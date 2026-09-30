@@ -166,6 +166,8 @@ function parseRouteParams() {
     hostname === 'localhost' ||
     hostname === '127.0.0.1' ||
     hostname.endsWith('.vercel.app') ||
+    hostname.endsWith('.pages.dev') ||
+    hostname.endsWith('.workers.dev') ||
     hostname.endsWith('.web.app');
 
   let portal: 'super-admin' | 'cashier' | 'customer' | 'admin' | 'join' | 'partner' | 'partner-landing' | 'onboarding' = 'super-admin';
