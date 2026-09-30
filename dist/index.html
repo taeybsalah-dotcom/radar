@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/icon-192.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Radar</title>
+    <link rel="manifest" href="/api/manifest" id="app-manifest" />
+    <meta name="theme-color" content="#0B0F17" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Radar" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="apple-touch-icon" href="/icon-192.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <script>
+      // Global error listener to prevent silent black screen
+      window.addEventListener('error', function(e) {
+        console.error('Radar Window Error:', e);
+        var root = document.getElementById('root');
+        if (root && (!root.innerHTML || root.innerHTML.indexOf('radar-preloader') !== -1)) {
+          var errMsg = (e && e.message) ? e.message : 'حدث خطأ أثناء تحميل الحزم البرمجية';
+          root.innerHTML = '<div style="min-height:100vh;background:#080B11;color:#fff;display:flex;align-items:center;justify-content:center;padding:20px;font-family:Cairo,sans-serif;text-align:center;direction:rtl;">' +
+            '<div style="max-width:440px;width:100%;background:#0F172A;border:1px solid rgba(239,68,68,0.4);border-radius:24px;padding:28px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">' +
+              '<div style="font-size:36px;margin-bottom:12px;">⚠️</div>' +
+              '<h2 style="font-size:18px;font-weight:900;margin-bottom:8px;color:#fff;">تحديث منصة رادار</h2>' +
+              '<p style="font-size:12px;color:#94A3B8;margin-bottom:16px;line-height:1.6;">تم نشر تحديث جديد للمنصة. يرجى الضغط على الزر لتحديث المتصفح ومسح الذاكرة المؤقتة.</p>' +
+              '<div style="background:#020617;padding:10px;border-radius:12px;font-family:monospace;font-size:10px;color:#FCA5A5;margin-bottom:16px;text-align:left;direction:ltr;overflow:auto;max-height:80px;">' + errMsg + '</div>' +
+              '<button onclick="localStorage.clear();sessionStorage.clear();if(window.caches){caches.keys().then(function(keys){keys.forEach(function(k){caches.delete(k);});});}window.location.reload(true);" style="width:100%;background:#F59E0B;color:#000;border:none;border-radius:14px;padding:12px;font-weight:900;font-size:13px;cursor:pointer;font-family:Cairo,sans-serif;">🔄 تحديث فوري ومسح الكاش</button>' +
+            '</div>' +
+          '</div>';
+        }
+      });
+      
+      // Auto unregister any stale service workers
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for (var i = 0; i < registrations.length; i++) {
+            registrations[i].unregister();
+          }
+        });
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-C2AejsS6.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-VCoj450d.css">
+  </head>
+  <body class="bg-[#0B0F17] text-slate-100 font-sans min-h-screen antialiased selection:bg-amber-500 selection:text-black">
+    <div id="root">
+      <!-- Instant Preloader (replaces blank black screen while scripts load) -->
+      <div id="radar-preloader" style="min-height:100vh;background:#080B11;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#F8FAFC;font-family:Cairo,sans-serif;direction:rtl;padding:20px;">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:16px;text-align:center;">
+          <div style="width:64px;height:64px;border-radius:24px;background:linear-gradient(135deg,#F59E0B,#FCD34D);display:flex;align-items:center;justify-content:center;font-size:32px;box-shadow:0 10px 25px -5px rgba(245,158,11,0.4);font-weight:900;animation:pulse 2s infinite;">
+            ⚡
+          </div>
+          <div>
+            <h1 style="font-size:22px;font-weight:900;letter-spacing:1px;margin:0;color:#fff;">رادار | RADAR</h1>
+            <p style="font-size:12px;color:#94A3B8;margin-top:4px;margin-bottom:0;">محرك الولاء والمكافآت الذكي</p>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;background:rgba(15,23,42,0.8);border:1px solid #1E293B;padding:8px 16px;border-radius:999px;font-size:11px;color:#CBD5E1;margin-top:8px;">
+            <div style="width:12px;height:12px;border:2px solid #F59E0B;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;"></div>
+            <span>جاري تشغيل المنصة...</span>
+          </div>
+        </div>
+      </div>
+      <style>
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+      </style>
+    </div>
+  </body>
+</html>
