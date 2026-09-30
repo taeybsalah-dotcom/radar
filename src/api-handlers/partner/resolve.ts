@@ -90,7 +90,7 @@ export default async function handler(req: any, res: any) {
     const partner = partnerRecords && partnerRecords.length > 0 ? partnerRecords[0] : null;
 
     // If partner not found or inactive/suspended -> return 404 without leaking partner status (Section 23)
-    const affiliates = (partner.affiliates as any);
+    const affiliates = (partner?.affiliates as any);
     const affiliateRecord = Array.isArray(affiliates) ? affiliates[0] : affiliates;
     if (!partner || partner.active === false || affiliateRecord?.status !== 'ACTIVE') {
       return res.status(404).json({
