@@ -178,6 +178,15 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
   // 7. Bonuses State
   const [bonusMilestones, setBonusMilestones] = useState<PartnerBonusMilestone[]>(defaultBonusMilestones);
 
+  // 8. Change PIN Modal State
+  const [showChangePinModal, setShowChangePinModal] = useState(false);
+  const [currentPinInput, setCurrentPinInput] = useState('');
+  const [newPinInput, setNewPinInput] = useState('');
+  const [confirmPinInput, setConfirmPinInput] = useState('');
+  const [pinChangeError, setPinChangeError] = useState<string | null>(null);
+  const [pinChangeSuccess, setPinChangeSuccess] = useState<string | null>(null);
+  const [isUpdatingPin, setIsUpdatingPin] = useState(false);
+
   // 8. Copy Feedback State
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
@@ -378,6 +387,53 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
     setStats(null);
   };
 
+  // Handle Changing PIN
+  const handleChangePinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPinChangeError(null);
+    setPinChangeSuccess(null);
+
+    if (!currentPinInput.trim()) {
+      setPinChangeError('يرجى إدخال الرمز السري الحالي');
+      return;
+    }
+    if (!newPinInput.trim() || newPinInput.trim().length < 4) {
+      setPinChangeError('الرمز السري الجديد يجب أن يكون 4 أرقام على الأقل');
+      return;
+    }
+    if (newPinInput.trim() !== confirmPinInput.trim()) {
+      setPinChangeError('الرمز السري الجديد وتأكيده غير متطابقين');
+      return;
+    }
+
+    setIsUpdatingPin(true);
+    try {
+      const res = await LoyaltyService.updatePartnerPin(
+        partner.id || partner.affiliate_id,
+        currentPinInput.trim(),
+        newPinInput.trim()
+      );
+      if (!res.success) {
+        setPinChangeError(res.error || 'فشل تحديث الرمز السري');
+        return;
+      }
+
+      setPartner(res.partner);
+      setPinChangeSuccess('تم تحديث الرمز السري بنجاح! 🔒');
+      setCurrentPinInput('');
+      setNewPinInput('');
+      setConfirmPinInput('');
+      setTimeout(() => {
+        setShowChangePinModal(false);
+        setPinChangeSuccess(null);
+      }, 1500);
+    } catch (err: any) {
+      setPinChangeError(err.message || 'حدث خطأ أثناء تحديث الرمز');
+    } finally {
+      setIsUpdatingPin(false);
+    }
+  };
+
   // Download QR Code as SVG
   const handleDownloadQR = () => {
     if (!qrRef.current) return;
@@ -461,7 +517,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                 />
                 <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
-              <p className="text-[10px] text-slate-500">الرمز السري المحدد لك من قبل إدارة رادار (الافتراضي: 1234)</p>
+              <p className="text-[10px] text-slate-500">الرمز السري المحدد لك من قبل إدارة رادار (يمكنك تغييره من لوحة التحكم)</p>
             </div>
 
             <button
@@ -473,17 +529,6 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               <span>{isLoggingIn ? 'جاري التحقق...' : 'دخول بوابة الشريك'}</span>
             </button>
           </form>
-
-          {onBackToApp && (
-            <div className="text-center pt-2">
-              <button
-                onClick={onBackToApp}
-                className="text-xs text-slate-500 hover:text-slate-300 transition"
-              >
-                العودة للمنصة الرئيسية
-              </button>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -569,6 +614,22 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
             <span>معاينة صفحتك الترويجية</span>
           </a>
+
+          <button
+            onClick={() => {
+              setPinChangeError(null);
+              setPinChangeSuccess(null);
+              setCurrentPinInput('');
+              setNewPinInput('');
+              setConfirmPinInput('');
+              setShowChangePinModal(true);
+            }}
+            className="flex items-center gap-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-amber-400 hover:text-amber-300 px-3.5 py-2 rounded-2xl text-xs font-bold transition"
+            title="تغيير الرمز السري الخاص بك"
+          >
+            <KeyRound className="w-3.5 h-3.5" />
+            <span>تغيير الرمز السري</span>
+          </button>
 
           <button
             onClick={handleLogout}
@@ -1451,6 +1512,126 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                 <span>واتساب</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change PIN Modal */}
+      {showChangePinModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" dir="rtl">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">تغيير الرمز السري (PIN)</h3>
+                  <p className="text-[11px] text-slate-400">تحديث رمز دخولك الخاص ببوابة الشركاء</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowChangePinModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {pinChangeError && (
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold flex items-start gap-2 animate-shake">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>{pinChangeError}</span>
+              </div>
+            )}
+
+            {pinChangeSuccess && (
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                <span>{pinChangeSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePinSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">الرمز السري الحالي</label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    maxLength={8}
+                    value={currentPinInput}
+                    onChange={(e) => setCurrentPinInput(e.target.value)}
+                    placeholder="••••"
+                    dir="ltr"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-10 py-3 text-xs text-white placeholder-slate-600 outline-none transition text-left tracking-widest font-mono"
+                    required
+                  />
+                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">الرمز السري الجديد</label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    maxLength={8}
+                    value={newPinInput}
+                    onChange={(e) => setNewPinInput(e.target.value)}
+                    placeholder="••••"
+                    dir="ltr"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-10 py-3 text-xs text-white placeholder-slate-600 outline-none transition text-left tracking-widest font-mono"
+                    required
+                  />
+                  <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                <p className="text-[10px] text-slate-500">مكون من 4 أرقام على الأقل</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">تأكيد الرمز السري الجديد</label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    maxLength={8}
+                    value={confirmPinInput}
+                    onChange={(e) => setConfirmPinInput(e.target.value)}
+                    placeholder="••••"
+                    dir="ltr"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-10 py-3 text-xs text-white placeholder-slate-600 outline-none transition text-left tracking-widest font-mono"
+                    required
+                  />
+                  <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowChangePinModal(false)}
+                  className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingPin}
+                  className="flex-1 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isUpdatingPin ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>جاري الحفظ...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>حفظ الرمز السري 🔒</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

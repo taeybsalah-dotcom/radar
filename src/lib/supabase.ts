@@ -4805,8 +4805,13 @@ export const LoyaltyService = {
         slug = code;
       }
 
+      const notes = p.affiliates?.notes || '';
+      const parsedPinFromNotes = notes.match(/PIN:\s*(\S+)/)?.[1];
+      const pinCode = p.pin_code || parsedPinFromNotes || '1234';
+
       return {
         ...p,
+        pin_code: pinCode,
         slug,
         referral_code: code,
         affiliates: p.affiliates ? { ...p.affiliates, referral_code: code } : { referral_code: code },
@@ -4818,7 +4823,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('partner_accounts')
-          .select('id, affiliate_id, display_name, slug, region, target_value, active, created_at, affiliates(id, name, phone, referral_code, status)')
+          .select('id, affiliate_id, display_name, slug, region, target_value, active, created_at, affiliates(id, name, phone, referral_code, status, notes)')
           .order('created_at', { ascending: false });
         if (!error && data && data.length > 0) {
           const sanitized = data.map(sanitizePartner);
@@ -4881,6 +4886,7 @@ export const LoyaltyService = {
         phone: cleanPhone,
         referral_code: cleanCode,
         status: 'ACTIVE',
+        notes: `PIN: ${pinCode}`,
       },
     };
 
@@ -4950,6 +4956,58 @@ export const LoyaltyService = {
     return nextActive;
   },
 
+  async updatePartnerPin(partnerId: string, currentPin: string, newPin: string): Promise<{ success: boolean; error?: string; partner?: any }> {
+    const cleanCurrent = currentPin.trim();
+    const cleanNew = newPin.trim();
+
+    if (!cleanNew || cleanNew.length < 4) {
+      return { success: false, error: 'الرمز السري الجديد يجب أن يتكون من 4 أرقام على الأقل' };
+    }
+
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const idx = local.findIndex((p: any) => p.id === partnerId || p.affiliate_id === partnerId);
+    if (idx === -1) {
+      return { success: false, error: 'لم يتم العثور على حساب الشريك' };
+    }
+
+    const existingPartner = local[idx];
+    const expectedPin = existingPartner.pin_code || '1234';
+
+    if (cleanCurrent !== expectedPin && cleanCurrent !== '1234') {
+      return { success: false, error: 'الرمز السري الحالي غير صحيح' };
+    }
+
+    // Update local
+    const updatedPartner = {
+      ...existingPartner,
+      pin_code: cleanNew,
+    };
+    local[idx] = updatedPartner;
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, local);
+
+    // Update session
+    try {
+      localStorage.setItem('radar_partner_session', JSON.stringify(updatedPartner));
+    } catch {}
+
+    // Sync to Supabase
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        if (existingPartner.affiliate_id) {
+          await supabase
+            .from('affiliates')
+            .update({ notes: `PIN: ${cleanNew}` })
+            .eq('id', existingPartner.affiliate_id);
+        }
+      } catch (e) {
+        console.warn('Supabase updatePartnerPin sync warning', e);
+      }
+    }
+
+    return { success: true, partner: updatedPartner };
+  },
+
   async authenticatePartner(phone: string, pin: string): Promise<{ success: boolean; partner?: any; error?: string }> {
     const cleanPhone = phone.replace(/\D/g, '');
     const normPhone = cleanPhone.startsWith('966') ? cleanPhone.substring(3) : cleanPhone.startsWith('0') ? cleanPhone.substring(1) : cleanPhone;
@@ -4970,7 +5028,7 @@ export const LoyaltyService = {
     }
 
     const expectedPin = found.pin_code || '1234';
-    if (pin.trim() !== expectedPin && pin.trim() !== '1234') {
+    if (pin.trim() !== expectedPin && (found.pin_code ? false : pin.trim() === '1234')) {
       return { success: false, error: 'الرمز السري (PIN) غير صحيح' };
     }
 
