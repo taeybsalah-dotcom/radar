@@ -551,6 +551,21 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     });
   };
 
+  const handleNavigateToBilling = () => {
+    setActiveTab('settings');
+    setSettingsSection('billing');
+    setTimeout(() => {
+      const target =
+        document.getElementById('merchant-billing-packages') ||
+        document.getElementById('merchant-billing-root');
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }, 100);
+  };
+
   const handleProcessSandboxPayment = async (details: {
     paymentMethod: 'mada' | 'visa' | 'mastercard' | 'credit_card';
     cardNumber: string;
@@ -1958,6 +1973,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     store.status === 'suspended' ||
     subscriptionInfo?.isSuspended === true;
 
+  const isTrial =
+    !isStoreSuspended &&
+    (!store.setup_fee_paid ||
+      subscriptionInfo?.status === 'trial' ||
+      store.subscription_status === 'trial');
+  const trialDaysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? 7));
+
   const baseDomain = store.custom_domain
     ? `https://${store.custom_domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}`
     : `${window.location.origin}/?store=${store.slug}`;
@@ -2016,6 +2038,41 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   return (
     <div className="max-w-7xl mx-auto space-y-6 animate-fade-in text-slate-200">
       
+      {/* 🚀 Global Sticky Trial Banner (Visible across all merchant dashboard screens only during TRIAL) */}
+      {isTrial && (
+        <div className="sticky top-2 z-40 animate-fade-in">
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-500/25 via-slate-900/95 to-amber-500/15 border border-amber-500/50 shadow-2xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
+            <div className="flex items-center space-x-3.5 rtl:space-x-reverse min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-amber-500/25 shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs sm:text-sm font-black text-white">
+                    فترة التجربة المجانية نشطة
+                  </h4>
+                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-black font-mono">
+                    متبقي {trialDaysLeft} {trialDaysLeft === 1 ? 'يوم' : trialDaysLeft === 2 ? 'يومان' : trialDaysLeft <= 10 ? 'أيام' : 'يوماً'} على انتهاء الفترة التجريبية
+                  </span>
+                </div>
+                <p className="text-[11px] sm:text-xs text-slate-300 truncate mt-0.5">
+                  استمتع بكافة ميزات المنصة المفتوحة. اشترك في باقة متجرك لتثبيت الحساب والاستمرار دون انقطاع.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleNavigateToBilling}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs sm:text-sm transition-all duration-200 flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-lg shadow-amber-500/25 shrink-0 hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <Zap className="w-4 h-4 fill-current" />
+              <span>اشترك الآن 🚀</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 👑 Executive Command Header */}
       <div className="relative overflow-hidden rounded-3xl bg-slate-900/90 border border-slate-800 p-5 sm:p-6 shadow-2xl backdrop-blur-xl">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
@@ -2182,40 +2239,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           >
             <CreditCard className="w-4 h-4" />
             <span>{isPayingRenewal ? 'جاري الدفع...' : 'تجديد الاشتراك الآن (195 ر.س) 💳'}</span>
-          </button>
-        </div>
-      )}
-
-      {/* 🎁 Active 7-Day Free Trial Banner */}
-      {!isStoreSuspended && !store.setup_fee_paid && (
-        <div className="p-4 rounded-3xl bg-gradient-to-r from-blue-500/20 via-slate-900 to-emerald-500/10 border border-blue-500/30 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in">
-          <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
-            <div className="w-11 h-11 rounded-2xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400 shrink-0">
-              <Gift className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <h4 className="text-sm font-black text-white">
-                  أنت في فترة التجربة المجانية (7 أيام)
-                </h4>
-                <span className="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 text-[10px] font-bold font-mono">
-                  متبقي {subscriptionInfo?.daysLeft ?? 7} أيام
-                </span>
-              </div>
-              <p className="text-xs text-slate-300 mt-0.5">
-                سدد رسوم التأسيس (500 ر.س) لمرة واحدة الآن واحصل على <strong className="text-emerald-400">اشتراك الشهر الأول مجاناً 🎁</strong>
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            disabled={isPayingSetup}
-            onClick={() => handlePaySetupFee('mada')}
-            className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs transition flex items-center justify-center space-x-2 rtl:space-x-reverse shadow-lg shadow-emerald-500/20 shrink-0 disabled:opacity-50"
-          >
-            <Zap className="w-4 h-4" />
-            <span>{isPayingSetup ? 'جاري التفعيل...' : 'تفعيل الحساب الدائم (500 ر.س) 🚀'}</span>
           </button>
         </div>
       )}
@@ -5719,7 +5742,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         const activePlans = allPlans.filter((p) => p.active !== false);
 
         return (
-          <div className="space-y-6 animate-fade-in" dir="rtl">
+          <div id="merchant-billing-root" className="space-y-6 animate-fade-in" dir="rtl">
             {/* Toast Notification on Upgrade Success */}
             {upgradeSuccessMessage && (
               <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2.5 animate-fade-in shadow-xl">
@@ -5820,7 +5843,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       </div>
 
                       {/* Quick Action */}
-                      {!store.setup_fee_paid ? (
+                      {!store.setup_fee_paid && (
                         <button
                           type="button"
                           disabled={isPayingSetup}
@@ -5829,16 +5852,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         >
                           <Zap className="w-4 h-4" />
                           <span>{isPayingSetup ? 'جاري السداد...' : 'سداد التأسيس (500 ر.س) وتثبيت المتجر 🎁'}</span>
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={isPayingRenewal}
-                          onClick={() => handlePayRenewal('mada')}
-                          className="px-5 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-lg shadow-amber-500/20 disabled:opacity-50 shrink-0"
-                        >
-                          <CreditCard className="w-4 h-4" />
-                          <span>{isPayingRenewal ? 'جاري التجديد...' : `تجديد مسبق (+${getPlanDurationLabel(currentPlan)}) 💳`}</span>
                         </button>
                       )}
                     </div>
@@ -5866,7 +5879,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             })()}
 
             {/* 🚀 Active Plans Comparison & Upgrade Section (عرض الباقات المتاحة للترقية) */}
-            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
+            <div id="merchant-billing-packages" className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
                 <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
                   <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 font-black text-xl shadow-lg shadow-amber-500/20 shrink-0">
