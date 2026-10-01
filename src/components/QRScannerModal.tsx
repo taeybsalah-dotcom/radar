@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, X, RefreshCw, SwitchCamera, AlertCircle, Zap } from 'lucide-react';
+import { Camera, X, RefreshCw, SwitchCamera, AlertCircle, Zap, Copy, Check, ShieldAlert } from 'lucide-react';
+import { Html5Qrcode } from 'html5-qrcode';
 
 interface QRScannerModalProps {
   isOpen: boolean;
@@ -7,6 +8,16 @@ interface QRScannerModalProps {
   onScanSuccess: (scannedData: string) => void;
   title?: string;
   subtitle?: string;
+}
+
+interface DiagnosticDetails {
+  errorName: string;
+  errorMessage: string;
+  stagesAttempted: string[];
+  isSecureContext: boolean;
+  protocol: string;
+  hasMediaDevices: boolean;
+  userAgent: string;
 }
 
 export const QRScannerModal: React.FC<QRScannerModalProps> = ({
@@ -17,17 +28,21 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
   subtitle = 'وجّه كاميرا الجهاز نحو شاشة الجوال لقراءة الباركود فورياً',
 }) => {
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [diagnostic, setDiagnostic] = useState<DiagnosticDetails | null>(null);
+  const [copiedDiag, setCopiedDiag] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
   const [availableCameras, setAvailableCameras] = useState<Array<{ id: string; label: string }>>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
   const [manualCode, setManualCode] = useState('');
 
-  const scannerRef = useRef<any>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
   const isStoppingRef = useRef(false);
   const readerElementId = 'radar-qr-reader-viewport';
 
   useEffect(() => {
     if (isOpen) {
       isStoppingRef.current = false;
+      // Start camera directly
       startCamera();
     } else {
       stopCamera();
@@ -57,116 +72,220 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
   const startCamera = async (cameraIdToUse?: string) => {
     setCameraError(null);
+    setDiagnostic(null);
+    setIsInitializing(true);
     isStoppingRef.current = false;
 
-    // ⚡ Guaranteed DOM layout settling before initializing Html5Qrcode on Mobile
-    setTimeout(async () => {
-      if (isStoppingRef.current) return;
+    const stagesAttempted: string[] = [];
 
-      const container = document.getElementById(readerElementId);
-      if (!container) return;
+    // Pre-flight check: Secure context & mediaDevices
+    const isSecure = typeof window !== 'undefined' ? window.isSecureContext : false;
+    const protocol = typeof window !== 'undefined' ? window.location.protocol : 'unknown';
+    const hasMedia = typeof navigator !== 'undefined' && !!navigator?.mediaDevices?.getUserMedia;
 
-      try {
-        if (scannerRef.current) {
-          try {
-            if (scannerRef.current.isScanning) {
-              await scannerRef.current.stop();
-            }
-            scannerRef.current.clear();
-          } catch {}
-        }
+    if (!isSecure && protocol !== 'https:' && typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+      const errName = 'SecurityError / InsecureContext';
+      const errMsg = 'المتصفح يمنع تشغيل الكاميرا في المواقع غير المشفرة (HTTP). يجب فتح الموقع عبر HTTPS.';
+      setCameraError(errMsg);
+      setDiagnostic({
+        errorName: errName,
+        errorMessage: errMsg,
+        stagesAttempted: ['pre-flight-https-check'],
+        isSecureContext: isSecure,
+        protocol,
+        hasMediaDevices: hasMedia,
+        userAgent: navigator.userAgent,
+      });
+      setIsInitializing(false);
+      return;
+    }
 
-        // Dynamically import html5-qrcode on demand
-        const { Html5Qrcode } = await import('html5-qrcode');
-        if (isStoppingRef.current) return;
+    const container = document.getElementById(readerElementId);
+    if (!container) {
+      setIsInitializing(false);
+      return;
+    }
 
-        const html5QrCode = new Html5Qrcode(readerElementId, false);
-        scannerRef.current = html5QrCode;
-
-        // Mobile-Safe Dynamic Scan Box (Guaranteed never to exceed viewfinder dimensions on mobile)
-        const scanConfig = {
-          fps: 20,
-          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-            const minEdge = Math.min(viewfinderWidth || 280, viewfinderHeight || 280);
-            const size = Math.floor(minEdge * 0.75);
-            const finalSize = Math.max(150, Math.min(size, minEdge - 10));
-            return { width: finalSize, height: finalSize };
-          },
-          disableFlip: false,
-        };
-
-        const onScan = (decodedText: string) => {
-          if (isStoppingRef.current) return;
-          isStoppingRef.current = true;
-          // Instant 0ms callback to POS UI
-          onScanSuccess(decodedText.trim());
-          onClose();
-          // Background teardown
-          setTimeout(() => {
-            try {
-              html5QrCode.stop().then(() => html5QrCode.clear()).catch(() => {});
-            } catch {}
-          }, 30);
-        };
-
-        const targetCamera = cameraIdToUse || { facingMode: 'environment' };
-
+    try {
+      // Clear previous instance safely
+      if (scannerRef.current) {
         try {
-          await html5QrCode.start(targetCamera, scanConfig, onScan, () => {});
-
-          // Non-blocking device enumeration in background for camera switcher
-          Html5Qrcode.getCameras()
-            .then((cams) => {
-              if (Array.isArray(cams) && cams.length > 0) {
-                setAvailableCameras(cams);
-              }
-            })
-            .catch(() => {});
-        } catch (firstErr) {
-          console.warn('Direct environment start failed, attempting device enumeration fallback', firstErr);
-          // 🛡️ Fallback: Enumerate available cameras to explicitly find rear camera on iOS/Android
-          try {
-            const cams = await Html5Qrcode.getCameras();
-            if (Array.isArray(cams) && cams.length > 0) {
-              setAvailableCameras(cams);
-              const backCam =
-                cams.find((c) => {
-                  const l = (c.label || '').toLowerCase();
-                  return (
-                    (l.includes('back') ||
-                      l.includes('rear') ||
-                      l.includes('environment') ||
-                      l.includes('خلفية') ||
-                      l.includes('0')) &&
-                    !l.includes('ultra') &&
-                    !l.includes('wide 0.5')
-                  );
-                }) ||
-                cams.find((c) => {
-                  const l = (c.label || '').toLowerCase();
-                  return l.includes('back') || l.includes('rear') || l.includes('environment') || l.includes('خلفية');
-                }) ||
-                cams[cams.length - 1] ||
-                cams[0];
-
-              const fallbackCam = backCam ? backCam.id : { facingMode: 'environment' };
-              if (backCam) setSelectedCameraId(backCam.id);
-              await html5QrCode.start(fallbackCam, scanConfig, onScan, () => {});
-            } else {
-              await html5QrCode.start('environment' as any, scanConfig, onScan, () => {});
-            }
-          } catch (fallbackErr: any) {
-            console.warn('Camera fallback failed:', fallbackErr);
-            throw fallbackErr;
+          if (scannerRef.current.isScanning) {
+            await scannerRef.current.stop();
           }
-        }
-      } catch (err: any) {
-        console.warn('Camera start fatal error:', err);
-        setCameraError(
-          'تعذر تشغيل الكاميرا. يرجى التأكد من السماح بصلاحية الكاميرا للمتصفح في إعدادات الجوال أو استخدام الإدخال اليدوي.'
-        );
+          scannerRef.current.clear();
+        } catch {}
       }
-    }, 80);
+
+      const html5QrCode = new Html5Qrcode(readerElementId, false);
+      scannerRef.current = html5QrCode;
+
+      // Mathematically guaranteed safe qrbox calculation:
+      // Always strictly 75% of minimum dimension, never exceeds viewfinder width or height
+      const scanConfig = {
+        fps: 20,
+        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+          const vw = viewfinderWidth > 0 ? viewfinderWidth : 260;
+          const vh = viewfinderHeight > 0 ? viewfinderHeight : 260;
+          const minEdge = Math.min(vw, vh);
+          const safeSize = Math.max(50, Math.floor(minEdge * 0.75));
+          return { width: safeSize, height: safeSize };
+        },
+        disableFlip: false,
+      };
+
+      const onScan = (decodedText: string) => {
+        if (isStoppingRef.current) return;
+        isStoppingRef.current = true;
+        // Instant callback to POS UI
+        onScanSuccess(decodedText.trim());
+        onClose();
+        // Background cleanup
+        setTimeout(() => {
+          try {
+            html5QrCode.stop().then(() => html5QrCode.clear()).catch(() => {});
+          } catch {}
+        }, 30);
+      };
+
+      // Progressive Multi-Stage Fallback Strategy
+      let startSuccess = false;
+      let lastError: any = null;
+
+      // If a specific camera ID was selected by the user, prioritize it
+      if (cameraIdToUse) {
+        stagesAttempted.push(`specific-camera-id (${cameraIdToUse})`);
+        try {
+          await html5QrCode.start(cameraIdToUse, scanConfig, onScan, () => {});
+          startSuccess = true;
+        } catch (e: any) {
+          lastError = e;
+          console.warn('Direct camera ID start failed:', e);
+        }
+      }
+
+      // Stage 1: Standard Environment Facing Mode { facingMode: 'environment' }
+      if (!startSuccess && !isStoppingRef.current) {
+        stagesAttempted.push("facingMode: 'environment'");
+        try {
+          await html5QrCode.start({ facingMode: 'environment' }, scanConfig, onScan, () => {});
+          startSuccess = true;
+        } catch (e: any) {
+          lastError = e;
+          console.warn('Stage 1 facingMode environment failed:', e);
+        }
+      }
+
+      // Stage 2: Camera Enumeration -> Detect Rear Camera explicitly
+      if (!startSuccess && !isStoppingRef.current) {
+        stagesAttempted.push('camera-device-enumeration');
+        try {
+          const cams = await Html5Qrcode.getCameras();
+          if (Array.isArray(cams) && cams.length > 0) {
+            setAvailableCameras(cams);
+            const backCam =
+              cams.find((c) => {
+                const l = (c.label || '').toLowerCase();
+                return (
+                  (l.includes('back') ||
+                    l.includes('rear') ||
+                    l.includes('environment') ||
+                    l.includes('خلفية') ||
+                    l.includes('0')) &&
+                  !l.includes('ultra') &&
+                  !l.includes('wide 0.5')
+                );
+              }) ||
+              cams.find((c) => {
+                const l = (c.label || '').toLowerCase();
+                return l.includes('back') || l.includes('rear') || l.includes('environment') || l.includes('خلفية');
+              }) ||
+              cams[cams.length - 1] ||
+              cams[0];
+
+            if (backCam) {
+              setSelectedCameraId(backCam.id);
+              stagesAttempted.push(`enumerated-rear-camera (${backCam.label || backCam.id})`);
+              await html5QrCode.start(backCam.id, scanConfig, onScan, () => {});
+              startSuccess = true;
+            }
+          }
+        } catch (e: any) {
+          lastError = e;
+          console.warn('Stage 2 device enumeration fallback failed:', e);
+        }
+      }
+
+      // Stage 3: Front Facing Mode / User Facing
+      if (!startSuccess && !isStoppingRef.current) {
+        stagesAttempted.push("facingMode: 'user'");
+        try {
+          await html5QrCode.start({ facingMode: 'user' }, scanConfig, onScan, () => {});
+          startSuccess = true;
+        } catch (e: any) {
+          lastError = e;
+          console.warn('Stage 3 user facingMode failed:', e);
+        }
+      }
+
+      // Stage 4: Basic string fallback 'environment'
+      if (!startSuccess && !isStoppingRef.current) {
+        stagesAttempted.push("string: 'environment'");
+        try {
+          await html5QrCode.start('environment' as any, scanConfig, onScan, () => {});
+          startSuccess = true;
+        } catch (e: any) {
+          lastError = e;
+          console.warn('Stage 4 string environment failed:', e);
+        }
+      }
+
+      // If all stages failed, throw the last error to be captured in the UI Diagnostic Boundary
+      if (!startSuccess) {
+        throw lastError || new Error('فشلت جميع محاولات الاتصال بكاميرا الجهاز');
+      }
+
+      // Populate camera list in background for switcher
+      Html5Qrcode.getCameras()
+        .then((cams) => {
+          if (Array.isArray(cams) && cams.length > 0) {
+            setAvailableCameras(cams);
+          }
+        })
+        .catch(() => {});
+    } catch (err: any) {
+      console.error('Camera fatal error in diagnostic boundary:', err);
+
+      const errName = err?.name || 'CameraError';
+      const errMsg = err?.message || String(err);
+
+      // Human-readable Arabic translation for common browser media errors
+      let arabicExplanation = 'تعذر تشغيل الكاميرا.';
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+        arabicExplanation = 'المتصفح يمنع الكاميرا (تم رفض الإذن). يرجى فتح إعدادات المتصفح وتفعيل إذن الكاميرا.';
+      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+        arabicExplanation = 'لم يتم العثور على كاميرا في هذا الجهاز.';
+      } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+        arabicExplanation = 'الكاميرا قيد الاستخدام بواسطة تطبيق آخر أو نظام الجهاز يمنع الوصول.';
+      } else if (errName === 'OverconstrainedError') {
+        arabicExplanation = 'إعدادات الكاميرا غير متوافقة مع عدسات الجهاز، وتمت تجربة كافة البدائل.';
+      } else if (errName === 'SecurityError') {
+        arabicExplanation = 'المتصفح يمنع الكاميرا لأن الاتصال ليس مشفراً (HTTPS).';
+      }
+
+      setCameraError(arabicExplanation);
+      setDiagnostic({
+        errorName: errName,
+        errorMessage: errMsg,
+        stagesAttempted,
+        isSecureContext: typeof window !== 'undefined' ? window.isSecureContext : false,
+        protocol: typeof window !== 'undefined' ? window.location.protocol : 'unknown',
+        hasMediaDevices: typeof navigator !== 'undefined' && !!navigator?.mediaDevices?.getUserMedia,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+      });
+    } finally {
+      setIsInitializing(false);
+    }
   };
 
   const handleSwitchCamera = () => {
@@ -187,27 +306,53 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
     stopCamera();
   };
 
+  const handleCopyDiagnostic = () => {
+    if (!diagnostic) return;
+    const text = [
+      `=== RADAR POS CAMERA DIAGNOSTIC ===`,
+      `Error Name: ${diagnostic.errorName}`,
+      `Error Message: ${diagnostic.errorMessage}`,
+      `Stages Attempted: ${diagnostic.stagesAttempted.join(' -> ')}`,
+      `Secure Context: ${diagnostic.isSecureContext ? 'YES (Secure)' : 'NO (Insecure)'}`,
+      `Protocol: ${diagnostic.protocol}`,
+      `MediaDevices API: ${diagnostic.hasMediaDevices ? 'Available' : 'Unavailable'}`,
+      `User Agent: ${diagnostic.userAgent}`,
+      `Timestamp: ${new Date().toISOString()}`,
+    ].join('\n');
+
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedDiag(true);
+      setTimeout(() => setCopiedDiag(false), 2500);
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-lg animate-fade-in">
       <div className="w-full max-w-lg rounded-3xl p-5 sm:p-7 border border-slate-700/80 relative shadow-2xl overflow-hidden bg-slate-900/98 text-right">
         
-        {/* Custom styling to ensure video stream fills container completely and seamlessly on mobile */}
+        {/* Custom styling for video stream viewport */}
         <style>{`
-          #radar-qr-reader-viewport,
-          #radar-qr-reader-viewport__scan_region,
-          #radar-qr-reader-viewport__scan_region > div {
+          #radar-qr-reader-viewport {
             width: 100% !important;
             height: 100% !important;
-            min-height: 100% !important;
             border: none !important;
-            background: transparent !important;
+            background: #000 !important;
             position: relative !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
             overflow: hidden !important;
+          }
+          #radar-qr-reader-viewport__scan_region {
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 100% !important;
+            border: none !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
           }
           #radar-qr-reader-viewport video {
             width: 100% !important;
@@ -259,37 +404,88 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           {/* Universal Html5Qrcode Viewport */}
           <div id={readerElementId} className="w-full h-full"></div>
 
-          {/* Clean Focused Viewfinder Guide Frame */}
-          <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-6 z-10">
-            <div className="w-full max-w-[270px] aspect-square rounded-3xl border border-white/20 relative shadow-[0_0_20px_rgba(0,0,0,0.4)]">
-              {/* Clean Subtle Corner Accents */}
-              <div className="absolute -top-1 -left-1 w-6 h-6 border-t-2 border-l-2 border-amber-400 rounded-tl-lg"></div>
-              <div className="absolute -top-1 -right-1 w-6 h-6 border-t-2 border-r-2 border-amber-400 rounded-tr-lg"></div>
-              <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-2 border-l-2 border-amber-400 rounded-bl-lg"></div>
-              <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-2 border-r-2 border-amber-400 rounded-br-lg"></div>
+          {/* Clean Focused Viewfinder Guide Frame (Visible when active and no error) */}
+          {!cameraError && (
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-6 z-10">
+              <div className="w-full max-w-[270px] aspect-square rounded-3xl border border-white/20 relative shadow-[0_0_20px_rgba(0,0,0,0.4)]">
+                {/* Clean Subtle Corner Accents */}
+                <div className="absolute -top-1 -left-1 w-6 h-6 border-t-2 border-l-2 border-amber-400 rounded-tl-lg"></div>
+                <div className="absolute -top-1 -right-1 w-6 h-6 border-t-2 border-r-2 border-amber-400 rounded-tr-lg"></div>
+                <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-2 border-l-2 border-amber-400 rounded-bl-lg"></div>
+                <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-2 border-r-2 border-amber-400 rounded-br-lg"></div>
 
-              <div className="absolute -bottom-8 left-0 right-0 text-center">
-                <span className="px-3 py-1 rounded-full bg-slate-950/80 border border-slate-700 text-[11px] font-bold text-slate-300 backdrop-blur-md">
-                  ضع الباركود داخل الإطار
-                </span>
+                <div className="absolute -bottom-8 left-0 right-0 text-center">
+                  <span className="px-3 py-1 rounded-full bg-slate-950/80 border border-slate-700 text-[11px] font-bold text-slate-300 backdrop-blur-md">
+                    ضع الباركود داخل الإطار
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
-          {/* Error Alert Display */}
+          {/* Loading Overlay */}
+          {isInitializing && !cameraError && (
+            <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center space-y-3 z-15 text-center p-4">
+              <div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+              <p className="text-xs font-bold text-slate-300">جاري تشغيل الكاميرا والتحقق من التوافق...</p>
+            </div>
+          )}
+
+          {/* 🔴 VISIBLE ERROR BOUNDARY & DIAGNOSTIC PANEL */}
           {cameraError && (
-            <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center space-y-4 z-20">
-              <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
-                <AlertCircle className="w-6 h-6" />
+            <div className="absolute inset-0 bg-slate-950/98 flex flex-col items-center justify-between p-4 sm:p-5 text-right z-25 overflow-y-auto">
+              
+              <div className="w-full space-y-3">
+                {/* Header */}
+                <div className="flex items-center space-x-2 rtl:space-x-reverse text-rose-400 border-b border-rose-500/30 pb-2">
+                  <ShieldAlert className="w-6 h-6 shrink-0 animate-pulse" />
+                  <div>
+                    <h4 className="text-sm font-black text-white">تنبيه تشغيل الكاميرا</h4>
+                    <span className="text-[11px] font-mono text-rose-400">{diagnostic?.errorName || 'Camera Access Blocked'}</span>
+                  </div>
+                </div>
+
+                {/* Explanation */}
+                <p className="text-xs text-rose-200 font-medium leading-relaxed bg-rose-950/40 p-3 rounded-2xl border border-rose-500/30">
+                  {cameraError}
+                </p>
+
+                {/* Technical Diagnostic Details Box */}
+                {diagnostic && (
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 text-[11px] font-mono space-y-1 text-slate-300 select-text">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-1 mb-1">
+                      <span className="text-amber-400 font-bold">تقرير الفحص الفني (Diagnostic):</span>
+                      <button
+                        type="button"
+                        onClick={handleCopyDiagnostic}
+                        className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-white bg-slate-800 px-2 py-0.5 rounded-lg border border-slate-700"
+                      >
+                        {copiedDiag ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedDiag ? 'تم النسخ' : 'نسخ التقرير'}</span>
+                      </button>
+                    </div>
+                    <div className="text-rose-300 font-bold truncate">Error: {diagnostic.errorMessage}</div>
+                    <div className="text-slate-400">Stages: {diagnostic.stagesAttempted.join(' ➔ ')}</div>
+                    <div className="flex gap-3 text-slate-400 text-[10px]">
+                      <span>HTTPS: <strong className={diagnostic.isSecureContext ? 'text-emerald-400' : 'text-rose-400'}>{diagnostic.isSecureContext ? 'نعم' : 'لا'}</strong></span>
+                      <span>MediaAPI: <strong className={diagnostic.hasMediaDevices ? 'text-emerald-400' : 'text-rose-400'}>{diagnostic.hasMediaDevices ? 'متاح' : 'محظور'}</strong></span>
+                    </div>
+                  </div>
+                )}
               </div>
-              <p className="text-xs sm:text-sm text-slate-300 max-w-xs leading-relaxed">{cameraError}</p>
-              <button
-                onClick={() => startCamera()}
-                className="px-5 py-2.5 rounded-xl bg-amber-500 text-black text-xs font-black hover:bg-amber-400 flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-lg"
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>إعادة محاولة فتح الكاميرا 🔄</span>
-              </button>
+
+              {/* Direct Tap User-Gesture Action Button */}
+              <div className="w-full pt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => startCamera()}
+                  className="w-full py-3.5 rounded-2xl bg-amber-500 text-black text-xs font-black hover:bg-amber-400 flex items-center justify-center space-x-2 rtl:space-x-reverse transition shadow-xl active:scale-98"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>👉 انقر هنا للسماح وتشغيل الكاميرا مباشرة (Tap to Start)</span>
+                </button>
+              </div>
+
             </div>
           )}
         </div>

@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Store, Customer, Tier, Privilege, DynamicQRToken, StoreStaff, CustomerCoupon } from '../types';
 import { LoyaltyService, normalizePhone } from '../lib/supabase';
-const QRScannerModal = React.lazy(() =>
-  import('./QRScannerModal').then((m) => ({ default: m.QRScannerModal }))
-);
+import { QRScannerModal } from './QRScannerModal';
 import { StaffLoginGate } from './StaffLoginGate';
 import { playBeepSound } from '../lib/sound';
 import { LoyaltyEvents } from '../lib/events';
@@ -1401,30 +1399,19 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         </div>
       )}
 
-      {/* 📷 Live Camera Single QR Scanner Modal (Dynamically loaded on demand) */}
+      {/* 📷 Live Camera Single QR Scanner Modal */}
       {isScannerOpen && (
-        <React.Suspense
-          fallback={
-            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-              <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl flex items-center gap-3 text-slate-300">
-                <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
-                <span className="text-xs font-mono">جاري تشغيل الكاميرا...</span>
-              </div>
-            </div>
+        <QRScannerModal
+          isOpen={isScannerOpen}
+          onClose={() => setIsScannerOpen(false)}
+          onScanSuccess={handleQRScanned}
+          title={
+            scannerAction === 'REDEEM'
+              ? `مسح باركود العميل لحرق: ${selectedReward?.title || 'المكافأة'}`
+              : 'مسح الباركود الذكي (عميل أو كوبون)'
           }
-        >
-          <QRScannerModal
-            isOpen={isScannerOpen}
-            onClose={() => setIsScannerOpen(false)}
-            onScanSuccess={handleQRScanned}
-            title={
-              scannerAction === 'REDEEM'
-                ? `مسح باركود العميل لحرق: ${selectedReward?.title || 'المكافأة'}`
-                : 'مسح الباركود الذكي (عميل أو كوبون)'
-            }
-            subtitle="وجّه كاميرا الجهاز نحو شاشة الجوال لقراءة الباركود فورياً"
-          />
-        </React.Suspense>
+          subtitle="وجّه كاميرا الجهاز نحو شاشة الجوال لقراءة الباركود فورياً"
+        />
       )}
 
     </div>
