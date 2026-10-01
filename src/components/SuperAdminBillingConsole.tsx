@@ -18,7 +18,7 @@ import {
   DollarSign,
   Gift,
 } from 'lucide-react';
-import { BillingPlan } from '../types';
+import { BillingPlan, getPlanDurationLabel, getPlanPriceSuffix } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 
 export const SuperAdminBillingConsole: React.FC = () => {
@@ -31,7 +31,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
 
   // Form State
   const [planName, setPlanName] = useState('');
-  const [planInterval, setPlanInterval] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
+  const [planDurationMonths, setPlanDurationMonths] = useState<number | ''>(1);
   const [planAmount, setPlanAmount] = useState<number | ''>(195);
   const [planFeaturesText, setPlanFeaturesText] = useState('');
   const [planDescription, setPlanDescription] = useState('');
@@ -58,7 +58,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
   const handleOpenAddModal = () => {
     setEditingPlan(null);
     setPlanName('');
-    setPlanInterval('MONTHLY');
+    setPlanDurationMonths(1);
     setPlanAmount(195);
     setPlanDescription('');
     setPlanFeaturesText(
@@ -71,7 +71,8 @@ export const SuperAdminBillingConsole: React.FC = () => {
   const handleOpenEditModal = (plan: BillingPlan) => {
     setEditingPlan(plan);
     setPlanName(plan.name);
-    setPlanInterval(plan.billing_interval || 'MONTHLY');
+    const months = plan.duration_months ?? (plan.billing_interval === 'YEARLY' ? 12 : 1);
+    setPlanDurationMonths(months);
     setPlanAmount(plan.amount);
     setPlanDescription(plan.description || '');
     setPlanFeaturesText((plan.features || []).join('\n'));
@@ -81,7 +82,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
 
   const handleSavePlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!planName.trim() || planAmount === '') return;
+    if (!planName.trim() || planAmount === '' || planDurationMonths === '') return;
 
     setIsSaving(true);
     try {
@@ -90,10 +91,14 @@ export const SuperAdminBillingConsole: React.FC = () => {
         .map((f) => f.trim())
         .filter((f) => f.length > 0);
 
+      const months = Math.max(1, Math.floor(Number(planDurationMonths)));
+      const interval = months === 12 ? 'YEARLY' : 'MONTHLY';
+
       if (editingPlan && editingPlan.id) {
         const updated = await LoyaltyService.updateSubscriptionPlan(editingPlan.id, {
           name: planName.trim(),
-          billing_interval: planInterval,
+          duration_months: months,
+          billing_interval: interval,
           amount: Number(planAmount),
           description: planDescription.trim(),
           features: cleanFeatures,
@@ -104,7 +109,8 @@ export const SuperAdminBillingConsole: React.FC = () => {
       } else {
         const created = await LoyaltyService.addSubscriptionPlan({
           name: planName.trim(),
-          billing_interval: planInterval,
+          duration_months: months,
+          billing_interval: interval,
           amount: Number(planAmount),
           currency: 'ر.س',
           description: planDescription.trim(),
@@ -235,14 +241,8 @@ export const SuperAdminBillingConsole: React.FC = () => {
                 {/* Card Top */}
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <span
-                      className={`text-[11px] font-mono font-bold px-2.5 py-1 rounded-xl border ${
-                        plan.billing_interval === 'YEARLY'
-                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-                          : 'bg-blue-500/10 text-blue-400 border-blue-500/30'
-                      }`}
-                    >
-                      {plan.billing_interval === 'YEARLY' ? '📅 اشتراك سنوي' : '📆 اشتراك شهري'}
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl border bg-amber-500/10 text-amber-300 border-amber-500/30 font-mono">
+                      🗓️ {getPlanDurationLabel(plan)}
                     </span>
 
                     <span
@@ -271,7 +271,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
                       <span className="text-xs text-slate-400 font-bold mr-1.5">{plan.currency || 'ر.س'}</span>
                     </div>
                     <span className="text-xs text-slate-400 font-medium">
-                      / {plan.billing_interval === 'YEARLY' ? 'سنة' : 'شهر'}
+                      / {getPlanPriceSuffix(plan)}
                     </span>
                   </div>
 
@@ -338,7 +338,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
                   <h3 className="text-base font-black text-white">
                     {editingPlan ? 'تعديل خطة الاشتراك' : 'إضافة خطة اشتراك جديدة'}
                   </h3>
-                  <p className="text-[11px] text-slate-400">حدد الاسم والسعر والمدة وقائمة المميزات</p>
+                  <p className="text-[11px] text-slate-400">حدد الاسم، السعر، عدد الأشهر، وقائمة المميزات</p>
                 </div>
               </div>
               <button
@@ -357,24 +357,64 @@ export const SuperAdminBillingConsole: React.FC = () => {
                   type="text"
                   value={planName}
                   onChange={(e) => setPlanName(e.target.value)}
-                  placeholder="مثال: باقة الانطلاق أو باقة المحترفين"
+                  placeholder="مثال: باقة الانطلاق، باقة النمو (3 أشهر)، باقة المحترفين"
                   className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-bold text-white placeholder-slate-600 outline-none transition"
                   required
                 />
               </div>
 
-              {/* Interval & Price */}
+              {/* Dynamic Duration (Integer Months) & Price */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300 block">المدة (دورة الاشتراك)</label>
-                  <select
-                    value={planInterval}
-                    onChange={(e) => setPlanInterval(e.target.value as 'MONTHLY' | 'YEARLY')}
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-bold text-white outline-none transition"
-                  >
-                    <option value="MONTHLY">📆 شهري (MONTHLY)</option>
-                    <option value="YEARLY">📅 سنوي (YEARLY)</option>
-                  </select>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      مدة الاشتراك (عدد الأشهر)
+                    </label>
+                    <span className="text-[10px] text-amber-400 font-mono font-bold">
+                      {planDurationMonths ? `${planDurationMonths} شهر` : ''}
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={planDurationMonths}
+                      onChange={(e) =>
+                        setPlanDurationMonths(e.target.value === '' ? '' : Math.max(1, Math.floor(Number(e.target.value))))
+                      }
+                      placeholder="1"
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-14 py-3 text-xs font-mono font-bold text-white placeholder-slate-600 outline-none transition"
+                      required
+                    />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-500 pointer-events-none">
+                      أشهر
+                    </span>
+                  </div>
+
+                  {/* Duration Presets */}
+                  <div className="flex items-center gap-1.5 pt-1">
+                    {[
+                      { m: 1, label: 'شهر' },
+                      { m: 3, label: '3 أشهر' },
+                      { m: 6, label: '6 أشهر' },
+                      { m: 12, label: 'سنة (12)' },
+                    ].map((preset) => (
+                      <button
+                        key={preset.m}
+                        type="button"
+                        onClick={() => setPlanDurationMonths(preset.m)}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
+                          planDurationMonths === preset.m
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
@@ -393,6 +433,9 @@ export const SuperAdminBillingConsole: React.FC = () => {
                       ر.س
                     </span>
                   </div>
+                  <p className="text-[10px] text-slate-400 pt-1">
+                    * الفوترة: {planAmount || 0} ر.س لكل {planDurationMonths || 1} أشهر
+                  </p>
                 </div>
               </div>
 

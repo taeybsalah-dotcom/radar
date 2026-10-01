@@ -29,7 +29,7 @@ export interface StoreInvoice {
   id: string;
   store_id: string;
   invoice_number: string;
-  invoice_type: 'setup' | 'renewal' | 'extra_cashier';
+  invoice_type: 'setup' | 'renewal' | 'upgrade' | 'extra_cashier';
   amount: number;
   currency: string;
   status: 'pending' | 'paid' | 'failed' | 'refunded';
@@ -52,6 +52,8 @@ export interface Store {
   status?: StoreSubscriptionStatus; // حالة المتجر العامة
   subscription_status?: StoreSubscriptionStatus; // 'trial' | 'active' | 'past_due' | 'suspended'
   subscription_plan?: string; // 'trial' | 'pro' | 'enterprise'
+  subscription_plan_id?: string; // معرف باقة الاشتراك المختارة
+  plan_code?: string; // كود الباقة المختارة
   trial_start_date?: string;
   trial_end_date?: string; // نهاية فترة الـ 7 أيام المجانية
   subscription_start_date?: string;
@@ -445,11 +447,34 @@ export interface BillingPlan {
   description?: string;
   amount: number;
   currency: string;
-  billing_interval: 'MONTHLY' | 'YEARLY';
+  duration_months?: number; // عدد الأشهر: 1 = شهر، 3 = 3 أشهر، 6 = 6 أشهر، 12 = سنة، إلخ
+  billing_interval?: 'MONTHLY' | 'YEARLY' | 'CUSTOM';
   trial_days?: number;
   features?: string[];
   active?: boolean;
   created_at?: string;
+}
+
+export function getPlanDurationLabel(plan?: Partial<BillingPlan> | null): string {
+  if (!plan) return 'شهر واحد';
+  const months = plan.duration_months ?? (plan.billing_interval === 'YEARLY' ? 12 : 1);
+  if (months === 1) return 'شهر واحد';
+  if (months === 2) return 'شهرين';
+  if (months === 3) return '3 أشهر (ربع سنوي)';
+  if (months === 6) return '6 أشهر (نصف سنوي)';
+  if (months === 12) return 'سنة كاملة (12 شهر)';
+  return `${months} أشهر`;
+}
+
+export function getPlanPriceSuffix(plan?: Partial<BillingPlan> | null): string {
+  if (!plan) return 'شهر';
+  const months = plan.duration_months ?? (plan.billing_interval === 'YEARLY' ? 12 : 1);
+  if (months === 1) return 'شهر';
+  if (months === 2) return 'شهرين';
+  if (months === 3) return '3 أشهر';
+  if (months === 6) return '6 أشهر';
+  if (months === 12) return 'سنة';
+  return `${months} أشهر`;
 }
 
 export type MerchantSubscriptionStatus =

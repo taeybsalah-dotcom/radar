@@ -20,6 +20,8 @@ import {
   GlobalModifierGroup,
   ServiceBooking,
   BillingPlan,
+  getPlanDurationLabel,
+  getPlanPriceSuffix,
 } from '../types';
 import { LoyaltyService, normalizeStore } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
@@ -361,6 +363,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   } | null>(null);
   const [isPayingSetup, setIsPayingSetup] = useState(false);
   const [isPayingRenewal, setIsPayingRenewal] = useState(false);
+  const [isUpgradingPlanId, setIsUpgradingPlanId] = useState<string | null>(null);
+  const [upgradeSuccessMessage, setUpgradeSuccessMessage] = useState<string | null>(null);
   const [selectedPaymentGateway, setSelectedPaymentGateway] = useState<'moyasar' | 'tap' | 'sandbox'>('moyasar');
   const [paymentSuccessModal, setPaymentSuccessModal] = useState<StoreInvoice | null>(null);
   const [isSimulatingState, setIsSimulatingState] = useState(false);
@@ -553,6 +557,29 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       console.error('Renewal payment error:', err);
     } finally {
       setIsPayingRenewal(false);
+    }
+  };
+
+  const handleUpgradePlan = async (plan: BillingPlan) => {
+    const planKey = plan.id || plan.code || '';
+    if (!planKey) return;
+    setIsUpgradingPlanId(planKey);
+    setUpgradeSuccessMessage(null);
+    try {
+      const res = await LoyaltyService.upgradeStoreSubscription(store.id, plan, 'mada');
+      setStore(res.store);
+      const sub = await LoyaltyService.checkAndUpdateStoreSubscription(store.id);
+      setSubscriptionInfo(sub);
+      const invs = await LoyaltyService.getStoreInvoices(store.id);
+      setInvoices(invs);
+      confetti({ particleCount: 140, spread: 90, origin: { y: 0.6 } });
+      setUpgradeSuccessMessage(`🎉 تم بنجاح تفعيل وترقية باقة "${plan.name}" لمتجرك!`);
+      setTimeout(() => setUpgradeSuccessMessage(null), 5000);
+    } catch (err: any) {
+      console.error('Plan upgrade error:', err);
+      alert(err.message || 'حدث خطأ أثناء ترقية الباقة');
+    } finally {
+      setIsUpgradingPlanId(null);
     }
   };
 
@@ -5561,6 +5588,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             name: 'باقة المحترفين',
             amount: 195,
             currency: 'ر.س',
+            duration_months: 1,
             billing_interval: 'MONTHLY',
             trial_days: 7,
             features: [
@@ -5575,8 +5603,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             active: true,
           };
 
+        const activePlans = allPlans.filter((p) => p.active !== false);
+
         return (
           <div className="space-y-6 animate-fade-in" dir="rtl">
+            {/* Toast Notification on Upgrade Success */}
+            {upgradeSuccessMessage && (
+              <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2.5 animate-fade-in shadow-xl">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                <span>{upgradeSuccessMessage}</span>
+              </div>
+            )}
+
             {/* Header Card */}
             <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
@@ -5589,7 +5627,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       إدارة الاشتراك والفوترة
                     </h3>
                     <p className="text-xs text-slate-400">
-                      متابعة باقة المتجر الحالية، دورة التجديد، المميزات المتاحة، وسجل الفواتير
+                      متابعة باقة المتجر الحالية، دورة التجديد، ترقية الخطط، وسجل الفواتير
                     </p>
                   </div>
                 </div>
@@ -5620,7 +5658,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
                   <span className="text-xs text-slate-400 font-medium">قيمة الاشتراك:</span>
                   <p className="text-lg font-black text-amber-400 font-mono">
-                    {currentPlan.amount.toLocaleString()} <span className="text-xs text-slate-400 font-sans">{currentPlan.currency || 'ر.س'} / {currentPlan.billing_interval === 'YEARLY' ? 'سنة' : 'شهر'}</span>
+                    {currentPlan.amount.toLocaleString()}{' '}
+                    <span className="text-xs text-slate-400 font-sans">
+                      {currentPlan.currency || 'ر.س'} / {getPlanPriceSuffix(currentPlan)}
+                    </span>
                   </p>
                   <span className="text-[11px] text-emerald-400 font-bold block">تجديد آلي دوري</span>
                 </div>
@@ -5695,7 +5736,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-md disabled:opacity-50"
                     >
                       <Zap className="w-4 h-4" />
-                      <span>{isPayingSetup ? 'جاري الدفع...' : 'سداد التأسيس (500 ر.س) + شهر مجاناً 🎁'}</span>
+                      <span>{isPayingSetup ? 'جاري الدفع...' : 'سداد التأسيس (500 ر.س) + تفعيل المتجر 🎁'}</span>
                     </button>
                   ) : (
                     <button
@@ -5705,11 +5746,153 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-md disabled:opacity-50"
                     >
                       <CreditCard className="w-4 h-4" />
-                      <span>{isPayingRenewal ? 'جاري التجديد...' : `تجديد الاشتراك الآن (+30 يوماً بـ ${currentPlan.amount} ر.س) 💳`}</span>
+                      <span>{isPayingRenewal ? 'جاري التجديد...' : `تجديد الاشتراك الآن (+${getPlanDurationLabel(currentPlan)} بـ ${currentPlan.amount} ر.س) 💳`}</span>
                     </button>
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* 🚀 Active Plans Comparison & Upgrade Section (عرض الباقات المتاحة للترقية) */}
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+                <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 font-black text-xl shadow-lg shadow-amber-500/20 shrink-0">
+                    🚀
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <h4 className="text-base sm:text-lg font-black text-white">
+                        باقات وخطط الاشتراك المتاحة (الترقية وتغيير الباقة)
+                      </h4>
+                      <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                        {activePlans.length} باقات نشطة
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">
+                      اختر الخطة المناسبة لحجم ونمو نشاطك. يتم احتساب مدة الصلاحية وتفعيل الميزات فوراً.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {activePlans.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500">
+                  لا توجد باقات مفعلة حالياً في النظام.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {activePlans.map((plan) => {
+                    const isCurrent =
+                      (plan.id && (plan.id === (store as any).subscription_plan_id || plan.id === currentPlan.id)) ||
+                      (plan.code && (plan.code === (store as any).plan_code || plan.code === currentPlan.code)) ||
+                      plan.name === currentPlan.name;
+
+                    const planKey = plan.id || plan.code || plan.name;
+                    const isUpgradingThis = isUpgradingPlanId === planKey;
+
+                    return (
+                      <div
+                        key={plan.id || plan.code}
+                        className={`rounded-3xl p-6 sm:p-7 space-y-6 flex flex-col justify-between transition-all duration-300 relative ${
+                          isCurrent
+                            ? 'bg-slate-950 border-2 border-amber-500 shadow-xl shadow-amber-500/10'
+                            : 'bg-slate-950/80 border border-slate-800 hover:border-amber-500/40 hover:shadow-lg'
+                        }`}
+                      >
+                        {isCurrent && (
+                          <div className="absolute -top-3.5 right-6 px-3.5 py-1 rounded-full bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 text-[11px] font-black shadow-md flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>باقتك الحالية</span>
+                          </div>
+                        )}
+
+                        <div className="space-y-4">
+                          {/* Plan Duration Badge */}
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 font-mono">
+                              🗓️ {getPlanDurationLabel(plan)}
+                            </span>
+
+                            {plan.trial_days && plan.trial_days > 0 ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                تجربة {plan.trial_days} أيام
+                              </span>
+                            ) : null}
+                          </div>
+
+                          {/* Title & Description */}
+                          <div>
+                            <h5 className="text-xl font-black text-white">{plan.name}</h5>
+                            {plan.description && (
+                              <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                                {plan.description}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Price Tag */}
+                          <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 flex items-baseline justify-between">
+                            <div>
+                              <span className="text-3xl font-black text-amber-400 font-mono">
+                                {plan.amount.toLocaleString()}
+                              </span>
+                              <span className="text-xs text-slate-400 font-bold mr-1.5">
+                                {plan.currency || 'ر.س'}
+                              </span>
+                            </div>
+                            <span className="text-xs text-slate-400 font-medium">
+                              / {getPlanPriceSuffix(plan)}
+                            </span>
+                          </div>
+
+                          {/* Features List */}
+                          <div className="space-y-2 pt-2 border-t border-slate-800/60">
+                            <span className="text-[11px] font-bold text-slate-400 block">المميزات المضمنة:</span>
+                            <ul className="space-y-2 text-xs text-slate-300">
+                              {(plan.features || []).map((feat, fIdx) => (
+                                <li key={fIdx} className="flex items-start gap-2 leading-relaxed">
+                                  <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                                  <span>{feat}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+
+                        {/* Action Button */}
+                        <div className="pt-4 mt-2 border-t border-slate-800/80">
+                          {isCurrent ? (
+                            <div className="w-full py-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-black flex items-center justify-center gap-2">
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>باقتك الحالية النشطة ✅</span>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleUpgradePlan(plan)}
+                              disabled={isUpgradingThis}
+                              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                            >
+                              {isUpgradingThis ? (
+                                <>
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                  <span>جاري الترقية والتفعيل...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Zap className="w-4 h-4" />
+                                  <span>ترقية إلى هذه الباقة الآن 🚀</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Invoices History Table Card */}

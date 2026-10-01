@@ -3747,14 +3747,15 @@ export const LoyaltyService = {
     return localInvoices[storeId] || [];
   },
 
-  // معالجة الدفع والاشتراك (التأسيس 500 ر.س / التجديد الشهري 195 ر.س / كاشير إضافي 200 ر.س)
+  // معالجة الدفع والاشتراك (التأسيس 500 ر.س / التجديد / الترقية / كاشير إضافي 200 ر.س)
   async processSubscriptionPayment(payload: {
     storeId: string;
-    invoiceType: 'setup' | 'renewal' | 'extra_cashier';
+    invoiceType: 'setup' | 'renewal' | 'upgrade' | 'extra_cashier';
     amount: number;
     paymentMethod?: string;
     gateway?: 'moyasar' | 'tap' | 'sandbox';
     gatewayPaymentId?: string;
+    planId?: string;
   }): Promise<{ success: boolean; invoice: StoreInvoice; store: Store }> {
     const supabase = getSupabaseClient();
     let updatedStore: Store | null = null;
@@ -3768,7 +3769,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase.rpc('process_subscription_payment', {
           p_store_id: payload.storeId,
-          p_invoice_type: payload.invoiceType,
+          p_invoice_type: payload.invoiceType === 'upgrade' ? 'renewal' : payload.invoiceType,
           p_amount: payload.amount,
           p_payment_method: paymentMethod,
           p_gateway: gateway,
@@ -3795,14 +3796,26 @@ export const LoyaltyService = {
     const storeIdx = stores.findIndex((s) => s.id === payload.storeId);
     let currentStore = storeIdx !== -1 ? stores[storeIdx] : INITIAL_STORE;
 
+    // استخراج الخطة لمعرفة مدة الاشتراك بالأشهر (duration_months)
+    const allBillingPlans = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_BILLING_PLANS);
+    const targetPlan =
+      (payload.planId ? allBillingPlans.find((p) => p.id === payload.planId || p.code === payload.planId) : null) ||
+      allBillingPlans.find((p) => p.id === currentStore.subscription_plan_id || p.code === currentStore.plan_code) ||
+      allBillingPlans.find((p) => p.code === 'PRO') ||
+      allBillingPlans[0];
+
+    const planMonths = targetPlan?.duration_months ?? (targetPlan?.billing_interval === 'YEARLY' ? 12 : 1);
+    const durationDays = Math.max(1, planMonths * 30);
+    const durationMs = durationDays * 86400000;
+
     const now = new Date();
     const invoiceNum = `INV-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
       now.getDate()
     ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
     if (payload.invoiceType === 'setup') {
-      // 1. دورة التأسيس: 500 ريال لمرة واحدة + اشتراك الشهر الأول مجاناً (30 يوماً من الآن)
-      const nextEnd = new Date(Date.now() + 30 * 86400000).toISOString();
+      // 1. دورة التأسيس: 500 ريال لمرة واحدة + تفعيل فترة الاشتراك الأولى ديناميكياً
+      const nextEnd = new Date(Date.now() + durationMs).toISOString();
       currentStore = {
         ...currentStore,
         status: 'active',
@@ -3811,15 +3824,19 @@ export const LoyaltyService = {
         setup_fee_paid: true,
         subscription_start_date: now.toISOString(),
         subscription_end_date: nextEnd,
+        renewal_amount: targetPlan?.amount || currentStore.renewal_amount || 195,
+        subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id,
+        plan_code: targetPlan?.code || currentStore.plan_code,
+        subscription_plan: targetPlan?.name || currentStore.subscription_plan,
         updated_at: now.toISOString(),
       };
-    } else if (payload.invoiceType === 'renewal') {
-      // 2. التجديد الشهري: 195 ريال (تمديد 30 يوماً إضافية)
+    } else if (payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') {
+      // 2. التجديد أو الترقية: تمديد المدة بناءً على عدد الأشهر الديناميكي
       const currentEndMs = currentStore.subscription_end_date
         ? new Date(currentStore.subscription_end_date).getTime()
         : Date.now();
       const baseMs = Math.max(Date.now(), currentEndMs);
-      const nextEnd = new Date(baseMs + 30 * 86400000).toISOString();
+      const nextEnd = new Date(baseMs + durationMs).toISOString();
 
       currentStore = {
         ...currentStore,
@@ -3827,6 +3844,10 @@ export const LoyaltyService = {
         subscription_status: 'active',
         subscription_active: true,
         subscription_end_date: nextEnd,
+        renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
+        subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id,
+        plan_code: targetPlan?.code || currentStore.plan_code,
+        subscription_plan: targetPlan?.name || currentStore.subscription_plan,
         updated_at: now.toISOString(),
       };
     } else if (payload.invoiceType === 'extra_cashier') {
@@ -5097,6 +5118,7 @@ export const LoyaltyService = {
             description: p.description || '',
             amount: Number(p.amount) || 0,
             currency: p.currency || 'ر.س',
+            duration_months: p.duration_months ? Number(p.duration_months) : (p.billing_interval === 'YEARLY' ? 12 : 1),
             billing_interval: p.billing_interval || 'MONTHLY',
             trial_days: p.trial_days || 7,
             features: Array.isArray(p.features) ? p.features : typeof p.features === 'string' ? JSON.parse(p.features) : [],
@@ -5120,9 +5142,15 @@ export const LoyaltyService = {
 
   async addSubscriptionPlan(planData: Omit<BillingPlan, 'id'>): Promise<BillingPlan> {
     const planId = 'plan-' + Date.now();
+    const durationMonths = planData.duration_months && Number(planData.duration_months) > 0
+      ? Number(planData.duration_months)
+      : (planData.billing_interval === 'YEARLY' ? 12 : 1);
+
     const newPlan: BillingPlan = {
       ...planData,
       id: planId,
+      duration_months: durationMonths,
+      billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
       currency: planData.currency || 'ر.س',
       active: planData.active !== false,
       created_at: new Date().toISOString(),
@@ -5142,6 +5170,7 @@ export const LoyaltyService = {
           description: newPlan.description || '',
           amount: newPlan.amount,
           currency: newPlan.currency,
+          duration_months: newPlan.duration_months,
           billing_interval: newPlan.billing_interval,
           trial_days: newPlan.trial_days || 7,
           features: newPlan.features || [],
@@ -5161,9 +5190,15 @@ export const LoyaltyService = {
     const idx = local.findIndex((p) => p.id === planId || p.code === planId);
     if (idx === -1) throw new Error('الخطة غير موجودة');
 
+    const durationMonths = updates.duration_months !== undefined
+      ? (Number(updates.duration_months) > 0 ? Number(updates.duration_months) : 1)
+      : (local[idx].duration_months || (local[idx].billing_interval === 'YEARLY' ? 12 : 1));
+
     const updatedPlan: BillingPlan = {
       ...local[idx],
       ...updates,
+      duration_months: durationMonths,
+      billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
     };
     local[idx] = updatedPlan;
     saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, local);
@@ -5176,6 +5211,7 @@ export const LoyaltyService = {
           description: updatedPlan.description,
           amount: updatedPlan.amount,
           currency: updatedPlan.currency,
+          duration_months: updatedPlan.duration_months,
           billing_interval: updatedPlan.billing_interval,
           trial_days: updatedPlan.trial_days,
           features: updatedPlan.features,
@@ -5229,6 +5265,22 @@ export const LoyaltyService = {
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return true;
   },
+
+  // ترقية باقة المتجر واختيار خطة جديدة
+  async upgradeStoreSubscription(
+    storeId: string,
+    plan: BillingPlan,
+    paymentMethod: string = 'mada'
+  ): Promise<{ success: boolean; store: Store; invoice: StoreInvoice }> {
+    return this.processSubscriptionPayment({
+      storeId,
+      invoiceType: 'upgrade',
+      amount: plan.amount,
+      paymentMethod,
+      gateway: 'sandbox',
+      planId: plan.id || plan.code,
+    });
+  },
 };
 
 export const DEFAULT_BILLING_PLANS: BillingPlan[] = [
@@ -5239,6 +5291,7 @@ export const DEFAULT_BILLING_PLANS: BillingPlan[] = [
     description: 'مثالية للمتاجر الناشئة والمقاهي لبدء بناء قاعدة عملاء أوفياء.',
     amount: 99,
     currency: 'ر.س',
+    duration_months: 1,
     billing_interval: 'MONTHLY',
     trial_days: 7,
     features: [
@@ -5257,6 +5310,7 @@ export const DEFAULT_BILLING_PLANS: BillingPlan[] = [
     description: 'الحل الشامل لنمو المبيعات واستعادة العملاء المنقطعين بالذكاء الاصطناعي.',
     amount: 195,
     currency: 'ر.س',
+    duration_months: 1,
     billing_interval: 'MONTHLY',
     trial_days: 7,
     features: [
@@ -5271,12 +5325,32 @@ export const DEFAULT_BILLING_PLANS: BillingPlan[] = [
     active: true,
   },
   {
+    id: 'plan-quarterly-growth',
+    code: 'GROWTH_3M',
+    name: 'باقة النمو (3 أشهر)',
+    description: 'خطة استراتيجية لـ 3 أشهر لدفع نمو المبيعات واستعادة العملاء.',
+    amount: 520,
+    currency: 'ر.س',
+    duration_months: 3,
+    billing_interval: 'MONTHLY',
+    trial_days: 7,
+    features: [
+      'كل مميزات باقة المحترفين',
+      'رادار الإنقاذ الذكي واستعادة العملاء',
+      'مساعد الذكاء الاصطناعي لكتابة العروض',
+      'دورة فوترة مرنة لكل 3 أشهر',
+      'أولوية الدعم الفني',
+    ],
+    active: true,
+  },
+  {
     id: 'plan-yearly-vip',
     code: 'VIP_YEARLY',
     name: 'الباقة السنوية VIP (توفير شهرين)',
     description: 'للمتاجر المتوسعة وسلاسل الفروع الراغبة بأعلى عائد استثمار وأولوية الميزات.',
     amount: 1950,
     currency: 'ر.س',
+    duration_months: 12,
     billing_interval: 'YEARLY',
     trial_days: 14,
     features: [
