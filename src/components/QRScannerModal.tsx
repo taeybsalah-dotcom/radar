@@ -21,7 +21,7 @@ interface DiagnosticDetails {
   errorName: string;
   errorMessage: string;
   stagesAttempted: string[];
-  detectedCameras: Array<{ id: string; label: string; isRear: boolean; score: number }>;
+  detectedCameras: Array<{ id: string; label: string; isRear: boolean }>;
   isSecureContext: boolean;
   protocol: string;
   hasMediaDevices: boolean;
@@ -63,7 +63,6 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
   /**
    * 🛡️ Clean track stopping: Kills all active MediaStreamTracks and clears Html5Qrcode instance
-   * Completely avoids track-locking and silent failures on iOS Safari / Android Chrome
    */
   const killAllActiveMediaTracks = async () => {
     if (scannerRef.current) {
@@ -79,7 +78,6 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
       }
     }
 
-    // Aggressively kill any dangling MediaStreamTracks across video elements
     if (typeof document !== 'undefined') {
       const videoElements = document.querySelectorAll('video');
       videoElements.forEach((vid) => {
@@ -95,7 +93,6 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
       });
     }
 
-    // Brief delay to allow mobile OS hardware HAL to release camera hardware lock
     await new Promise((resolve) => setTimeout(resolve, 50));
   };
 
@@ -105,46 +102,9 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
   };
 
   /**
-   * ⚡ Apply Continuous Auto-Focus directly to the active hardware video track
+   * 🎯 Camera Device Enumeration (Handles Empty Privacy Labels on iOS/Android gracefully)
    */
-  const applyHardwareTrackOptimizations = () => {
-    try {
-      const videoElem = document.querySelector(`#${readerElementId} video`) as HTMLVideoElement | null;
-      if (videoElem && videoElem.srcObject) {
-        const stream = videoElem.srcObject as MediaStream;
-        const track = stream.getVideoTracks()[0];
-        if (track) {
-          const caps = (track.getCapabilities ? track.getCapabilities() : {}) as any;
-          const constraintsToApply: any = { advanced: [] };
-
-          if (caps.focusMode && Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
-            constraintsToApply.advanced.push({ focusMode: 'continuous' });
-          }
-          if (caps.exposureMode && Array.isArray(caps.exposureMode) && caps.exposureMode.includes('continuous')) {
-            constraintsToApply.advanced.push({ exposureMode: 'continuous' });
-          }
-          if (caps.whiteBalanceMode && Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes('continuous')) {
-            constraintsToApply.advanced.push({ whiteBalanceMode: 'continuous' });
-          }
-
-          if (constraintsToApply.advanced.length > 0) {
-            track.applyConstraints(constraintsToApply).catch((e) => {
-              console.warn('Track auto-focus constraint warning:', e);
-            });
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Hardware track optimization bypassed:', e);
-    }
-  };
-
-  /**
-   * 🎯 Proper Device Enumeration & Multi-Lens Classifier:
-   * Scores and prioritizes the Primary 1x Standard Rear Lens while eliminating
-   * Ultrawide, Macro, Telephoto, and Virtual Depth lenses that cause mobile cameras to hang.
-   */
-  const enumerateAndRankCameras = async (): Promise<ScoredCamera[]> => {
+  const enumerateCamerasSafely = async (): Promise<ScoredCamera[]> => {
     let devices: MediaDeviceInfo[] = [];
     try {
       if (typeof navigator !== 'undefined' && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
@@ -154,22 +114,20 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
     const videoInputs = devices.filter((d) => d.kind === 'videoinput');
 
-    // Fallback to Html5Qrcode.getCameras() if enumerateDevices returned empty/unlabeled devices
-    if (videoInputs.length === 0 || !videoInputs.some((d) => d.label)) {
+    if (videoInputs.length === 0) {
       try {
         const html5Cams = await Html5Qrcode.getCameras();
         if (html5Cams && html5Cams.length > 0) {
           return html5Cams.map((c, idx) => {
-            const label = (c.label || `Camera ${idx + 1}`).toLowerCase();
+            const label = (c.label || '').toLowerCase();
             const isRear =
               label.includes('back') ||
               label.includes('rear') ||
               label.includes('environment') ||
-              label.includes('خلف') ||
-              label.includes('0');
+              label.includes('خلف');
             return {
               id: c.id,
-              label: c.label || `Camera ${idx + 1}`,
+              label: c.label || `كاميرا ${idx + 1}`,
               isRear,
               score: isRear ? 60 : 10,
             };
@@ -179,71 +137,47 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
     }
 
     return videoInputs.map((d, idx) => {
-      const label = (d.label || '').toLowerCase();
+      const rawLabel = d.label || '';
+      const lower = rawLabel.toLowerCase();
+
       const isFront =
-        label.includes('front') ||
-        label.includes('user') ||
-        label.includes('selfie') ||
-        label.includes('أمام') ||
-        label.includes('face');
+        lower.includes('front') ||
+        lower.includes('user') ||
+        lower.includes('selfie') ||
+        lower.includes('أمام') ||
+        lower.includes('face');
 
       const isRear =
         !isFront &&
-        (label.includes('back') ||
-          label.includes('rear') ||
-          label.includes('environment') ||
-          label.includes('خلف') ||
-          label.includes('facing back') ||
-          idx === 0);
+        (lower.includes('back') ||
+          lower.includes('rear') ||
+          lower.includes('environment') ||
+          lower.includes('خلف') ||
+          lower.includes('facing back'));
 
       let score = 0;
       if (isRear) {
         score += 100;
-        // Prioritize primary / standard 1x main lens
-        if (
-          label.includes('main') ||
-          label.includes('primary') ||
-          label.includes('standard') ||
-          label.includes('أساسية')
-        ) {
-          score += 60;
-        }
-        if (label.includes('camera2 0') || label.includes('camera 0') || label.includes('0, facing back')) {
+        if (lower.includes('main') || lower.includes('primary') || lower.includes('standard') || lower.includes('أساسية')) {
           score += 50;
         }
-        if (label.includes('1x') || (label.includes('wide') && !label.includes('ultra') && !label.includes('0.5'))) {
-          score += 40;
+        if (lower.includes('1x') || (lower.includes('wide') && !lower.includes('ultra') && !lower.includes('0.5'))) {
+          score += 30;
         }
-
-        // Heavy penalty on lenses that crash WebRTC on modern devices
-        if (label.includes('ultra') || label.includes('0.5') || label.includes('0.6') || label.includes('wide 0.5')) {
-          score -= 90;
-        }
-        if (label.includes('macro')) {
-          score -= 95;
-        }
-        if (
-          label.includes('telephoto') ||
-          label.includes('zoom') ||
-          label.includes('3x') ||
-          label.includes('5x') ||
-          label.includes('10x')
-        ) {
+        if (lower.includes('ultra') || lower.includes('0.5') || lower.includes('macro') || lower.includes('telephoto')) {
           score -= 80;
         }
-        if (label.includes('depth') || label.includes('tof') || label.includes('virtual')) {
-          score -= 90;
-        }
-        if (label.includes('triple') || label.includes('dual')) {
-          score -= 30;
-        }
+      } else if (isFront) {
+        score = 10;
       } else {
-        score += 20;
+        score = 50; // Neutral if label is empty (Safari privacy)
       }
+
+      const displayLabel = rawLabel.trim() || `كاميرا الجهاز (${idx + 1})`;
 
       return {
         id: d.deviceId,
-        label: d.label || (isRear ? `كاميرا خلفية (${idx + 1})` : `كاميرا أمامية (${idx + 1})`),
+        label: displayLabel,
         isRear,
         score,
       };
@@ -284,7 +218,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
     }
 
     try {
-      // 1. Cleanly stop and kill all previous tracks to prevent device busy locks
+      // 1. Cleanly kill all previous active streams to prevent hardware lock
       await killAllActiveMediaTracks();
       if (isStoppingRef.current) return;
 
@@ -294,8 +228,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
         return;
       }
 
-      // ⚡ Restrict formats to QR_CODE and CODE_128 for ultra-fast recognition speed (<50ms per frame)
-      // + Enable native hardware BarcodeDetector if supported by the browser GPU
+      // ⚡ Restrict formats to QR_CODE and CODE_128 for rapid decoding (<50ms)
       const html5QrCode = new Html5Qrcode(readerElementId, {
         formatsToSupport: [
           Html5QrcodeSupportedFormats.QR_CODE,
@@ -306,10 +239,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
       });
       scannerRef.current = html5QrCode;
 
-      // ⚡ High-speed scan configuration:
-      // - fps: 15 (high frame rate processing)
-      // - disableFlip: true (eliminates CPU/GPU mirroring overhead on rear camera)
-      // - videoConstraints with continuous auto-focus
+      // ⚡ Clean scan configuration WITHOUT strict videoConstraints (Ensures 100% Safari compatibility)
       const scanConfig = {
         fps: 15,
         disableFlip: true,
@@ -320,43 +250,33 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           const safeSize = Math.max(50, Math.floor(minEdge * 0.75));
           return { width: safeSize, height: safeSize };
         },
-        videoConstraints: {
-          focusMode: 'continuous',
-          advanced: [
-            { focusMode: 'continuous' } as any,
-          ],
-        } as any,
       };
 
       const onScan = (decodedText: string) => {
         if (isStoppingRef.current) return;
         isStoppingRef.current = true;
-        // Instant callback to POS UI
         onScanSuccess(decodedText.trim());
         onClose();
-        // Background cleanup
         setTimeout(() => {
           killAllActiveMediaTracks().catch(() => {});
         }, 30);
       };
 
-      // 2. Classify and rank all available cameras
-      detectedList = await enumerateAndRankCameras();
+      // 2. Fetch available cameras
+      detectedList = await enumerateCamerasSafely();
       setAvailableCameras(detectedList.map((c) => ({ id: c.id, label: c.label })));
 
-      const rearCameras = detectedList.filter((c) => c.isRear).sort((a, b) => b.score - a.score);
-      const frontCameras = detectedList.filter((c) => !c.isRear);
+      const rearWithLabels = detectedList.filter((c) => c.isRear && c.label && !c.label.startsWith('كاميرا الجهاز')).sort((a, b) => b.score - a.score);
 
       let startSuccess = false;
       let lastError: any = null;
 
-      // Scenario A: User manually picked a specific camera
+      // Stage 0: User manually selected a specific camera from switcher
       if (cameraIdToUse) {
-        stagesAttempted.push(`specific-camera-id: ${cameraIdToUse}`);
+        stagesAttempted.push(`manual-camera-id: ${cameraIdToUse}`);
         try {
           await html5QrCode.start(cameraIdToUse, scanConfig, onScan, () => {});
           setSelectedCameraId(cameraIdToUse);
-          applyHardwareTrackOptimizations();
           startSuccess = true;
         } catch (e: any) {
           lastError = e;
@@ -364,86 +284,86 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
         }
       }
 
-      // Scenario B (Primary): Target the Main 1x Primary Rear Camera directly by deviceId
-      if (!startSuccess && !isStoppingRef.current && rearCameras.length > 0) {
-        const mainRear = rearCameras[0];
-        stagesAttempted.push(`primary-rear-lens: ${mainRear.label || mainRear.id}`);
+      // Stage 1 (Clean Environment Standard - 100% Safari / Mobile Chrome compliant):
+      // Clean request without conflicting constraints
+      if (!startSuccess && !isStoppingRef.current) {
+        stagesAttempted.push("clean facingMode: 'environment'");
         try {
-          await html5QrCode.start(mainRear.id, scanConfig, onScan, () => {});
-          setSelectedCameraId(mainRear.id);
-          applyHardwareTrackOptimizations();
+          await html5QrCode.start({ facingMode: 'environment' }, scanConfig, onScan, () => {});
           startSuccess = true;
         } catch (e: any) {
           lastError = e;
-          console.warn(`Primary rear lens [${mainRear.label}] failed, attempting next rear lens:`, e);
+          console.warn("Stage 1 clean facingMode: 'environment' failed:", e);
         }
       }
 
-      // Scenario C: Secondary Rear Lenses (if device has multiple rear cameras and primary had specific constraint issue)
-      if (!startSuccess && !isStoppingRef.current && rearCameras.length > 1) {
-        for (let i = 1; i < rearCameras.length; i++) {
-          const secondaryRear = rearCameras[i];
-          stagesAttempted.push(`secondary-rear-lens: ${secondaryRear.label || secondaryRear.id}`);
-          try {
-            await html5QrCode.start(secondaryRear.id, scanConfig, onScan, () => {});
-            setSelectedCameraId(secondaryRear.id);
-            applyHardwareTrackOptimizations();
-            startSuccess = true;
-            break;
-          } catch (e: any) {
-            lastError = e;
-            console.warn(`Secondary rear lens [${secondaryRear.label}] failed:`, e);
-          }
+      // Stage 2 (Exact Environment Mode - for devices requiring exact rear flag):
+      if (!startSuccess && !isStoppingRef.current) {
+        stagesAttempted.push("facingMode: { exact: 'environment' }");
+        try {
+          await html5QrCode.start({ facingMode: { exact: 'environment' } }, scanConfig, onScan, () => {});
+          startSuccess = true;
+        } catch (e: any) {
+          lastError = e;
+          console.warn("Stage 2 facingMode: { exact: 'environment' } failed:", e);
         }
       }
 
-      // Scenario D: Flexible environment facingMode fallback { facingMode: { ideal: 'environment' } }
+      // Stage 3 (Target Labeled Primary Rear Camera by DeviceId - if labels are available):
+      if (!startSuccess && !isStoppingRef.current && rearWithLabels.length > 0) {
+        const bestRear = rearWithLabels[0];
+        stagesAttempted.push(`labeled-rear-id: ${bestRear.label} (${bestRear.id})`);
+        try {
+          await html5QrCode.start(bestRear.id, scanConfig, onScan, () => {});
+          setSelectedCameraId(bestRear.id);
+          startSuccess = true;
+        } catch (e: any) {
+          lastError = e;
+          console.warn(`Stage 3 labeled rear camera [${bestRear.label}] failed:`, e);
+        }
+      }
+
+      // Stage 4 (Ideal Environment Mode):
       if (!startSuccess && !isStoppingRef.current) {
         stagesAttempted.push("facingMode: { ideal: 'environment' }");
         try {
           await html5QrCode.start({ facingMode: { ideal: 'environment' } } as any, scanConfig, onScan, () => {});
-          applyHardwareTrackOptimizations();
           startSuccess = true;
         } catch (e: any) {
           lastError = e;
-          console.warn('Ideal environment facingMode failed:', e);
+          console.warn('Stage 4 ideal environment failed:', e);
         }
       }
 
-      // Scenario E: Standard environment facingMode fallback
+      // Stage 5 (String 'environment'):
       if (!startSuccess && !isStoppingRef.current) {
-        stagesAttempted.push("facingMode: 'environment'");
+        stagesAttempted.push("string: 'environment'");
         try {
-          await html5QrCode.start({ facingMode: 'environment' }, scanConfig, onScan, () => {});
-          applyHardwareTrackOptimizations();
+          await html5QrCode.start('environment' as any, scanConfig, onScan, () => {});
           startSuccess = true;
         } catch (e: any) {
           lastError = e;
-          console.warn('Standard environment facingMode failed:', e);
+          console.warn('Stage 5 string environment failed:', e);
         }
       }
 
-      // Scenario F: Fallback to Front Camera if Rear Camera completely failed (keeps POS functional)
-      if (!startSuccess && !isStoppingRef.current && frontCameras.length > 0) {
-        const frontCam = frontCameras[0];
-        stagesAttempted.push(`fallback-front-camera: ${frontCam.label || frontCam.id}`);
+      // Stage 6 (Front Camera fallback ONLY if all rear attempts failed):
+      if (!startSuccess && !isStoppingRef.current) {
+        stagesAttempted.push("fallback: facingMode 'user'");
         try {
-          await html5QrCode.start(frontCam.id, scanConfig, onScan, () => {});
-          setSelectedCameraId(frontCam.id);
-          applyHardwareTrackOptimizations();
+          await html5QrCode.start({ facingMode: 'user' }, scanConfig, onScan, () => {});
           startSuccess = true;
           setRearWarning(
-            '⚠️ تعذر تشغيل الكاميرا الخلفية على هذا الجهاز بسبب قيود العتاد، وتم التبديل تلقائياً إلى الكاميرا الأمامية.'
+            '⚠️ تعذر فتح الكاميرا الخلفية تلقائياً، وتم فتح الكاميرا الأمامية مؤقتاً. يمكنك استخدام زر "تبديل العدسة" لتجربة عدسة أخرى.'
           );
         } catch (e: any) {
           lastError = e;
-          console.warn('Front camera fallback failed:', e);
+          console.warn('Stage 6 front camera fallback failed:', e);
         }
       }
 
-      // If all progressive stages failed, trigger the diagnostic error boundary
       if (!startSuccess) {
-        throw lastError || new Error('فشلت جميع محاولات تشغيل الكاميرات الخلفية والأمامية');
+        throw lastError || new Error('فشلت جميع محاولات تشغيل الكاميرا على هذا الجهاز');
       }
     } catch (err: any) {
       console.error('Camera fatal error in diagnostic boundary:', err);
@@ -459,7 +379,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
       } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
         arabicExplanation = 'الكاميرا قيد الاستخدام بواسطة تطبيق آخر أو حدث تعارض في تحرير العتاد (Hardware Lock).';
       } else if (errName === 'OverconstrainedError') {
-        arabicExplanation = 'إعدادات العدسة غير متوافقة مع مواصفات الجهاز، وجاري تجربة العدسات الأخرى.';
+        arabicExplanation = 'المتصفح رفض إعدادات العدسة المطلوبة (OverconstrainedError).';
       } else if (errName === 'SecurityError') {
         arabicExplanation = 'المتصفح يمنع الكاميرا لأن الاتصال ليس مشفراً (HTTPS).';
       }
@@ -506,7 +426,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
       `Error Message: ${diagnostic.errorMessage}`,
       `Stages Attempted: ${diagnostic.stagesAttempted.join(' ➔ ')}`,
       `Detected Cameras:`,
-      ...diagnostic.detectedCameras.map((c, i) => `  [${i + 1}] ${c.label} (ID: ${c.id.slice(0, 10)}..., Rear: ${c.isRear}, Score: ${c.score})`),
+      ...diagnostic.detectedCameras.map((c, i) => `  [${i + 1}] ${c.label} (ID: ${c.id.slice(0, 10)}..., Rear: ${c.isRear})`),
       `Secure Context: ${diagnostic.isSecureContext ? 'YES (Secure)' : 'NO (Insecure)'}`,
       `Protocol: ${diagnostic.protocol}`,
       `MediaDevices API: ${diagnostic.hasMediaDevices ? 'Available' : 'Unavailable'}`,
@@ -630,7 +550,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           {isInitializing && !cameraError && (
             <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center space-y-3 z-15 text-center p-4">
               <div className="w-8 h-8 border-3 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-xs font-bold text-slate-300">جاري تشغيل الكاميرا والتركيز التلقائي...</p>
+              <p className="text-xs font-bold text-slate-300">جاري تشغيل الكاميرا الخلفية...</p>
             </div>
           )}
 
