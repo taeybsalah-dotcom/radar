@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LoyaltyService } from '../lib/supabase';
+import { generateSafeSlug } from '../lib/slugUtils';
 import confetti from 'canvas-confetti';
 import {
   Users,
@@ -181,14 +182,8 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     setPartnerName(val);
     setModalError(null);
 
-    const cleanLatin = val
-      .trim()
-      .replace(/[^\w\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .toLowerCase();
-
     if (!partnerSlug) {
-      setPartnerSlug(cleanLatin || '');
+      setPartnerSlug(generateSafeSlug(val));
     }
   };
 
@@ -217,7 +212,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     }
     cleanCode = cleanCode.toLowerCase();
 
-    let cleanSlug = (partnerSlug.trim() || cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-')).toLowerCase();
+    let cleanSlug = partnerSlug.trim() ? generateSafeSlug(partnerSlug.trim()) : generateSafeSlug(cleanName);
     if (!cleanSlug) cleanSlug = `partner-${Math.floor(1000 + Math.random() * 9000)}`;
 
     if (!cleanName || cleanName.length < 2) {

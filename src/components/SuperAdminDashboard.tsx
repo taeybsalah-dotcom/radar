@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Store, StoreOnboardingPayload, MerchantLead } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
+import { generateSafeSlug, resolveUniqueStoreSlug } from '../lib/slugUtils';
 import {
   Crown,
   PlusCircle,
@@ -85,6 +86,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [managerContact, setManagerContact] = useState('');
   const [managerPin, setManagerPin] = useState('9999');
   const [activeFoundingLead, setActiveFoundingLead] = useState<MerchantLead | null>(null);
+  const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -237,9 +239,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         ? editCustomDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
         : null;
 
+      const safeEditSlug = generateSafeSlug(editSlug.trim());
+      const finalUniqueSlug = await resolveUniqueStoreSlug(safeEditSlug, stores, editingStore.id);
+
       const updated = await LoyaltyService.updateStoreSettings(editingStore.id, {
         name: editName.trim(),
-        slug: editSlug.toLowerCase().trim(),
+        slug: finalUniqueSlug,
         custom_domain: cleanCustomDomain,
         manager_name: editManagerName.trim() || editingStore.manager_name,
         manager_contact: editManagerContact.trim() || editingStore.manager_contact,
@@ -282,16 +287,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     }
   };
 
-  const handleNameChange = (val: string) => {
+  const handleNameChange = async (val: string) => {
     setName(val);
-    if (!slug || slug === '') {
-      const generatedSlug = val
-        .toLowerCase()
-        .trim()
-        .replace(/[^a-zA-Z0-9]/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-|-$/g, '');
-      if (generatedSlug) setSlug(generatedSlug);
+    if (!isSlugManuallyEdited || !slug.trim()) {
+      const candidateSlug = generateSafeSlug(val);
+      if (candidateSlug) {
+        const uniqueSlug = await resolveUniqueStoreSlug(candidateSlug, stores);
+        setSlug(uniqueSlug);
+      } else {
+        setSlug('');
+      }
     }
   };
 
@@ -314,19 +319,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     }
   };
 
-  const handleFoundStoreFromLead = (lead: MerchantLead) => {
+  const handleFoundStoreFromLead = async (lead: MerchantLead) => {
     setActiveFoundingLead(lead);
     setName(lead.store_name || '');
+    setIsSlugManuallyEdited(false);
 
-    // Generate a clean URL-safe slug
-    const baseSlug = (lead.store_name || '')
-      .trim()
-      .toLowerCase()
-      .replace(/[\s_]+/g, '-')
-      .replace(/[^\u0621-\u064A\w-]/g, '')
-      .replace(/--+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    setSlug(baseSlug || `store-${Date.now().toString().slice(-4)}`);
+    // Generate clean URL-safe transliterated unique English slug (e.g. bin-walia)
+    const uniqueSlug = await resolveUniqueStoreSlug(lead.store_name || '', stores);
+    setSlug(uniqueSlug);
 
     setManagerName(lead.manager_name || '');
     setManagerContact(lead.phone || '');
@@ -335,8 +335,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
   const handleCreateStoreSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !slug.trim() || !managerName.trim()) {
-      setErrorMessage('يرجى تعبئة الحقول الأساسية (اسم المتجر، الرابط، واسم المدير)');
+    if (!name.trim() || !managerName.trim()) {
+      setErrorMessage('يرجى تعبئة الحقول الأساسية (اسم المتجر واسم المدير)');
       return;
     }
 
@@ -348,9 +348,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         ? customDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
         : undefined;
 
+      const rawSlug = slug.trim() || generateSafeSlug(name.trim()) || `store-${Date.now().toString().slice(-4)}`;
+      const safeSlug = generateSafeSlug(rawSlug);
+      const finalUniqueSlug = await resolveUniqueStoreSlug(safeSlug, stores);
+
       const payload: StoreOnboardingPayload = {
         name: name.trim(),
-        slug: slug.toLowerCase().trim(),
+        slug: finalUniqueSlug,
         custom_domain: cleanCustomDomain,
         logo_url:
           logoUrl ||
@@ -392,6 +396,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       // Reset Form
       setName('');
       setSlug('');
+      setIsSlugManuallyEdited(false);
       setCustomDomain('');
       setLogoUrl('');
       setLogoStats(null);
@@ -671,7 +676,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   <input
                     type="text"
                     value={slug}
-                    onChange={(e) => setSlug(e.target.value.toLowerCase().trim())}
+                    onChange={(e) => {
+                      setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-'));
+                      setIsSlugManuallyEdited(true);
+                    }}
                     placeholder="dr-batatas"
                     className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 rounded-2xl px-4 py-3 text-sm font-mono text-amber-400 placeholder-slate-600 outline-none transition"
                     required
