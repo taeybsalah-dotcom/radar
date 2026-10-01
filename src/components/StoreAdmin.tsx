@@ -1973,11 +1973,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     store.status === 'suspended' ||
     subscriptionInfo?.isSuspended === true;
 
+  // 🛡️ Strict Trial Detection: Any unpaid store (setup_fee_paid === false) is in trial unless explicitly suspended
   const isTrial =
     !isStoreSuspended &&
-    (!store.setup_fee_paid ||
+    (store.setup_fee_paid !== true ||
+      !store.setup_fee_paid ||
+      store.subscription_status === 'trial' ||
+      store.status === 'trial' ||
       subscriptionInfo?.status === 'trial' ||
-      store.subscription_status === 'trial');
+      subscriptionInfo?.requiresSetup === true);
   const trialDaysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? 7));
 
   const baseDomain = store.custom_domain
@@ -5718,38 +5722,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           {settingsSection === 'billing' && (() => {
         const isTrial =
           !isStoreSuspended &&
-          (!store.setup_fee_paid ||
+          (store.setup_fee_paid !== true ||
+            !store.setup_fee_paid ||
+            store.subscription_status === 'trial' ||
+            store.status === 'trial' ||
             subscriptionInfo?.status === 'trial' ||
-            store.subscription_status === 'trial');
+            subscriptionInfo?.requiresSetup === true);
 
-        const currentPlan: BillingPlan =
-          (!isTrial &&
-            store.setup_fee_paid &&
-            allPlans.find(
-              (p) =>
-                p.id === (store as any).subscription_plan_id ||
-                p.code === (store as any).plan_code
-            )) ||
-          allPlans.find((p) => p.code === 'PRO' || p.active) ||
-          allPlans[0] || {
-            id: 'plan-pro',
-            name: 'باقة المحترفين',
-            amount: 195,
-            currency: 'ر.س',
-            duration_months: 1,
-            billing_interval: 'MONTHLY',
-            trial_days: 7,
-            features: [
-              'بطاقات ولاء رقمية (PWA) بدون تحميل تطبيق',
-              'كاشير سريع لمسح الباركود وصرف النقاط',
-              'نظام رتب ومستويات (Tiers) ذكي',
-              'رادار الإنقاذ الذكي (استهداف العملاء المنقطعين تلقائياً)',
-              'مساعد الكتابة والتسويق بالذكاء الاصطناعي',
-              'حملات واتساب المباشرة والعروض المخصصة',
-              'نظام حجز المواعيد والخدمات المتكامل',
-            ],
-            active: true,
-          };
+        // 🛡️ During trial (setup_fee_paid === false), no paid plan is active (currentPaidPlan is null)
+        const currentPaidPlan: BillingPlan | null =
+          !isTrial && Boolean(store.setup_fee_paid)
+            ? allPlans.find(
+                (p) =>
+                  (p.id && p.id === (store as any).subscription_plan_id) ||
+                  (p.code && p.code === (store as any).plan_code) ||
+                  (p.name && p.name === (store as any).subscription_plan)
+              ) ||
+              allPlans.find((p) => p.code === 'PRO' || p.active) ||
+              allPlans[0]
+            : null;
 
         const activePlans = allPlans.filter((p) => p.active !== false);
 
@@ -5767,8 +5758,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             {(() => {
               const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 7 : 30)));
               const totalCycleDays = isTrial
-                ? (currentPlan.trial_days || 7)
-                : Math.max(1, (currentPlan.duration_months || (currentPlan.billing_interval === 'YEARLY' ? 12 : 1)) * 30);
+                ? 7
+                : currentPaidPlan
+                ? Math.max(1, (currentPaidPlan.duration_months || (currentPaidPlan.billing_interval === 'YEARLY' ? 12 : 1)) * 30)
+                : 30;
               const progressPercent = Math.min(100, Math.max(0, Math.round((daysLeft / totalCycleDays) * 100)));
 
               return (
@@ -5790,18 +5783,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             </h3>
                             <span
                               className={`px-3 py-1 rounded-full text-xs font-bold border ${
-                                !isTrial
+                                !isTrial && currentPaidPlan
                                   ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
                                   : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                               }`}
                             >
-                              {!isTrial ? `🟢 باقة ${currentPlan.name}` : '🎁 فترة التجربة المجانية (7 أيام)'}
+                              {!isTrial && currentPaidPlan ? `🟢 باقة ${currentPaidPlan.name}` : '🎁 فترة التجربة المجانية (7 أيام)'}
                             </span>
                           </div>
                           <p className="text-xs text-slate-400 mt-0.5">
-                            {!isTrial
-                              ? `اشتراكك مفعل على (${currentPlan.name}) بسعر ${currentPlan.amount} ${currentPlan.currency || 'ر.س'} / ${getPlanPriceSuffix(currentPlan)}`
-                              : 'أنت الآن تستمتع بفترة التجربة المجانية مع كامل المميزات المفتوحة'}
+                            {!isTrial && currentPaidPlan
+                              ? `اشتراكك مفعل على (${currentPaidPlan.name}) بسعر ${currentPaidPlan.amount} ${currentPaidPlan.currency || 'ر.س'} / ${getPlanPriceSuffix(currentPaidPlan)}`
+                              : 'أنت الآن تستمتع بفترة التجربة المجانية مع كامل المميزات المفتوحة. اشترك في إحدى الباقات لتثبيت الحساب والاستمرار دون انقطاع.'}
                           </p>
                         </div>
                       </div>
@@ -5922,9 +5915,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     const isCurrent =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
-                      ((plan.id && (plan.id === (store as any).subscription_plan_id || plan.id === currentPlan.id)) ||
-                        (plan.code && (plan.code === (store as any).plan_code || plan.code === currentPlan.code)) ||
-                        plan.name === currentPlan.name);
+                      Boolean(
+                        currentPaidPlan &&
+                          ((plan.id && (plan.id === currentPaidPlan.id || plan.id === (store as any).subscription_plan_id)) ||
+                            (plan.code && (plan.code === currentPaidPlan.code || plan.code === (store as any).plan_code)) ||
+                            plan.name === currentPaidPlan.name)
+                      );
 
                     const planKey = plan.id || plan.code || plan.name;
                     const isUpgradingThis = isUpgradingPlanId === planKey;
