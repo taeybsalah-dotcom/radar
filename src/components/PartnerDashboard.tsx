@@ -7,6 +7,7 @@ import {
   MerchantLead,
 } from '../types';
 import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
+import { LoyaltyEvents } from '../lib/events';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ShieldCheck,
@@ -419,6 +420,35 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       fetchLeads(1);
     }
   }, [partner, activeTab, leadsStatusFilter, fetchLeads]);
+
+  // 🔄 Real-time synchronization when Super Admin updates lead status or creates store
+  useEffect(() => {
+    if (!partner) return;
+    const unsubscribe = LoyaltyEvents.listen((event) => {
+      if (
+        event.type === 'LEAD_UPDATED' ||
+        event.type === 'PARTNER_UPDATED' ||
+        event.type === 'PAYMENT_COMPLETED' ||
+        event.type === 'STORE_UPDATED'
+      ) {
+        fetchLeads(leadsPage);
+        LoyaltyService.getPartnerFinancialSummary(partner.id).then((fin) => {
+          setStats((prev: any) => ({
+            ...prev,
+            financials: {
+              earned_commissions: fin.earned_commissions,
+              bonuses_earned: fin.bonuses_earned,
+              pending_commissions: fin.pending_commissions,
+            },
+          }));
+        });
+        LoyaltyService.getPartnerCommissions(partner.id).then((comms) => {
+          setCommissions(comms);
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, [partner, leadsPage, fetchLeads]);
 
   // Handle Login via Phone + PIN
   const handleLoginSubmit = async (e: React.FormEvent) => {

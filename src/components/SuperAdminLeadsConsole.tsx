@@ -37,11 +37,13 @@ import confetti from 'canvas-confetti';
 interface SuperAdminLeadsConsoleProps {
   stores: Store[];
   onSelectStore?: (store: Store, targetTab?: 'cashier' | 'customer' | 'admin') => void;
+  onFoundStoreFromLead?: (lead: MerchantLead) => void;
 }
 
 export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
   stores,
   onSelectStore,
+  onFoundStoreFromLead,
 }) => {
   // 1. Authentication State
   const [adminToken, setAdminToken] = useState<string>(() => {
@@ -971,16 +973,33 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
 
                       {/* Actions */}
                       <td className="py-4 px-4 text-center">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openLeadDetails(lead);
-                          }}
-                          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition inline-flex items-center gap-1"
-                        >
-                          <span>عرض وتأسيس</span>
-                          <ChevronLeft className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openLeadDetails(lead);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition inline-flex items-center gap-1"
+                            title="عرض تفاصيل الطلب"
+                          >
+                            <span>عرض</span>
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                          </button>
+
+                          {lead.status !== 'CONVERTED' && onFoundStoreFromLead && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onFoundStoreFromLead(lead);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 text-xs font-black transition inline-flex items-center gap-1 shadow-md shadow-amber-500/10"
+                              title="تعبئة بيانات الطلب وتأسيس المتجر فوراً"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                              <span>تأسيس</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1199,6 +1218,37 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
                   <Sparkles className="w-4 h-4 text-amber-400" />
                   <span>إجراءات المرحلة ودورة حياة التأسيس</span>
                 </h4>
+
+                {/* 🚀 Quick Action: Direct Pre-fill Store Founding */}
+                {selectedLead.status !== 'CONVERTED' && onFoundStoreFromLead && (
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/30 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        تأسيس المتجر وتعبئة البيانات تلقائياً
+                      </span>
+                      {selectedLead.referral_code && (
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-900/80 border border-amber-500/30 text-amber-400">
+                          كود: {selectedLead.referral_code}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      انقل بيانات المتجر والمدير ورقم التواصل تلقائياً إلى نموذج تأسيس المتاجر لإنشاء المتجر فوراً مع الحفاظ على ربط الشريك.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onFoundStoreFromLead(selectedLead);
+                        setSelectedLead(null);
+                      }}
+                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs transition shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>تعبئة وتأسيس متجر جديد من هذا الطلب 🚀</span>
+                    </button>
+                  </div>
+                )}
 
                 {/* State: APPROVED -> Can Start Conversion */}
                 {selectedLead.status === 'APPROVED' && (

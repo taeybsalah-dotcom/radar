@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Store, StoreOnboardingPayload } from '../types';
+import { Store, StoreOnboardingPayload, MerchantLead } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
 import {
@@ -84,6 +84,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [managerName, setManagerName] = useState('');
   const [managerContact, setManagerContact] = useState('');
   const [managerPin, setManagerPin] = useState('9999');
+  const [activeFoundingLead, setActiveFoundingLead] = useState<MerchantLead | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -313,6 +314,25 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     }
   };
 
+  const handleFoundStoreFromLead = (lead: MerchantLead) => {
+    setActiveFoundingLead(lead);
+    setName(lead.store_name || '');
+
+    // Generate a clean URL-safe slug
+    const baseSlug = (lead.store_name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, '-')
+      .replace(/[^\u0621-\u064A\w-]/g, '')
+      .replace(/--+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    setSlug(baseSlug || `store-${Date.now().toString().slice(-4)}`);
+
+    setManagerName(lead.manager_name || '');
+    setManagerContact(lead.phone || '');
+    handleSubTabChange('stores');
+  };
+
   const handleCreateStoreSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !slug.trim() || !managerName.trim()) {
@@ -344,6 +364,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       };
 
       const result = await LoyaltyService.createStoreConcierge(payload);
+
+      // 💰 If founded directly from an existing lead, auto-convert the lead and distribute affiliate commissions
+      if (activeFoundingLead) {
+        try {
+          await LoyaltyService.convertLeadToStore(activeFoundingLead.id, result.store.id);
+        } catch (convErr) {
+          console.warn('[SuperAdmin] Auto convert lead to store error:', convErr);
+        }
+        setActiveFoundingLead(null);
+      }
 
       confetti({
         particleCount: 120,
@@ -558,7 +588,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       </div>
 
       {activeSubTab === 'leads' ? (
-        <SuperAdminLeadsConsole stores={stores} onSelectStore={onSelectStore} />
+        <SuperAdminLeadsConsole
+          stores={stores}
+          onSelectStore={onSelectStore}
+          onFoundStoreFromLead={handleFoundStoreFromLead}
+        />
       ) : activeSubTab === 'partners' ? (
         <SuperAdminPartnersConsole />
       ) : activeSubTab === 'billing' ? (
@@ -574,6 +608,42 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               <Sparkles className="w-6 h-6 text-amber-400" />
               <h3 className="text-lg font-bold text-white">تأسيس متجر جديد (Concierge Onboarding)</h3>
             </div>
+
+            {/* 🎯 Linked Lead Notification Banner */}
+            {activeFoundingLead && (
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border border-amber-500/40 flex items-center justify-between gap-3 animate-fadeIn">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500 text-black text-[10px] font-black">
+                      ربط بطلب عميل محتمل 🎯
+                    </span>
+                    <h4 className="text-xs font-bold text-white">{activeFoundingLead.store_name}</h4>
+                  </div>
+                  <p className="text-[11px] text-slate-300">
+                    المسؤول: <strong>{activeFoundingLead.manager_name}</strong> ({activeFoundingLead.phone})
+                    {activeFoundingLead.referral_code && (
+                      <span className="mr-2 rtl:ml-2 text-amber-400 font-mono">
+                        • كود الشريك: {activeFoundingLead.referral_code}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveFoundingLead(null);
+                    setName('');
+                    setSlug('');
+                    setManagerName('');
+                    setManagerContact('');
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium transition shrink-0"
+                  title="إلغاء ربط الطلب وتأسيس متجر عام"
+                >
+                  إلغاء الربط ✕
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleCreateStoreSubmit} className="space-y-4">
               

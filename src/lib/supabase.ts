@@ -5340,6 +5340,9 @@ export const LoyaltyService = {
       }
     }
 
+    LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: 'global' });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+
     return { success: true };
   },
 
@@ -5380,6 +5383,10 @@ export const LoyaltyService = {
     } catch (commErr) {
       console.warn('Auto recordLeadConversionCommission non-blocking warning:', commErr);
     }
+
+    LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: storeId || 'global' });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: storeId || 'global' });
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: storeId || 'global' });
 
     return { success: true };
   },
