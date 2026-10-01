@@ -107,15 +107,10 @@ interface StoreAdminProps {
 type AdminTab =
   | 'analytics'
   | 'catalog'
-  | 'services'
-  | 'modifiers'
-  | 'perks'
-  | 'tiers'
+  | 'loyalty'
   | 'customers'
   | 'staff'
-  | 'logs'
-  | 'settings'
-  | 'billing';
+  | 'settings';
 
 export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) => {
   const currentStore = initialStore || INITIAL_STORE;
@@ -129,8 +124,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [storeWallet, setStoreWallet] = useState<StoreWallet | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Active Admin Navigation Tab & Header Collapsible State
+  // Active Admin Navigation Tab & Sub-Sections
   const [activeTab, setActiveTab] = useState<AdminTab>('analytics');
+  const [catalogSection, setCatalogSection] = useState<'products' | 'services' | 'modifiers'>('products');
+  const [loyaltySection, setLoyaltySection] = useState<'perks' | 'tiers'>('perks');
+  const [customersSection, setCustomersSection] = useState<'crm' | 'logs'>('crm');
+  const [settingsSection, setSettingsSection] = useState<'identity' | 'billing'>('identity');
   const [showQuickLinks, setShowQuickLinks] = useState(true);
 
   // Authentication & Session State
@@ -1967,68 +1966,38 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const tabsConfig = [
     {
       id: 'analytics' as AdminTab,
-      label: 'الأداء والتحليلات',
+      label: 'التحليلات والأداء',
       icon: BarChart3,
       badge: null,
     },
     {
       id: 'catalog' as AdminTab,
-      label: 'المنيو والمنتجات 🍔',
+      label: 'الكتالوج والخدمات',
       icon: ShoppingBag,
-      badge: productItemsCount.toString(),
+      badge: `${catalogItems.length}`,
     },
     {
-      id: 'services' as AdminTab,
-      label: 'الخدمات والمواعيد 📅',
-      icon: Calendar,
-      badge: `${serviceItemsCount} خدمة | ${bookings.length} حجز`,
-    },
-    {
-      id: 'modifiers' as AdminTab,
-      label: 'الأقسام والإضافات 🏷️',
-      icon: Tag,
-      badge: `${globalCategories.length} أقسام | ${globalModifierGroups.length} إضافات`,
-    },
-    {
-      id: 'perks' as AdminTab,
-      label: 'الحصريات والمكافآت',
+      id: 'loyalty' as AdminTab,
+      label: 'برنامج الولاء',
       icon: Gift,
-      badge: privileges.length.toString(),
-    },
-    {
-      id: 'tiers' as AdminTab,
-      label: 'مستويات الولاء',
-      icon: Award,
-      badge: tiers.length.toString(),
+      badge: `${privileges.length}`,
     },
     {
       id: 'customers' as AdminTab,
-      label: 'العملاء والـ CRM',
+      label: 'العملاء والعمليات',
       icon: Users,
-      badge: customers.length.toString(),
+      badge: `${customers.length}`,
     },
     {
       id: 'staff' as AdminTab,
       label: 'طاقم العمل والـ PIN',
       icon: ShieldCheck,
-      badge: staffList.length.toString(),
-    },
-    {
-      id: 'logs' as AdminTab,
-      label: 'سجل العمليات والكوبونات',
-      icon: FileText,
-      badge: auditLogs.length.toString(),
+      badge: `${staffList.length}`,
     },
     {
       id: 'settings' as AdminTab,
-      label: 'هوية المتجر والسلايدر',
+      label: 'الإعدادات والفوترة',
       icon: Sliders,
-      badge: null,
-    },
-    {
-      id: 'billing' as AdminTab,
-      label: 'الاشتراك والفوترة',
-      icon: CreditCard,
       badge: isStoreSuspended
         ? 'معلق ⚠️'
         : subscriptionInfo?.requiresRenewal
@@ -2247,29 +2216,30 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       )}
 
       {/* 🧭 Luxury Executive Navigation Hub (Tab Bar) */}
-      <div className="rounded-2xl p-1.5 border border-slate-800 bg-slate-900/60 shadow-lg backdrop-blur-md">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+      <div className="rounded-2xl p-2 border border-slate-800 bg-slate-900/80 shadow-xl backdrop-blur-md">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           {tabsConfig.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
+                type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-2 rtl:space-x-reverse whitespace-nowrap transition-all duration-200 relative shrink-0 ${
+                className={`w-full py-3 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 rtl:space-x-reverse transition-all duration-200 relative ${
                   isActive
-                    ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 border border-transparent'
+                    ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/20'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/70 border border-transparent hover:border-slate-700/60'
                 }`}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-amber-400' : 'text-slate-400'}`} />
-                <span>{tab.label}</span>
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-slate-950' : 'text-slate-400'}`} />
+                <span className="truncate">{tab.label}</span>
                 {tab.badge !== null && (
                   <span
-                    className={`text-[10px] font-mono px-2 py-0.2 rounded-full border font-bold ${
+                    className={`text-[11px] font-mono px-2 py-0.5 rounded-full border font-bold shrink-0 ${
                       isActive
-                        ? 'bg-amber-400 text-slate-950 border-amber-300'
-                        : 'bg-slate-800/80 text-slate-400 border-slate-700/60'
+                        ? 'bg-slate-950 text-amber-400 border-slate-900'
+                        : 'bg-slate-800 text-slate-400 border-slate-700/60'
                     }`}
                   >
                     {tab.badge}
@@ -2457,18 +2427,50 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       )}
 
       {/* ========================================== */}
-      {/* 🎁 TAB 2: الحصريات والمكافآت (Perks & Coupons) */}
+      {/* 🎁 TAB 3: برنامج الولاء والمكافآت */}
       {/* ========================================== */}
-      {activeTab === 'perks' && (
-        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-800">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-              <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shadow-sm">
-                <Gift className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
-                  <span>إدارة الامتيازات والكوبونات وساعات الصرف (Privileges & Coupons)</span>
+      {!isStoreSuspended && activeTab === 'loyalty' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Subtabs Switcher */}
+          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl w-fit shadow-md">
+            <button
+              type="button"
+              onClick={() => setLoyaltySection('perks')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                loyaltySection === 'perks'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <Gift className="w-4 h-4" />
+              <span>الامتيازات والكوبونات ({privileges.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setLoyaltySection('tiers')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                loyaltySection === 'tiers'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <Award className="w-4 h-4" />
+              <span>رتب ومستويات الولاء ({tiers.length})</span>
+            </button>
+          </div>
+
+          {/* Sub-Section 1: Perks */}
+          {loyaltySection === 'perks' && (
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                    <Gift className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
+                      <span>الامتيازات وكوبونات الولاء</span>
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono font-bold">
                     {privileges.length} عروض
                   </span>
@@ -2703,37 +2705,36 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 👑 TAB 3: مستويات الولاء (Tiers & Levels) */}
-      {/* ========================================== */}
-      {activeTab === 'tiers' && (
-        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-              <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shadow-sm">
-                <Award className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
-                  <span>إدارة رتب ومستويات الولاء (Loyalty Tiers & XP)</span>
-                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-bold font-mono">
-                    {tiers.length} رتب
-                  </span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  تسمية الرتب وتحديد عدد نقاط الـ XP المطلوبة للترقية وتنعكس فوراً على محفظة الزبائن وشاشة الكاشير
-                </p>
-              </div>
-            </div>
+          {/* Sub-Section 2: Tiers */}
+          {loyaltySection === 'tiers' && (
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                    <Award className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
+                      <span>رتب ومستويات الولاء</span>
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-bold font-mono">
+                        {tiers.length} رتب
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      تسمية الرتب وتحديد نقاط الـ XP المطلوبة للترقية في محفظة الزبائن وشاشة الكاشير
+                    </p>
+                  </div>
+                </div>
 
-            <button
-              onClick={handleOpenAddTier}
-              className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center space-x-2 rtl:space-x-reverse shadow-sm transition self-start sm:self-auto"
-            >
-              <PlusCircle className="w-4 h-4 text-amber-400" />
-              <span>+ إضافة رتبة جديدة</span>
-            </button>
-          </div>
+                <button
+                  type="button"
+                  onClick={handleOpenAddTier}
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs sm:text-sm flex items-center justify-center space-x-2 rtl:space-x-reverse shadow-md transition self-start sm:self-auto"
+                >
+                  <PlusCircle className="w-4 h-4 text-slate-950" />
+                  <span>+ إضافة رتبة جديدة</span>
+                </button>
+              </div>
 
           {tierActionSuccess && (
             <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold animate-fade-in flex items-center space-x-2 rtl:space-x-reverse">
@@ -2813,206 +2814,751 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           </div>
         </div>
       )}
-
-      {/* ========================================== */}
-      {/* 👥 TAB 4: سجل العملاء والـ CRM (Customer Intelligence) */}
-      {/* ========================================== */}
-      {activeTab === 'customers' && (
-        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-              <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shadow-sm">
-                <Users className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
-                  <span>سجل ودليل العملاء الشامل (Customer CRM & Directory)</span>
-                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono font-bold">
-                    {filteredCustomers.length} من أصل {customers.length} عميل
-                  </span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  عرض كامل بيانات الزبائن، الرتبة، الرصيد، التنشيط/التعطيل، وإمكانية تعديل النقاط وإرسال رسائل مباشرة
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 self-start md:self-auto">
-              <button
-                onClick={handleExportCustomersCSV}
-                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse border border-slate-700 transition"
-              >
-                <Download className="w-3.5 h-3.5 text-slate-400" />
-                <span>تصدير ملف (CSV)</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Filter and Search Bar */}
-          <div className="flex flex-col sm:flex-row items-center gap-3">
-            <div className="relative flex-1 w-full">
-              <input
-                type="text"
-                placeholder="ابحث بالاسم أو برقم الجوال..."
-                value={customerSearchQuery}
-                onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-2xl px-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none pr-9"
-              />
-              <Search className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2" />
-            </div>
-
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <Filter className="w-4 h-4 text-slate-500" />
-              <select
-                value={customerTierFilter}
-                onChange={(e) => setCustomerTierFilter(e.target.value)}
-                className="bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-2xl px-3 py-2.5 text-xs text-white outline-none font-medium"
-              >
-                <option value="ALL">جميع الرتب</option>
-                {tiers.map((t) => (
-                  <option key={t.id} value={t.tier_name}>
-                    {t.tier_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {customerActionSuccess && (
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold animate-fade-in flex items-center space-x-2 rtl:space-x-reverse">
-              <CheckCircle className="w-4 h-4 text-emerald-400" />
-              <span>{customerActionSuccess}</span>
-            </div>
-          )}
-
-          {/* Customers Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-right text-xs">
-              <thead>
-                <tr className="border-b border-slate-800 text-slate-400 font-medium">
-                  <th className="pb-3 px-3">اسم العميل</th>
-                  <th className="pb-3 px-3">رقم الجوال</th>
-                  <th className="pb-3 px-3">الرتبة الحالية</th>
-                  <th className="pb-3 px-3">رصيد الحرق (Wallet)</th>
-                  <th className="pb-3 px-3">النقاط الدائمة (XP)</th>
-                  <th className="pb-3 px-3">آخر زيارة</th>
-                  <th className="pb-3 px-3 text-center">حالة الحساب</th>
-                  <th className="pb-3 px-3 text-center">الإجراءات</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {filteredCustomers.length > 0 ? (
-                  filteredCustomers.map((cust) => {
-                    const currentTier =
-                      tiers
-                        .filter((t) => t.required_xp <= cust.lifetime_xp)
-                        .sort((a, b) => b.required_xp - a.required_xp)[0] || tiers[0];
-                    const isActive = cust.is_active !== false;
-
-                    return (
-                      <tr key={cust.id} className="hover:bg-slate-950/40 transition">
-                        <td className="py-3.5 px-3">
-                          <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                            <div className="w-8 h-8 rounded-xl bg-slate-800 text-slate-200 font-bold flex items-center justify-center text-xs border border-slate-700">
-                              {cust.name ? cust.name.charAt(0) : 'ع'}
-                            </div>
-                            <div>
-                              <span className="font-bold text-white block">
-                                {cust.name || 'عميل'}
-                              </span>
-                              <button
-                                onClick={() => handleOpenEditCustomer(cust)}
-                                className="text-[10px] text-slate-400 hover:text-white flex items-center gap-0.5"
-                              >
-                                <Edit3 className="w-2.5 h-2.5" />
-                                <span>{cust.name ? 'تعديل' : '+ إضافة اسم'}</span>
-                              </button>
-                            </div>
-                          </div>
-                        </td>
-
-                        <td className="py-3.5 px-3 font-mono text-slate-300 font-medium" dir="ltr">
-                          {cust.phone}
-                        </td>
-
-                        <td className="py-3.5 px-3">
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-xl text-[11px] font-medium bg-slate-800 text-slate-200 border border-slate-700">
-                            {currentTier?.tier_name || 'ضيف'}
-                          </span>
-                        </td>
-
-                        <td className="py-3.5 px-3 font-mono font-bold text-white text-sm">
-                          {cust.wallet_balance.toLocaleString()}
-                          <span className="text-[10px] text-slate-400 font-normal mr-1">نقطة</span>
-                        </td>
-
-                        <td className="py-3.5 px-3 font-mono text-slate-300">
-                          {cust.lifetime_xp.toLocaleString()} XP
-                        </td>
-
-                        <td className="py-3.5 px-3 text-slate-400 font-mono text-[11px]">
-                          {cust.last_visit_date
-                            ? new Date(cust.last_visit_date).toLocaleDateString('ar-SA', {
-                                day: 'numeric',
-                                month: 'short',
-                                year: 'numeric',
-                              })
-                            : 'جديد'}
-                        </td>
-
-                        <td className="py-3.5 px-3 text-center">
-                          <button
-                            onClick={() => handleToggleCustomerActive(cust)}
-                            className={`px-3 py-1 rounded-full text-[11px] font-medium border transition ${
-                              isActive
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-                            }`}
-                            title="اضغط لتغيير حالة الحساب"
-                          >
-                            {isActive ? '● نشط' : '○ موقوف'}
-                          </button>
-                        </td>
-
-                        <td className="py-3.5 px-3 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              onClick={() => handleOpenAdjustPoints(cust)}
-                              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
-                              title="تعديل النقاط"
-                            >
-                              <Zap className="w-3.5 h-3.5" />
-                            </button>
-
-                            <button
-                              onClick={() => handleCustomerDirectWhatsApp(cust)}
-                              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
-                              title="إرسال رسالة واتساب للعميل"
-                            >
-                              <Send className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan={8} className="py-8 text-center text-slate-500">
-                      لا يوجد أي عملاء يطابقون خيارات البحث الحالية.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
         </div>
       )}
 
       {/* ========================================== */}
-      {/* 🛡️ TAB 5: طاقم العمل والصلاحيات (Staff & RBAC) */}
+      {/* 👥 TAB 4: العملاء وحركات العمليات */}
       {/* ========================================== */}
-      {activeTab === 'staff' && (
+      {!isStoreSuspended && activeTab === 'customers' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Subtabs Switcher */}
+          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl w-fit shadow-md">
+            <button
+              type="button"
+              onClick={() => setCustomersSection('crm')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                customersSection === 'crm'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>دليل وسجل العملاء ({customers.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setCustomersSection('logs')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                customersSection === 'logs'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>سجل العمليات والطلبات ({auditLogs.length})</span>
+            </button>
+          </div>
+
+          {/* Sub-Section 1: CRM Directory */}
+          {customersSection === 'crm' && (
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shadow-sm">
+                    <Users className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
+                      <span>سجل ودليل العملاء</span>
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono font-bold">
+                        {filteredCustomers.length} من أصل {customers.length} عميل
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      عرض بيانات العملاء، الرتبة، الرصيد، التنشيط/التعطيل، وتعديل النقاط
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-start md:self-auto">
+                  <button
+                    onClick={handleExportCustomersCSV}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse border border-slate-700 transition"
+                  >
+                    <Download className="w-3.5 h-3.5 text-slate-400" />
+                    <span>تصدير ملف (CSV)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter and Search Bar */}
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <div className="relative flex-1 w-full">
+                  <input
+                    type="text"
+                    placeholder="ابحث بالاسم أو برقم الجوال..."
+                    value={customerSearchQuery}
+                    onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-2xl px-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none pr-9"
+                  />
+                  <Search className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2" />
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <Filter className="w-4 h-4 text-slate-500" />
+                  <select
+                    value={customerTierFilter}
+                    onChange={(e) => setCustomerTierFilter(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-2xl px-3 py-2.5 text-xs text-white outline-none font-medium"
+                  >
+                    <option value="ALL">جميع الرتب</option>
+                    {tiers.map((t) => (
+                      <option key={t.id} value={t.tier_name}>
+                        {t.tier_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {customerActionSuccess && (
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold animate-fade-in flex items-center space-x-2 rtl:space-x-reverse">
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <span>{customerActionSuccess}</span>
+                </div>
+              )}
+
+              {/* Customers Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 font-medium">
+                      <th className="pb-3 px-3">اسم العميل</th>
+                      <th className="pb-3 px-3">رقم الجوال</th>
+                      <th className="pb-3 px-3">الرتبة الحالية</th>
+                      <th className="pb-3 px-3">رصيد النقاط</th>
+                      <th className="pb-3 px-3">النقاط الدائمة (XP)</th>
+                      <th className="pb-3 px-3">آخر زيارة</th>
+                      <th className="pb-3 px-3 text-center">حالة الحساب</th>
+                      <th className="pb-3 px-3 text-center">الإجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {filteredCustomers.length > 0 ? (
+                      filteredCustomers.map((cust) => {
+                        const currentTier =
+                          tiers
+                            .filter((t) => t.required_xp <= cust.lifetime_xp)
+                            .sort((a, b) => b.required_xp - a.required_xp)[0] || tiers[0];
+                        const isActive = cust.is_active !== false;
+
+                        return (
+                          <tr key={cust.id} className="hover:bg-slate-950/40 transition">
+                            <td className="py-3.5 px-3">
+                              <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                                <div className="w-8 h-8 rounded-xl bg-slate-800 text-slate-200 font-bold flex items-center justify-center text-xs border border-slate-700">
+                                  {cust.name ? cust.name.charAt(0) : 'ع'}
+                                </div>
+                                <div>
+                                  <span className="font-bold text-white block">
+                                    {cust.name || 'عميل'}
+                                  </span>
+                                  <button
+                                    onClick={() => handleOpenEditCustomer(cust)}
+                                    className="text-[10px] text-slate-400 hover:text-white flex items-center gap-0.5"
+                                  >
+                                    <Edit3 className="w-2.5 h-2.5" />
+                                    <span>{cust.name ? 'تعديل' : '+ إضافة اسم'}</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+
+                            <td className="py-3.5 px-3 font-mono text-slate-300 font-medium" dir="ltr">
+                              {cust.phone}
+                            </td>
+
+                            <td className="py-3.5 px-3">
+                              <span className="inline-flex items-center px-2.5 py-1 rounded-xl text-[11px] font-medium bg-slate-800 text-slate-200 border border-slate-700">
+                                {currentTier?.tier_name || 'ضيف'}
+                              </span>
+                            </td>
+
+                            <td className="py-3.5 px-3 font-mono font-bold text-white text-sm">
+                              {cust.wallet_balance.toLocaleString()}
+                              <span className="text-[10px] text-slate-400 font-normal mr-1">نقطة</span>
+                            </td>
+
+                            <td className="py-3.5 px-3 font-mono text-slate-300">
+                              {cust.lifetime_xp.toLocaleString()} XP
+                            </td>
+
+                            <td className="py-3.5 px-3 text-slate-400 font-mono text-[11px]">
+                              {cust.last_visit_date
+                                ? new Date(cust.last_visit_date).toLocaleDateString('ar-SA', {
+                                    day: 'numeric',
+                                    month: 'short',
+                                    year: 'numeric',
+                                  })
+                                : 'جديد'}
+                            </td>
+
+                            <td className="py-3.5 px-3 text-center">
+                              <button
+                                onClick={() => handleToggleCustomerActive(cust)}
+                                className={`px-3 py-1 rounded-full text-[11px] font-medium border transition ${
+                                  isActive
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                    : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                }`}
+                                title="اضغط لتغيير حالة الحساب"
+                              >
+                                {isActive ? '● نشط' : '○ موقوف'}
+                              </button>
+                            </td>
+
+                            <td className="py-3.5 px-3 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  onClick={() => handleOpenAdjustPoints(cust)}
+                                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                                  title="تعديل النقاط"
+                                >
+                                  <Zap className="w-3.5 h-3.5" />
+                                </button>
+
+                                <button
+                                  onClick={() => handleCustomerDirectWhatsApp(cust)}
+                                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                                  title="إرسال رسالة واتساب للعميل"
+                                >
+                                  <Send className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-slate-500">
+                          لا يوجد أي عملاء يطابقون خيارات البحث الحالية.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Sub-Section 2: Operations Ledger */}
+          {customersSection === 'logs' && (() => {
+            // Date Boundaries
+            const now = new Date();
+            const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+            const sevenDaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000;
+            const thirtyDaysAgo = startOfToday - 30 * 24 * 60 * 60 * 1000;
+
+            // Apply all filters: Date, Action, Staff, Entry Method, Search Query
+            const filteredAuditLogs = auditLogs.filter((log) => {
+              const logTime = new Date(log.created_at).getTime();
+
+              // Date filter
+              if (logDateFilter === 'TODAY' && logTime < startOfToday) return false;
+              if (logDateFilter === '7DAYS' && logTime < sevenDaysAgo) return false;
+              if (logDateFilter === '30DAYS' && logTime < thirtyDaysAgo) return false;
+
+              // Action Type filter
+              if (logActionFilter === 'PURCHASE' && log.action !== 'PURCHASE') return false;
+              if (
+                logActionFilter === 'REDEEM' &&
+                log.action !== 'REDEEM_COUPON' &&
+                log.action !== 'REDEEM_REWARD' &&
+                log.action !== 'PURCHASE_COUPON'
+              ) {
+                return false;
+              }
+              if (logActionFilter === 'ADJUSTMENT' && log.action !== 'ADJUSTMENT') return false;
+              if (
+                logActionFilter === 'SERVICE_BOOKING' &&
+                log.action !== 'SERVICE_BOOKING' &&
+                (log.action as string) !== 'BOOKING'
+              ) {
+                return false;
+              }
+
+              // Entry method filter
+              if (logFilter === 'manual' && log.entry_method !== 'manual') return false;
+              if (logFilter === 'qr_scan' && log.entry_method === 'manual') return false;
+
+              // Staff filter
+              if (logStaffFilter !== 'ALL') {
+                const cashierName = log.metadata?.cashier_name || '';
+                const matchingStaff = staffList.find(
+                  (s) => s.id === logStaffFilter || s.name === logStaffFilter || s.id === log.staff_id
+                );
+                const matchesId = log.staff_id === logStaffFilter;
+                const matchesName =
+                  cashierName === logStaffFilter || (matchingStaff && cashierName === matchingStaff.name);
+                if (!matchesId && !matchesName) return false;
+              }
+
+              // Search Query
+              if (logSearchQuery.trim()) {
+                const q = logSearchQuery.trim().toLowerCase();
+                const customerName = (log.customer_name || '').toLowerCase();
+                const customerPhone = (log.customer_phone || '').toLowerCase();
+                const couponCode = (log.metadata?.coupon_code || '').toLowerCase();
+                const privilegeTitle = (log.metadata?.privilege_title || '').toLowerCase();
+                const note = (log.metadata?.note || '').toLowerCase();
+                const cashierName = (log.metadata?.cashier_name || '').toLowerCase();
+                const amountStr = log.purchase_amount ? log.purchase_amount.toString() : '';
+
+                const matches =
+                  customerName.includes(q) ||
+                  customerPhone.includes(q) ||
+                  couponCode.includes(q) ||
+                  privilegeTitle.includes(q) ||
+                  note.includes(q) ||
+                  cashierName.includes(q) ||
+                  amountStr.includes(q);
+                if (!matches) return false;
+              }
+
+              return true;
+            });
+
+            // Summary calculations
+            const totalSalesAmount = filteredAuditLogs
+              .filter((l) => l.action === 'PURCHASE')
+              .reduce((sum, l) => sum + (Number(l.purchase_amount) || 0), 0);
+
+            const totalPointsAwarded = filteredAuditLogs
+              .filter((l) => l.points_changed > 0)
+              .reduce((sum, l) => sum + l.points_changed, 0);
+
+            const totalRedeemedCoupons = filteredAuditLogs.filter(
+              (l) => l.action === 'REDEEM_COUPON' || l.action === 'REDEEM_REWARD'
+            ).length;
+
+            const manualLogsCount = filteredAuditLogs.filter((l) => l.entry_method === 'manual').length;
+            const qrLogsCount = filteredAuditLogs.filter((l) => l.entry_method !== 'manual').length;
+
+            const handleRefreshLogs = async () => {
+              try {
+                const fresh = await LoyaltyService.getAuditLogs(store.id);
+                setAuditLogs(fresh);
+              } catch (e) {
+                console.error(e);
+              }
+            };
+
+            return (
+              <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+                {/* Header Title & Subtitle */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+                  <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shadow-sm">
+                      <FileText className="w-6 h-6 text-amber-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                        <span>سجل العمليات والطلبات المركزي</span>
+                        {manualLogsCount > 0 && (
+                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse">
+                            ⚠️ {manualLogsCount} إدخال يدوي
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        سجل موحد لجميع حركات النقاط والكوبونات والطلبات وتفاصيل العمليات المالية وطرق المسح
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleRefreshLogs}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold flex items-center gap-1.5 self-start sm:self-auto transition shadow-sm"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>تحديث السجل 🔄</span>
+                  </button>
+                </div>
+
+                {/* 📊 Summary Metrics Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                    <span className="text-[11px] text-slate-400 block font-medium">إجمالي العمليات</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xl font-black text-white font-mono">{filteredAuditLogs.length}</span>
+                      <Layers className="w-4 h-4 text-slate-500" />
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                    <span className="text-[11px] text-slate-400 block font-medium">مبيعات الفواتير</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xl font-black text-emerald-400 font-mono">
+                        {totalSalesAmount.toLocaleString()} <span className="text-xs font-sans">ر.س</span>
+                      </span>
+                      <Coins className="w-4 h-4 text-emerald-500" />
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                    <span className="text-[11px] text-slate-400 block font-medium">النقاط الممنوحة</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xl font-black text-amber-400 font-mono">
+                        +{totalPointsAwarded.toLocaleString()}
+                      </span>
+                      <Zap className="w-4 h-4 text-amber-500" />
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                    <span className="text-[11px] text-slate-400 block font-medium">كوبونات تم حرقها</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xl font-black text-rose-400 font-mono">{totalRedeemedCoupons}</span>
+                      <Flame className="w-4 h-4 text-rose-500" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 🔍 Quick Filter Suite */}
+                <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
+                  {/* Row 1: Search Bar & Date Filter Presets */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    {/* Search Box */}
+                    <div className="sm:col-span-6 relative">
+                      <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={logSearchQuery}
+                        onChange={(e) => setLogSearchQuery(e.target.value)}
+                        placeholder="بحث سريع بالاسم، رقم الجوال، كود الكوبون، أو المبلغ..."
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl pr-10 pl-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500 transition"
+                      />
+                      {logSearchQuery && (
+                        <button
+                          onClick={() => setLogSearchQuery('')}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Date Filter Buttons */}
+                    <div className="sm:col-span-6 flex items-center justify-start sm:justify-end gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                      <span className="text-xs text-slate-400 font-medium ml-1 shrink-0 flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>التاريخ:</span>
+                      </span>
+                      {[
+                        { id: 'ALL', label: 'الكل' },
+                        { id: 'TODAY', label: 'اليوم' },
+                        { id: '7DAYS', label: 'آخر 7 أيام' },
+                        { id: '30DAYS', label: 'آخر 30 يوماً' },
+                      ].map((df) => (
+                        <button
+                          key={df.id}
+                          onClick={() => setLogDateFilter(df.id as any)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+                            logDateFilter === df.id
+                              ? 'bg-amber-500 text-black shadow-sm'
+                              : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                          }`}
+                        >
+                          {df.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Row 2: Operation Type, Entry Method, and Cashier Filters */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-2 border-t border-slate-800/80">
+                    {/* Action Type Filters */}
+                    <div className="sm:col-span-6 flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs text-slate-400 font-medium ml-1 shrink-0">نوع الحركة:</span>
+                      {[
+                        { id: 'ALL', label: 'الكل' },
+                        { id: 'PURCHASE', label: '🛒 شراء ونقاط' },
+                        { id: 'REDEEM', label: '🔥 حرق كوبونات' },
+                        { id: 'SERVICE_BOOKING', label: '💇‍♂️ حجز مواعيد' },
+                        { id: 'ADJUSTMENT', label: '⚡ تعديل رصيد' },
+                      ].map((af) => (
+                        <button
+                          key={af.id}
+                          onClick={() => setLogActionFilter(af.id as any)}
+                          className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition ${
+                            logActionFilter === af.id
+                              ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {af.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Entry Method & Staff Dropdowns */}
+                    <div className="sm:col-span-6 flex items-center justify-start sm:justify-end gap-2 flex-wrap">
+                      {/* Entry Method Buttons */}
+                      <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                        <button
+                          onClick={() => setLogFilter('all')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
+                            logFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          الكل
+                        </button>
+                        <button
+                          onClick={() => setLogFilter('qr_scan')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${
+                            logFilter === 'qr_scan'
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <ShieldCheck className="w-3 h-3" />
+                          <span>مسح مباشر ({qrLogsCount})</span>
+                        </button>
+                        <button
+                          onClick={() => setLogFilter('manual')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${
+                            logFilter === 'manual'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <AlertTriangle className="w-3 h-3 text-amber-400" />
+                          <span>يدوي ({manualLogsCount})</span>
+                        </button>
+                      </div>
+
+                      {/* Cashier Staff Dropdown */}
+                      {staffList.length > 0 && (
+                        <select
+                          value={logStaffFilter}
+                          onChange={(e) => setLogStaffFilter(e.target.value)}
+                          className="bg-slate-900 border border-slate-800 text-slate-300 text-xs font-bold rounded-xl px-3 py-1.5 outline-none focus:border-amber-500"
+                        >
+                          <option value="ALL">جميع الكاشيرات ({staffList.length})</option>
+                          {staffList.map((s) => (
+                            <option key={s.id} value={s.name}>
+                              {s.name} ({s.role === 'admin' ? 'مدير' : 'كاشير'})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 📋 Unified Operations Ledger Table */}
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
+                  <table className="w-full text-right text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-950/80">
+                        <th className="py-3.5 px-3">التاريخ والوقت</th>
+                        <th className="py-3.5 px-3">نوع الحركة</th>
+                        <th className="py-3.5 px-3">التفاصيل (المبلغ / الكوبون)</th>
+                        <th className="py-3.5 px-3">بيانات العميل</th>
+                        <th className="py-3.5 px-3">طريقة الإدخال</th>
+                        <th className="py-3.5 px-3">المسؤول / الكاشير</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {filteredAuditLogs.length > 0 ? (
+                        filteredAuditLogs.map((log) => {
+                          const isManual = log.entry_method === 'manual';
+                          return (
+                            <tr
+                              key={log.id}
+                              className={`transition ${
+                                isManual ? 'bg-amber-500/[0.03] hover:bg-amber-500/[0.07]' : 'hover:bg-slate-900/60'
+                              }`}
+                            >
+                              {/* 1. التاريخ والوقت */}
+                              <td className="py-3.5 px-3 text-slate-300 font-mono whitespace-nowrap">
+                                <div className="font-bold text-slate-200">
+                                  {new Date(log.created_at).toLocaleDateString('ar-SA', {
+                                    day: 'numeric',
+                                    month: 'short',
+                                    year: 'numeric',
+                                  })}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  {new Date(log.created_at).toLocaleTimeString('ar-SA', {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </div>
+                              </td>
+
+                              {/* 2. نوع الحركة */}
+                              <td className="py-3.5 px-3">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                                    log.action === 'PURCHASE'
+                                      ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                                      : log.action === 'REDEEM_COUPON' || log.action === 'REDEEM_REWARD'
+                                      ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                                      : log.action === 'PURCHASE_COUPON'
+                                      ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
+                                      : log.action === 'SERVICE_BOOKING' || (log.action as string) === 'BOOKING'
+                                      ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
+                                      : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                                  }`}
+                                >
+                                  {log.action === 'PURCHASE' ? (
+                                    <>
+                                      <Zap className="w-3 h-3" />
+                                      <span>🛒 شراء واكتساب نقاط</span>
+                                    </>
+                                  ) : log.action === 'REDEEM_COUPON' || log.action === 'REDEEM_REWARD' ? (
+                                    <>
+                                      <Flame className="w-3 h-3 text-rose-400" />
+                                      <span>🔥 حرق واستلام كوبون</span>
+                                    </>
+                                  ) : log.action === 'PURCHASE_COUPON' ? (
+                                    <>
+                                      <Gift className="w-3 h-3" />
+                                      <span>🎁 شراء كوبون بالنقاط</span>
+                                    </>
+                                  ) : log.action === 'SERVICE_BOOKING' || (log.action as string) === 'BOOKING' ? (
+                                    <>
+                                      <Calendar className="w-3 h-3 text-blue-400" />
+                                      <span>💇‍♂️ حجز موعد خدمة</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Sliders className="w-3 h-3" />
+                                      <span>⚡ تعديل رصيد يدوي</span>
+                                    </>
+                                  )}
+                                </span>
+                              </td>
+
+                              {/* 3. التفاصيل */}
+                              <td className="py-3.5 px-3">
+                                <div className="space-y-0.5">
+                                  {log.action === 'PURCHASE' ? (
+                                    <div>
+                                      <span className="font-bold text-white font-mono text-xs">
+                                        فاتورة: {log.purchase_amount || 0} ر.س
+                                      </span>
+                                      <span className="text-[11px] font-bold text-amber-400 font-mono mr-2 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                                        +{log.points_changed} XP
+                                      </span>
+                                    </div>
+                                  ) : log.action === 'SERVICE_BOOKING' || (log.action as string) === 'BOOKING' ? (
+                                    <div className="space-y-0.5">
+                                      <div className="font-bold text-white text-xs flex items-center gap-1.5">
+                                        <span>{log.metadata?.service_name || 'خدمة'}</span>
+                                        {log.purchase_amount ? (
+                                          <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
+                                            {log.purchase_amount} ر.س
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+                                        <span className="text-blue-300 font-bold">{log.metadata?.specialist_name || 'أي مختص'}</span>
+                                        <span>•</span>
+                                        <span>{log.metadata?.booking_date} الساعة {log.metadata?.booking_time}</span>
+                                        {log.metadata?.booking_number && (
+                                          <span className="text-amber-400 font-bold">#{log.metadata.booking_number}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ) : log.metadata?.privilege_title || log.metadata?.coupon_code ? (
+                                    <div>
+                                      <strong className="text-white text-xs block">
+                                        {log.metadata.privilege_title || 'مكافأة'}
+                                      </strong>
+                                      {log.metadata?.coupon_code && (
+                                        <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30 mt-0.5 inline-block">
+                                          كود: {log.metadata.coupon_code}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <span className="text-white font-mono font-bold">
+                                        {log.points_changed > 0 ? `+${log.points_changed}` : log.points_changed} XP
+                                      </span>
+                                      {log.metadata?.reason && (
+                                        <span className="text-[10px] text-slate-400 block mt-0.5">
+                                          السبب: {log.metadata.reason}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 4. بيانات العميل */}
+                              <td className="py-3.5 px-3">
+                                <div className="font-bold text-white">
+                                  {log.customer_name || 'عميل المتجر'}
+                                </div>
+                                <div className="text-[11px] font-mono text-slate-400 mt-0.5" dir="ltr">
+                                  {log.customer_phone || log.customer_id?.substring(0, 10)}
+                                </div>
+                              </td>
+
+                              {/* 5. طريقة الإدخال */}
+                              <td className="py-3.5 px-3">
+                                {isManual ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/40">
+                                    <AlertTriangle className="w-3 h-3 text-amber-400" />
+                                    <span>⚠️ إدخال يدوي</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                                    <span>🛡️ مسح مباشر</span>
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 6. المسؤول / الكاشير */}
+                              <td className="py-3.5 px-3 font-medium text-slate-300">
+                                {log.action === 'PURCHASE_COUPON' ? (
+                                  <span className="text-xs text-slate-400">📱 العميل (عبر المحفظة)</span>
+                                ) : (
+                                  <div>
+                                    <span className="text-xs font-bold text-white">
+                                      {log.metadata?.cashier_name ||
+                                        staffList.find((s) => s.id === log.staff_id)?.name ||
+                                        'كاشير المتجر'}
+                                    </span>
+                                    {log.metadata?.note && (
+                                      <span className="text-[10px] text-slate-400 block mt-0.5">
+                                        {log.metadata.note}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="py-12 text-center text-slate-500 space-y-2">
+                            <FileText className="w-8 h-8 text-slate-600 mx-auto" />
+                            <p className="text-xs">لا توجد أي حركات مطابقة لشروط البحث والفلتر المحددة.</p>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 🛡️ TAB 5: طاقم العمل والصلاحيات */}
+      {/* ========================================== */}
+      {!isStoreSuspended && activeTab === 'staff' && (
         <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
             <div className="flex items-center space-x-3 rtl:space-x-reverse">
@@ -3021,13 +3567,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </div>
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
-                  <span>طاقم العمل ومنح الصلاحيات (Staff RBAC & Anti-Fraud)</span>
+                  <span>طاقم العمل والصلاحيات</span>
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-bold font-mono">
                     {staffList.length} موظف
                   </span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  إضافة الكاشير والمدراء وتحديد صلاحية (المسح الإجباري بالكاميرا 🔒 أو الإدخال اليدوي) لكل موظف على حدة
+                  إضافة الكاشير والمدراء وتحديد صلاحية المسح الإجباري بالكاميرا 🔒 أو الإدخال اليدوي
                 </p>
               </div>
             </div>
@@ -3064,7 +3610,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 ⚡
               </div>
               <div>
-                <span className="font-bold text-white block">سعة نقاط البيع (POS Cashiers Quota):</span>
+                <span className="font-bold text-white block">سعة نقاط البيع (الكاشير):</span>
                 <span className="text-slate-400 text-[11px]">
                   مستغل حالياً <strong className="text-white">{activeCashiersCount}</strong> من أصل <strong className="text-amber-400">{maxCashiersAllowed}</strong> كاشير متاح في باقتك.
                 </span>
@@ -3085,7 +3631,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
                   : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
               }`}>
-                {isCashierLimitReached ? 'اكتملت السعة (2/2)' : `${activeCashiersCount}/${maxCashiersAllowed} متاح`}
+                {isCashierLimitReached ? 'اكتملت السعة' : `${activeCashiersCount}/${maxCashiersAllowed} متاح`}
               </span>
             </div>
           </div>
@@ -3103,7 +3649,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 <tr className="border-b border-slate-800 text-slate-400 font-medium">
                   <th className="pb-3 px-3">اسم الموظف</th>
                   <th className="pb-3 px-3">رقم الجوال (الدخول)</th>
-                  <th className="pb-3 px-3">الصلاحية (Role)</th>
+                  <th className="pb-3 px-3">الصلاحية</th>
                   <th className="pb-3 px-3">رمز الدخول (PIN)</th>
                   <th className="pb-3 px-3">صلاحية المسح</th>
                   <th className="pb-3 px-3">حالة الحساب</th>
@@ -3195,549 +3741,73 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       )}
 
       {/* ========================================== */}
-      {/* 📜 TAB 6: سجل العمليات والكوبونات المركزي (Operations Ledger) */}
+      {/* 🍔 TAB 2: الكتالوج والخدمات */}
       {/* ========================================== */}
-      {activeTab === 'logs' && (() => {
-        // Date Boundaries
-        const now = new Date();
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        const sevenDaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000;
-        const thirtyDaysAgo = startOfToday - 30 * 24 * 60 * 60 * 1000;
+      {!isStoreSuspended && activeTab === 'catalog' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Subtabs Switcher */}
+          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl w-fit shadow-md flex-wrap">
+            <button
+              type="button"
+              onClick={() => setCatalogSection('products')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                catalogSection === 'products'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>المنيو والمنتجات ({productItemsCount})</span>
+            </button>
 
-        // Apply all filters: Date, Action, Staff, Entry Method, Search Query
-        const filteredAuditLogs = auditLogs.filter((log) => {
-          const logTime = new Date(log.created_at).getTime();
+            <button
+              type="button"
+              onClick={() => setCatalogSection('services')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                catalogSection === 'services'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <Calendar className="w-4 h-4" />
+              <span>الخدمات والمواعيد ({serviceItemsCount})</span>
+            </button>
 
-          // Date filter
-          if (logDateFilter === 'TODAY' && logTime < startOfToday) return false;
-          if (logDateFilter === '7DAYS' && logTime < sevenDaysAgo) return false;
-          if (logDateFilter === '30DAYS' && logTime < thirtyDaysAgo) return false;
-
-          // Action Type filter
-          if (logActionFilter === 'PURCHASE' && log.action !== 'PURCHASE') return false;
-          if (
-            logActionFilter === 'REDEEM' &&
-            log.action !== 'REDEEM_COUPON' &&
-            log.action !== 'REDEEM_REWARD' &&
-            log.action !== 'PURCHASE_COUPON'
-          ) {
-            return false;
-          }
-          if (logActionFilter === 'ADJUSTMENT' && log.action !== 'ADJUSTMENT') return false;
-          if (
-            logActionFilter === 'SERVICE_BOOKING' &&
-            log.action !== 'SERVICE_BOOKING' &&
-            (log.action as string) !== 'BOOKING'
-          ) {
-            return false;
-          }
-
-          // Entry method filter
-          if (logFilter === 'manual' && log.entry_method !== 'manual') return false;
-          if (logFilter === 'qr_scan' && log.entry_method === 'manual') return false;
-
-          // Staff filter
-          if (logStaffFilter !== 'ALL') {
-            const cashierName = log.metadata?.cashier_name || '';
-            const matchingStaff = staffList.find(
-              (s) => s.id === logStaffFilter || s.name === logStaffFilter || s.id === log.staff_id
-            );
-            const matchesId = log.staff_id === logStaffFilter;
-            const matchesName =
-              cashierName === logStaffFilter || (matchingStaff && cashierName === matchingStaff.name);
-            if (!matchesId && !matchesName) return false;
-          }
-
-          // Search Query
-          if (logSearchQuery.trim()) {
-            const q = logSearchQuery.trim().toLowerCase();
-            const customerName = (log.customer_name || '').toLowerCase();
-            const customerPhone = (log.customer_phone || '').toLowerCase();
-            const couponCode = (log.metadata?.coupon_code || '').toLowerCase();
-            const privilegeTitle = (log.metadata?.privilege_title || '').toLowerCase();
-            const note = (log.metadata?.note || '').toLowerCase();
-            const cashierName = (log.metadata?.cashier_name || '').toLowerCase();
-            const amountStr = log.purchase_amount ? log.purchase_amount.toString() : '';
-
-            const matches =
-              customerName.includes(q) ||
-              customerPhone.includes(q) ||
-              couponCode.includes(q) ||
-              privilegeTitle.includes(q) ||
-              note.includes(q) ||
-              cashierName.includes(q) ||
-              amountStr.includes(q);
-            if (!matches) return false;
-          }
-
-          return true;
-        });
-
-        // Summary calculations
-        const totalSalesAmount = filteredAuditLogs
-          .filter((l) => l.action === 'PURCHASE')
-          .reduce((sum, l) => sum + (Number(l.purchase_amount) || 0), 0);
-
-        const totalPointsAwarded = filteredAuditLogs
-          .filter((l) => l.points_changed > 0)
-          .reduce((sum, l) => sum + l.points_changed, 0);
-
-        const totalRedeemedCoupons = filteredAuditLogs.filter(
-          (l) => l.action === 'REDEEM_COUPON' || l.action === 'REDEEM_REWARD'
-        ).length;
-
-        const manualLogsCount = filteredAuditLogs.filter((l) => l.entry_method === 'manual').length;
-        const qrLogsCount = filteredAuditLogs.filter((l) => l.entry_method !== 'manual').length;
-
-        const handleRefreshLogs = async () => {
-          try {
-            const fresh = await LoyaltyService.getAuditLogs(store.id);
-            setAuditLogs(fresh);
-          } catch (e) {
-            console.error(e);
-          }
-        };
-
-        return (
-          <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-            
-            {/* Header Title & Subtitle */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-              <div className="flex items-center space-x-3 rtl:space-x-reverse">
-                <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shadow-sm">
-                  <FileText className="w-6 h-6 text-amber-400" />
-                </div>
-                <div>
-                  <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                    <span>سجل العمليات والكوبونات المركزي (Operations Ledger)</span>
-                    {manualLogsCount > 0 && (
-                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse">
-                        ⚠️ {manualLogsCount} إدخال يدوي
-                      </span>
-                    )}
-                  </h3>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    دفتر الأستاذ الموحد والمحدث لحظياً لجميع حركات النقاط والكوبونات وتفاصيل العمليات المالية وطرق المسح
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={handleRefreshLogs}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold flex items-center gap-1.5 self-start sm:self-auto transition shadow-sm"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>تحديث السجل 🔄</span>
-              </button>
-            </div>
-
-            {/* 📊 Summary Metrics Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
-                <span className="text-[11px] text-slate-400 block font-medium">إجمالي العمليات</span>
-                <div className="flex items-center justify-between">
-                  <span className="text-xl font-black text-white font-mono">{filteredAuditLogs.length}</span>
-                  <Layers className="w-4 h-4 text-slate-500" />
-                </div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
-                <span className="text-[11px] text-slate-400 block font-medium">مبيعات الفواتير</span>
-                <div className="flex items-center justify-between">
-                  <span className="text-xl font-black text-emerald-400 font-mono">
-                    {totalSalesAmount.toLocaleString()} <span className="text-xs font-sans">ر.س</span>
-                  </span>
-                  <Coins className="w-4 h-4 text-emerald-500" />
-                </div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
-                <span className="text-[11px] text-slate-400 block font-medium">النقاط الممنوحة</span>
-                <div className="flex items-center justify-between">
-                  <span className="text-xl font-black text-amber-400 font-mono">
-                    +{totalPointsAwarded.toLocaleString()}
-                  </span>
-                  <Zap className="w-4 h-4 text-amber-500" />
-                </div>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
-                <span className="text-[11px] text-slate-400 block font-medium">كوبونات تم حرقها</span>
-                <div className="flex items-center justify-between">
-                  <span className="text-xl font-black text-rose-400 font-mono">{totalRedeemedCoupons}</span>
-                  <Flame className="w-4 h-4 text-rose-500" />
-                </div>
-              </div>
-            </div>
-
-            {/* 🔍 Quick Filter Suite */}
-            <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
-              
-              {/* Row 1: Search Bar & Date Filter Presets */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                
-                {/* Search Box */}
-                <div className="sm:col-span-6 relative">
-                  <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={logSearchQuery}
-                    onChange={(e) => setLogSearchQuery(e.target.value)}
-                    placeholder="بحث سريع بالاسم، رقم الجوال، كود الكوبون، أو المبلغ..."
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl pr-10 pl-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500 transition"
-                  />
-                  {logSearchQuery && (
-                    <button
-                      onClick={() => setLogSearchQuery('')}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Date Filter Buttons */}
-                <div className="sm:col-span-6 flex items-center justify-start sm:justify-end gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-                  <span className="text-xs text-slate-400 font-medium ml-1 shrink-0 flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5" />
-                    <span>التاريخ:</span>
-                  </span>
-                  {[
-                    { id: 'ALL', label: 'الكل' },
-                    { id: 'TODAY', label: 'اليوم' },
-                    { id: '7DAYS', label: 'آخر 7 أيام' },
-                    { id: '30DAYS', label: 'آخر 30 يوماً' },
-                  ].map((df) => (
-                    <button
-                      key={df.id}
-                      onClick={() => setLogDateFilter(df.id as any)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
-                        logDateFilter === df.id
-                          ? 'bg-amber-500 text-black shadow-sm'
-                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-                      }`}
-                    >
-                      {df.label}
-                    </button>
-                  ))}
-                </div>
-
-              </div>
-
-              {/* Row 2: Operation Type, Entry Method, and Cashier Filters */}
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-2 border-t border-slate-800/80">
-                
-                {/* Action Type Filters */}
-                <div className="sm:col-span-6 flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs text-slate-400 font-medium ml-1 shrink-0">نوع العملية:</span>
-                  {[
-                    { id: 'ALL', label: 'الكل' },
-                    { id: 'PURCHASE', label: '🛒 شراء ونقاط' },
-                    { id: 'REDEEM', label: '🔥 حرق كوبونات' },
-                    { id: 'SERVICE_BOOKING', label: '💇‍♂️ حجز مواعيد' },
-                    { id: 'ADJUSTMENT', label: '⚡ تعديل رصيد' },
-                  ].map((af) => (
-                    <button
-                      key={af.id}
-                      onClick={() => setLogActionFilter(af.id as any)}
-                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition ${
-                        logActionFilter === af.id
-                          ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {af.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Entry Method & Staff Dropdowns */}
-                <div className="sm:col-span-6 flex items-center justify-start sm:justify-end gap-2 flex-wrap">
-                  
-                  {/* Entry Method Buttons */}
-                  <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
-                    <button
-                      onClick={() => setLogFilter('all')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${
-                        logFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      الكل
-                    </button>
-                    <button
-                      onClick={() => setLogFilter('qr_scan')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${
-                        logFilter === 'qr_scan'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <ShieldCheck className="w-3 h-3" />
-                      <span>مسح مباشر ({qrLogsCount})</span>
-                    </button>
-                    <button
-                      onClick={() => setLogFilter('manual')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex items-center gap-1 ${
-                        logFilter === 'manual'
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      <AlertTriangle className="w-3 h-3 text-amber-400" />
-                      <span>يدوي ({manualLogsCount})</span>
-                    </button>
-                  </div>
-
-                  {/* Cashier Staff Dropdown */}
-                  {staffList.length > 0 && (
-                    <select
-                      value={logStaffFilter}
-                      onChange={(e) => setLogStaffFilter(e.target.value)}
-                      className="bg-slate-900 border border-slate-800 text-slate-300 text-xs font-bold rounded-xl px-3 py-1.5 outline-none focus:border-amber-500"
-                    >
-                      <option value="ALL">جميع الكاشيرات ({staffList.length})</option>
-                      {staffList.map((s) => (
-                        <option key={s.id} value={s.name}>
-                          {s.name} ({s.role === 'admin' ? 'مدير' : 'كاشير'})
-                        </option>
-                      ))}
-                    </select>
-                  )}
-
-                </div>
-
-              </div>
-
-            </div>
-
-            {/* 📋 Unified Operations Ledger Table */}
-            <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
-              <table className="w-full text-right text-xs">
-                <thead>
-                  <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-950/80">
-                    <th className="py-3.5 px-3">التاريخ والوقت</th>
-                    <th className="py-3.5 px-3">نوع الحركة</th>
-                    <th className="py-3.5 px-3">التفاصيل (المبلغ / الكوبون)</th>
-                    <th className="py-3.5 px-3">اسم وبيانات العميل</th>
-                    <th className="py-3.5 px-3">طريقة الإدخال</th>
-                    <th className="py-3.5 px-3">الكاشير / المسؤول</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {filteredAuditLogs.length > 0 ? (
-                    filteredAuditLogs.map((log) => {
-                      const isManual = log.entry_method === 'manual';
-                      return (
-                        <tr
-                          key={log.id}
-                          className={`transition ${
-                            isManual ? 'bg-amber-500/[0.03] hover:bg-amber-500/[0.07]' : 'hover:bg-slate-900/60'
-                          }`}
-                        >
-                          {/* 1. التاريخ والوقت */}
-                          <td className="py-3.5 px-3 text-slate-300 font-mono whitespace-nowrap">
-                            <div className="font-bold text-slate-200">
-                              {new Date(log.created_at).toLocaleDateString('ar-SA', {
-                                day: 'numeric',
-                                month: 'short',
-                                year: 'numeric',
-                              })}
-                            </div>
-                            <div className="text-[10px] text-slate-500">
-                              {new Date(log.created_at).toLocaleTimeString('ar-SA', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </div>
-                          </td>
-
-                          {/* 2. نوع الحركة */}
-                          <td className="py-3.5 px-3">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
-                                log.action === 'PURCHASE'
-                                  ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                                  : log.action === 'REDEEM_COUPON' || log.action === 'REDEEM_REWARD'
-                                  ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
-                                  : log.action === 'PURCHASE_COUPON'
-                                  ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
-                                  : log.action === 'SERVICE_BOOKING' || (log.action as string) === 'BOOKING'
-                                  ? 'bg-blue-500/10 text-blue-300 border-blue-500/30'
-                                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                              }`}
-                            >
-                              {log.action === 'PURCHASE' ? (
-                                <>
-                                  <Zap className="w-3 h-3" />
-                                  <span>🛒 شراء واكتساب نقاط</span>
-                                </>
-                              ) : log.action === 'REDEEM_COUPON' || log.action === 'REDEEM_REWARD' ? (
-                                <>
-                                  <Flame className="w-3 h-3 text-rose-400" />
-                                  <span>🔥 حرق واستلام كوبون</span>
-                                </>
-                              ) : log.action === 'PURCHASE_COUPON' ? (
-                                <>
-                                  <Gift className="w-3 h-3" />
-                                  <span>🎁 شراء كوبون بالنقاط</span>
-                                </>
-                              ) : log.action === 'SERVICE_BOOKING' || (log.action as string) === 'BOOKING' ? (
-                                <>
-                                  <Calendar className="w-3 h-3 text-blue-400" />
-                                  <span>💇‍♂️ حجز موعد خدمة</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Sliders className="w-3 h-3" />
-                                  <span>⚡ تعديل رصيد يدوي</span>
-                                </>
-                              )}
-                            </span>
-                          </td>
-
-                          {/* 3. التفاصيل (مبلغ الفاتورة أو اسم الكوبون وكوده) */}
-                          <td className="py-3.5 px-3">
-                            <div className="space-y-0.5">
-                              {log.action === 'PURCHASE' ? (
-                                <div>
-                                  <span className="font-bold text-white font-mono text-xs">
-                                    فاتورة: {log.purchase_amount || 0} ر.س
-                                  </span>
-                                  <span className="text-[11px] font-bold text-amber-400 font-mono mr-2 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                                    +{log.points_changed} XP
-                                  </span>
-                                </div>
-                              ) : log.action === 'SERVICE_BOOKING' || (log.action as string) === 'BOOKING' ? (
-                                <div className="space-y-0.5">
-                                  <div className="font-bold text-white text-xs flex items-center gap-1.5">
-                                    <span>{log.metadata?.service_name || 'خدمة'}</span>
-                                    {log.purchase_amount ? (
-                                      <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
-                                        {log.purchase_amount} ر.س
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                  <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-                                    <span className="text-blue-300 font-bold">{log.metadata?.specialist_name || 'أي مختص'}</span>
-                                    <span>•</span>
-                                    <span>{log.metadata?.booking_date} الساعة {log.metadata?.booking_time}</span>
-                                    {log.metadata?.booking_number && (
-                                      <span className="text-amber-400 font-bold">#{log.metadata.booking_number}</span>
-                                    )}
-                                  </div>
-                                </div>
-                              ) : log.metadata?.privilege_title || log.metadata?.coupon_code ? (
-                                <div>
-                                  <strong className="text-white text-xs block">
-                                    {log.metadata.privilege_title || 'مكافأة'}
-                                  </strong>
-                                  {log.metadata?.coupon_code && (
-                                    <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30 mt-0.5 inline-block">
-                                      كود: {log.metadata.coupon_code}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <div>
-                                  <span className="text-white font-mono font-bold">
-                                    {log.points_changed > 0 ? `+${log.points_changed}` : log.points_changed} XP
-                                  </span>
-                                  {log.metadata?.reason && (
-                                    <span className="text-[10px] text-slate-400 block mt-0.5">
-                                      السبب: {log.metadata.reason}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </td>
-
-                          {/* 4. اسم وبيانات العميل */}
-                          <td className="py-3.5 px-3">
-                            <div className="font-bold text-white">
-                              {log.customer_name || 'عميل المتجر'}
-                            </div>
-                            <div className="text-[11px] font-mono text-slate-400 mt-0.5" dir="ltr">
-                              {log.customer_phone || log.customer_id?.substring(0, 10)}
-                            </div>
-                          </td>
-
-                          {/* 5. طريقة الإدخال */}
-                          <td className="py-3.5 px-3">
-                            {isManual ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-300 border border-amber-500/40">
-                                <AlertTriangle className="w-3 h-3 text-amber-400" />
-                                <span>⚠️ إدخال يدوي</span>
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-                                <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                                <span>🛡️ مسح مباشر</span>
-                              </span>
-                            )}
-                          </td>
-
-                          {/* 6. الكاشير / المسؤول المنفذ */}
-                          <td className="py-3.5 px-3 font-medium text-slate-300">
-                            {log.action === 'PURCHASE_COUPON' ? (
-                              <span className="text-xs text-slate-400">📱 العميل (عبر المحفظة)</span>
-                            ) : (
-                              <div>
-                                <span className="text-xs font-bold text-white">
-                                  {log.metadata?.cashier_name ||
-                                    staffList.find((s) => s.id === log.staff_id)?.name ||
-                                    'كاشير المتجر'}
-                                </span>
-                                {log.metadata?.note && (
-                                  <span className="text-[10px] text-slate-400 block mt-0.5">
-                                    {log.metadata.note}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="py-12 text-center text-slate-500 space-y-2">
-                        <FileText className="w-8 h-8 text-slate-600 mx-auto" />
-                        <p className="text-xs">لا توجد أي حركات مطابقة لشروط البحث والفلتر المحددة.</p>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
+            <button
+              type="button"
+              onClick={() => setCatalogSection('modifiers')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                catalogSection === 'modifiers'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <Tag className="w-4 h-4" />
+              <span>الأقسام والإضافات ({globalCategories.length + globalModifierGroups.length})</span>
+            </button>
           </div>
-        );
-      })()}
 
-      {/* ========================================== */}
-      {/* 🍔 TAB 1: قائمة المنتجات والمنيو (Products & Menu) */}
-      {/* ========================================== */}
-      {activeTab === 'catalog' && (
-        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-          {/* Header & Quick Action */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-              <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shadow-sm">
-                <ShoppingBag className="w-6 h-6 text-amber-400" />
-              </div>
-              <div>
-                <h3 className="text-base sm:text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
-                  <span>المنيو والمنتجات (Menu & Products)</span>
-                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-slate-700 font-bold font-mono">
-                    {catalogItems.filter((i) => i.item_type !== 'service').length} منتج
-                  </span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  إدارة أصناف الطعام، المشروبات، والمنتجات العادية مع خيارات التخصيص والإضافات
-                </p>
-              </div>
-            </div>
+          {/* Sub-Section 1: Products */}
+          {catalogSection === 'products' && (
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+              {/* Header & Quick Action */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                    <ShoppingBag className="w-6 h-6 text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
+                      <span>المنيو والمنتجات</span>
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-slate-700 font-bold font-mono">
+                        {catalogItems.filter((i) => i.item_type !== 'service').length} منتج
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      إدارة أصناف الطعام، المشروبات، والمنتجات مع خيارات التخصيص
+                    </p>
+                  </div>
+                </div>
 
             <button
               type="button"
@@ -3957,29 +4027,27 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 📅 TAB 2: الخدمات والمواعيد (Services & Bookings) */}
-      {/* ========================================== */}
-      {activeTab === 'services' && (
-        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-          {/* Main Services Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-              <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 shadow-sm">
-                <Calendar className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base sm:text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
-                  <span>الخدمات، المواعيد والمختصين (Services & Bookings)</span>
-                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold font-mono">
-                    {bookings.length} موعد مسجل
-                  </span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  إدارة باقات الخدمات، مدة كل خدمة، طاقم المختصين، وسجل حجوزات العملاء المباشرة
-                </p>
-              </div>
-            </div>
+          {/* Sub-Section 2: Services */}
+          {catalogSection === 'services' && (
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+              {/* Main Services Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                    <Calendar className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
+                      <span>الخدمات والمواعيد والمختصين</span>
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-slate-700 font-bold font-mono">
+                        {bookings.length} موعد مسجل
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      إدارة باقات الخدمات، المختصين، وسجل حجوزات المواعيد
+                    </p>
+                  </div>
+                </div>
 
             {/* Sub-tab Navigation */}
             <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800 self-start sm:self-auto">
@@ -4515,26 +4583,24 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 🏷️ TAB 3: الأقسام والإضافات المركزية (Centralized Categories & Modifiers) */}
-      {/* ========================================== */}
-      {activeTab === 'modifiers' && (
-        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
-                <Tag className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base sm:text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
-                  <span>مكتبة الأقسام والإضافات المركزية (Categories & Modifiers Library)</span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  حدد الأقسام والإضافات المركزية مسبقاً، واستخدمها كوسوم (Tags) سريعة داخل أي صنف أو خدمة
-                </p>
-              </div>
-            </div>
+          {/* Sub-Section 3: Modifiers & Categories */}
+          {catalogSection === 'modifiers' && (
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                    <Tag className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
+                      <span>الأقسام ومجموعات الإضافات</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      تجهيز الأقسام والإضافات لاستخدامها كوسوم سريعة داخل الأصناف والخدمات
+                    </p>
+                  </div>
+                </div>
 
             {/* Subtabs Switcher */}
             <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800 self-start sm:self-auto">
@@ -4735,32 +4801,66 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           )}
         </div>
       )}
+        </div>
+      )}
 
       {/* ========================================== */}
-      {/* ⚙️ TAB 7: هوية المتجر والسلايدر (Branding & Slider) */}
+      {/* ⚙️ TAB 6: الإعدادات والفوترة */}
       {/* ========================================== */}
-      {activeTab === 'settings' && (
-        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-              <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300 shadow-sm">
-                <Sliders className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-white">إعدادات وهوية المتجر والدومين (Branding & Settings)</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  تعديل اسم المتجر، ألوان الهوية، رقم الجوال للتواصل والدخول، الدومين الخاص، ومعامل النقاط
-                </p>
-              </div>
-            </div>
-
-            <a
-              href={`/merchant/onboarding?store_id=${store.id}`}
-              className="px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-bold transition flex items-center gap-1.5 self-start md:self-auto"
+      {!isStoreSuspended && activeTab === 'settings' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Subtabs Switcher */}
+          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl w-fit shadow-md">
+            <button
+              type="button"
+              onClick={() => setSettingsSection('identity')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                settingsSection === 'identity'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
             >
-              <span>معالج تهيئة المتجر (Onboarding) 🚀</span>
-            </a>
+              <Sliders className="w-4 h-4" />
+              <span>هوية المتجر والشعار</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSettingsSection('billing')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                settingsSection === 'billing'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <CreditCard className="w-4 h-4" />
+              <span>الاشتراك والفوترة</span>
+            </button>
           </div>
+
+          {/* Sub-Section 1: Identity & Theme */}
+          {settingsSection === 'identity' && (
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                    <Sliders className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">إعدادات وهوية المتجر</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      تعديل اسم المتجر، ألوان الهوية، الشعار، الدومين الخاص، ومعامل النقاط
+                    </p>
+                  </div>
+                </div>
+
+                <a
+                  href={`/merchant/onboarding?store_id=${store.id}`}
+                  className="px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-bold transition flex items-center gap-1.5 self-start md:self-auto"
+                >
+                  <span>معالج تهيئة المتجر 🚀</span>
+                </a>
+              </div>
 
           <form onSubmit={handleSaveLoyaltySettings} className="grid grid-cols-1 md:grid-cols-12 gap-6">
             
@@ -5586,10 +5686,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 💳 TAB 8: الاشتراك والفوترة */}
-      {/* ========================================== */}
-      {!subscriptionInfo?.isSuspended && activeTab === 'billing' && (() => {
+          {/* Sub-Section 2: Billing */}
+          {settingsSection === 'billing' && (() => {
         const currentPlan: BillingPlan =
           allPlans.find((p) => p.id === (store as any).subscription_plan_id || p.code === (store as any).plan_code) ||
           allPlans.find((p) => p.code === 'PRO' || p.active) ||
@@ -5971,6 +6069,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           </div>
         );
       })()}
+        </div>
+      )}
 
       {/* ========================================== */}
       {/* ➕ Modals (Outside tabs for clean overlays) */}
