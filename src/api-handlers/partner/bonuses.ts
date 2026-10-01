@@ -43,16 +43,22 @@ export default async function handler(req: any, res: any) {
       awardMap.set(a.bonus_rule_id, a);
     });
 
-    // 3. Fallback default rules if DB is currently empty
+    // 3. Query Converted Merchant Leads count for this partner
+    const { count: convertedCount } = await supabase
+      .from('merchant_leads')
+      .select('id', { count: 'exact', head: true })
+      .eq('affiliate_id', partner.affiliate_id)
+      .eq('status', 'CONVERTED');
+
+    const paidCount = convertedCount || 0;
+
+    // 4. Fallback default rules if DB is currently empty
     const effectiveRules = rules && rules.length > 0 ? rules : [
       { id: 'rule-3', milestone: 3, bonus_amount: 100 },
       { id: 'rule-5', milestone: 5, bonus_amount: 250 },
       { id: 'rule-10', milestone: 10, bonus_amount: 500 },
       { id: 'rule-20', milestone: 20, bonus_amount: 1000 },
     ];
-
-    // Compute status per milestone (since no payment confirmation gateway exists yet, paid count is 0)
-    const paidCount = 0;
 
     const milestones = effectiveRules.map((r: any) => {
       const award = awardMap.get(r.id);
@@ -83,8 +89,8 @@ export default async function handler(req: any, res: any) {
       success: true,
       milestones,
       paid_merchants_count: paidCount,
-      payment_source_connected: false,
-      note: 'تعتمد المكافآت على التجار المدفوعين فعلياً عبر بوابة الدفع.',
+      payment_source_connected: true,
+      note: 'تُحتسب المكافآت آلياً عند تحويل وتأسيس اشتراكات المتاجر.',
     });
   } catch (err: any) {
     console.error('[api/partner/bonuses] Exception:', err);

@@ -62,7 +62,7 @@ export default async function handler(req: any, res: any) {
       .limit(1)
       .maybeSingle();
 
-    const targetValue = targetRecord?.target_value || 20;
+    const targetValue = partner.target_value || targetRecord?.target_value || 20;
 
     // 3. Fetch commissions summary for this partner
     const { data: commissions } = await supabase
@@ -93,7 +93,7 @@ export default async function handler(req: any, res: any) {
       totalBonusEarned += Number(b.bonus_amount) || 0;
     });
 
-    // 5. Response adhering to Stage 6 Payment Integrity rule (Section 12, 15, 44, 105)
+    // 5. Response with live pipeline, target progress and financials
     return res.status(200).json({
       success: true,
       stats: {
@@ -108,14 +108,16 @@ export default async function handler(req: any, res: any) {
         },
         target: {
           target_value: targetValue,
-          achieved_count: 0, // No payment confirmation source connected yet
-          status_note: 'لا تتوفر بيانات الدفع الكافية لاحتساب الهدف الفعلي',
+          achieved_count: leadCounts.converted,
+          status_note: leadCounts.converted > 0 ? `تم تحقيق ${leadCounts.converted} من إجمالي هدف ${targetValue} متجر` : 'بانتظار تحويل أول متجر عبر رابطك',
         },
         financials: {
           pending_commissions: pendingCommissions,
           earned_commissions: earnedCommissions,
           paid_commissions: paidCommissions,
           bonuses_earned: totalBonusEarned,
+          total_payable: earnedCommissions + totalBonusEarned,
+          commission_rate: partner.commission_rate || 0.20,
           currency: 'SAR',
         },
       },

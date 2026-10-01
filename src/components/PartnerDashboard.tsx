@@ -246,44 +246,98 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       try {
         const tok = sessionStorage.getItem('RADAR_PARTNER_AUTH_TOKEN');
         const headers = tok ? { Authorization: `Bearer ${tok}` } : undefined;
+        let apiLoaded = false;
 
-        // Try API if available
+        // 1. Try API if token available
         if (headers) {
-          const statsRes = await fetch('/api/partner/stats', { headers });
-          if (statsRes.ok) {
-            const statsData = await statsRes.json();
-            if (statsData.success && statsData.stats) setStats(statsData.stats);
-          }
+          try {
+            const [statsRes, assetsRes, commRes, bonusRes] = await Promise.all([
+              fetch('/api/partner/stats', { headers }),
+              fetch('/api/partner/assets', { headers }),
+              fetch('/api/partner/commissions', { headers }),
+              fetch('/api/partner/bonuses', { headers }),
+            ]);
 
-          const assetsRes = await fetch('/api/partner/assets', { headers });
-          if (assetsRes.ok) {
-            const assetsData = await assetsRes.json();
-            if (assetsData.success) {
-              if (assetsData.sales_kit) setSalesKit(assetsData.sales_kit);
-              if (assetsData.status_templates) setStatusTemplates(assetsData.status_templates);
-              if (assetsData.logo_pitch) setLogoPitch(assetsData.logo_pitch);
+            if (statsRes.ok) {
+              const statsData = await statsRes.json();
+              if (statsData.success && statsData.stats) setStats(statsData.stats);
             }
+            if (assetsRes.ok) {
+              const assetsData = await assetsRes.json();
+              if (assetsData.success) {
+                if (assetsData.sales_kit) setSalesKit(assetsData.sales_kit);
+                if (assetsData.status_templates) setStatusTemplates(assetsData.status_templates);
+                if (assetsData.logo_pitch) setLogoPitch(assetsData.logo_pitch);
+              }
+            }
+            if (commRes.ok) {
+              const commData = await commRes.json();
+              if (commData.success) {
+                setCommissions(commData.commissions || []);
+                if (commData.summary) setCommissionsSummary(commData.summary);
+              }
+            }
+            if (bonusRes.ok) {
+              const bonusData = await bonusRes.json();
+              if (bonusData.success && bonusData.milestones) {
+                setBonusMilestones(bonusData.milestones);
+              }
+            }
+            apiLoaded = true;
+          } catch (e) {
+            console.warn('Partner API fetch warning:', e);
           }
+        }
 
-          const commRes = await fetch('/api/partner/commissions', { headers });
-          if (commRes.ok) {
-            const commData = await commRes.json();
-            if (commData.success) {
-              setCommissions(commData.commissions || []);
-              if (commData.summary) setCommissionsSummary(commData.summary);
-            }
-          }
+        // 2. Dual-mode fallback / hydration via LoyaltyService
+        if (!apiLoaded) {
+          const [summary, commList, bonusData, allLeads] = await Promise.all([
+            LoyaltyService.getPartnerFinancialSummary(partner.id, partner.affiliate_id),
+            LoyaltyService.getPartnerCommissions(partner.id),
+            LoyaltyService.getPartnerBonuses(partner.id, partner.affiliate_id),
+            LoyaltyService.getAllLeads(),
+          ]);
 
-          const bonusRes = await fetch('/api/partner/bonuses', { headers });
-          if (bonusRes.ok) {
-            const bonusData = await bonusRes.json();
-            if (bonusData.success && bonusData.milestones) {
-              setBonusMilestones(bonusData.milestones);
-            }
+          const partnerRef = (partner.affiliates?.referral_code || partner.referral_code || '').toLowerCase().trim();
+          const matchedLeads = allLeads.filter(
+            (l) => (l.referral_code || '').toLowerCase().trim() === partnerRef
+          );
+          const convertedCount = matchedLeads.filter((l) => l.status === 'CONVERTED').length;
+          const targetVal = partner.target_value || 20;
+
+          setStats({
+            pipeline: {
+              total_leads: matchedLeads.length,
+              converted: convertedCount,
+            },
+            target: {
+              target_value: targetVal,
+              achieved_count: convertedCount,
+              status_note: convertedCount > 0 ? `تم تحقيق ${convertedCount} من إجمالي هدف ${targetVal} متجر` : 'بانتظار تحويل أول متجر عبر رابطك',
+            },
+            financials: {
+              pending_commissions: summary.pending_commissions,
+              earned_commissions: summary.earned_commissions,
+              paid_commissions: summary.paid_commissions,
+              bonuses_earned: summary.bonuses_earned,
+              commission_rate: partner.commission_rate || 0.20,
+              currency: 'SAR',
+            },
+          });
+
+          setCommissions(commList || []);
+          setCommissionsSummary({
+            total_pending: summary.pending_commissions,
+            total_earned: summary.earned_commissions,
+            total_paid: summary.paid_commissions,
+          });
+
+          if (bonusData?.milestones) {
+            setBonusMilestones(bonusData.milestones);
           }
         }
       } catch (err) {
-        console.warn('Using client-side generated partner assets and stats');
+        console.warn('Dashboard data loader exception:', err);
       } finally {
         setLoadingStats(false);
       }
@@ -304,7 +358,11 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
         
         if (client) {
           let query = client.from('merchant_leads').select('*', { count: 'exact' });
-          if (refCode) {
+          if (partner.affiliate_id && refCode) {
+            query = query.or(`affiliate_id.eq.${partner.affiliate_id},partner_id.eq.${partner.id},referral_code.eq.${refCode}`);
+          } else if (partner.affiliate_id) {
+            query = query.or(`affiliate_id.eq.${partner.affiliate_id},partner_id.eq.${partner.id}`);
+          } else if (refCode) {
             query = query.or(`partner_id.eq.${partner.id},referral_code.eq.${refCode}`);
           } else {
             query = query.eq('partner_id', partner.id);
@@ -321,7 +379,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           const to = from + 14;
           const { data, count, error } = await query.range(from, to).order('created_at', { ascending: false });
 
-          if (!error && data) {
+          if (!error && data && data.length > 0) {
             setLeads(data as MerchantLead[]);
             setTotalLeads(count || data.length);
             setLeadsPage(pageToLoad);
@@ -330,9 +388,23 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           }
         }
 
-        // Fallback: empty array
-        setLeads([]);
-        setTotalLeads(0);
+        // Fallback: search local leads
+        const allLocalLeads = await LoyaltyService.getAllLeads();
+        const partnerRef = (partner.affiliates?.referral_code || partner.referral_code || '').toLowerCase().trim();
+        let matched = allLocalLeads.filter(
+          (l) => (l.referral_code || '').toLowerCase().trim() === partnerRef
+        );
+        if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
+          matched = matched.filter((l) => l.status === leadsStatusFilter);
+        }
+        if (leadsSearch.trim()) {
+          const s = leadsSearch.toLowerCase().trim();
+          matched = matched.filter(
+            (l) => l.store_name?.toLowerCase().includes(s) || l.manager_name?.toLowerCase().includes(s) || l.phone?.includes(s)
+          );
+        }
+        setLeads(matched);
+        setTotalLeads(matched.length);
       } catch (err) {
         console.warn('Error fetching partner leads:', err);
       } finally {
@@ -1372,7 +1444,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             <div className="p-5 border-b border-slate-800 flex items-center justify-between">
               <div>
                 <h4 className="text-base font-bold text-white">دفتر حركات العمولات</h4>
-                <p className="text-xs text-slate-400">سجل شفاف لكل عملية بيع أو اشتراك محول بنسبة 20%</p>
+                <p className="text-xs text-slate-400">سجل شفاف لكل عملية تأسيس أو اشتراك محول بنسبة {Math.round((partner?.commission_rate || 0.20) * 100)}%</p>
               </div>
             </div>
 

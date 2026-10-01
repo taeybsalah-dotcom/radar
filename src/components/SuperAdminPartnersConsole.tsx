@@ -24,6 +24,12 @@ import {
   Send,
   MessageSquare,
   Share2,
+  DollarSign,
+  Percent,
+  Receipt,
+  Coins,
+  CreditCard,
+  Sliders,
 } from 'lucide-react';
 
 export const SuperAdminPartnersConsole: React.FC = () => {
@@ -42,7 +48,20 @@ export const SuperAdminPartnersConsole: React.FC = () => {
   const [partnerSlug, setPartnerSlug] = useState('');
   const [region, setRegion] = useState('');
   const [monthlyTarget, setMonthlyTarget] = useState<number | ''>('');
+  const [commissionRate, setCommissionRate] = useState<number>(20);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Commission Rate Edit Modal
+  const [rateModalPartner, setRateModalPartner] = useState<any | null>(null);
+  const [editingRate, setEditingRate] = useState<number>(20);
+  const [isUpdatingRate, setIsUpdatingRate] = useState(false);
+
+  // Settlement Modal State
+  const [settlePartner, setSettlePartner] = useState<any | null>(null);
+  const [settleSummary, setSettleSummary] = useState<any | null>(null);
+  const [settleReference, setSettleReference] = useState('');
+  const [isSettling, setIsSettling] = useState(false);
+  const [loadingSettleSummary, setLoadingSettleSummary] = useState(false);
 
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
   const [copiedAction, setCopiedAction] = useState<{ id: string; type: 'affiliate' | 'merchant' } | null>(null);
@@ -80,7 +99,81 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     setPartnerSlug('');
     setRegion('');
     setMonthlyTarget('');
+    setCommissionRate(20);
     setIsModalOpen(true);
+  };
+
+  // Open Rate Edit Modal
+  const openRateModal = (p: any) => {
+    const rateVal = Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100);
+    setEditingRate(rateVal);
+    setRateModalPartner(p);
+  };
+
+  const handleUpdateRateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rateModalPartner) return;
+    setIsUpdatingRate(true);
+    setError(null);
+    try {
+      const decimalRate = (Number(editingRate) || 20) / 100;
+      await LoyaltyService.updatePartnerCommissionRate(rateModalPartner.id, decimalRate);
+      setSuccess(`تم بنجاح تحديث نسبة عمولة [${rateModalPartner.display_name}] إلى ${editingRate}% 🎉`);
+      setRateModalPartner(null);
+      await fetchPartners();
+    } catch (err: any) {
+      setError(err.message || 'فشل في تحديث نسبة العمولة');
+    } finally {
+      setIsUpdatingRate(false);
+    }
+  };
+
+  // Open Settlement Modal
+  const openSettlementModal = async (p: any) => {
+    setSettlePartner(p);
+    setSettleReference(`PAYOUT-${new Date().toISOString().substring(0, 10)}-${p.slug || 'PARTNER'}`);
+    setSettleSummary(null);
+    setLoadingSettleSummary(true);
+
+    try {
+      const summary = await LoyaltyService.getPartnerFinancialSummary(p.id, p.affiliate_id);
+      setSettleSummary(summary);
+    } catch (err) {
+      console.warn('Failed to get partner financial summary:', err);
+      setSettleSummary({
+        pending_commissions: 0,
+        earned_commissions: 0,
+        paid_commissions: 0,
+        bonuses_earned: 0,
+        total_payable: 0,
+        currency: 'SAR',
+      });
+    } finally {
+      setLoadingSettleSummary(false);
+    }
+  };
+
+  const handleExecuteSettlement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!settlePartner) return;
+    setIsSettling(true);
+    setError(null);
+
+    try {
+      const res = await LoyaltyService.settlePartnerCommissions(settlePartner.id, settleReference.trim());
+      if (res.success) {
+        setSuccess(`تمت تسوية وصرف عمولات ومكافآت [${settlePartner.display_name}] بمبلغ ${res.total_amount || settleSummary?.total_payable || 0} ر.س بنجاح 💳✨`);
+        try { confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } }); } catch {}
+        setSettlePartner(null);
+        await fetchPartners();
+      } else {
+        setError(res.error || 'فشلت عملية التسوية');
+      }
+    } catch (err: any) {
+      setError(err.message || 'حدث خطأ أثناء تنفيذ التسوية');
+    } finally {
+      setIsSettling(false);
+    }
   };
 
   // Auto-generate slug when typing name
@@ -140,6 +233,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     setIsSubmitting(true);
 
     try {
+      const decimalRate = (Number(commissionRate) || 20) / 100;
       await LoyaltyService.addPartner({
         name: cleanName,
         phone: cleanPhone,
@@ -147,10 +241,11 @@ export const SuperAdminPartnersConsole: React.FC = () => {
         pin_code: pinCode.trim() || '1234',
         slug: cleanSlug,
         region: region.trim(),
-        target_value: typeof monthlyTarget === 'number' ? monthlyTarget : 0,
+        target_value: typeof monthlyTarget === 'number' ? monthlyTarget : 20,
+        commission_rate: decimalRate,
       });
 
-      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بكود: ${cleanCode} والرمز السري (PIN): ${pinCode.trim() || '1234'} 🎉`);
+      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بنسبة عمولة ${commissionRate}% وكود: ${cleanCode} والرمز السري (PIN): ${pinCode.trim() || '1234'} 🎉`);
       setIsModalOpen(false);
       setPartnerName('');
       setPartnerPhone('');
@@ -158,6 +253,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
       setPartnerSlug('');
       setRegion('');
       setMonthlyTarget('');
+      setCommissionRate(20);
       setModalError(null);
 
       try { confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } }); } catch {}
@@ -357,12 +453,13 @@ ${origin}/join?ref=${refCode}`;
                 <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-bold text-slate-400">
                   <th className="py-3.5 px-4">اسم المسوق والجوال</th>
                   <th className="py-3.5 px-4">كود الإحالة (Referral)</th>
+                  <th className="py-3.5 px-4">نسبة العمولة (%)</th>
                   <th className="py-3.5 px-4">الرمز السري (PIN)</th>
                   <th className="py-3.5 px-4">رابط الإحالة المباشر</th>
                   <th className="py-3.5 px-4 min-w-[240px]">إرسال ونشر (WhatsApp & Copy)</th>
                   <th className="py-3.5 px-4">المنطقة والهدف</th>
                   <th className="py-3.5 px-4">حالة الحساب</th>
-                  <th className="py-3.5 px-4 text-center">الإجراءات</th>
+                  <th className="py-3.5 px-4 text-center">الإجراءات والتسوية</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
@@ -370,6 +467,7 @@ ${origin}/join?ref=${refCode}`;
                   const refCode = p.affiliates?.referral_code || '—';
                   const phone = p.affiliates?.phone || '—';
                   const partnerPin = p.pin_code || '1234';
+                  const commRatePct = Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100);
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/40 transition">
@@ -384,6 +482,22 @@ ${origin}/join?ref=${refCode}`;
                         <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30">
                           {refCode}
                         </span>
+                      </td>
+
+                      {/* 💰 Custom Commission % with Quick Edit */}
+                      <td className="py-4 px-4">
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-black text-xs">
+                            {commRatePct}%
+                          </span>
+                          <button
+                            onClick={() => openRateModal(p)}
+                            className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                            title="تعديل نسبة العمولة المخصصة"
+                          >
+                            <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                          </button>
+                        </div>
                       </td>
 
                       <td className="py-4 px-4 font-mono text-slate-300">
@@ -517,29 +631,33 @@ ${origin}/join?ref=${refCode}`;
                         </span>
                       </td>
 
+                      {/* Actions & Settlement */}
                       <td className="py-4 px-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {/* Settle Button */}
+                          <button
+                            onClick={() => openSettlementModal(p)}
+                            className="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1"
+                            title="صرف وتسوية العمولات والمكافآت"
+                          >
+                            <CreditCard className="w-3.5 h-3.5" />
+                            <span>تسوية</span>
+                          </button>
+
+                          {/* Toggle Active Status */}
                           <button
                             onClick={() => handleToggleStatus(p.id, p.affiliate_id, p.active)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                            className={`p-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
                               p.active
                                 ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30'
                                 : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                             }`}
+                            title={p.active ? 'إيقاف الحساب' : 'تنشيط الحساب'}
                           >
-                            {p.active ? (
-                              <>
-                                <Lock className="w-3 h-3" />
-                                <span>إيقاف</span>
-                              </>
-                            ) : (
-                              <>
-                                <Unlock className="w-3 h-3" />
-                                <span>تنشيط</span>
-                              </>
-                            )}
+                            {p.active ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
                           </button>
 
+                          {/* Preview Link */}
                           <a
                             href={`/join?ref=${refCode}`}
                             target="_blank"
@@ -620,29 +738,37 @@ ${origin}/join?ref=${refCode}`;
                 <p className="text-[10px] text-slate-500">يستخدمه المسوق للدخول إلى لوحة أرباحه عبر /partner</p>
               </div>
 
-              {/* Field 3: Referral Code (r + 4 digits) */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
-                  <span className="flex items-center gap-1">
+              {/* Field 3: Referral Code & Custom Commission Rate */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
                     <Tag className="w-3.5 h-3.5 text-amber-400" />
-                    <span>كود الإحالة التلقائي (Referral Code)</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setReferralCode(generateNewReferralCode())}
-                    className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>توليد كود آخر</span>
-                  </button>
-                </label>
-                <input
-                  type="text"
-                  value={referralCode}
-                  onChange={(e) => setReferralCode(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                  placeholder="r4819"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-mono text-amber-400 font-bold outline-none transition"
-                />
+                    <span>كود الإحالة</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                    placeholder="r4819"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-3 py-2.5 text-xs font-mono text-amber-400 font-bold outline-none transition"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
+                    <Percent className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>نسبة العمولة (%)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={commissionRate}
+                    onChange={(e) => setCommissionRate(Number(e.target.value))}
+                    placeholder="20"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-2xl px-3 py-2.5 text-xs font-mono text-emerald-400 font-bold outline-none transition"
+                  />
+                </div>
               </div>
 
               {/* Field 4: PIN Code (Default 1234) */}
@@ -688,7 +814,7 @@ ${origin}/join?ref=${refCode}`;
                     min={0}
                     value={monthlyTarget}
                     onChange={(e) => setMonthlyTarget(e.target.value ? Number(e.target.value) : '')}
-                    placeholder="10 متاجر"
+                    placeholder="20 متجر"
                     className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-3 py-2.5 text-xs text-white placeholder-slate-600 outline-none transition"
                   />
                 </div>
@@ -719,6 +845,177 @@ ${origin}/join?ref=${refCode}`;
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Quick Edit Commission Rate */}
+      {rateModalPartner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-sm w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Percent className="w-5 h-5 text-emerald-400" />
+                <h4 className="text-sm font-black text-white">تعديل نسبة العمولة المخصصة</h4>
+              </div>
+              <button onClick={() => setRateModalPartner(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-300">
+              <span className="text-slate-400 block text-[11px]">الشريك:</span>
+              <strong className="text-white text-sm">{rateModalPartner.display_name}</strong>
+              <span className="text-slate-500 block text-[10px] font-mono mt-0.5">كود: {rateModalPartner.affiliates?.referral_code || rateModalPartner.referral_code}</span>
+            </div>
+
+            <form onSubmit={handleUpdateRateSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                  <span>نسبة العمولة الجديدة (%)</span>
+                  <span className="font-mono text-emerald-400 font-black">{editingRate}%</span>
+                </label>
+                <input
+                  type="range"
+                  min="5"
+                  max="50"
+                  step="5"
+                  value={editingRate}
+                  onChange={(e) => setEditingRate(Number(e.target.value))}
+                  className="w-full accent-emerald-500 cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                  <span>5%</span>
+                  <span>20% (افتراضي)</span>
+                  <span>35%</span>
+                  <span>50%</span>
+                </div>
+              </div>
+
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={isUpdatingRate}
+                  className="flex-1 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isUpdatingRate ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>حفظ النسبة الجديدة 💾</span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRateModalPartner(null)}
+                  className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-bold transition"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Settlement & Payout */}
+      {settlePartner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-md w-full bg-slate-900 border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-5 h-5 text-amber-400" />
+                <h4 className="text-base font-black text-white">صرف وتسوية عمولات الشريك</h4>
+              </div>
+              <button onClick={() => setSettlePartner(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <strong className="text-white block text-sm">{settlePartner.display_name}</strong>
+                  <span className="text-slate-400 text-[11px]">📞 {settlePartner.affiliates?.phone || '—'}</span>
+                </div>
+                <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono font-bold text-xs">
+                  كود: {settlePartner.affiliates?.referral_code || settlePartner.referral_code}
+                </span>
+              </div>
+            </div>
+
+            {loadingSettleSummary ? (
+              <div className="py-8 text-center space-y-2">
+                <Loader2 className="w-6 h-6 text-amber-400 animate-spin mx-auto" />
+                <p className="text-xs text-slate-400">جاري احتساب دفتر العمولات والمكافآت...</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Financial Breakdowns */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
+                    <span className="text-[10px] text-slate-400 block">عمولات مكتسبة</span>
+                    <span className="text-base font-black font-mono text-emerald-400 block">
+                      {settleSummary?.earned_commissions || 0} <span className="text-xs">ر.س</span>
+                    </span>
+                  </div>
+
+                  <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
+                    <span className="text-[10px] text-slate-400 block">مكافآت محققة</span>
+                    <span className="text-base font-black font-mono text-amber-400 block">
+                      {settleSummary?.bonuses_earned || 0} <span className="text-xs">ر.س</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Total Grand Payable */}
+                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-emerald-400 block">إجمالي المبلغ المستحق للصرف</span>
+                    <span className="text-[10px] text-slate-400">سيتم ترحيل هذه الحركات إلى (مدفوع PAID)</span>
+                  </div>
+                  <span className="text-2xl font-black font-mono text-emerald-400">
+                    {settleSummary?.total_payable || 0} <span className="text-xs font-normal">ر.س</span>
+                  </span>
+                </div>
+
+                <form onSubmit={handleExecuteSettlement} className="space-y-3 pt-2">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
+                      <CreditCard className="w-3.5 h-3.5 text-amber-400" />
+                      <span>مرجع التحويل أو الحوالة البنكية *</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={settleReference}
+                      onChange={(e) => setSettleReference(e.target.value)}
+                      placeholder="مثال: حوالة الراجحي #94821"
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs text-white placeholder-slate-600 outline-none transition"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex items-center gap-2">
+                    <button
+                      type="submit"
+                      disabled={isSettling || (settleSummary?.total_payable || 0) === 0}
+                      className="flex-1 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {isSettling ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>جاري التسوية...</span>
+                        </>
+                      ) : (
+                        <span>تأكيد الصرف والترحيل إلى مدفوع 💸</span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSettlePartner(null)}
+                      className="px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-bold transition"
+                    >
+                      إلغاء
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
           </div>
         </div>
       )}

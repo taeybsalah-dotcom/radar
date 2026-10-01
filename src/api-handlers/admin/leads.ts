@@ -377,18 +377,16 @@ export default async function handler(req: any, res: any) {
             })
             .eq('id', leadId);
 
-          if (!directErr) {
-            return res.status(200).json({ success: true, lead_id: leadId, status: 'CONVERTED', store_id: storeId });
+          if (directErr) {
+            return res.status(500).json({
+              success: false,
+              code: 'DATABASE_RPC_ERROR',
+              error: 'فشل في إتمام عملية تأسيس المتجر',
+            });
           }
-
-          return res.status(500).json({
-            success: false,
-            code: 'DATABASE_RPC_ERROR',
-            error: 'فشل في إتمام عملية تأسيس المتجر',
-          });
         }
 
-        if (!data || data.success === false) {
+        if (data && data.success === false) {
           const statusMap: Record<string, number> = {
             NOT_FOUND: 404,
             STORE_NOT_FOUND: 404,
@@ -400,8 +398,19 @@ export default async function handler(req: any, res: any) {
           return res.status(statusMap[data?.code] || 400).json(data);
         }
 
+        // 💰 Trigger Affiliate Commission & Milestone Recording (Idempotent)
+        try {
+          await supabase.rpc('record_lead_conversion_commission', {
+            p_lead_id: leadId,
+            p_store_id: storeId,
+            p_basis_amount: 195.00,
+          });
+        } catch (commErr) {
+          console.warn('[api/admin/leads] record_lead_conversion_commission error (non-blocking):', commErr);
+        }
+
         // Return success (including idempotent_replay flag if winner retried)
-        return res.status(200).json(data);
+        return res.status(200).json(data || { success: true, lead_id: leadId, status: 'CONVERTED', store_id: storeId });
       }
 
       case 'ROLLBACK_CONVERSION': {

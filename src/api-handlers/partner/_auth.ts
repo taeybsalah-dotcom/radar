@@ -11,6 +11,8 @@ export interface AuthenticatedPartner {
   region: string | null;
   active: boolean;
   referral_code: string;
+  commission_rate?: number;
+  target_value?: number;
 }
 
 export async function authenticatePartner(req: any, res: any): Promise<{ supabase: any; partner: AuthenticatedPartner } | null> {
@@ -60,11 +62,11 @@ export async function authenticatePartner(req: any, res: any): Promise<{ supabas
     const slugParam = req.query?.slug;
 
     if (partnerIdParam) {
-      partnerQuery = supabase.from('partner_accounts').select('*, affiliates(referral_code, name, status)').eq('id', partnerIdParam);
+      partnerQuery = supabase.from('partner_accounts').select('*, affiliates(referral_code, name, status, commission_rate)').eq('id', partnerIdParam);
     } else if (slugParam) {
-      partnerQuery = supabase.from('partner_accounts').select('*, affiliates(referral_code, name, status)').eq('slug', String(slugParam).toLowerCase().trim());
+      partnerQuery = supabase.from('partner_accounts').select('*, affiliates(referral_code, name, status, commission_rate)').eq('slug', String(slugParam).toLowerCase().trim());
     } else {
-      partnerQuery = supabase.from('partner_accounts').select('*, affiliates(referral_code, name, status)').eq('active', true).limit(1);
+      partnerQuery = supabase.from('partner_accounts').select('*, affiliates(referral_code, name, status, commission_rate)').eq('active', true).limit(1);
     }
   } else {
     // Normal Supabase Auth JWT
@@ -80,7 +82,7 @@ export async function authenticatePartner(req: any, res: any): Promise<{ supabas
 
     partnerQuery = supabase
       .from('partner_accounts')
-      .select('*, affiliates(referral_code, name, status)')
+      .select('*, affiliates(referral_code, name, status, commission_rate)')
       .eq('auth_user_id', userData.user.id);
   }
 
@@ -117,6 +119,7 @@ export async function authenticatePartner(req: any, res: any): Promise<{ supabas
   }
 
   const referralCode = rawPartner.affiliates?.referral_code || '';
+  const commissionRate = typeof rawPartner.commission_rate === 'number' ? rawPartner.commission_rate : (typeof rawPartner.affiliates?.commission_rate === 'number' ? rawPartner.affiliates.commission_rate : 0.20);
 
   const partner: AuthenticatedPartner = {
     id: rawPartner.id,
@@ -127,6 +130,8 @@ export async function authenticatePartner(req: any, res: any): Promise<{ supabas
     region: rawPartner.region,
     active: rawPartner.active,
     referral_code: referralCode,
+    commission_rate: commissionRate,
+    target_value: rawPartner.target_value || 20,
   };
 
   return { supabase, partner };

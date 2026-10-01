@@ -400,8 +400,20 @@ export interface PartnerAccount {
   region?: string | null;
   active: boolean;
   referral_code: string;
+  commission_rate?: number; // e.g. 0.20 = 20%
+  target_value?: number;
+  pin_code?: string;
   created_at?: string;
   updated_at?: string;
+  affiliates?: {
+    id?: string;
+    name?: string;
+    phone?: string;
+    referral_code?: string;
+    status?: string;
+    commission_rate?: number;
+    notes?: string;
+  };
 }
 
 export interface PartnerCommission {

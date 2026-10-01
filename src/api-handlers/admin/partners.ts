@@ -116,7 +116,7 @@ export default async function handler(req: any, res: any) {
     if (req.method === 'GET') {
       const { data: partners, error } = await supabase
         .from('partner_accounts')
-        .select('*, affiliates(id, name, phone, referral_code, status)')
+        .select('*, affiliates(id, name, phone, referral_code, status, commission_rate)')
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -131,7 +131,7 @@ export default async function handler(req: any, res: any) {
       // Also fetch unmapped affiliates so Super Admin can easily pick one to onboard
       const { data: allAffiliates } = await supabase
         .from('affiliates')
-        .select('id, name, phone, referral_code, status')
+        .select('id, name, phone, referral_code, status, commission_rate')
         .eq('status', 'ACTIVE')
         .order('created_at', { ascending: false });
 
@@ -145,7 +145,7 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // 4. POST Method: Create New Partner Account
+    // 4. POST Method: Create New Partner Account OR Settle Commissions
     if (req.method === 'POST') {
       const body = req.body;
       if (!body || typeof body !== 'object') {
@@ -156,7 +156,37 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      const { affiliate_id, display_name, slug, region, target_value = 20 } = body;
+      const action = String(body.action || '').trim().toUpperCase();
+
+      // Action: Settle / Payout Commissions
+      if (action === 'SETTLE_COMMISSIONS') {
+        const partnerId = body.partner_id || body.partner_account_id;
+        if (!isValidUuid(partnerId)) {
+          return res.status(400).json({
+            success: false,
+            code: 'INVALID_PARTNER_ID',
+            error: 'معرف الشريك (partner_id) غير صالح',
+          });
+        }
+
+        const { data: settleResult, error: settleErr } = await supabase.rpc('admin_settle_partner_commissions', {
+          p_partner_account_id: partnerId,
+          p_settlement_reference: body.reference || `SETTLE-${Date.now()}`,
+        });
+
+        if (settleErr) {
+          console.error('[api/admin/partners] Settlement RPC error:', settleErr.message);
+          return res.status(500).json({
+            success: false,
+            code: 'DATABASE_RPC_ERROR',
+            error: 'فشل في تسوية عمولات ومكافآت الشريك',
+          });
+        }
+
+        return res.status(200).json(settleResult);
+      }
+
+      const { affiliate_id, display_name, slug, region, target_value = 20, commission_rate = 0.20 } = body;
 
       if (!isValidUuid(affiliate_id)) {
         return res.status(400).json({
@@ -191,6 +221,8 @@ export default async function handler(req: any, res: any) {
         });
       }
 
+      const commRate = typeof commission_rate === 'number' ? Math.max(0.01, Math.min(1.0, commission_rate)) : 0.20;
+
       // Call database RPC admin_create_partner_account
       const { data: result, error: rpcErr } = await supabase.rpc('admin_create_partner_account', {
         p_affiliate_id: affiliate_id,
@@ -218,6 +250,16 @@ export default async function handler(req: any, res: any) {
             SLUG_ALREADY_EXISTS: 409,
         };
         return res.status(statusMap[result?.code] || 400).json(result);
+      }
+
+      // Update custom commission rate if not default
+      if (commRate !== 0.20 && result.partner_id) {
+        try {
+          await supabase.from('partner_accounts').update({ commission_rate: commRate }).eq('id', result.partner_id);
+          await supabase.from('affiliates').update({ commission_rate: commRate }).eq('id', affiliate_id);
+        } catch (e) {
+          console.warn('[api/admin/partners] Update commission_rate warning:', e);
+        }
       }
 
       return res.status(200).json(result);
@@ -254,10 +296,14 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json(toggleResult);
       }
 
-      // Handle region / target update
+      // Handle region / target / commission_rate update
       const updates: any = { updated_at: new Date().toISOString() };
       if (typeof body.region === 'string') updates.region = body.region.trim();
       if (typeof body.display_name === 'string') updates.display_name = body.display_name.trim();
+      if (typeof body.target_value === 'number') updates.target_value = Math.max(1, body.target_value);
+      if (typeof body.commission_rate === 'number') {
+        updates.commission_rate = Math.max(0.01, Math.min(1.0, body.commission_rate));
+      }
 
       const { data: updatedPartner, error: updateErr } = await supabase
         .from('partner_accounts')
@@ -272,6 +318,18 @@ export default async function handler(req: any, res: any) {
           code: 'DATABASE_ERROR',
           error: 'فشل في تحديث بيانات الشريك',
         });
+      }
+
+      // Sync commission_rate to affiliates table
+      if (typeof body.commission_rate === 'number' && updatedPartner?.affiliate_id) {
+        try {
+          await supabase
+            .from('affiliates')
+            .update({ commission_rate: updates.commission_rate })
+            .eq('id', updatedPartner.affiliate_id);
+        } catch (e) {
+          console.warn('[api/admin/partners] Sync affiliate commission_rate warning:', e);
+        }
       }
 
       return res.status(200).json({

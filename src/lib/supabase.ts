@@ -24,6 +24,9 @@ import {
   BillingPlan,
   MerchantLead,
   LeadStatus,
+  PartnerAccount,
+  PartnerCommission,
+  PartnerBonusMilestone,
 } from '../types';
 import {
   INITIAL_STORES,
@@ -64,6 +67,9 @@ const STORAGE_KEYS = {
   LOCAL_ORDERS: 'radar_local_whatsapp_orders',
   LOCAL_PARTNERS: 'radar_local_partners',
   LOCAL_LEADS: 'radar_local_merchant_leads',
+  LOCAL_COMMISSIONS: 'radar_local_partner_commissions',
+  LOCAL_BONUS_AWARDS: 'radar_local_partner_bonus_awards',
+  LOCAL_BONUS_RULES: 'radar_local_partner_bonus_rules',
   LOCAL_BILLING_PLANS: 'radar_local_billing_plans',
   CONSUMED_TOKENS: 'radar_consumed_tokens',
 };
@@ -4858,13 +4864,16 @@ export const LoyaltyService = {
       const notes = p.affiliates?.notes || '';
       const parsedPinFromNotes = notes.match(/PIN:\s*(\S+)/)?.[1];
       const pinCode = p.pin_code || parsedPinFromNotes || '1234';
+      const commRate = typeof p.commission_rate === 'number' ? p.commission_rate : (typeof p.affiliates?.commission_rate === 'number' ? p.affiliates.commission_rate : 0.20);
 
       return {
         ...p,
         pin_code: pinCode,
         slug,
         referral_code: code,
-        affiliates: p.affiliates ? { ...p.affiliates, referral_code: code } : { referral_code: code },
+        commission_rate: commRate,
+        target_value: p.target_value || 20,
+        affiliates: p.affiliates ? { ...p.affiliates, referral_code: code, commission_rate: commRate } : { referral_code: code, commission_rate: commRate },
       };
     };
 
@@ -4873,7 +4882,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('partner_accounts')
-          .select('id, affiliate_id, display_name, slug, region, target_value, active, created_at, affiliates(id, name, phone, referral_code, status, notes)')
+          .select('id, affiliate_id, display_name, slug, region, target_value, commission_rate, active, created_at, affiliates(id, name, phone, referral_code, status, notes, commission_rate)')
           .order('created_at', { ascending: false });
         if (!error && data && data.length > 0) {
           const sanitized = data.map(sanitizePartner);
@@ -4897,9 +4906,11 @@ export const LoyaltyService = {
     slug?: string;
     region?: string;
     target_value?: number;
+    commission_rate?: number;
   }): Promise<any> {
     const cleanName = payload.name.trim();
     const cleanPhone = payload.phone.trim();
+    const commRate = typeof payload.commission_rate === 'number' ? Math.max(0.01, Math.min(1.0, payload.commission_rate)) : 0.20;
     
     // Normalization: r + digits
     let cleanCode = (payload.referral_code || '').trim().toLowerCase();
@@ -4926,7 +4937,8 @@ export const LoyaltyService = {
       display_name: cleanName,
       slug: cleanSlug,
       region: payload.region || '',
-      target_value: payload.target_value || 0,
+      target_value: payload.target_value || 20,
+      commission_rate: commRate,
       pin_code: pinCode,
       active: true,
       created_at: new Date().toISOString(),
@@ -4935,6 +4947,7 @@ export const LoyaltyService = {
         name: cleanName,
         phone: cleanPhone,
         referral_code: cleanCode,
+        commission_rate: commRate,
         status: 'ACTIVE',
         notes: `PIN: ${pinCode}`,
       },
@@ -4951,7 +4964,7 @@ export const LoyaltyService = {
       try {
         const { data: affData } = await supabase
           .from('affiliates')
-          .upsert([{ name: cleanName, phone: cleanPhone, referral_code: cleanCode, status: 'ACTIVE', notes: `PIN: ${pinCode}` }], { onConflict: 'phone' })
+          .upsert([{ name: cleanName, phone: cleanPhone, referral_code: cleanCode, status: 'ACTIVE', commission_rate: commRate, notes: `PIN: ${pinCode}` }], { onConflict: 'phone' })
           .select('id')
           .single();
 
@@ -4964,7 +4977,9 @@ export const LoyaltyService = {
             display_name: cleanName,
             slug: cleanSlug,
             region: payload.region || null,
-            target_value: payload.target_value || null,
+            target_value: payload.target_value || 20,
+            commission_rate: commRate,
+            pin_code: pinCode,
             active: true
           }]);
       } catch (e) {
@@ -5331,7 +5346,348 @@ export const LoyaltyService = {
       }
     }
 
+    // 💰 Auto-trigger commission recording and milestone evaluation
+    try {
+      await this.recordLeadConversionCommission(leadId, storeId);
+    } catch (commErr) {
+      console.warn('Auto recordLeadConversionCommission non-blocking warning:', commErr);
+    }
+
     return { success: true };
+  },
+
+  // ==============================================================================
+  // 💰 دفتر حركات العمولات والمكافآت للشركاء (Affiliate Financial Ledger & Milestones)
+  // ==============================================================================
+
+  async recordLeadConversionCommission(
+    leadId: string,
+    storeId: string,
+    basisAmount: number = 195.00
+  ): Promise<{ success: boolean; commission_id?: string; amount?: number; rate?: number; error?: string }> {
+    const supabase = getSupabaseClient();
+
+    // 1. Try Supabase RPC first if available
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('record_lead_conversion_commission', {
+          p_lead_id: leadId,
+          p_store_id: storeId,
+          p_basis_amount: basisAmount,
+        });
+
+        if (!error && data?.success) {
+          return {
+            success: true,
+            commission_id: data.commission_id,
+            amount: data.commission_amount,
+            rate: data.commission_rate,
+          };
+        }
+      } catch (e) {
+        console.warn('Supabase record_lead_conversion_commission RPC failed, using dual-mode fallback:', e);
+      }
+    }
+
+    // 2. Dual-mode Client Fallback:
+    const allLeads = await this.getAllLeads();
+    const lead = allLeads.find((l) => l.id === leadId);
+    if (!lead || !lead.referral_code) {
+      // Direct lead without affiliate code
+      return { success: true };
+    }
+
+    const allPartners = await this.getAllPartners();
+    const leadRef = (lead.referral_code || '').toLowerCase().trim();
+    const partner = allPartners.find((p) => {
+      const pRef = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim();
+      const pSlug = (p.slug || '').toLowerCase().trim();
+      return pRef === leadRef || pSlug === leadRef;
+    });
+
+    if (!partner) {
+      return { success: true };
+    }
+
+    const rate = typeof partner.commission_rate === 'number' ? partner.commission_rate : (typeof partner.affiliates?.commission_rate === 'number' ? partner.affiliates.commission_rate : 0.20);
+    const commAmount = Math.round(basisAmount * rate * 100) / 100;
+    const commId = `comm-${leadId}`;
+    const idempotencyKey = `conv_comm_${leadId}`;
+
+    const newComm = {
+      id: commId,
+      partner_account_id: partner.id,
+      merchant_lead_id: leadId,
+      store_id: storeId,
+      commission_type: 'STORE_CONVERSION',
+      basis_amount: basisAmount,
+      commission_rate: rate,
+      commission_amount: commAmount,
+      status: 'EARNED',
+      qualifying_event: 'تأسيس وتفعيل المتجر بنجاح',
+      idempotency_key: idempotencyKey,
+      merchant_name: lead.store_name,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Save to local commissions
+    const existingComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    const commIdx = existingComms.findIndex((c) => c.idempotency_key === idempotencyKey || c.id === commId);
+    if (commIdx !== -1) {
+      existingComms[commIdx] = { ...existingComms[commIdx], ...newComm };
+    } else {
+      existingComms.unshift(newComm);
+    }
+    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, existingComms);
+
+    // Evaluate Milestone Bonus Rules
+    const convertedLeadsCount = allLeads.filter(
+      (l) => (l.referral_code?.toLowerCase().trim() === leadRef) && (l.status === 'CONVERTED' || l.id === leadId)
+    ).length;
+
+    const defaultMilestones = [
+      { id: 'rule-3', milestone: 3, bonus_amount: 100 },
+      { id: 'rule-5', milestone: 5, bonus_amount: 250 },
+      { id: 'rule-10', milestone: 10, bonus_amount: 500 },
+      { id: 'rule-20', milestone: 20, bonus_amount: 1000 },
+    ];
+
+    const existingAwards = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+    for (const rule of defaultMilestones) {
+      if (convertedLeadsCount >= rule.milestone) {
+        const awardKey = `bonus_${partner.id}_${rule.milestone}`;
+        if (!existingAwards.some((a) => a.idempotency_key === awardKey)) {
+          existingAwards.push({
+            id: `award-${Date.now()}-${rule.milestone}`,
+            partner_account_id: partner.id,
+            bonus_rule_id: rule.id,
+            milestone: rule.milestone,
+            bonus_amount: rule.bonus_amount,
+            status: 'ACHIEVED',
+            idempotency_key: awardKey,
+            awarded_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+    }
+    saveLocalData(STORAGE_KEYS.LOCAL_BONUS_AWARDS, existingAwards);
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
+    return {
+      success: true,
+      commission_id: commId,
+      amount: commAmount,
+      rate,
+    };
+  },
+
+  async getPartnerCommissions(partnerId: string): Promise<any[]> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('partner_commissions')
+          .select('*, merchant_leads(store_name)')
+          .eq('partner_account_id', partnerId)
+          .order('created_at', { ascending: false });
+
+        if (!error && Array.isArray(data)) {
+          return data.map((c) => ({
+            ...c,
+            merchant_name: c.merchant_leads?.store_name || 'متجر محول',
+          }));
+        }
+      } catch (e) {
+        console.warn('Supabase getPartnerCommissions failed:', e);
+      }
+    }
+
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    return local.filter((c) => c.partner_account_id === partnerId);
+  },
+
+  async getPartnerBonuses(partnerId: string, affiliateId?: string): Promise<{ milestones: any[]; paidCount: number }> {
+    const supabase = getSupabaseClient();
+    let rules = [
+      { id: 'rule-3', milestone: 3, bonus_amount: 100 },
+      { id: 'rule-5', milestone: 5, bonus_amount: 250 },
+      { id: 'rule-10', milestone: 10, bonus_amount: 500 },
+      { id: 'rule-20', milestone: 20, bonus_amount: 1000 },
+    ];
+    let awards: any[] = [];
+    let convertedCount = 0;
+
+    if (supabase) {
+      try {
+        const [rulesRes, awardsRes, leadsRes] = await Promise.all([
+          supabase.from('partner_bonus_rules').select('*').eq('active', true).order('milestone', { ascending: true }),
+          supabase.from('partner_bonus_awards').select('*').eq('partner_account_id', partnerId),
+          affiliateId ? supabase.from('merchant_leads').select('id', { count: 'exact', head: true }).eq('affiliate_id', affiliateId).eq('status', 'CONVERTED') : Promise.resolve({ count: 0 } as any),
+        ]);
+
+        if (rulesRes.data && rulesRes.data.length > 0) rules = rulesRes.data;
+        if (awardsRes.data) awards = awardsRes.data;
+        if (typeof leadsRes.count === 'number') convertedCount = leadsRes.count;
+      } catch (e) {
+        console.warn('Supabase getPartnerBonuses query failed:', e);
+      }
+    }
+
+    if (convertedCount === 0) {
+      const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+      const allPartners = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+      const targetPartner = allPartners.find((p) => p.id === partnerId || p.affiliate_id === partnerId || p.affiliate_id === affiliateId);
+      const refCode = (targetPartner?.affiliates?.referral_code || targetPartner?.referral_code || '').toLowerCase().trim();
+      convertedCount = allLeads.filter((l) => l.status === 'CONVERTED' && (l.referral_code || '').toLowerCase().trim() === refCode).length;
+    }
+
+    const localAwards = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []).filter((a) => a.partner_account_id === partnerId);
+    const combinedAwards = [...awards, ...localAwards.filter((la) => !awards.some((a) => a.idempotency_key === la.idempotency_key))];
+
+    const awardMap = new Map();
+    combinedAwards.forEach((a) => {
+      awardMap.set(a.bonus_rule_id || `rule-${a.milestone}`, a);
+      if (a.milestone) awardMap.set(a.milestone, a);
+    });
+
+    const milestones = rules.map((r) => {
+      const award = awardMap.get(r.id) || awardMap.get(r.milestone);
+      let status: 'LOCKED' | 'IN_PROGRESS' | 'ACHIEVED' | 'AWARDED' = 'LOCKED';
+      if (award) {
+        status = award.status === 'PAID' ? 'AWARDED' : 'ACHIEVED';
+      } else if (convertedCount >= r.milestone) {
+        status = 'ACHIEVED';
+      } else if (convertedCount > 0) {
+        status = 'IN_PROGRESS';
+      }
+
+      return {
+        id: r.id,
+        milestone: r.milestone,
+        bonus_amount: Number(r.bonus_amount),
+        status,
+        current_progress: convertedCount,
+        required_merchants: r.milestone,
+        awarded_at: award?.awarded_at || null,
+      };
+    });
+
+    return { milestones, paidCount: convertedCount };
+  },
+
+  async getPartnerFinancialSummary(partnerId: string, affiliateId?: string): Promise<{
+    pending_commissions: number;
+    earned_commissions: number;
+    paid_commissions: number;
+    bonuses_earned: number;
+    total_payable: number;
+    currency: string;
+  }> {
+    const commissions = await this.getPartnerCommissions(partnerId);
+    const bonusesData = await this.getPartnerBonuses(partnerId, affiliateId);
+
+    let pending_commissions = 0;
+    let earned_commissions = 0;
+    let paid_commissions = 0;
+
+    commissions.forEach((c) => {
+      const amt = Number(c.commission_amount) || 0;
+      if (c.status === 'PENDING') pending_commissions += amt;
+      else if (c.status === 'EARNED') earned_commissions += amt;
+      else if (c.status === 'PAID') paid_commissions += amt;
+    });
+
+    let bonuses_earned = 0;
+    bonusesData.milestones.forEach((m) => {
+      if (m.status === 'ACHIEVED' || m.status === 'AWARDED') {
+        bonuses_earned += Number(m.bonus_amount) || 0;
+      }
+    });
+
+    return {
+      pending_commissions,
+      earned_commissions,
+      paid_commissions,
+      bonuses_earned,
+      total_payable: earned_commissions + bonuses_earned,
+      currency: 'SAR',
+    };
+  },
+
+  async settlePartnerCommissions(partnerId: string, reference?: string): Promise<{ success: boolean; total_amount?: number; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('admin_settle_partner_commissions', {
+          p_partner_account_id: partnerId,
+          p_settlement_reference: reference || `SETTLE-${Date.now()}`,
+        });
+
+        if (!error && data?.success) {
+          return { success: true, total_amount: Number(data.total_amount) };
+        }
+      } catch (e) {
+        console.warn('Supabase admin_settle_partner_commissions failed, settling locally:', e);
+      }
+    }
+
+    // Local settlement
+    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    let settledAmt = 0;
+    const updatedComms = localComms.map((c) => {
+      if (c.partner_account_id === partnerId && c.status === 'EARNED') {
+        settledAmt += Number(c.commission_amount) || 0;
+        return { ...c, status: 'PAID', updated_at: new Date().toISOString() };
+      }
+      return c;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
+
+    const localBonuses = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+    const updatedBonuses = localBonuses.map((b) => {
+      if (b.partner_account_id === partnerId && (b.status === 'ACHIEVED' || b.status === 'AWARDED')) {
+        return { ...b, status: 'PAID' };
+      }
+      return b;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_BONUS_AWARDS, updatedBonuses);
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+    return { success: true, total_amount: settledAmt };
+  },
+
+  async updatePartnerCommissionRate(partnerId: string, newRate: number): Promise<{ success: boolean; partner?: any; error?: string }> {
+    const cleanRate = Math.max(0.01, Math.min(1.0, Number(newRate) || 0.20));
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const idx = local.findIndex((p) => p.id === partnerId || p.affiliate_id === partnerId);
+    if (idx === -1) {
+      return { success: false, error: 'حساب الشريك غير موجود' };
+    }
+
+    const updated = {
+      ...local[idx],
+      commission_rate: cleanRate,
+      affiliates: local[idx].affiliates ? { ...local[idx].affiliates, commission_rate: cleanRate } : { commission_rate: cleanRate },
+    };
+    local[idx] = updated;
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, local);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('partner_accounts').update({ commission_rate: cleanRate }).eq('id', partnerId);
+        if (updated.affiliate_id) {
+          await supabase.from('affiliates').update({ commission_rate: cleanRate }).eq('id', updated.affiliate_id);
+        }
+      } catch (e) {
+        console.warn('Supabase updatePartnerCommissionRate error:', e);
+      }
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+    return { success: true, partner: updated };
   },
 
   async rollbackLeadConversion(leadId: string, reason?: string): Promise<{ success: boolean; error?: string }> {
