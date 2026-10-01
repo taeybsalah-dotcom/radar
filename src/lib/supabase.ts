@@ -22,6 +22,8 @@ import {
   GlobalModifierGroup,
   ServiceBooking,
   BillingPlan,
+  MerchantLead,
+  LeadStatus,
 } from '../types';
 import {
   INITIAL_STORES,
@@ -61,6 +63,7 @@ const STORAGE_KEYS = {
   LOCAL_BOOKINGS: 'radar_local_service_bookings',
   LOCAL_ORDERS: 'radar_local_whatsapp_orders',
   LOCAL_PARTNERS: 'radar_local_partners',
+  LOCAL_LEADS: 'radar_local_merchant_leads',
   LOCAL_BILLING_PLANS: 'radar_local_billing_plans',
   CONSUMED_TOKENS: 'radar_consumed_tokens',
 };
@@ -208,6 +211,39 @@ export function normalizeStore(s: any): Store {
     ...s,
     manager_contact,
     slider_images: slider_images.filter((img) => img && typeof img === 'object' && Boolean(img.image_url)),
+  };
+}
+
+export function normalizeLead(l: any): MerchantLead {
+  if (!l || typeof l !== 'object') {
+    return {
+      id: `lead-${Date.now()}`,
+      store_name: 'متجر جديد',
+      manager_name: 'مدير المتجر',
+      phone: '',
+      attribution_source: 'DIRECT',
+      status: 'NEW',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  return {
+    id: String(l.id || `lead-${Date.now()}`),
+    store_name: String(l.store_name || l.storeName || 'متجر جديد'),
+    manager_name: String(l.manager_name || l.managerName || l.owner_name || l.ownerName || 'مدير المتجر'),
+    phone: String(l.phone || ''),
+    city: l.city || null,
+    business_type: l.business_type || l.businessType || null,
+    attribution_source: l.attribution_source === 'REFERRAL' ? 'REFERRAL' : 'DIRECT',
+    referral_code: l.referral_code || l.referralCode || null,
+    status: (l.status as LeadStatus) || 'NEW',
+    conversion_started_at: l.conversion_started_at || null,
+    conversion_error: l.conversion_error || null,
+    converted_store_id: l.converted_store_id || null,
+    notes: l.notes || null,
+    created_at: l.created_at || new Date().toISOString(),
+    updated_at: l.updated_at || new Date().toISOString(),
   };
 }
 
@@ -5088,6 +5124,250 @@ export const LoyaltyService = {
     try {
       localStorage.removeItem('radar_partner_session');
     } catch {}
+  },
+
+  // ==============================================================================
+  // 📋 إدارة طلبات انضمام التجار (Merchant Leads Management)
+  // ==============================================================================
+  async getAllLeads(): Promise<MerchantLead[]> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('merchant_leads')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!error && Array.isArray(data)) {
+          const validLeads = data.map(normalizeLead);
+          saveLocalData(STORAGE_KEYS.LOCAL_LEADS, validLeads);
+          return validLeads;
+        }
+      } catch (e) {
+        console.warn('Supabase getAllLeads failed:', e);
+      }
+    }
+    const local = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+    return local.map(normalizeLead);
+  },
+
+  async submitLead(payload: {
+    store_name: string;
+    manager_name: string;
+    phone: string;
+    referral_code?: string;
+    city?: string;
+    business_type?: string;
+    notes?: string;
+  }): Promise<{ success: boolean; lead_id?: string; error?: string }> {
+    const cleanStore = payload.store_name.trim();
+    const cleanManager = payload.manager_name.trim();
+    const cleanPhone = payload.phone.trim();
+    const refCode = payload.referral_code?.trim() || null;
+
+    let normPhone = cleanPhone.replace(/[^0-9]/g, '');
+    if (normPhone.startsWith('00966')) normPhone = normPhone.substring(5);
+    else if (normPhone.startsWith('966')) normPhone = normPhone.substring(3);
+    if (normPhone.length === 10 && normPhone.startsWith('05')) normPhone = normPhone.substring(1);
+
+    const tempId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `lead-${Date.now()}`;
+    const newLead: MerchantLead = {
+      id: tempId,
+      store_name: cleanStore,
+      manager_name: cleanManager,
+      phone: cleanPhone,
+      city: payload.city || null,
+      business_type: payload.business_type || null,
+      attribution_source: refCode ? 'REFERRAL' : 'DIRECT',
+      referral_code: refCode,
+      status: 'NEW',
+      conversion_started_at: null,
+      conversion_error: null,
+      converted_store_id: null,
+      notes: payload.notes || (refCode ? `إحالة شريك: ${refCode}` : 'طلب انضمام مباشر من صفحة الهبوط'),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // 1. Try API gateway
+    try {
+      const res = await fetch('/api/lead-submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          store_name: cleanStore,
+          owner_name: cleanManager,
+          phone: normPhone,
+          referral_code: refCode,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.success) {
+          newLead.id = data.lead_id || tempId;
+          const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+          saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.phone !== cleanPhone)]);
+          return { success: true, lead_id: newLead.id };
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (errData?.error === 'DUPLICATE_PHONE') {
+          return { success: false, error: 'رقم الجوال مسجل مسبقاً في قائمة الطلبات أو المتاجر النشطة.' };
+        }
+        if (errData?.error === 'RATE_LIMITED') {
+          return { success: false, error: 'تم تجاوز الحد المسموح من الطلبات، يرجى المحاولة لاحقاً.' };
+        }
+        if (errData?.error === 'INVALID_PHONE') {
+          return { success: false, error: 'يرجى إدخال رقم جوال سعودي صحيح يبدأ بـ 05.' };
+        }
+      }
+    } catch (apiErr) {
+      console.warn('API lead-submit fetch failed, falling back to direct Supabase/localStorage:', apiErr);
+    }
+
+    // 2. Direct Supabase Client fallback
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('merchant_leads')
+          .insert([
+            {
+              store_name: cleanStore,
+              manager_name: cleanManager,
+              phone: cleanPhone,
+              normalized_phone: normPhone,
+              city: payload.city || null,
+              business_type: payload.business_type || null,
+              attribution_source: refCode ? 'REFERRAL' : 'DIRECT',
+              referral_code: refCode,
+              status: 'NEW',
+              notes: newLead.notes,
+            },
+          ])
+          .select('id')
+          .single();
+
+        if (!error && data?.id) {
+          newLead.id = data.id;
+          const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+          saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.id !== newLead.id)]);
+          return { success: true, lead_id: data.id };
+        }
+      } catch (dbErr) {
+        console.warn('Supabase direct insert merchant_leads error:', dbErr);
+      }
+    }
+
+    // 3. Local fallback persistence
+    const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.phone !== cleanPhone)]);
+    return { success: true, lead_id: newLead.id };
+  },
+
+  async updateLeadStatus(leadId: string, newStatus: LeadStatus, notes?: string): Promise<{ success: boolean; error?: string }> {
+    const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+    const updated = current.map((l) => {
+      if (l.id === leadId) {
+        return {
+          ...l,
+          status: newStatus,
+          notes: notes !== undefined ? notes : l.notes,
+          updated_at: new Date().toISOString(),
+        };
+      }
+      return l;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_LEADS, updated);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase
+          .from('merchant_leads')
+          .update({
+            status: newStatus,
+            notes: notes !== undefined ? notes : undefined,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', leadId);
+      } catch (err) {
+        console.warn('Supabase updateLeadStatus error:', err);
+      }
+    }
+
+    return { success: true };
+  },
+
+  async convertLeadToStore(leadId: string, storeId: string): Promise<{ success: boolean; error?: string }> {
+    const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+    const updated = current.map((l) => {
+      if (l.id === leadId) {
+        return {
+          ...l,
+          status: 'CONVERTED' as LeadStatus,
+          converted_store_id: storeId,
+          updated_at: new Date().toISOString(),
+        };
+      }
+      return l;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_LEADS, updated);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase
+          .from('merchant_leads')
+          .update({
+            status: 'CONVERTED',
+            converted_store_id: storeId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', leadId);
+      } catch (err) {
+        console.warn('Supabase convertLeadToStore error:', err);
+      }
+    }
+
+    return { success: true };
+  },
+
+  async rollbackLeadConversion(leadId: string, reason?: string): Promise<{ success: boolean; error?: string }> {
+    const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+    const updated = current.map((l) => {
+      if (l.id === leadId) {
+        return {
+          ...l,
+          status: 'APPROVED' as LeadStatus,
+          conversion_started_at: null,
+          conversion_error: reason || 'Rollback by admin',
+          updated_at: new Date().toISOString(),
+        };
+      }
+      return l;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_LEADS, updated);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase
+          .from('merchant_leads')
+          .update({
+            status: 'APPROVED',
+            conversion_started_at: null,
+            conversion_error: reason || 'Rollback by admin',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', leadId);
+      } catch (err) {
+        console.warn('Supabase rollbackLeadConversion error:', err);
+      }
+    }
+
+    return { success: true };
   },
 
   // ==============================================================================

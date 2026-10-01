@@ -78,56 +78,68 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // 4. Attribution Cookie is MANDATORY in Stage 4
+    // 4. Optional Attribution Cookie or Direct Referral Code Resolution
+    let affiliateId: string | null = null;
+    let referralCode: string | null = null;
+    let firstTouchAt: string = new Date().toISOString();
+
     const cookies = parseCookies(req.headers?.cookie);
     const rawToken = cookies['radar_aff_token'];
+    const attributionSecret = process.env.RADAR_ATTRIBUTION_SECRET;
 
-    if (!rawToken) {
-      return res.status(400).json({
-        success: false,
-        error: 'MISSING_ATTRIBUTION',
-      });
+    if (rawToken && attributionSecret) {
+      const verification = verifyAttributionToken(rawToken, attributionSecret);
+      if (verification.valid && verification.payload) {
+        affiliateId = verification.payload.affId;
+        referralCode = verification.payload.ref;
+        firstTouchAt = new Date(verification.payload.ts).toISOString();
+      }
     }
 
-    const attributionSecret = process.env.RADAR_ATTRIBUTION_SECRET;
     const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zagpvflyizbmzsbmhnts.supabase.co';
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-    if (!serviceRoleKey || !attributionSecret) {
-      console.error('[api/lead-submit] Missing server credentials (SUPABASE_SERVICE_ROLE_KEY or RADAR_ATTRIBUTION_SECRET)');
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.error('[api/lead-submit] Missing Supabase server credentials');
       return res.status(500).json({
         success: false,
         error: 'INTERNAL_ERROR',
+        message: 'خدمة استقبال الطلبات غير مهيأة بالشكل الصحيح.',
       });
     }
 
-    const verification = verifyAttributionToken(rawToken, attributionSecret);
-    if (!verification.valid || !verification.payload) {
-      if (verification.reason === 'EXPIRED') {
-        return res.status(400).json({
-          success: false,
-          error: 'EXPIRED_TOKEN',
-        });
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    // If no cookie attribution but body contains referral code, resolve affiliate from database
+    if (!affiliateId && body.referral_code && typeof body.referral_code === 'string') {
+      const inputRef = body.referral_code.trim().toLowerCase();
+      try {
+        const { data: aff } = await supabase
+          .from('affiliates')
+          .select('id, referral_code, status')
+          .or(`referral_code.ilike.${inputRef},referral_code.ilike.radar-${inputRef}`)
+          .eq('status', 'ACTIVE')
+          .maybeSingle();
+
+        if (aff) {
+          affiliateId = aff.id;
+          referralCode = aff.referral_code;
+        } else {
+          referralCode = inputRef;
+        }
+      } catch (err) {
+        console.warn('[api/lead-submit] Affiliate lookup warning:', err);
       }
-      return res.status(400).json({
-        success: false,
-        error: 'INVALID_ATTRIBUTION',
-      });
     }
-
-    const affiliateId = verification.payload.affId;
-    const referralCode = verification.payload.ref;
-    const firstTouchAt = new Date(verification.payload.ts).toISOString();
 
     // 5. Server-Side Trusted IP Extraction (Vercel Network)
     const clientIp = getTrustedClientIp(req);
 
     // 6. Invoke Protected PostgreSQL RPC using Service Role
     // Server-Side Mapping: owner_name -> p_manager_name
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-
+    let leadId: string | null = null;
     const { data: rpcResult, error: rpcError } = await supabase.rpc('submit_merchant_lead_internal', {
       p_store_name: storeName,
       p_manager_name: ownerName,
@@ -141,10 +153,52 @@ export default async function handler(req: any, res: any) {
     });
 
     if (rpcError) {
-      console.error('[api/lead-submit] RPC execution error:', rpcError.message);
-      return res.status(500).json({
-        success: false,
-        error: 'INTERNAL_ERROR',
+      console.warn('[api/lead-submit] RPC execution error, attempting direct insert fallback:', rpcError.message);
+      
+      // Fallback direct insert to merchant_leads table
+      const { data: directInsert, error: directError } = await supabase
+        .from('merchant_leads')
+        .insert([
+          {
+            store_name: storeName,
+            manager_name: ownerName,
+            phone: phone,
+            normalized_phone: normPhone,
+            attribution_source: affiliateId ? 'REFERRAL' : 'DIRECT',
+            affiliate_id: affiliateId,
+            referral_code: referralCode,
+            status: 'NEW',
+            notes: affiliateId ? `طلب عبر الشريك: ${referralCode}` : 'طلب مباشر من صفحة الهبوط',
+          },
+        ])
+        .select('id')
+        .single();
+
+      if (directError) {
+        console.error('[api/lead-submit] Direct insert failed:', directError.message);
+        if (directError.code === '23505') {
+          return res.status(409).json({
+            success: false,
+            error: 'DUPLICATE_PHONE',
+            message: 'رقم الجوال مسجل مسبقاً في قائمة الطلبات أو المتاجر النشطة.',
+          });
+        }
+        return res.status(500).json({
+          success: false,
+          error: 'INTERNAL_ERROR',
+          message: 'حدث خطأ أثناء حفظ الطلب.',
+        });
+      }
+
+      leadId = directInsert?.id;
+      
+      const isProduction = process.env.NODE_ENV === 'production' || req.headers?.['x-forwarded-proto'] === 'https';
+      const secureFlag = isProduction ? '; Secure' : '';
+      res.setHeader('Set-Cookie', `radar_aff_token=; Path=/; Max-Age=0; HttpOnly${secureFlag}; SameSite=Lax`);
+
+      return res.status(200).json({
+        success: true,
+        lead_id: leadId,
       });
     }
 
@@ -156,6 +210,7 @@ export default async function handler(req: any, res: any) {
         return res.status(409).json({
           success: false,
           error: 'DUPLICATE_PHONE',
+          message: rpcResult?.error || 'رقم الجوال مسجل مسبقاً كمتجر نشط أو طلب معلق.',
         });
       }
 
@@ -163,6 +218,7 @@ export default async function handler(req: any, res: any) {
         return res.status(429).json({
           success: false,
           error: 'RATE_LIMITED',
+          message: rpcResult?.error || 'تم تجاوز الحد المسموح من الطلبات، يرجى المحاولة لاحقاً.',
         });
       }
 
@@ -170,6 +226,7 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({
           success: false,
           error: 'INVALID_PHONE',
+          message: rpcResult?.error || 'يرجى إدخال رقم جوال سعودي صحيح.',
         });
       }
 
@@ -177,23 +234,28 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({
           success: false,
           error: 'INVALID_INPUT',
+          message: rpcResult?.error || 'البيانات المدخلة غير مكتملة.',
         });
       }
 
       return res.status(400).json({
         success: false,
         error: 'INVALID_INPUT',
+        message: rpcResult?.error || 'تعذر معالجة الطلب، يرجى مراجعة البيانات.',
       });
     }
+
+    leadId = rpcResult?.lead_id;
 
     // 8. On success: expire attribution cookie
     const isProduction = process.env.NODE_ENV === 'production' || req.headers?.['x-forwarded-proto'] === 'https';
     const secureFlag = isProduction ? '; Secure' : '';
     res.setHeader('Set-Cookie', `radar_aff_token=; Path=/; Max-Age=0; HttpOnly${secureFlag}; SameSite=Lax`);
 
-    // 9. Exact Public Contract Success Response: { "success": true } ONLY
+    // 9. Exact Public Contract Success Response: { "success": true, "lead_id": ... }
     return res.status(200).json({
       success: true,
+      lead_id: leadId,
     });
   } catch (err: any) {
     console.error('[api/lead-submit] Unhandled exception:', err?.message || err);

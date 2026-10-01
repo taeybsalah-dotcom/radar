@@ -21,7 +21,7 @@ import {
   Star,
   ChevronLeft,
 } from 'lucide-react';
-import { getSupabaseClient } from '../lib/supabase';
+import { getSupabaseClient, LoyaltyService } from '../lib/supabase';
 import confetti from 'canvas-confetti';
 
 // ==============================================================================
@@ -115,57 +115,29 @@ export const MerchantJoinLanding: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      // 1. Try API gateway
-      const payload = {
+      const res = await LoyaltyService.submitLead({
         store_name: storeName,
-        owner_name: ownerName,
+        manager_name: ownerName,
         phone: normalizedPhone,
         referral_code: referralCode || undefined,
-      };
+        notes: referralCode ? `طلب انضمام عبر الشريك: ${referralCode}` : 'طلب تفعيل مباشر من صفحة الهبوط الرسمية',
+      });
 
-      const response = await fetch('/api/lead-submit', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify(payload),
-      }).catch(() => null);
-
-      if (response && response.ok) {
-        const result = await response.json().catch(() => ({}));
-        if (result.success === true) {
-          setPageState('SUCCESS');
-          try { confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } }); } catch {}
-          return;
-        }
+      if (res.success) {
+        setPageState('SUCCESS');
+        try {
+          confetti({
+            particleCount: 150,
+            spread: 80,
+            origin: { y: 0.6 },
+            colors: ['#06B6D4', '#10B981', '#F59E0B', '#FFFFFF'],
+          });
+        } catch {}
+      } else {
+        setErrorMessage(res.error || 'حدث خطأ أثناء إرسال الطلب، يرجى مراجعة البيانات والمحاولة مجدداً.');
       }
-
-      // 2. Direct Supabase Client fallback
-      const client = getSupabaseClient();
-      if (client) {
-        const { error: dbError } = await client.from('merchant_leads').insert([
-          {
-            store_name: storeName,
-            manager_name: ownerName,
-            phone: normalizedPhone,
-            status: 'NEW',
-            referral_code: referralCode || null,
-            notes: 'طلب تفعيل مباشر من صفحة الهبوط الرسمية',
-          },
-        ]);
-
-        if (!dbError) {
-          setPageState('SUCCESS');
-          try { confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } }); } catch {}
-          return;
-        }
-      }
-
-      // Fallback: Show success
-      setPageState('SUCCESS');
-      try { confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } }); } catch {}
-    } catch {
+    } catch (err: any) {
+      console.error('[MerchantJoinLanding] Submit exception:', err);
       setErrorMessage('حدث خطأ في الاتصال، يرجى المحاولة مرة أخرى.');
     } finally {
       setIsSubmitting(false);
