@@ -3921,10 +3921,38 @@ export const LoyaltyService = {
     allInvoices[payload.storeId].unshift(createdInvoice);
     saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, allInvoices);
 
+    // 💰 Auto-convert matching merchant lead and credit affiliate commissions if lead exists
+    try {
+      const allLeads = await this.getAllLeads();
+      const normalizeStr = (s?: string | null) => (s || '').replace(/[\s\-\+\(\)]/g, '').toLowerCase();
+      const storePhone = normalizeStr(currentStore.manager_contact);
+      const storeName = (currentStore.name || '').trim().toLowerCase();
+
+      const matchingLead = allLeads.find((l) => {
+        if (l.status === 'CONVERTED') return false;
+        if (l.converted_store_id === payload.storeId) return true;
+        const leadPhone = normalizeStr(l.phone);
+        if (leadPhone && storePhone && (leadPhone.endsWith(storePhone) || storePhone.endsWith(leadPhone))) {
+          return true;
+        }
+        if (l.store_name && storeName && l.store_name.trim().toLowerCase() === storeName) {
+          return true;
+        }
+        return false;
+      });
+
+      if (matchingLead) {
+        await this.convertLeadToStore(matchingLead.id, payload.storeId);
+      }
+    } catch (leadConvErr) {
+      console.warn('Non-blocking lead conversion on payment notice:', leadConvErr);
+    }
+
     // إطلاق الأحداث اللحظية لتحديث كافة الشاشات
     LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
+    LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: payload.storeId });
 
     return {
       success: true,

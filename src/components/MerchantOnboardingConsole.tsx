@@ -21,6 +21,8 @@ import {
   Check,
   Zap,
 } from 'lucide-react';
+import { SandboxPaymentModal } from './SandboxPaymentModal';
+import { LoyaltyService } from '../lib/supabase';
 
 interface MerchantOnboardingConsoleProps {
   store: Store;
@@ -90,6 +92,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [completedSteps, setCompletedSteps] = useState<Record<string, boolean>>({});
   const [billingState, setBillingState] = useState<any>(null);
+  const [isSandboxModalOpen, setIsSandboxModalOpen] = useState(false);
 
   // Form Fields for Step 1
   const [storeName, setStoreName] = useState(initialStore.name || '');
@@ -293,6 +296,35 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
       setCurrentStep('REVIEW');
     } catch (err: any) {
       setErrorMsg('حدث خطأ أثناء تفعيل التجربة المجانية');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleProcessOnboardingSandboxPayment = async (details: {
+    paymentMethod: 'mada' | 'visa' | 'mastercard' | 'credit_card';
+    cardNumber: string;
+    cardholderName: string;
+    expiryDate: string;
+    cvv: string;
+  }) => {
+    setSaving(true);
+    try {
+      const res = await LoyaltyService.processSubscriptionPayment({
+        storeId: initialStore.id,
+        invoiceType: 'setup',
+        amount: 500,
+        paymentMethod: details.paymentMethod,
+        gateway: 'sandbox',
+      });
+      setStore((prev) => ({ ...prev, ...res.store }));
+      setIsSandboxModalOpen(false);
+      setSuccessMsg('🎉 تم سداد رسوم التأسيس وتفعيل المتجر واشتراك الشهر الأول بنجاح!');
+      await fetchOnboardingState();
+      setCurrentStep('REVIEW');
+    } catch (err: any) {
+      console.error('Onboarding payment failed:', err);
+      throw err;
     } finally {
       setSaving(false);
     }
@@ -764,7 +796,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
             </div>
 
             <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <h4 className="text-sm font-bold text-white">فترة التجربة الرسمية المجانية (7 أيام)</h4>
                   <p className="text-xs text-slate-400">
@@ -772,20 +804,20 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
                   </p>
                 </div>
                 {billingState?.trial_ends_at ? (
-                  <span className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
+                  <span className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold shrink-0">
                     التجربة مفعلة ومستمرة ✅
                   </span>
                 ) : billingState?.trial_eligible ? (
                   <button
                     onClick={handleStartTrial}
                     disabled={saving}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition flex items-center gap-2"
+                    className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition flex items-center gap-2 shrink-0"
                   >
-                    <Zap className="w-3.5 h-3.5" />
-                    تفعيل الـ 7 أيام الآن
+                    <Clock className="w-3.5 h-3.5" />
+                    بدء التجربة المجانية (7 أيام)
                   </button>
                 ) : (
-                  <span className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-400 text-xs font-semibold">
+                  <span className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-400 text-xs font-semibold shrink-0">
                     تم استهلاك التجربة
                   </span>
                 )}
@@ -799,6 +831,32 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
                   </span>
                 </div>
               )}
+            </div>
+
+            {/* Direct Setup Fee Payment (Sandbox / Production) */}
+            <div className="p-6 rounded-2xl bg-gradient-to-tr from-slate-950 via-slate-900 to-slate-950 border border-amber-500/30 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold text-white">تفعيل الحساب الدائم (سداد رسوم التأسيس)</h4>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                      شامل الشهر الأول مجاناً 🎁
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    سدد 500 ر.س لمرة واحدة الآن لتفعيل المتجر بدون أي فترات توقف تجريبية (متاح ببطاقات الاختبار Sandbox).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSandboxModalOpen(true)}
+                  disabled={saving || store.setup_fee_paid}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 text-xs font-extrabold transition flex items-center gap-2 shadow-lg shadow-amber-500/20 shrink-0 disabled:opacity-50"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>{store.setup_fee_paid ? 'تم سداد التأسيس ✅' : 'سداد 500 ر.س (Sandbox) 🚀'}</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -876,6 +934,18 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
           )}
         </div>
       </div>
+
+      {/* 💳 Sandbox Payment Checkout Modal */}
+      <SandboxPaymentModal
+        isOpen={isSandboxModalOpen}
+        onClose={() => setIsSandboxModalOpen(false)}
+        title="سداد رسوم تأسيس واشتراك المتجر"
+        itemDescription="رسوم تأسيس المتجر + اشتراك الشهر الأول مجاناً 🎁"
+        amount={500}
+        currency="ر.س"
+        storeName={storeName || store.name}
+        onProcessPayment={handleProcessOnboardingSandboxPayment}
+      />
     </div>
   );
 };

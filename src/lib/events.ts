@@ -12,6 +12,8 @@ export type LoyaltyEventType =
   | 'STAFF_UPDATED'
   | 'SUBSCRIPTION_UPDATED'
   | 'PAYMENT_COMPLETED'
+  | 'LEAD_UPDATED'
+  | 'PARTNER_UPDATED'
   | 'SCAN_REJECTED';
 
 export interface LoyaltyEventPayload {

@@ -29,6 +29,7 @@ import { INITIAL_STORE } from '../lib/demoData';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
 import { StaffLoginGate } from './StaffLoginGate';
 import { StoreAnalyticsView } from './merchant/StoreAnalyticsView';
+import { SandboxPaymentModal } from './SandboxPaymentModal';
 import {
   Users,
   Coins,
@@ -368,6 +369,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [paymentSuccessModal, setPaymentSuccessModal] = useState<StoreInvoice | null>(null);
   const [isSimulatingState, setIsSimulatingState] = useState(false);
   const [simulationNotice, setSimulationNotice] = useState<string | null>(null);
+  const [sandboxPaymentConfig, setSandboxPaymentConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    itemDescription: string;
+    amount: number;
+    invoiceType: 'setup' | 'renewal' | 'upgrade';
+    planId?: string;
+  } | null>(null);
 
   const handleLogout = () => {
     LoyaltyService.clearStaffSession(store.id, 'admin', store.slug);
@@ -509,76 +518,72 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   };
 
   // ==========================================
-  // 💳 SaaS Subscription Payment Handlers
+  // 💳 SaaS Subscription Payment Handlers (Sandbox & Live)
   // ==========================================
-  const handlePaySetupFee = async (paymentMethod: string = 'mada') => {
-    setIsPayingSetup(true);
-    try {
-      const res = await LoyaltyService.processSubscriptionPayment({
-        storeId: store.id,
-        invoiceType: 'setup',
-        amount: 500,
-        paymentMethod,
-        gateway: selectedPaymentGateway,
-      });
-      setStore(res.store);
-      setPaymentSuccessModal(res.invoice);
-      const sub = await LoyaltyService.checkAndUpdateStoreSubscription(store.id);
-      setSubscriptionInfo(sub);
-      const invs = await LoyaltyService.getStoreInvoices(store.id);
-      setInvoices(invs);
-      confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } });
-    } catch (err) {
-      console.error('Setup fee payment error:', err);
-    } finally {
-      setIsPayingSetup(false);
-    }
+  const handlePaySetupFee = (_paymentMethod: string = 'mada') => {
+    setSandboxPaymentConfig({
+      isOpen: true,
+      title: 'سداد رسوم التأسيس واشتراك المتجر',
+      itemDescription: 'رسوم تأسيس المتجر + اشتراك الشهر الأول مجاناً 🎁',
+      amount: 500,
+      invoiceType: 'setup',
+    });
   };
 
-  const handlePayRenewal = async (paymentMethod: string = 'mada') => {
+  const handlePayRenewal = (_paymentMethod: string = 'mada') => {
+    setSandboxPaymentConfig({
+      isOpen: true,
+      title: 'تجديد اشتراك المتجر الشهري',
+      itemDescription: 'تجديد باقة المتجر (+30 يوماً إضافية)',
+      amount: subscriptionInfo?.renewalAmount || 195,
+      invoiceType: 'renewal',
+    });
+  };
+
+  const handleUpgradePlan = (plan: BillingPlan) => {
+    setSandboxPaymentConfig({
+      isOpen: true,
+      title: `ترقية باقة المتجر إلى ${plan.name}`,
+      itemDescription: `تفعيل باقة "${plan.name}" ومميزاتها المتقدمة`,
+      amount: plan.amount,
+      invoiceType: 'upgrade',
+      planId: plan.id || plan.code,
+    });
+  };
+
+  const handleProcessSandboxPayment = async (details: {
+    paymentMethod: 'mada' | 'visa' | 'mastercard' | 'credit_card';
+    cardNumber: string;
+    cardholderName: string;
+    expiryDate: string;
+    cvv: string;
+  }) => {
+    if (!sandboxPaymentConfig) return;
+    setIsPayingSetup(true);
     setIsPayingRenewal(true);
     try {
       const res = await LoyaltyService.processSubscriptionPayment({
         storeId: store.id,
-        invoiceType: 'renewal',
-        amount: subscriptionInfo?.renewalAmount || 195,
-        paymentMethod,
-        gateway: selectedPaymentGateway,
+        invoiceType: sandboxPaymentConfig.invoiceType,
+        amount: sandboxPaymentConfig.amount,
+        paymentMethod: details.paymentMethod,
+        gateway: 'sandbox',
+        planId: sandboxPaymentConfig.planId,
       });
       setStore(res.store);
+      setSandboxPaymentConfig(null);
       setPaymentSuccessModal(res.invoice);
       const sub = await LoyaltyService.checkAndUpdateStoreSubscription(store.id);
       setSubscriptionInfo(sub);
       const invs = await LoyaltyService.getStoreInvoices(store.id);
       setInvoices(invs);
-      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-    } catch (err) {
-      console.error('Renewal payment error:', err);
-    } finally {
-      setIsPayingRenewal(false);
-    }
-  };
-
-  const handleUpgradePlan = async (plan: BillingPlan) => {
-    const planKey = plan.id || plan.code || '';
-    if (!planKey) return;
-    setIsUpgradingPlanId(planKey);
-    setUpgradeSuccessMessage(null);
-    try {
-      const res = await LoyaltyService.upgradeStoreSubscription(store.id, plan, 'mada');
-      setStore(res.store);
-      const sub = await LoyaltyService.checkAndUpdateStoreSubscription(store.id);
-      setSubscriptionInfo(sub);
-      const invs = await LoyaltyService.getStoreInvoices(store.id);
-      setInvoices(invs);
-      confetti({ particleCount: 140, spread: 90, origin: { y: 0.6 } });
-      setUpgradeSuccessMessage(`🎉 تم بنجاح تفعيل وترقية باقة "${plan.name}" لمتجرك!`);
-      setTimeout(() => setUpgradeSuccessMessage(null), 5000);
+      confetti({ particleCount: 140, spread: 80, origin: { y: 0.6 } });
     } catch (err: any) {
-      console.error('Plan upgrade error:', err);
-      alert(err.message || 'حدث خطأ أثناء ترقية الباقة');
+      console.error('Sandbox payment error:', err);
+      throw err;
     } finally {
-      setIsUpgradingPlanId(null);
+      setIsPayingSetup(false);
+      setIsPayingRenewal(false);
     }
   };
 
@@ -8213,6 +8218,20 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             </div>
           </div>
         </div>
+      )}
+
+      {/* 💳 Sandbox Payment Checkout Modal */}
+      {sandboxPaymentConfig && (
+        <SandboxPaymentModal
+          isOpen={sandboxPaymentConfig.isOpen}
+          onClose={() => setSandboxPaymentConfig(null)}
+          title={sandboxPaymentConfig.title}
+          itemDescription={sandboxPaymentConfig.itemDescription}
+          amount={sandboxPaymentConfig.amount}
+          currency="ر.س"
+          storeName={store.name}
+          onProcessPayment={handleProcessSandboxPayment}
+        />
       )}
 
       {/* 🎉 Modal: Payment & Subscription Success Invoice Receipt */}

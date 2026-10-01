@@ -142,6 +142,33 @@ export default async function handler(req: any, res: any) {
             provider_payment_id: event.transactionId || event.eventId,
             created_at: now.toISOString(),
           });
+
+          // 💰 Check and convert linked merchant lead + record affiliate commission
+          try {
+            const { data: matchedLeads } = await supabase
+              .from('merchant_leads')
+              .select('id, referral_code, status')
+              .eq('converted_store_id', event.storeId)
+              .neq('status', 'CONVERTED')
+              .limit(5);
+
+            if (matchedLeads && matchedLeads.length > 0) {
+              for (const lead of matchedLeads) {
+                await supabase
+                  .from('merchant_leads')
+                  .update({ status: 'CONVERTED', updated_at: now.toISOString() })
+                  .eq('id', lead.id);
+
+                await supabase.rpc('record_lead_conversion_commission', {
+                  p_lead_id: lead.id,
+                  p_store_id: event.storeId,
+                  p_basis_amount: event.amount || 195.0,
+                });
+              }
+            }
+          } catch (leadErr) {
+            console.warn('[api/billing/webhook] Lead commission auto-record non-blocking warning:', leadErr);
+          }
         } else if (event.eventType === 'PAYMENT_FAILED') {
           await supabase
             .from('merchant_subscriptions')

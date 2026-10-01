@@ -260,13 +260,15 @@ export class UnconfiguredBillingProviderAdapter implements BillingProviderAdapte
  * Active Provider Resolution
  */
 export function getBillingProvider(): BillingProviderAdapter {
-  if (process.env.MOYASAR_API_KEY && process.env.MOYASAR_API_KEY.trim().length > 0) {
+  if (process.env.MOYASAR_API_KEY && process.env.MOYASAR_API_KEY.trim().length > 0 && process.env.PAYMENT_PROVIDER_MODE !== 'sandbox') {
     return new MoyasarBillingProviderAdapter();
   }
 
+  // Safe fallback to Sandbox Billing Provider when live credentials are absent or sandbox mode is enabled
   if (
     process.env.PAYMENT_PROVIDER_MODE === 'sandbox' ||
-    process.env.ENABLE_SANDBOX_PAYMENTS === 'true'
+    process.env.ENABLE_SANDBOX_PAYMENTS !== 'false' ||
+    !process.env.MOYASAR_API_KEY
   ) {
     return new SandboxBillingProviderAdapter();
   }
