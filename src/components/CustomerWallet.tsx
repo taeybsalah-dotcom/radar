@@ -404,22 +404,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     };
   }, [store?.id]);
 
-  // ─── التحميل الكامل: يُشغَّل مرة واحدة عند الدخول للصفحة فقط ──────────────
+  // ─── التحميل الكامل: يُشغَّل مرة واحدة عند الدخول للصفحة فقط (Zero UI Flicker) ──
   const loadInitialData = async () => {
     if (!store?.id) return;
     setLoading(true);
     try {
       const savedPhone = LoyaltyService.getCustomerSession(store.id, store.slug);
 
-      // جلب بيانات المتجر الهيكلية + بيانات العميل كلها بالتوازي
-      const [freshStore, t, p, cat, specs, bks, freshCust] = await Promise.all([
+      // 1. Resolve customer first if session exists so coupons can be fetched concurrently
+      const freshCust = savedPhone ? await LoyaltyService.getCustomer(store.id, savedPhone) : null;
+
+      // 2. Fetch everything concurrently in one single Promise.all (Zero UI flicker)
+      const [freshStore, t, p, cat, specs, bks, freshCoupons] = await Promise.all([
         LoyaltyService.resolveStore(store.id || store.slug),
         LoyaltyService.getTiers(store.id),
         LoyaltyService.getPrivileges(store.id),
         LoyaltyService.getCatalogItems(store.id),
         LoyaltyService.getStoreSpecialists(store.id),
         LoyaltyService.getStoreBookings(store.id),
-        savedPhone ? LoyaltyService.getCustomer(store.id, savedPhone) : Promise.resolve(null),
+        freshCust ? LoyaltyService.getCustomerCoupons(freshCust.id, store.id, freshCust.phone) : Promise.resolve([]),
       ]);
 
       if (freshStore) setStore(freshStore);
@@ -428,15 +431,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       setCatalogItems(cat || []);
       setSpecialists(specs || []);
       setStoreBookings(bks || []);
+      if (freshCoupons) setCustomerCoupons(freshCoupons);
 
       if (freshCust) {
         setCustomer(freshCust);
         lastPointsRef.current = freshCust.wallet_balance;
         regenerateToken(freshCust, null);
-        // جلب الكوبونات بعد ما عرفنا أن العميل موجود
-        LoyaltyService.getCustomerCoupons(freshCust.id, store.id, freshCust.phone)
-          .then((cpns) => setCustomerCoupons(cpns))
-          .catch(() => {});
       }
     } catch (e) {
       console.error(e);
@@ -683,42 +683,102 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
   };
 
-  // Purchase Privilege Action
+  // Purchase Privilege Action with Optimistic UI & Robust Rollback Protocol (0ms Perceived Latency)
   const handleConfirmPurchaseCoupon = async () => {
-    if (!customer || !purchasingPrivilege) return;
+    if (!customer || !purchasingPrivilege || purchaseLoading) return;
     setPurchaseLoading(true);
     setPurchaseError(null);
 
+    const cost = purchasingPrivilege.cost_points || 0;
+    if ((customer.wallet_balance || 0) < cost) {
+      setPurchaseError(`رصيد نقاطك غير كافٍ! تحتاج إلى ${cost} نقطة ورصيدك الحالي هو ${customer.wallet_balance} نقطة`);
+      setPurchaseLoading(false);
+      return;
+    }
+
+    // 1. Snapshot previous state for rollback
+    const previousCustomer = { ...customer };
+    const previousCoupons = [...customerCoupons];
+    const previousSelectedCoupon = selectedCouponForQR;
+    const activePrivilege = purchasingPrivilege;
+
+    // 2. Optimistic Coupon Creation & Immediate UI State Mutation (0ms Reaction)
+    const optimisticCode =
+      'CPN-' +
+      Math.floor(1000 + Math.random() * 9000) +
+      '-' +
+      Math.random().toString(36).substring(2, 6).toUpperCase();
+    const optimisticCoupon: CustomerCoupon = {
+      id: 'cpn-opt-' + Date.now(),
+      coupon_code: optimisticCode,
+      customer_id: customer.id,
+      customer_phone: customer.phone,
+      customer_name: customer.name || undefined,
+      store_id: store.id,
+      privilege_id: activePrivilege.id,
+      privilege_title: activePrivilege.title,
+      privilege_image_url: activePrivilege.image_url,
+      cost_points: cost,
+      status: 'ACTIVE',
+      valid_start_time: activePrivilege.valid_start_time,
+      valid_end_time: activePrivilege.valid_end_time,
+      purchased_at: new Date().toISOString(),
+    };
+
+    const optimisticUpdatedCustomer: Customer = {
+      ...customer,
+      wallet_balance: customer.wallet_balance - cost,
+    };
+
+    // Instant UI updates (0ms Perceived Latency)
+    setCustomer(optimisticUpdatedCustomer);
+    setCustomerCoupons([optimisticCoupon, ...customerCoupons]);
+    setSelectedCouponForQR(optimisticCoupon);
+    regenerateToken(optimisticUpdatedCustomer, optimisticCoupon);
+
+    setPurchaseSuccessAlert({
+      title: optimisticCoupon.privilege_title,
+      cost: optimisticCoupon.cost_points,
+      code: optimisticCoupon.coupon_code,
+    });
+
+    setPurchasingPrivilege(null);
+    setActiveTab('tickets'); // Switch directly to tickets tab!
+
+    playBeepSound('success');
+    confetti({
+      particleCount: 120,
+      spread: 90,
+      origin: { y: 0.5 },
+      colors: [store.secondary_color || '#C6F27B', '#10B981', '#38BDF8', '#FFFFFF'],
+    });
+
+    // 3. Background Supabase Execution with Strict Rollback Guard
     try {
       const result = await LoyaltyService.purchaseCoupon(
         store.id,
         customer.id,
-        purchasingPrivilege.id
+        activePrivilege.id
       );
 
-      setCustomer(result.updatedCustomer);
-      setCustomerCoupons([result.coupon, ...customerCoupons]);
-      setSelectedCouponForQR(result.coupon);
-      regenerateToken(result.updatedCustomer, result.coupon);
-
-      setPurchaseSuccessAlert({
-        title: result.coupon.privilege_title,
-        cost: result.coupon.cost_points,
-        code: result.coupon.coupon_code,
-      });
-
-      setPurchasingPrivilege(null);
-      setActiveTab('tickets'); // Switch directly to the tickets tab to view it!
-
-      playBeepSound('success');
-      confetti({
-        particleCount: 120,
-        spread: 90,
-        origin: { y: 0.5 },
-        colors: [store.secondary_color || '#C6F27B', '#10B981', '#38BDF8', '#FFFFFF'],
-      });
+      // Confirm with server-persisted data
+      if (result && result.coupon) {
+        setCustomer(result.updatedCustomer);
+        setCustomerCoupons((prev) =>
+          prev.map((c) => (c.id === optimisticCoupon.id ? result.coupon : c))
+        );
+        setSelectedCouponForQR(result.coupon);
+        regenerateToken(result.updatedCustomer, result.coupon);
+      }
     } catch (err: any) {
-      setPurchaseError(err.message || 'فشلت عملية تفعيل الامتياز');
+      // 🛡️ Rollback Protocol: Revert state and notify user
+      console.error('Background redemption failed, executing rollback:', err);
+      setCustomer(previousCustomer);
+      setCustomerCoupons(previousCoupons);
+      setSelectedCouponForQR(previousSelectedCoupon);
+      regenerateToken(previousCustomer, previousSelectedCoupon);
+      setPurchaseSuccessAlert(null);
+      setPurchaseError(err.message || 'فشلت عملية تفعيل الامتياز. تم استرجاع نقاطك بالكامل.');
     } finally {
       setPurchaseLoading(false);
     }
