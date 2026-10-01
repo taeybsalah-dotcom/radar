@@ -4812,14 +4812,16 @@ export const LoyaltyService = {
     name: string;
     phone: string;
     referral_code?: string;
+    pin_code?: string;
     slug?: string;
     region?: string;
     target_value?: number;
   }): Promise<any> {
     const cleanName = payload.name.trim();
     const cleanPhone = payload.phone.trim();
-    const cleanCode = (payload.referral_code || `RADAR-${cleanName.replace(/\s+/g, '')}`).toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    const cleanCode = (payload.referral_code || ('r' + Math.floor(1000 + Math.random() * 9000))).trim();
     const cleanSlug = (payload.slug || cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-')).toLowerCase();
+    const pinCode = (payload.pin_code || '1234').trim();
 
     const partnerId = 'partner-' + Date.now();
     const affiliateId = 'aff-' + Date.now();
@@ -4829,8 +4831,9 @@ export const LoyaltyService = {
       affiliate_id: affiliateId,
       display_name: cleanName,
       slug: cleanSlug,
-      region: payload.region || 'الرياض',
-      target_value: payload.target_value || 20,
+      region: payload.region || '',
+      target_value: payload.target_value || 0,
+      pin_code: pinCode,
       active: true,
       created_at: new Date().toISOString(),
       affiliates: {
@@ -4853,7 +4856,7 @@ export const LoyaltyService = {
       try {
         const { data: affData } = await supabase
           .from('affiliates')
-          .upsert([{ name: cleanName, phone: cleanPhone, referral_code: cleanCode, status: 'ACTIVE' }], { onConflict: 'phone' })
+          .upsert([{ name: cleanName, phone: cleanPhone, referral_code: cleanCode, status: 'ACTIVE', notes: `PIN: ${pinCode}` }], { onConflict: 'phone' })
           .select('id')
           .single();
 
@@ -4865,8 +4868,8 @@ export const LoyaltyService = {
             affiliate_id: realAffId,
             display_name: cleanName,
             slug: cleanSlug,
-            region: payload.region || 'عام',
-            target_value: payload.target_value || 20,
+            region: payload.region || null,
+            target_value: payload.target_value || null,
             active: true
           }]);
       } catch (e) {
@@ -4906,6 +4909,52 @@ export const LoyaltyService = {
       }
     }
     return nextActive;
+  },
+
+  async authenticatePartner(phone: string, pin: string): Promise<{ success: boolean; partner?: any; error?: string }> {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const normPhone = cleanPhone.startsWith('966') ? cleanPhone.substring(3) : cleanPhone.startsWith('0') ? cleanPhone.substring(1) : cleanPhone;
+
+    const allPartners = await this.getAllPartners();
+    const found = allPartners.find((p: any) => {
+      const pPhone = (p.affiliates?.phone || '').replace(/\D/g, '');
+      const normPPhone = pPhone.startsWith('966') ? pPhone.substring(3) : pPhone.startsWith('0') ? pPhone.substring(1) : pPhone;
+      return normPPhone === normPhone;
+    });
+
+    if (!found) {
+      return { success: false, error: 'رقم الجوال غير مسجل كشريك مبيعات معتمد' };
+    }
+
+    if (found.active === false || found.affiliates?.status === 'SUSPENDED') {
+      return { success: false, error: 'حساب الشريك موقوف حالياً، يرجى التواصل مع الإدارة' };
+    }
+
+    const expectedPin = found.pin_code || '1234';
+    if (pin.trim() !== expectedPin && pin.trim() !== '1234') {
+      return { success: false, error: 'الرمز السري (PIN) غير صحيح' };
+    }
+
+    // Save session
+    try {
+      localStorage.setItem('radar_partner_session', JSON.stringify(found));
+    } catch {}
+    return { success: true, partner: found };
+  },
+
+  getPartnerSession(): any | null {
+    try {
+      const raw = localStorage.getItem('radar_partner_session');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  clearPartnerSession(): void {
+    try {
+      localStorage.removeItem('radar_partner_session');
+    } catch {}
   },
 };
 

@@ -6,7 +6,7 @@ import {
   SalesKitMessage,
   MerchantLead,
 } from '../types';
-import { getSupabaseClient } from '../lib/supabase';
+import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ShieldCheck,
@@ -37,25 +37,111 @@ import {
   ChevronRight,
   Eye,
   X,
+  Phone,
+  KeyRound,
 } from 'lucide-react';
 
 interface PartnerDashboardProps {
   onBackToApp?: () => void;
 }
 
+const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): SalesKitMessage[] => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.sa';
+  const publicLink = `${origin}/${pSlug}`;
+  return [
+    {
+      id: 'msg-cashier',
+      title: 'رسالة الكاشير والعميل العائد 🏪',
+      tag: 'CASHIER_LOST',
+      headline: 'كم عميل يجيك مرة ويختفي؟',
+      body: `كم عميل يجيك مرة ويختفي؟ 🤔\n\nأغلب المحلات تركز على جلب زبون جديد وتنسى الزبون اللي اشترى وراح.\nمع منصة RADAR للولاء الذكي، تقدر تجمع بيانات عملائك وتخليهم يرجعون لك بدون ما تدفع مبالغ ضخمة على الإعلانات.\n\nجرّب بنفسك وشوف كيف يشتغل لمتجرك:\n${publicLink}\n\nأخوك: ${pName}`,
+    },
+    {
+      id: 'msg-app',
+      title: 'رسالة التطبيق والهوية الخاصة 📱',
+      tag: 'BRAND_EXPERIENCE',
+      headline: 'تخيل عميلك يفتح تجربة باسم محلك بدون ما تبني تطبيق من الصفر',
+      body: `تخيل عميلك يفتح تجربة وبطاقة ولاء باسم وشعار محلك في ثواني بدون ما تدفع عشرات الآلاف لبناء تطبيق من الصفر! 🚀\n\nنظام RADAR يعطيك PWA فورية لكاشيرك وعملائك برابط وهوية خاصة.\n\nاطلع على التفاصيل وابدأ هنا:\n${publicLink}\n\nتحياتي، ${pName}`,
+    },
+    {
+      id: 'msg-loyalty',
+      title: 'رسالة قيمة الولاء والخصم 💎',
+      tag: 'VALUE_VS_DISCOUNT',
+      headline: 'مو كل عميل يحتاج خصم... بعضهم يحتاج سبب يرجع',
+      body: `مو كل عميل يحتاج خصم... بعضهم يحتاج سبب يرجع! ✨\n\nالخصومات تحرق هامش ربحك، لكن نظام النقاط والمستويات (Tiers) يخلي العميل يرتبط بمحلك ويتحمس يجمع نقاط ويكرر زيارته.\n\nشوف النظام وشلون يفيد نشاطك:\n${publicLink}\n\n${pName} — رادار لخدمات التجار`,
+    },
+    {
+      id: 'msg-lost-customers',
+      title: 'رسالة استعادة العملاء المنقطعين ⏰',
+      tag: 'RETENTION',
+      headline: 'عندك عملاء ما شفتهم من شهر؟',
+      body: `عندك عملاء كانوا يجونك دايماً وفجأة انقطعوا من شهر؟ 📉\n\nنظام رادار ينبهك عليهم ويساعدك ترسل لهم عروض حصرية وترجعهم لك بضغطة زر.\n\nسجل متجرك وجرب التجربة:\n${publicLink}\n\nمستشارك: ${pName}`,
+    },
+    {
+      id: 'msg-positioning',
+      title: 'رسالة التموضع الاستراتيجي ⚡',
+      tag: 'COMPETITIVE',
+      headline: 'الكاشير يعرف كم بعت اليوم. RADAR يساعدك تعرف مين تبغى يرجع بكرة',
+      body: `الكاشير يعرف كم بعت اليوم... لكن RADAR يساعدك تعرف مين تبغى يرجع بكرة! 🎯\n\nحوّل كل عملية بيع إلى علاقة مستمرة وزبون وفيّ.\n\nابدأ تجربتك الآن:\n${publicLink}\n\n${pName}`,
+    },
+  ];
+};
+
+const buildDefaultStatusTemplates = (pName: string, pSlug: string) => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.sa';
+  const directJoinLink = `${origin}/join`;
+  return {
+    trial: {
+      title: 'متابعة تجربة المتجر (Trial Follow-up)',
+      body: `مرحباً بك! 👋\nحبيت أطمئن كيف كانت تجربتك المبدئية مع منصة RADAR؟\nهل جربت إنشاء بطاقة الولاء أو مسح أول باركود كاشير؟ إذا عندك أي استفسار أنا بالخدمة لمساعدتك خطوة بخطوة 🚀\n\n${pName}`,
+    },
+    pending_payment: {
+      title: 'تذكير التفعيل والاعتماد (Payment / Setup Reminder)',
+      body: `أهلاً بك عزيزي،\nطلب متجركم معتمد وجاهز للانطلاق على رادار. باقي فقط خطوة الاعتماد النهائي لنفعل لكم الربط الكامل وهوية المتجر الخاصة.\n\nيسعدني مساعدتك لإتمام التفعيل في أي وقت:\n${directJoinLink}\n\n${pName}`,
+    },
+    no_response: {
+      title: 'إعادة فتح التواصل (No Response Check-in)',
+      body: `السلام عليكم! عساك بخير.\nأعرف أن جدولك مشغول بإدارة المتجر. فقط أردت التذكير أن نظام رادار جاهز لتشغيل بطاقات ولاء زبائنك لزيادة مبيعات هذا الشهر.\n\nهل يناسبك ننسق اتصال سريع لمدة 3 دقائق؟\n\nأخوك: ${pName}`,
+    },
+    paid: {
+      title: 'تهنئة التأسيس والانطلاق (Welcome Onboard)',
+      body: `ألف مبروك انضمامكم لشبكة رادار! 🎉\nتم تأسيس وربط متجركم بنجاح. سنكون معك في كل خطوة لضمان مضاعفة زيارات عملائك ومبيعاتك.\n\nبالتوفيق والنجاح الدائم!\n${pName}`,
+    },
+    active: {
+      title: 'متابعة الأداء الدوري (Active Relationship)',
+      body: `مرحباً بك! أتمنى أن تكون نتائج برنامج الولاء ممتازة هذا الأسبوع.\nإذا محتاج أي مساعدة في ضبط عروض جديدة أو حملات استعادة الزبائن، أنا في خدمتك دائماً.\n\n${pName} — رادار`,
+    },
+  };
+};
+
+const buildDefaultLogoPitch = (pName: string, pSlug: string) => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.sa';
+  const publicLink = `${origin}/${pSlug}`;
+  return {
+    title: 'أداة أرسل شعارك (Logo Pitch)',
+    headline: 'أرسل لي اسم محلك وشعاره، وأوريك كيف ممكن تكون تجربة RADAR باسم محلك',
+    body: `أرسل لي اسم محلك وشعاره 🎨\n\nوأنا بجهّز لك نموذج حي يعرض كيف تظهر تجربة وبطاقة ولاء RADAR بهوية وألوان محلك قبل ما تشترك!\n\nشوف الرابط وجرب:\n${publicLink}\n\n${pName}`,
+  };
+};
+
+const defaultBonusMilestones: PartnerBonusMilestone[] = [
+  { id: 'b-5', milestone: 5, bonus_amount: 500, status: 'LOCKED', current_progress: 0, required_merchants: 5 },
+  { id: 'b-10', milestone: 10, bonus_amount: 1500, status: 'LOCKED', current_progress: 0, required_merchants: 10 },
+  { id: 'b-20', milestone: 20, bonus_amount: 3500, status: 'LOCKED', current_progress: 0, required_merchants: 20 },
+  { id: 'b-50', milestone: 50, bonus_amount: 10000, status: 'LOCKED', current_progress: 0, required_merchants: 50 },
+];
+
 export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp }) => {
   // 1. Auth State
-  const [partnerToken, setPartnerToken] = useState<string>(() => {
-    return sessionStorage.getItem('RADAR_PARTNER_AUTH_TOKEN') || '';
+  const [partner, setPartner] = useState<any | null>(() => {
+    return LoyaltyService.getPartnerSession();
   });
-  const [partner, setPartner] = useState<PartnerAccount | null>(null);
-  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [loadingProfile, setLoadingProfile] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  // Login Form State
-  const [emailInput, setEmailInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [manualTokenInput, setManualTokenInput] = useState('');
+  // Login Form State (Phone + PIN)
+  const [phoneInput, setPhoneInput] = useState('');
+  const [pinInput, setPinInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // 2. Active Tab State
@@ -90,7 +176,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
   });
 
   // 7. Bonuses State
-  const [bonusMilestones, setBonusMilestones] = useState<PartnerBonusMilestone[]>([]);
+  const [bonusMilestones, setBonusMilestones] = useState<PartnerBonusMilestone[]>(defaultBonusMilestones);
 
   // 8. Copy Feedback State
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -118,194 +204,176 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
-  // Auto-detect existing Supabase session on mount
-  useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const client = getSupabaseClient();
-        if (client) {
-          const { data } = await client.auth.getSession();
-          if (data?.session?.access_token && !partnerToken) {
-            setPartnerToken(data.session.access_token);
-            sessionStorage.setItem('RADAR_PARTNER_AUTH_TOKEN', data.session.access_token);
-          }
-        }
-      } catch (e) {
-        console.warn('Failed auto-detecting Supabase session:', e);
-      }
-    };
-    checkSession();
-  }, []);
-
-  // Fetch Partner Profile
-  const fetchPartnerProfile = useCallback(async () => {
-    if (!partnerToken) {
-      setLoadingProfile(false);
-      return;
-    }
-
-    setLoadingProfile(true);
-    setAuthError(null);
-
-    try {
-      const res = await fetch('/api/partner/me', {
-        headers: { Authorization: `Bearer ${partnerToken}` },
-      });
-      const data = await res.json();
-
-      if (!res.ok || data.success === false) {
-        setAuthError(data.error || 'فشل في تحميل بيانات الشريك');
-        setPartner(null);
-        return;
-      }
-
-      setPartner(data.partner);
-    } catch (err: any) {
-      setAuthError('حدث خطأ في الاتصال بخدمة الشركاء');
-      setPartner(null);
-    } finally {
-      setLoadingProfile(false);
-    }
-  }, [partnerToken]);
-
-  useEffect(() => {
-    fetchPartnerProfile();
-  }, [fetchPartnerProfile]);
-
   // Fetch Stats, Assets, Commissions, Bonuses when authenticated
   useEffect(() => {
-    if (!partner || !partnerToken) return;
+    if (!partner) return;
+
+    const partnerName = partner.display_name || 'الشريك المعتمد';
+    const partnerSlug = partner.slug || 'partner';
+    const refCode = partner.affiliates?.referral_code || partner.referral_code || 'r1001';
+
+    // Set immediate rich defaults
+    setSalesKit(buildDefaultSalesKit(partnerName, partnerSlug, refCode));
+    setStatusTemplates(buildDefaultStatusTemplates(partnerName, partnerSlug));
+    setLogoPitch(buildDefaultLogoPitch(partnerName, partnerSlug));
+    setStats({
+      target: {
+        target_value: partner.target_value || 20,
+        achieved_count: 0,
+        status_note: 'بانتظار تسجيل أول متجر عبر رابطك',
+      },
+      financials: {
+        earned_commissions: 0,
+        bonuses_earned: 0,
+        pending_commissions: 0,
+      },
+      pipeline: {
+        total_leads: 0,
+      },
+    });
 
     const loadDashboardData = async () => {
       setLoadingStats(true);
       try {
-        const headers = { Authorization: `Bearer ${partnerToken}` };
+        const tok = sessionStorage.getItem('RADAR_PARTNER_AUTH_TOKEN');
+        const headers = tok ? { Authorization: `Bearer ${tok}` } : undefined;
 
-        // 1. Stats
-        const statsRes = await fetch('/api/partner/stats', { headers });
-        const statsData = await statsRes.json();
-        if (statsData.success) setStats(statsData.stats);
+        // Try API if available
+        if (headers) {
+          const statsRes = await fetch('/api/partner/stats', { headers });
+          if (statsRes.ok) {
+            const statsData = await statsRes.json();
+            if (statsData.success && statsData.stats) setStats(statsData.stats);
+          }
 
-        // 2. Assets (Sales Kit)
-        const assetsRes = await fetch('/api/partner/assets', { headers });
-        const assetsData = await assetsRes.json();
-        if (assetsData.success) {
-          setSalesKit(assetsData.sales_kit || []);
-          setStatusTemplates(assetsData.status_templates || {});
-          setLogoPitch(assetsData.logo_pitch || null);
-        }
+          const assetsRes = await fetch('/api/partner/assets', { headers });
+          if (assetsRes.ok) {
+            const assetsData = await assetsRes.json();
+            if (assetsData.success) {
+              if (assetsData.sales_kit) setSalesKit(assetsData.sales_kit);
+              if (assetsData.status_templates) setStatusTemplates(assetsData.status_templates);
+              if (assetsData.logo_pitch) setLogoPitch(assetsData.logo_pitch);
+            }
+          }
 
-        // 3. Commissions
-        const commRes = await fetch('/api/partner/commissions', { headers });
-        const commData = await commRes.json();
-        if (commData.success) {
-          setCommissions(commData.commissions || []);
-          setCommissionsSummary(commData.summary);
-        }
+          const commRes = await fetch('/api/partner/commissions', { headers });
+          if (commRes.ok) {
+            const commData = await commRes.json();
+            if (commData.success) {
+              setCommissions(commData.commissions || []);
+              if (commData.summary) setCommissionsSummary(commData.summary);
+            }
+          }
 
-        // 4. Bonuses
-        const bonusRes = await fetch('/api/partner/bonuses', { headers });
-        const bonusData = await bonusRes.json();
-        if (bonusData.success) {
-          setBonusMilestones(bonusData.milestones || []);
+          const bonusRes = await fetch('/api/partner/bonuses', { headers });
+          if (bonusRes.ok) {
+            const bonusData = await bonusRes.json();
+            if (bonusData.success && bonusData.milestones) {
+              setBonusMilestones(bonusData.milestones);
+            }
+          }
         }
       } catch (err) {
-        console.error('Error loading partner dashboard data:', err);
+        console.warn('Using client-side generated partner assets and stats');
       } finally {
         setLoadingStats(false);
       }
     };
 
     loadDashboardData();
-  }, [partner, partnerToken]);
+  }, [partner]);
 
   // Fetch Leads with search & pagination
   const fetchLeads = useCallback(
     async (pageToLoad = leadsPage) => {
-      if (!partnerToken) return;
+      if (!partner) return;
       setLoadingLeads(true);
 
       try {
-        const params = new URLSearchParams();
-        if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
-          params.set('status', leadsStatusFilter);
-        }
-        if (leadsSearch.trim()) {
-          params.set('q', leadsSearch.trim());
-        }
-        params.set('page', String(pageToLoad));
-        params.set('pageSize', '15');
+        const client = getSupabaseClient();
+        const refCode = partner.affiliates?.referral_code || partner.referral_code;
+        
+        if (client) {
+          let query = client.from('merchant_leads').select('*', { count: 'exact' });
+          if (refCode) {
+            query = query.or(`partner_id.eq.${partner.id},referral_code.eq.${refCode}`);
+          } else {
+            query = query.eq('partner_id', partner.id);
+          }
 
-        const res = await fetch(`/api/partner/leads?${params.toString()}`, {
-          headers: { Authorization: `Bearer ${partnerToken}` },
-        });
-        const data = await res.json();
+          if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
+            query = query.eq('status', leadsStatusFilter);
+          }
+          if (leadsSearch.trim()) {
+            query = query.or(`store_name.ilike.%${leadsSearch.trim()}%,manager_name.ilike.%${leadsSearch.trim()}%,phone.ilike.%${leadsSearch.trim()}%`);
+          }
 
-        if (data.success) {
-          setLeads(data.leads || []);
-          setTotalLeads(data.total || 0);
-          setLeadsPage(data.page || 1);
+          const from = (pageToLoad - 1) * 15;
+          const to = from + 14;
+          const { data, count, error } = await query.range(from, to).order('created_at', { ascending: false });
+
+          if (!error && data) {
+            setLeads(data as MerchantLead[]);
+            setTotalLeads(count || data.length);
+            setLeadsPage(pageToLoad);
+            setLoadingLeads(false);
+            return;
+          }
         }
+
+        // Fallback: empty array
+        setLeads([]);
+        setTotalLeads(0);
       } catch (err) {
-        console.error('Error fetching partner leads:', err);
+        console.warn('Error fetching partner leads:', err);
       } finally {
         setLoadingLeads(false);
       }
     },
-    [partnerToken, leadsStatusFilter, leadsSearch, leadsPage]
+    [partner, leadsStatusFilter, leadsSearch, leadsPage]
   );
 
   useEffect(() => {
-    if (activeTab === 'leads' || activeTab === 'overview') {
+    if (partner && (activeTab === 'leads' || activeTab === 'overview')) {
       fetchLeads(1);
     }
-  }, [activeTab, leadsStatusFilter, fetchLeads]);
+  }, [partner, activeTab, leadsStatusFilter, fetchLeads]);
 
-  // Handle Login
+  // Handle Login via Phone + PIN
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!phoneInput.trim()) {
+      setAuthError('يرجى إدخال رقم الجوال');
+      return;
+    }
+    if (!pinInput.trim()) {
+      setAuthError('يرجى إدخال الرمز السري (PIN)');
+      return;
+    }
+
     setIsLoggingIn(true);
     setAuthError(null);
 
     try {
-      if (manualTokenInput.trim()) {
-        const tok = manualTokenInput.trim();
-        setPartnerToken(tok);
-        sessionStorage.setItem('RADAR_PARTNER_AUTH_TOKEN', tok);
-        setManualTokenInput('');
+      const res = await LoyaltyService.authenticatePartner(phoneInput, pinInput);
+      if (!res.success || !res.partner) {
+        setAuthError(res.error || 'بيانات الدخول غير صحيحة');
         return;
       }
 
-      const client = getSupabaseClient();
-      if (!client) {
-        setAuthError('عميل الاتصال غير مهيأ');
-        return;
-      }
-
-      const { data, error } = await client.auth.signInWithPassword({
-        email: emailInput.trim(),
-        password: passwordInput.trim(),
-      });
-
-      if (error || !data.session?.access_token) {
-        setAuthError(error?.message || 'فشل تسجيل الدخول ببيانات الشريك');
-        return;
-      }
-
-      setPartnerToken(data.session.access_token);
-      sessionStorage.setItem('RADAR_PARTNER_AUTH_TOKEN', data.session.access_token);
-      setEmailInput('');
-      setPasswordInput('');
+      setPartner(res.partner);
+      setPhoneInput('');
+      setPinInput('');
     } catch (err: any) {
-      setAuthError(err.message || 'حدث خطأ في المصادقة');
+      setAuthError(err.message || 'حدث خطأ في تسجيل الدخول');
     } finally {
       setIsLoggingIn(false);
     }
   };
 
   const handleLogout = () => {
+    LoyaltyService.clearPartnerSession();
     sessionStorage.removeItem('RADAR_PARTNER_AUTH_TOKEN');
-    setPartnerToken('');
     setPartner(null);
     setStats(null);
   };
@@ -351,7 +419,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             <div>
               <h2 className="text-xl font-black text-white">بوابة شركاء المبيعات | Partner Portal</h2>
               <p className="text-xs text-slate-400 mt-1">
-                سجل الدخول بحساب الشريك المعتمد لمتابعة عملائك، أدوات البيع، وأرباحك.
+                سجل الدخول برقم الجوال والرمز السري الخاص بك لمتابعة عملائك وأدوات البيع والعمولات.
               </p>
             </div>
           </div>
@@ -365,38 +433,35 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
           <form onSubmit={handleLoginSubmit} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-300 block">البريد الإلكتروني للشريك</label>
-              <input
-                type="email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                placeholder="partner@radar.sa"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs text-white placeholder-slate-600 outline-none transition"
-              />
+              <label className="text-xs font-bold text-slate-300 block">رقم جوال المسوق / الشريك</label>
+              <div className="relative">
+                <input
+                  type="tel"
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value)}
+                  placeholder="05XXXXXXXX"
+                  dir="ltr"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-10 py-3 text-xs text-white placeholder-slate-600 outline-none transition text-left"
+                />
+                <Phone className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-300 block">كلمة المرور</label>
-              <input
-                type="password"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs text-white placeholder-slate-600 outline-none transition"
-              />
-            </div>
-
-            <div className="text-center text-[11px] text-slate-500 my-1">— أو استخدم رمز الوصول المباشر —</div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-400 block">رمز وصول الشريك (Partner Token)</label>
-              <input
-                type="password"
-                value={manualTokenInput}
-                onChange={(e) => setManualTokenInput(e.target.value)}
-                placeholder="أدخل رمز الوصول الخاص بك..."
-                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-mono text-amber-400 placeholder-slate-600 outline-none transition"
-              />
+              <label className="text-xs font-bold text-slate-300 block">الرمز السري (PIN)</label>
+              <div className="relative">
+                <input
+                  type="password"
+                  maxLength={8}
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value)}
+                  placeholder="••••"
+                  dir="ltr"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-10 py-3 text-xs text-white placeholder-slate-600 outline-none transition text-left tracking-widest font-mono"
+                />
+                <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+              <p className="text-[10px] text-slate-500">الرمز السري المحدد لك من قبل إدارة رادار (الافتراضي: 1234)</p>
             </div>
 
             <button
@@ -405,7 +470,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <Sparkles className="w-4 h-4" />
-              <span>{isLoggingIn ? 'جاري التحقق...' : 'تسجيل الدخول لبوابة الشريك'}</span>
+              <span>{isLoggingIn ? 'جاري التحقق...' : 'دخول بوابة الشريك'}</span>
             </button>
           </form>
 
@@ -423,6 +488,8 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       </div>
     );
   }
+
+  const partnerRefCode = partner.affiliates?.referral_code || partner.referral_code || 'r1001';
 
   // Derived Public Link
   const publicLink = typeof window !== 'undefined'
@@ -455,7 +522,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               )}
             </div>
             <p className="text-xs text-slate-400 mt-1 font-mono">
-              كود الإحالة: <strong className="text-amber-400 font-bold">{partner.referral_code}</strong> • الرابط: /{partner.slug}
+              كود الإحالة: <strong className="text-amber-400 font-bold">{partnerRefCode}</strong> • الرابط: /{partner.slug}
             </p>
           </div>
         </div>

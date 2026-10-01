@@ -19,6 +19,7 @@ import {
   Tag,
   MapPin,
   Target,
+  KeyRound,
   Loader2,
 } from 'lucide-react';
 
@@ -34,9 +35,10 @@ export const SuperAdminPartnersConsole: React.FC = () => {
   const [partnerName, setPartnerName] = useState('');
   const [partnerPhone, setPartnerPhone] = useState('');
   const [referralCode, setReferralCode] = useState('');
+  const [pinCode, setPinCode] = useState('1234');
   const [partnerSlug, setPartnerSlug] = useState('');
-  const [region, setRegion] = useState('الرياض');
-  const [monthlyTarget, setMonthlyTarget] = useState(20);
+  const [region, setRegion] = useState('');
+  const [monthlyTarget, setMonthlyTarget] = useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
@@ -59,7 +61,25 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     fetchPartners();
   }, [fetchPartners]);
 
-  // Auto-generate code & slug when typing name
+  // Generate random 4-digit code prefixed with lowercase 'r' (e.g. r4819)
+  const generateNewReferralCode = () => {
+    const randomDigits = Math.floor(1000 + Math.random() * 9000);
+    return `r${randomDigits}`;
+  };
+
+  const openNewPartnerModal = () => {
+    setModalError(null);
+    setPartnerName('');
+    setPartnerPhone('');
+    setReferralCode(generateNewReferralCode());
+    setPinCode('1234');
+    setPartnerSlug('');
+    setRegion('');
+    setMonthlyTarget('');
+    setIsModalOpen(true);
+  };
+
+  // Auto-generate slug when typing name
   const handleNameChange = (val: string) => {
     setPartnerName(val);
     setModalError(null);
@@ -70,13 +90,8 @@ export const SuperAdminPartnersConsole: React.FC = () => {
       .replace(/\s+/g, '-')
       .toLowerCase();
 
-    if (!referralCode || referralCode.startsWith('RADAR-')) {
-      const autoCode = val.trim() ? `RADAR-${val.replace(/\s+/g, '').toUpperCase().slice(0, 10)}` : '';
-      setReferralCode(autoCode);
-    }
-
     if (!partnerSlug) {
-      setPartnerSlug(cleanLatin || 'partner');
+      setPartnerSlug(cleanLatin || '');
     }
   };
 
@@ -98,8 +113,15 @@ export const SuperAdminPartnersConsole: React.FC = () => {
 
     const cleanName = partnerName.trim();
     const cleanPhone = normalizeSaudiPhone(partnerPhone.trim());
-    let cleanCode = (referralCode.trim() || `RADAR-${cleanName.replace(/\s+/g, '')}`).toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    let cleanCode = referralCode.trim() || generateNewReferralCode();
+    // Ensure code has lowercase r prefix
+    if (!cleanCode.startsWith('r') && !cleanCode.startsWith('R')) {
+      cleanCode = `r${cleanCode}`;
+    }
+    cleanCode = cleanCode.toLowerCase();
+
     let cleanSlug = (partnerSlug.trim() || cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-')).toLowerCase();
+    if (!cleanSlug) cleanSlug = `partner-${Math.floor(1000 + Math.random() * 9000)}`;
 
     if (!cleanName || cleanName.length < 2) {
       setModalError('يرجى كتابة اسم المسوق (حرفين على الأقل)');
@@ -111,28 +133,27 @@ export const SuperAdminPartnersConsole: React.FC = () => {
       return;
     }
 
-    if (cleanCode.length < 3) cleanCode = `RADAR-${Math.floor(1000 + Math.random() * 9000)}`;
-    if (cleanSlug.length < 2) cleanSlug = `partner-${Math.floor(1000 + Math.random() * 9000)}`;
-
     setIsSubmitting(true);
 
     try {
-      const created = await LoyaltyService.addPartner({
+      await LoyaltyService.addPartner({
         name: cleanName,
         phone: cleanPhone,
         referral_code: cleanCode,
+        pin_code: pinCode.trim() || '1234',
         slug: cleanSlug,
-        region: region.trim() || 'الرياض',
-        target_value: monthlyTarget,
+        region: region.trim(),
+        target_value: typeof monthlyTarget === 'number' ? monthlyTarget : 0,
       });
 
-      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بكود إحالة: ${cleanCode} ورابط: /${cleanSlug} 🎉`);
+      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بكود: ${cleanCode} والرمز السري (PIN): ${pinCode.trim() || '1234'} 🎉`);
       setIsModalOpen(false);
       setPartnerName('');
       setPartnerPhone('');
       setReferralCode('');
       setPartnerSlug('');
-      setRegion('الرياض');
+      setRegion('');
+      setMonthlyTarget('');
       setModalError(null);
 
       try { confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } }); } catch {}
@@ -188,7 +209,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                أضف مسوقين جدد بالاسم ورقم الجوال لتوليد أكواد الإحالة وروابط الهبوط المخصصة لهم وتتبع أرباحهم.
+                أضف مسوقين جدد بالاسم ورقم الجوال والرمز السري (PIN) لتوليد كود الإحالة (مثل r1042) ورابط المتابعة.
               </p>
             </div>
           </div>
@@ -196,10 +217,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => {
-              setModalError(null);
-              setIsModalOpen(true);
-            }}
+            onClick={openNewPartnerModal}
             className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl text-xs transition shadow-lg shadow-amber-500/20"
           >
             <PlusCircle className="w-4 h-4" />
@@ -256,6 +274,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-bold text-slate-400">
                   <th className="py-3.5 px-4">اسم المسوق والجوال</th>
                   <th className="py-3.5 px-4">كود الإحالة (Referral)</th>
+                  <th className="py-3.5 px-4">الرمز السري (PIN)</th>
                   <th className="py-3.5 px-4">رابط المسوق الخاص</th>
                   <th className="py-3.5 px-4">المنطقة والهدف</th>
                   <th className="py-3.5 px-4">حالة الحساب</th>
@@ -266,6 +285,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 {partners.map((p) => {
                   const refCode = p.affiliates?.referral_code || '—';
                   const phone = p.affiliates?.phone || '—';
+                  const partnerPin = p.pin_code || '1234';
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/40 transition">
@@ -279,6 +299,12 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                       <td className="py-4 px-4 font-mono font-bold text-amber-400">
                         <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30">
                           {refCode}
+                        </span>
+                      </td>
+
+                      <td className="py-4 px-4 font-mono text-slate-300">
+                        <span className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px]">
+                          🔑 {partnerPin}
                         </span>
                       </td>
 
@@ -301,8 +327,8 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                       </td>
 
                       <td className="py-4 px-4">
-                        <span className="text-slate-300 block">{p.region ? `📍 ${p.region}` : 'عام'}</span>
-                        <span className="text-[10px] text-slate-500">الهدف: {p.target_value || 20} متجر/شهر</span>
+                        <span className="text-slate-300 block">{p.region ? `📍 ${p.region}` : '—'}</span>
+                        <span className="text-[10px] text-slate-500">{p.target_value ? `الهدف: ${p.target_value} متجر/شهر` : 'بدون هدف محدد'}</span>
                       </td>
 
                       <td className="py-4 px-4">
@@ -388,14 +414,14 @@ export const SuperAdminPartnersConsole: React.FC = () => {
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
                   <User className="w-3.5 h-3.5 text-amber-400" />
-                  <span>اسم المسوق أو المؤسسة المسوقة *</span>
+                  <span>اسم المسوق أو المؤسسة *</span>
                 </label>
                 <input
                   type="text"
                   required
                   value={partnerName}
                   onChange={(e) => handleNameChange(e.target.value)}
-                  placeholder="مثال: صالح القحطاني، مؤسسة التسويق الذكي"
+                  placeholder="مثال: صالح القحطاني"
                   className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs text-white placeholder-slate-600 outline-none transition"
                 />
               </div>
@@ -421,26 +447,52 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 <p className="text-[10px] text-slate-500">يستخدمه المسوق للدخول إلى لوحة أرباحه عبر /partner</p>
               </div>
 
-              {/* Field 3: Referral Code */}
+              {/* Field 3: Referral Code (r + 4 digits) */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
                   <Tag className="w-3.5 h-3.5 text-amber-400" />
-                  <span>كود الإحالة (Referral Code)</span>
+                  <span>كود الإحالة (حرف r يليه 4 أرقام)</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={referralCode}
+                    onChange={(e) => setReferralCode(e.target.value.toLowerCase())}
+                    placeholder="مثال: r1042"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-mono text-amber-400 placeholder-slate-600 outline-none transition"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setReferralCode(generateNewReferralCode())}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+                  >
+                    توليد تلقائي
+                  </button>
+                </div>
+              </div>
+
+              {/* Field 4: PIN Code */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                  <span>الرمز السري لدخول المسوق (PIN)</span>
                 </label>
                 <input
                   type="text"
-                  value={referralCode}
-                  onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-                  placeholder="مثال: RADAR-SALEH أو SALEH10"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-mono text-amber-400 placeholder-slate-600 outline-none transition uppercase"
+                  maxLength={6}
+                  value={pinCode}
+                  onChange={(e) => setPinCode(e.target.value)}
+                  placeholder="1234"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-mono text-white placeholder-slate-600 outline-none transition"
                 />
+                <p className="text-[10px] text-slate-500">الرمز الذي تعطيه للمسوق لتسجيل الدخول إلى لوحته</p>
               </div>
 
-              {/* Field 4: Custom URL Slug */}
+              {/* Field 5: Custom URL Slug */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
                   <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
-                  <span>رابط صفحة المسوق العامة</span>
+                  <span>رابط صفحة المسوق</span>
                 </label>
                 <div className="relative">
                   <input
@@ -456,18 +508,18 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 </div>
               </div>
 
-              {/* Field 5: Region & Target */}
+              {/* Field 6: Region & Target (Empty by default) */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
                     <MapPin className="w-3.5 h-3.5 text-amber-400" />
-                    <span>المنطقة</span>
+                    <span>المنطقة (اختياري)</span>
                   </label>
                   <input
                     type="text"
                     value={region}
                     onChange={(e) => setRegion(e.target.value)}
-                    placeholder="الرياض، جدة..."
+                    placeholder="مثال: الرياض، جدة..."
                     className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-3 py-2.5 text-xs text-white placeholder-slate-600 outline-none transition"
                   />
                 </div>
@@ -475,15 +527,16 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
                     <Target className="w-3.5 h-3.5 text-amber-400" />
-                    <span>الهدف الشهري (متجر)</span>
+                    <span>الهدف الشهري (اختياري)</span>
                   </label>
                   <input
                     type="number"
                     min={1}
                     max={500}
                     value={monthlyTarget}
-                    onChange={(e) => setMonthlyTarget(parseInt(e.target.value, 10) || 20)}
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-3 py-2.5 text-xs font-mono text-white outline-none transition"
+                    onChange={(e) => setMonthlyTarget(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                    placeholder="مثال: 20 متجر"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-3 py-2.5 text-xs font-mono text-white placeholder-slate-600 outline-none transition"
                   />
                 </div>
               </div>
