@@ -59,8 +59,8 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
     setCameraError(null);
     isStoppingRef.current = false;
 
-    // ⚡ Stage 12B: Fast-path execution (requestAnimationFrame replaces artificial 80ms delay)
-    requestAnimationFrame(async () => {
+    // ⚡ Guaranteed DOM layout settling before initializing Html5Qrcode on Mobile
+    setTimeout(async () => {
       if (isStoppingRef.current) return;
 
       const container = document.getElementById(readerElementId);
@@ -76,20 +76,21 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           } catch {}
         }
 
-        // ⚡ Stage 12B Fix #5: Dynamically import html5-qrcode on demand (excludes it from initial POS route bundle)
+        // Dynamically import html5-qrcode on demand
         const { Html5Qrcode } = await import('html5-qrcode');
         if (isStoppingRef.current) return;
 
         const html5QrCode = new Html5Qrcode(readerElementId, false);
         scannerRef.current = html5QrCode;
 
-        // Configuration with dynamic scan box (no rigid aspectRatio that causes black screen on iOS)
+        // Mobile-Safe Dynamic Scan Box (Guaranteed never to exceed viewfinder dimensions on mobile)
         const scanConfig = {
           fps: 20,
           qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-            const size = Math.max(220, Math.floor(minEdge * 0.85));
-            return { width: size, height: size };
+            const minEdge = Math.min(viewfinderWidth || 280, viewfinderHeight || 280);
+            const size = Math.floor(minEdge * 0.75);
+            const finalSize = Math.max(150, Math.min(size, minEdge - 10));
+            return { width: finalSize, height: finalSize };
           },
           disableFlip: false,
         };
@@ -108,7 +109,6 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           }, 30);
         };
 
-        // ⚡ Stage 12B Fix #4: Direct environment facingMode init without blocking on getCameras() enumeration
         const targetCamera = cameraIdToUse || { facingMode: 'environment' };
 
         try {
@@ -146,13 +146,14 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                   const l = (c.label || '').toLowerCase();
                   return l.includes('back') || l.includes('rear') || l.includes('environment') || l.includes('خلفية');
                 }) ||
+                cams[cams.length - 1] ||
                 cams[0];
 
               const fallbackCam = backCam ? backCam.id : { facingMode: 'environment' };
               if (backCam) setSelectedCameraId(backCam.id);
               await html5QrCode.start(fallbackCam, scanConfig, onScan, () => {});
             } else {
-              throw firstErr;
+              await html5QrCode.start('environment' as any, scanConfig, onScan, () => {});
             }
           } catch (fallbackErr: any) {
             console.warn('Camera fallback failed:', fallbackErr);
@@ -165,7 +166,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           'تعذر تشغيل الكاميرا. يرجى التأكد من السماح بصلاحية الكاميرا للمتصفح في إعدادات الجوال أو استخدام الإدخال اليدوي.'
         );
       }
-    });
+    }, 80);
   };
 
   const handleSwitchCamera = () => {
@@ -192,13 +193,16 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-lg animate-fade-in">
       <div className="w-full max-w-lg rounded-3xl p-5 sm:p-7 border border-slate-700/80 relative shadow-2xl overflow-hidden bg-slate-900/98 text-right">
         
-        {/* Custom styling to ensure video stream fills container completely and seamlessly */}
+        {/* Custom styling to ensure video stream fills container completely and seamlessly on mobile */}
         <style>{`
-          #radar-qr-reader-viewport {
+          #radar-qr-reader-viewport,
+          #radar-qr-reader-viewport__scan_region,
+          #radar-qr-reader-viewport__scan_region > div {
             width: 100% !important;
             height: 100% !important;
+            min-height: 100% !important;
             border: none !important;
-            background: #000 !important;
+            background: transparent !important;
             position: relative !important;
             display: flex !important;
             align-items: center !important;
@@ -208,14 +212,10 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           #radar-qr-reader-viewport video {
             width: 100% !important;
             height: 100% !important;
+            min-height: 100% !important;
             object-fit: cover !important;
             border-radius: 1.5rem !important;
-          }
-          #radar-qr-reader-viewport__scan_region {
-            border: none !important;
-          }
-          #radar-qr-reader-viewport__scan_region > div {
-            border: none !important;
+            display: block !important;
           }
           #radar-qr-reader-viewport img, #radar-qr-reader-viewport span, #radar-qr-reader-viewport a {
             display: none !important;
