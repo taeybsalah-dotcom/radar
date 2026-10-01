@@ -2047,8 +2047,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
           {/* Manager & Store Info */}
           <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
-            <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-amber-400 font-bold text-xl shadow-inner shrink-0">
-              👑
+            <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center shadow-inner shrink-0 overflow-hidden">
+              {store.logo_url ? (
+                <img
+                  src={store.logo_url}
+                  alt={store.name}
+                  className="w-full h-full object-cover rounded-2xl"
+                />
+              ) : (
+                <div className="w-full h-full bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 font-black text-lg">
+                  {store.name.slice(0, 1)}
+                </div>
+              )}
             </div>
 
             <div>
@@ -5615,143 +5625,142 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </div>
             )}
 
-            {/* Header Card */}
-            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-                <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                    <CreditCard className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-base sm:text-lg font-black text-white">
-                      إدارة الاشتراك والفوترة
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      متابعة باقة المتجر الحالية، دورة التجديد، ترقية الخطط، وسجل الفواتير
-                    </p>
-                  </div>
-                </div>
+            {/* ⏱️ شريط عداد الأيام المتبقية وحالة الاشتراك المباشرة */}
+            {(() => {
+              const isTrial = !store.setup_fee_paid || subscriptionInfo?.status === 'trial';
+              const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 7 : 30)));
+              const totalCycleDays = isTrial
+                ? (currentPlan.trial_days || 7)
+                : Math.max(1, (currentPlan.duration_months || (currentPlan.billing_interval === 'YEARLY' ? 12 : 1)) * 30);
+              const progressPercent = Math.min(100, Math.max(0, Math.round((daysLeft / totalCycleDays) * 100)));
 
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`px-3.5 py-1.5 rounded-full text-xs font-bold border ${
-                      store.setup_fee_paid
-                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                        : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
-                    }`}
-                  >
-                    {store.setup_fee_paid ? '🟢 حساب نشط معتمد' : '🎁 فترة التجربة المجانية (7 أيام)'}
-                  </span>
-                </div>
-              </div>
+              return (
+                <div className="rounded-3xl p-6 sm:p-8 bg-gradient-to-br from-slate-900 via-slate-900/95 to-slate-950 border border-slate-800 shadow-2xl relative overflow-hidden space-y-6">
+                  {/* Decorative ambient glow */}
+                  <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/5 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
 
-              {/* Plan Metrics Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="text-xs text-slate-400 font-medium">الخطة الحالية:</span>
-                  <p className="text-lg font-black text-white">{currentPlan.name}</p>
-                  <span className="text-[11px] text-amber-400 font-bold block">
-                    {store.setup_fee_paid ? 'تم سداد رسوم التأسيس (500 ر.س)' : 'بانتظار سداد التأسيس'}
-                  </span>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="text-xs text-slate-400 font-medium">قيمة الاشتراك:</span>
-                  <p className="text-lg font-black text-amber-400 font-mono">
-                    {currentPlan.amount.toLocaleString()}{' '}
-                    <span className="text-xs text-slate-400 font-sans">
-                      {currentPlan.currency || 'ر.س'} / {getPlanPriceSuffix(currentPlan)}
-                    </span>
-                  </p>
-                  <span className="text-[11px] text-emerald-400 font-bold block">تجديد آلي دوري</span>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="text-xs text-slate-400 font-medium">تاريخ الاستحقاق القادم:</span>
-                  <p className="text-sm font-black text-white font-mono mt-1">
-                    {store.subscription_end_date
-                      ? new Date(store.subscription_end_date).toLocaleDateString('ar-SA', {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric',
-                        })
-                      : 'غير محدد'}
-                  </p>
-                  <span className="text-[11px] text-slate-400 font-bold block">
-                    متبقي: {subscriptionInfo?.daysLeft ?? 0} أيام
-                  </span>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="text-xs text-slate-400 font-medium">طرق الدفع المعتمدة:</span>
-                  <p className="text-sm font-black text-white flex items-center gap-1 mt-1">
-                    <span>مدفوعات إلكترونية فورية</span>
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                  </p>
-                  <span className="text-[11px] text-slate-400 block">مدى • Apple Pay • Visa</span>
-                </div>
-              </div>
-
-              {/* Current Plan Features */}
-              {currentPlan.features && currentPlan.features.length > 0 && (
-                <div className="p-5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4" />
-                      <span>المميزات المضمنة في باقتك الحالية ({currentPlan.name}):</span>
-                    </span>
-                    <span className="text-[11px] text-slate-500 font-mono">
-                      {currentPlan.features.length} ميزات نشطة
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
-                    {currentPlan.features.map((feat: string, idx: number) => (
-                      <div key={idx} className="flex items-start gap-2 text-xs text-slate-200">
-                        <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                        <span className="leading-relaxed">{feat}</span>
+                  <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                    {/* Left/Main info */}
+                    <div className="space-y-3">
+                      <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                          <CreditCard className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <h3 className="text-base sm:text-lg font-black text-white">
+                              إدارة الاشتراكات والفوترة
+                            </h3>
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-bold border ${
+                                !isTrial
+                                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                              }`}
+                            >
+                              {!isTrial ? `🟢 باقة ${currentPlan.name}` : '🎁 فترة التجربة المجانية (7 أيام)'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {!isTrial
+                              ? `اشتراكك مفعل على (${currentPlan.name}) بسعر ${currentPlan.amount} ${currentPlan.currency || 'ر.س'} / ${getPlanPriceSuffix(currentPlan)}`
+                              : 'أنت الآن تستمتع بفترة التجربة المجانية مع كامل المميزات المفتوحة'}
+                          </p>
+                        </div>
                       </div>
-                    ))}
+
+                      {/* Expiry Date */}
+                      <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
+                        <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
+                        <span>تاريخ الاستحقاق والتجديد:</span>
+                        <strong className="text-slate-200 font-mono">
+                          {store.subscription_end_date
+                            ? new Date(store.subscription_end_date).toLocaleDateString('ar-SA', {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                              })
+                            : store.trial_end_date
+                            ? new Date(store.trial_end_date).toLocaleDateString('ar-SA', {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                              })
+                            : '7 أيام من تاريخ إنشاء المتجر'}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {/* Right: Big Live Countdown Badge & Action Button */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 shrink-0">
+                      {/* Live Days Counter */}
+                      <div className="flex items-center gap-3.5 bg-slate-950 border border-slate-800/90 px-5 py-3.5 rounded-2xl shadow-inner">
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-amber-500/20 to-amber-400/10 border border-amber-500/30 flex items-center justify-center shrink-0">
+                          <Clock className="w-6 h-6 text-amber-400 animate-pulse" />
+                        </div>
+                        <div>
+                          <div className="text-[11px] text-slate-400 font-medium">
+                            {isTrial ? 'المتبقي من التجربة المجانية:' : 'الأيام المتبقية في الاشتراك:'}
+                          </div>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-2xl font-black text-amber-400 font-mono tracking-tight">
+                              {daysLeft}
+                            </span>
+                            <span className="text-xs font-bold text-slate-300">
+                              {daysLeft === 1 ? 'يوم واحد' : daysLeft === 2 ? 'يومان' : daysLeft <= 10 ? 'أيام' : 'يوماً'}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              / {totalCycleDays} يوم
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Action */}
+                      {!store.setup_fee_paid ? (
+                        <button
+                          type="button"
+                          disabled={isPayingSetup}
+                          onClick={() => handlePaySetupFee('mada')}
+                          className="px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-lg shadow-emerald-500/20 disabled:opacity-50 shrink-0"
+                        >
+                          <Zap className="w-4 h-4" />
+                          <span>{isPayingSetup ? 'جاري السداد...' : 'سداد التأسيس (500 ر.س) وتثبيت المتجر 🎁'}</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isPayingRenewal}
+                          onClick={() => handlePayRenewal('mada')}
+                          className="px-5 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-lg shadow-amber-500/20 disabled:opacity-50 shrink-0"
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          <span>{isPayingRenewal ? 'جاري التجديد...' : `تجديد مسبق (+${getPlanDurationLabel(currentPlan)}) 💳`}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Visual Progress Bar */}
+                  <div className="pt-4 border-t border-slate-800/80">
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1.5 font-mono">
+                      <span>مؤشر صلاحية الفترة الحالية</span>
+                      <span className="text-amber-400 font-bold">{progressPercent}% متبقي</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-slate-950 border border-slate-800/80 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          daysLeft <= 3
+                            ? 'bg-gradient-to-r from-rose-500 to-amber-500'
+                            : 'bg-gradient-to-r from-amber-500 to-emerald-400'
+                        }`}
+                        style={{ width: `${Math.max(5, progressPercent)}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
-              )}
-
-              {/* Quick Actions & Renewal Bar */}
-              <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h4 className="text-xs font-black text-white">إجراءات الدفع والتجديد السريع:</h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    {store.setup_fee_paid
-                      ? `يمكنك التجديد المسبق في أي وقت لإضافة فترة جديدة لاشتراكك بسعر ${currentPlan.amount} ${currentPlan.currency || 'ر.س'}.`
-                      : 'سدد رسوم التأسيس (500 ر.س) للاستفادة من عرض اشتراك أول شهر مجاناً.'}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  {!store.setup_fee_paid ? (
-                    <button
-                      type="button"
-                      disabled={isPayingSetup}
-                      onClick={() => handlePaySetupFee('mada')}
-                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-md disabled:opacity-50"
-                    >
-                      <Zap className="w-4 h-4" />
-                      <span>{isPayingSetup ? 'جاري الدفع...' : 'سداد التأسيس (500 ر.س) + تفعيل المتجر 🎁'}</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={isPayingRenewal}
-                      onClick={() => handlePayRenewal('mada')}
-                      className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-md disabled:opacity-50"
-                    >
-                      <CreditCard className="w-4 h-4" />
-                      <span>{isPayingRenewal ? 'جاري التجديد...' : `تجديد الاشتراك الآن (+${getPlanDurationLabel(currentPlan)} بـ ${currentPlan.amount} ر.س) 💳`}</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* 🚀 Active Plans Comparison & Upgrade Section (عرض الباقات المتاحة للترقية) */}
             <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
