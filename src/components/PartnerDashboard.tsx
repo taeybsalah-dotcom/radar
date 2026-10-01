@@ -413,8 +413,8 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       <div className="max-w-md mx-auto py-12 px-4 animate-fade-in" dir="rtl">
         <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl backdrop-blur-xl">
           <div className="text-center space-y-3">
-            <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto text-2xl font-bold shadow-lg shadow-amber-500/20">
-              🤝
+            <div className="w-20 h-20 mx-auto rounded-3xl p-1 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-2xl shadow-cyan-500/20">
+              <img src="/radar-logo-dark.jpg" alt="RADAR" className="w-full h-full object-cover rounded-[22px]" />
             </div>
             <div>
               <h2 className="text-xl font-black text-white">بوابة شركاء المبيعات | Partner Portal</h2>
@@ -522,8 +522,8 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       {/* 1. Partner Header & Identity Bar */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 font-black text-xl shadow-lg shadow-amber-500/30 flex-shrink-0">
-            🤝
+          <div className="w-14 h-14 rounded-2xl p-0.5 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-lg shadow-cyan-500/20 flex-shrink-0">
+            <img src="/radar-logo-dark.jpg" alt="RADAR" className="w-full h-full object-cover rounded-[14px]" />
           </div>
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
