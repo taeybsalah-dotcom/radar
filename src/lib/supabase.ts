@@ -4789,6 +4789,30 @@ export const LoyaltyService = {
   },
 
   async getAllPartners(): Promise<any[]> {
+    const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', '']);
+
+    const sanitizePartner = (p: any) => {
+      let code = p.affiliates?.referral_code || p.referral_code || 'r1001';
+      if (code.toLowerCase().startsWith('radar-')) {
+        code = 'r' + (code.replace(/\D/g, '') || '1001');
+      } else if (!code.toLowerCase().startsWith('r')) {
+        code = 'r' + (code.replace(/\D/g, '') || '1001');
+      }
+      code = code.toLowerCase();
+
+      let slug = (p.slug || '').toLowerCase().trim();
+      if (RESERVED_SLUGS.has(slug) || slug.length < 2) {
+        slug = code;
+      }
+
+      return {
+        ...p,
+        slug,
+        referral_code: code,
+        affiliates: p.affiliates ? { ...p.affiliates, referral_code: code } : { referral_code: code },
+      };
+    };
+
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -4797,15 +4821,17 @@ export const LoyaltyService = {
           .select('id, affiliate_id, display_name, slug, region, target_value, active, created_at, affiliates(id, name, phone, referral_code, status)')
           .order('created_at', { ascending: false });
         if (!error && data && data.length > 0) {
-          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, data);
-          return data;
+          const sanitized = data.map(sanitizePartner);
+          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, sanitized);
+          return sanitized;
         }
       } catch (e) {
         console.warn('Supabase getAllPartners error:', e);
       }
     }
     const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    return local;
+    const sanitizedLocal = local.map(sanitizePartner);
+    return sanitizedLocal;
   },
 
   async addPartner(payload: {
@@ -4819,8 +4845,21 @@ export const LoyaltyService = {
   }): Promise<any> {
     const cleanName = payload.name.trim();
     const cleanPhone = payload.phone.trim();
-    const cleanCode = (payload.referral_code || ('r' + Math.floor(1000 + Math.random() * 9000))).trim();
-    const cleanSlug = (payload.slug || cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-')).toLowerCase();
+    
+    // Normalization: r + digits
+    let cleanCode = (payload.referral_code || '').trim().toLowerCase();
+    if (cleanCode.startsWith('radar-')) {
+      cleanCode = 'r' + (cleanCode.replace(/\D/g, '') || Math.floor(1000 + Math.random() * 9000));
+    } else if (!cleanCode.startsWith('r')) {
+      const digits = cleanCode.replace(/\D/g, '') || Math.floor(1000 + Math.random() * 9000);
+      cleanCode = `r${digits}`;
+    }
+
+    const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', '']);
+    let cleanSlug = (payload.slug || '').toLowerCase().trim().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+    if (!cleanSlug || RESERVED_SLUGS.has(cleanSlug) || cleanSlug.length < 2) {
+      cleanSlug = cleanCode;
+    }
     const pinCode = (payload.pin_code || '1234').trim();
 
     const partnerId = 'partner-' + Date.now();
@@ -4945,7 +4984,29 @@ export const LoyaltyService = {
   getPartnerSession(): any | null {
     try {
       const raw = localStorage.getItem('radar_partner_session');
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed) return null;
+
+      const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', '']);
+      let code = parsed.affiliates?.referral_code || parsed.referral_code || 'r1001';
+      if (code.toLowerCase().startsWith('radar-')) {
+        code = 'r' + (code.replace(/\D/g, '') || '1001');
+      } else if (!code.toLowerCase().startsWith('r')) {
+        code = 'r' + (code.replace(/\D/g, '') || '1001');
+      }
+      code = code.toLowerCase();
+
+      let slug = (parsed.slug || '').toLowerCase().trim();
+      if (RESERVED_SLUGS.has(slug) || slug.length < 2) {
+        slug = code;
+      }
+
+      parsed.slug = slug;
+      parsed.referral_code = code;
+      if (parsed.affiliates) parsed.affiliates.referral_code = code;
+
+      return parsed;
     } catch {
       return null;
     }

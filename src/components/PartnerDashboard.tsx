@@ -489,12 +489,25 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
     );
   }
 
-  const partnerRefCode = partner.affiliates?.referral_code || partner.referral_code || 'r1001';
+  const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', '']);
+
+  let rawCode = partner.affiliates?.referral_code || partner.referral_code || 'r1001';
+  if (rawCode.toLowerCase().startsWith('radar-')) {
+    rawCode = 'r' + (rawCode.replace(/\D/g, '') || '1001');
+  } else if (!rawCode.toLowerCase().startsWith('r')) {
+    rawCode = 'r' + (rawCode.replace(/\D/g, '') || '1001');
+  }
+  const partnerRefCode = rawCode.toLowerCase();
+
+  let safeSlug = (partner.slug || '').toLowerCase().trim().replace(/^\/+|\/+$/g, '');
+  if (RESERVED_SLUGS.has(safeSlug) || safeSlug.length < 2) {
+    safeSlug = partnerRefCode;
+  }
 
   // Derived Links
   const publicLandingLink = typeof window !== 'undefined'
-    ? `${window.location.origin}/${partner.slug}`
-    : `https://radar.sa/${partner.slug}`;
+    ? `${window.location.origin}/${safeSlug}`
+    : `https://radar.sa/${safeSlug}`;
 
   const directJoinLink = typeof window !== 'undefined'
     ? `${window.location.origin}/join?ref=${encodeURIComponent(partnerRefCode)}`
@@ -531,7 +544,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               </span>
               <span className="text-slate-500">•</span>
               <span className="text-slate-400">
-                معرف الصفحة: <strong className="text-slate-300">/{partner.slug}</strong>
+                معرف الصفحة: <strong className="text-slate-300">/{safeSlug}</strong>
               </span>
             </div>
           </div>
