@@ -229,15 +229,15 @@ export default async function handler(req: any, res: any) {
       `<link rel="icon" href="${faviconHref}" />`
     );
 
-    // Fast Edge CDN Caching: Instant edge delivery with background stale-while-revalidate
+    // Real-time HTML Delivery: Zero edge/browser cache for HTML to guarantee instant delivery of newest JS bundle hashes
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=86400');
-
+    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=0, must-revalidate');
 
     return res.status(200).send(rawHtml);
   } catch (err: any) {
     console.error('SSR Handler Error:', err);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=0, must-revalidate');
     return res.status(200).send(getHtmlTemplate());
   }
 }
