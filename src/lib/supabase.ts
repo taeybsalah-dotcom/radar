@@ -1918,115 +1918,108 @@ export const LoyaltyService = {
     return coupons.filter((c) => c.store_id === resolvedStoreId || c.store_id === storeId);
   },
 
-  // 11.4 شراء كوبون بالنقاط (Customer Purchase with instant points deduction & stock update)
+  // 11.4 شراء واستبدال كوبون بالنقاط (Customer Purchase with instant points deduction & stock update)
   async purchaseCoupon(
     storeId: string,
     customerId: string,
     privilegeId: string
   ): Promise<{ success: boolean; coupon: CustomerCoupon; updatedCustomer: Customer }> {
-    // ─── 0. تهيئة Supabase مرة واحدة فقط + resolveStore مرة واحدة ──────────
     const supabase = getSupabaseClient();
-    const currentStore = (await this.resolveStore(storeId)) || INITIAL_STORE;
-    const resolvedStoreId = currentStore.id;
+    const resolvedStoreId = isUUID(storeId)
+      ? storeId
+      : ((await this.resolveStore(storeId))?.id || storeId);
 
-    // ─── 1. جلب العميل مباشرة بالـ ID (بدلاً من تحميل كل عملاء المتجر) ───
+    // ─── 1. جلب العميل والمكافأة والكوتا بالتوازي التام (Promise.all - Fast Targeted Fetch) ───
     let customer: Customer | undefined;
-    if (supabase && isUUID(customerId) && isUUID(resolvedStoreId)) {
+    let privilege: Privilege | undefined;
+    let userPurchasedCount = 0;
+
+    if (supabase && isUUID(customerId) && isUUID(resolvedStoreId) && isUUID(privilegeId)) {
       try {
-        const { data, error } = await supabase
-          .from('store_customers')
-          .select('*')
-          .eq('id', customerId)
-          .eq('store_id', resolvedStoreId)
-          .maybeSingle();
-        if (!error && data) {
+        const [custRes, privRes, quotaRes] = await Promise.all([
+          supabase
+            .from('store_customers')
+            .select('*')
+            .eq('id', customerId)
+            .eq('store_id', resolvedStoreId)
+            .maybeSingle(),
+          supabase
+            .from('privileges')
+            .select('*')
+            .eq('id', privilegeId)
+            .eq('store_id', resolvedStoreId)
+            .maybeSingle(),
+          supabase
+            .from('customer_coupons')
+            .select('id', { count: 'exact', head: true })
+            .eq('store_id', resolvedStoreId)
+            .eq('privilege_id', privilegeId)
+            .eq('customer_id', customerId),
+        ]);
+
+        if (!custRes.error && custRes.data) {
           customer = {
-            id: data.id,
-            store_id: data.store_id,
-            phone: data.phone,
-            name: data.name || 'عميل مميز',
-            wallet_balance: Number(data.wallet_balance) || 0,
-            lifetime_xp: Number(data.lifetime_xp) || 0,
-            last_visit_date: data.last_visit_date
-              ? data.last_visit_date.split('T')[0]
+            id: custRes.data.id,
+            store_id: custRes.data.store_id,
+            phone: custRes.data.phone,
+            name: custRes.data.name || 'عميل مميز',
+            wallet_balance: Number(custRes.data.wallet_balance) || 0,
+            lifetime_xp: Number(custRes.data.lifetime_xp) || 0,
+            last_visit_date: custRes.data.last_visit_date
+              ? custRes.data.last_visit_date.split('T')[0]
               : new Date().toISOString().split('T')[0],
-            is_active: data.is_active !== undefined ? data.is_active : true,
-            visits_count: data.visits_count || 1,
-            created_at: data.created_at,
+            is_active: custRes.data.is_active !== undefined ? custRes.data.is_active : true,
+            visits_count: custRes.data.visits_count || 1,
+            created_at: custRes.data.created_at,
           };
         }
+
+        if (!privRes.error && privRes.data) {
+          privilege = privRes.data as Privilege;
+        }
+
+        userPurchasedCount = quotaRes.count || 0;
       } catch (e) {
-        console.warn('purchaseCoupon: direct customer fetch failed', e);
+        console.warn('purchaseCoupon: targeted fetch failed, falling back to local', e);
       }
     }
+
+    // Local Fallbacks
     if (!customer) {
-      // Fallback: Local Storage
       const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
       customer = localCustomers.find((c) => c.id === customerId);
     }
     if (!customer) throw new Error('العميل غير موجود');
 
-    // ─── 2. جلب الامتيازات والرتب بالتوازي (Promise.all) ────────────────────
-    const [privileges, tiers] = await Promise.all([
-      this.getPrivileges(resolvedStoreId),
-      this.getTiers(resolvedStoreId),
-    ]);
-
-    const privilege = privileges.find((p) => p.id === privilegeId);
+    if (!privilege) {
+      const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
+      privilege = privs.find((p) => p.id === privilegeId);
+    }
     if (!privilege) throw new Error('الامتياز غير موجود');
 
-    // 1. فحص التفعيل والإخفاء
+    // ─── 2. التحقق من الشروط والصلاحيات في الذاكرة (0ms Validation) ───
     if (!privilege.is_active) {
       throw new Error('عذراً، هذا الامتياز موقوف حالياً من قبل إدارة المتجر');
     }
 
-    // 2. فحص المخزون والكمية المتاحة (Sold Out Check)
     if (privilege.quantity_limit !== null && privilege.quantity_limit > 0) {
-      if (privilege.redeemed_count >= privilege.quantity_limit) {
+      if ((privilege.redeemed_count || 0) >= privilege.quantity_limit) {
         throw new Error('عذراً، نفدت كمية هذا الكوبون بالكامل! (Sold Out)');
       }
     }
 
-    // 2.1 فحص الحد الأقصى لكل عميل (Per-Customer Quota) — استعلام COUNT مباشر بلا resolveStore إضافي
     if (
       privilege.per_customer_limit !== null &&
       privilege.per_customer_limit !== undefined &&
       privilege.per_customer_limit > 0
     ) {
-      let userPurchasedCount = 0;
-      if (supabase && isUUID(resolvedStoreId)) {
-        try {
-          let countQuery = supabase
-            .from('customer_coupons')
-            .select('id', { count: 'exact', head: true })
-            .eq('store_id', resolvedStoreId)
-            .eq('privilege_id', isUUID(privilegeId) ? privilegeId : '');
-          if (isUUID(customerId)) {
-            countQuery = countQuery.or(
-              `customer_id.eq.${customerId},customer_phone.eq.${normalizePhone(customer.phone)}`
-            );
-          } else {
-            countQuery = countQuery.eq('customer_phone', normalizePhone(customer.phone));
-          }
-          const { count } = await countQuery;
-          userPurchasedCount = count || 0;
-        } catch (e) {
-          console.warn('purchaseCoupon: per-customer quota check failed, using local fallback', e);
-          const localCouponsForQuota = getLocalData<CustomerCoupon[]>(STORAGE_KEYS.LOCAL_COUPONS, []);
-          userPurchasedCount = localCouponsForQuota.filter(
-            (c) =>
-              c.privilege_id === privilegeId &&
-              (c.customer_id === customerId ||
-                normalizePhone(c.customer_phone) === normalizePhone(customer!.phone))
-          ).length;
-        }
-      } else {
-        const localCouponsForQuota = getLocalData<CustomerCoupon[]>(STORAGE_KEYS.LOCAL_COUPONS, []);
-        userPurchasedCount = localCouponsForQuota.filter(
+      if (userPurchasedCount === 0 && !supabase) {
+        const localCoupons = getLocalData<CustomerCoupon[]>(STORAGE_KEYS.LOCAL_COUPONS, []);
+        userPurchasedCount = localCoupons.filter(
           (c) =>
             c.privilege_id === privilegeId &&
             (c.customer_id === customerId ||
-              normalizePhone(c.customer_phone) === normalizePhone(customer.phone))
+              normalizePhone(c.customer_phone) === normalizePhone(customer!.phone))
         ).length;
       }
       if (userPurchasedCount >= privilege.per_customer_limit) {
@@ -2036,36 +2029,22 @@ export const LoyaltyService = {
       }
     }
 
-    // 3. فحص الرتبة المطلوبة (tiers جاهزة من Promise.all أعلاه)
-    const requiredTier = tiers.find((t) => t.id === privilege.required_tier_id);
-    if (requiredTier && (customer.lifetime_xp || 0) < requiredTier.required_xp) {
-      throw new Error(`عذراً، يتطلب هذا العرض الوصول لرتبة "${requiredTier.tier_name}" أولاً (${requiredTier.required_xp} XP)`);
+    // فحص الرتبة إذا وُجدت
+    if (privilege.required_tier_id) {
+      const tiers = getLocalData<Tier[]>(STORAGE_KEYS.LOCAL_TIERS, INITIAL_TIERS);
+      const reqTier = tiers.find((t) => t.id === privilege!.required_tier_id);
+      if (reqTier && (customer.lifetime_xp || 0) < reqTier.required_xp) {
+        throw new Error(`عذراً، يتطلب هذا العرض الوصول لرتبة "${reqTier.tier_name}" أولاً (${reqTier.required_xp} XP)`);
+      }
     }
 
-    // 4. فحص رصيد النقاط
+    // فحص رصيد النقاط
     const cost = privilege.cost_points || 0;
     if ((customer.wallet_balance || 0) < cost) {
       throw new Error(`رصيد نقاطك غير كافٍ! تحتاج إلى ${cost} نقطة ورصيدك الحالي هو ${customer.wallet_balance} نقطة`);
     }
 
-    // ─── 5+6. خصم النقاط + زيادة عداد الصرف بالتوازي (Promise.all) ─────────
-    const nextRedeemedCount = (privilege.redeemed_count || 0) + 1;
-    const isNowSoldOut =
-      privilege.quantity_limit !== null &&
-      privilege.quantity_limit > 0 &&
-      nextRedeemedCount >= privilege.quantity_limit;
-
-    const [updatedCustomer] = await Promise.all([
-      this.updateCustomer(customerId, {
-        wallet_balance: customer.wallet_balance - cost,
-      }),
-      this.updatePrivilege(privilegeId, {
-        redeemed_count: nextRedeemedCount,
-        is_hidden: isNowSoldOut ? true : privilege.is_hidden,
-      }),
-    ]);
-
-    // ─── 7. إنشاء الكوبون الجديد للعميل ────────────────────────────────────
+    // ─── 3. تجهيز بيانات الكوبون الجديد ───
     const code =
       'CPN-' +
       Math.floor(1000 + Math.random() * 9000) +
@@ -2074,37 +2053,17 @@ export const LoyaltyService = {
     const nowIso = new Date().toISOString();
     let couponId = 'cpn-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
 
-    if (supabase && isUUID(resolvedStoreId)) {
-      try {
-        const dbCouponPayload: any = {
-          store_id: resolvedStoreId,
-          customer_id: isUUID(customerId) ? customerId : null,
-          customer_phone: customer.phone,
-          customer_name: customer.name || 'عميل مميز',
-          privilege_id: isUUID(privilegeId) ? privilegeId : null,
-          privilege_title: privilege.title,
-          privilege_image_url: privilege.image_url || null,
-          coupon_code: code,
-          cost_points: cost,
-          status: 'ACTIVE',
-          valid_start_time: privilege.valid_start_time || '00:00',
-          valid_end_time: privilege.valid_end_time || '23:59',
-          purchased_at: nowIso,
-        };
-        const { data: insertedCpn, error: cpnErr } = await supabase
-          .from('customer_coupons')
-          .insert([dbCouponPayload])
-          .select()
-          .single();
-        if (!cpnErr && insertedCpn) {
-          couponId = insertedCpn.id;
-        } else {
-          console.warn('Supabase insert coupon failed:', cpnErr);
-        }
-      } catch (e) {
-        console.warn('Supabase insert coupon failed', e);
-      }
-    }
+    const nextRedeemedCount = (privilege.redeemed_count || 0) + 1;
+    const isNowSoldOut =
+      privilege.quantity_limit !== null &&
+      privilege.quantity_limit > 0 &&
+      nextRedeemedCount >= privilege.quantity_limit;
+
+    const newBalance = customer.wallet_balance - cost;
+    const updatedCustomer: Customer = {
+      ...customer,
+      wallet_balance: newBalance,
+    };
 
     const newCoupon: CustomerCoupon = {
       id: couponId,
@@ -2123,18 +2082,87 @@ export const LoyaltyService = {
       purchased_at: nowIso,
     };
 
-    // ─── 7b. حفظ الكوبون محلياً (Cache فقط — لا يؤثر على نجاح العملية) ────────
-    // saveLocalData صامتة بالكامل، لكن نُضيف try/catch صريحاً هنا كدرع إضافي
-    // لأن مصدر الحقيقة هو Supabase وليس localStorage.
+    // ─── 4. تنفيذ عمليات الحفظ في Supabase بالتوازي التام (Promise.all - Fast Writes) ───
+    if (supabase && isUUID(resolvedStoreId) && isUUID(customerId)) {
+      try {
+        const dbCouponPayload: any = {
+          store_id: resolvedStoreId,
+          customer_id: isUUID(customerId) ? customerId : null,
+          customer_phone: customer.phone,
+          customer_name: customer.name || 'عميل مميز',
+          privilege_id: isUUID(privilegeId) ? privilegeId : null,
+          privilege_title: privilege.title,
+          privilege_image_url: privilege.image_url || null,
+          coupon_code: code,
+          cost_points: cost,
+          status: 'ACTIVE',
+          valid_start_time: privilege.valid_start_time || '00:00',
+          valid_end_time: privilege.valid_end_time || '23:59',
+          purchased_at: nowIso,
+        };
+
+        const [custUpRes, privUpRes, cpnInsRes] = await Promise.all([
+          supabase
+            .from('store_customers')
+            .update({ wallet_balance: newBalance })
+            .eq('id', customerId)
+            .select()
+            .maybeSingle(),
+          supabase
+            .from('privileges')
+            .update({
+              redeemed_count: nextRedeemedCount,
+              is_hidden: isNowSoldOut ? true : privilege.is_hidden,
+            })
+            .eq('id', privilegeId),
+          supabase
+            .from('customer_coupons')
+            .insert([dbCouponPayload])
+            .select()
+            .maybeSingle(),
+        ]);
+
+        if (cpnInsRes.data && cpnInsRes.data.id) {
+          newCoupon.id = cpnInsRes.data.id;
+        }
+      } catch (e) {
+        console.warn('purchaseCoupon: fast write failed', e);
+      }
+    }
+
+    // ─── 5. تحديث الكاش المحلي فورياً ───
     try {
+      // 5.1 تحديث العملاء محلياً
+      const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
+      const custIdx = localCustomers.findIndex((c) => c.id === customerId);
+      if (custIdx !== -1) {
+        localCustomers[custIdx] = updatedCustomer;
+      } else {
+        localCustomers.unshift(updatedCustomer);
+      }
+      saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, localCustomers);
+
+      // 5.2 تحديث الامتياز محلياً
+      const localPrivs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
+      const pIdx = localPrivs.findIndex((p) => p.id === privilegeId);
+      if (pIdx !== -1) {
+        localPrivs[pIdx] = {
+          ...localPrivs[pIdx],
+          redeemed_count: nextRedeemedCount,
+          is_hidden: isNowSoldOut ? true : localPrivs[pIdx].is_hidden,
+        };
+        saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, localPrivs);
+      }
+
+      // 5.3 حفظ الكوبون محلياً
       const localCoupons = getLocalData<CustomerCoupon[]>(STORAGE_KEYS.LOCAL_COUPONS, []);
       localCoupons.unshift(newCoupon);
       saveLocalData(STORAGE_KEYS.LOCAL_COUPONS, localCoupons);
     } catch {
-      // Local cache write failed — acceptable. Supabase insert already succeeded above.
+      // Local cache fallback
     }
 
-    // ─── 8. Audit Log — Fire & Forget (لا يعلق استجابة الواجهة أبداً) ──────
+    // ─── 6. سجل التدقيق Audit Log (Fire & Forget في الخلفية) ───
     if (supabase && isUUID(resolvedStoreId)) {
       Promise.resolve(
         supabase
@@ -2159,43 +2187,6 @@ export const LoyaltyService = {
           ])
       ).catch((e: any) => console.warn('Supabase purchaseCoupon audit log failed', e));
     }
-
-    // ─── 8b. حفظ السجل المحلي (Cache فقط — لا يؤثر على نجاح العملية) ─────────
-    try {
-      const logs = getLocalData<AuditLog[]>(STORAGE_KEYS.LOCAL_LOGS, []);
-      logs.unshift({
-        id: 'log-' + Date.now(),
-        store_id: resolvedStoreId,
-        staff_id: null,
-        customer_id: customerId,
-        customer_phone: customer.phone,
-        customer_name: customer.name || undefined,
-        action: 'PURCHASE_COUPON',
-        purchase_amount: 0,
-        points_changed: -cost,
-        metadata: {
-          coupon_id: newCoupon.id,
-          coupon_code: newCoupon.coupon_code,
-          privilege_title: privilege.title,
-          cost_points: cost,
-        },
-        created_at: nowIso,
-      });
-      saveLocalData(STORAGE_KEYS.LOCAL_LOGS, logs);
-    } catch {
-      // Local cache write failed — acceptable. Audit log is also persisted in Supabase above.
-    }
-
-    LoyaltyEvents.emit({
-      type: 'COUPON_PURCHASED',
-      storeId: resolvedStoreId,
-      phone: customer.phone,
-      points: -cost,
-      newBalance: updatedCustomer.wallet_balance,
-      couponId: newCoupon.id,
-      couponCode: newCoupon.coupon_code,
-      rewardTitle: privilege.title,
-    });
 
     return { success: true, coupon: newCoupon, updatedCustomer };
   },
