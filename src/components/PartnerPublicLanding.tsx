@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, ArrowLeft, ShieldCheck, Store, Gift, Smartphone, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { LoyaltyService } from '../lib/supabase';
 
 interface PartnerPublicLandingProps {
   slug: string;
@@ -21,16 +22,37 @@ export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug
       setError(null);
 
       try {
-        const res = await fetch(`/api/partner/resolve?slug=${encodeURIComponent(slug)}`);
-        const data = await res.json();
+        const cleanSlug = (slug || '').trim().toLowerCase();
 
-        if (!res.ok || data.success === false) {
-          setError(data.error || 'صفحة الشريك غير متوفرة');
-          setPartner(null);
+        // 1. Direct query via LoyaltyService
+        const allPartners = await LoyaltyService.getAllPartners();
+        const found = allPartners.find((p: any) => (p.slug || '').toLowerCase() === cleanSlug);
+
+        if (found) {
+          const refCode = found.affiliates?.referral_code || found.referral_code || 'r1001';
+          setPartner({
+            display_name: found.display_name,
+            slug: found.slug,
+            region: found.region || 'عام',
+            referral_code: refCode,
+          });
+          setLoading(false);
           return;
         }
 
-        setPartner(data.partner);
+        // 2. Fallback to API if available
+        const res = await fetch(`/api/partner/resolve?slug=${encodeURIComponent(cleanSlug)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.partner) {
+            setPartner(data.partner);
+            setLoading(false);
+            return;
+          }
+        }
+
+        setError('صفحة الشريك غير متوفرة');
+        setPartner(null);
       } catch (err: any) {
         console.error('[PartnerPublicLanding] Resolve error:', err);
         setError('حدث خطأ في تحميل الصفحة');

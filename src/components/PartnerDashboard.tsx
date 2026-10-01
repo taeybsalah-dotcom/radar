@@ -491,10 +491,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
   const partnerRefCode = partner.affiliates?.referral_code || partner.referral_code || 'r1001';
 
-  // Derived Public Link
-  const publicLink = typeof window !== 'undefined'
+  // Derived Links
+  const publicLandingLink = typeof window !== 'undefined'
     ? `${window.location.origin}/${partner.slug}`
     : `https://radar.sa/${partner.slug}`;
+
+  const directJoinLink = typeof window !== 'undefined'
+    ? `${window.location.origin}/join?ref=${encodeURIComponent(partnerRefCode)}`
+    : `https://radar.sa/join?ref=${encodeURIComponent(partnerRefCode)}`;
 
   // --------------------------------------------------------------------------
   // AUTHENTICATED PARTNER DASHBOARD
@@ -521,21 +525,36 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-1 font-mono">
-              كود الإحالة: <strong className="text-amber-400 font-bold">{partnerRefCode}</strong> • الرابط: /{partner.slug}
-            </p>
+            <div className="flex items-center gap-3 mt-1.5 flex-wrap text-xs font-mono">
+              <span className="text-slate-400">
+                كود الإحالة: <strong className="text-amber-400 font-bold px-2 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">{partnerRefCode}</strong>
+              </span>
+              <span className="text-slate-500">•</span>
+              <span className="text-slate-400">
+                معرف الصفحة: <strong className="text-slate-300">/{partner.slug}</strong>
+              </span>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={() => copyText(directJoinLink, 'header-direct-join')}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 px-3.5 py-2 rounded-2xl text-xs font-black transition shadow-lg shadow-amber-500/20"
+            title="نسخ رابط تسجيل التاجر المباشر"
+          >
+            {copiedKey === 'header-direct-join' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copiedKey === 'header-direct-join' ? 'تم نسخ رابط التسجيل!' : 'نسخ رابط تسجيل التاجر'}</span>
+          </button>
+
           <a
-            href={publicLink}
+            href={publicLandingLink}
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 px-3.5 py-2 rounded-2xl text-xs font-bold transition"
           >
             <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
-            <span>عرض صفحتك العامة</span>
+            <span>معاينة صفحتك الترويجية</span>
           </a>
 
           <button
@@ -693,40 +712,68 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
             {/* Right: Personal Link & Quick QR Card */}
             <div className="lg:col-span-5 bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-5 flex flex-col justify-between">
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
                     <QrCode className="w-5 h-5 text-amber-400" />
-                    <span>رابطك والـ QR السريع</span>
+                    <span>روابطك الذكية والـ QR</span>
                   </h3>
                   <button
                     onClick={() => setActiveTab('qr')}
                     className="text-xs text-amber-400 hover:text-amber-300 font-bold"
                   >
-                    عرض كبير
+                    عرض صفحة الـ QR الكاملة
                   </button>
                 </div>
 
-                <div className="flex items-center justify-center p-4 bg-white rounded-2xl w-36 h-36 mx-auto shadow-xl">
-                  <QRCodeSVG value={publicLink} size={120} level="M" />
+                <div className="flex items-center justify-center p-3 bg-white rounded-2xl w-32 h-32 mx-auto shadow-xl">
+                  <QRCodeSVG value={directJoinLink} size={110} level="M" />
                 </div>
 
-                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-center font-mono text-xs text-amber-400 break-all select-all">
-                  {publicLink}
+                {/* Direct Registration Link */}
+                <div className="space-y-1.5 text-right">
+                  <span className="text-[11px] font-bold text-amber-400 block">
+                    🚀 رابط تسجيل التاجر المباشر (كودك مفعل تلقائياً):
+                  </span>
+                  <div className="bg-slate-950 p-2.5 rounded-xl border border-amber-500/30 font-mono text-xs text-amber-400 break-all select-all flex items-center justify-between gap-2">
+                    <span className="truncate">{directJoinLink}</span>
+                    <button
+                      onClick={() => copyText(directJoinLink, 'direct-link-quick')}
+                      className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-[10px] font-black transition flex-shrink-0"
+                    >
+                      {copiedKey === 'direct-link-quick' ? 'تم النسخ' : 'نسخ'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Public Landing Link */}
+                <div className="space-y-1.5 text-right">
+                  <span className="text-[11px] font-bold text-slate-300 block">
+                    🌐 صفحتك التعريفية الترويجية (Landing Page):
+                  </span>
+                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 break-all select-all flex items-center justify-between gap-2">
+                    <span className="truncate">{publicLandingLink}</span>
+                    <button
+                      onClick={() => copyText(publicLandingLink, 'public-link-quick')}
+                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[10px] font-bold transition flex-shrink-0"
+                    >
+                      {copiedKey === 'public-link-quick' ? 'تم النسخ' : 'نسخ'}
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 pt-2">
                 <button
-                  onClick={() => copyText(publicLink, 'quick-link')}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center justify-center gap-1.5"
+                  onClick={() => copyText(directJoinLink, 'quick-join-all')}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5"
                 >
-                  {copiedKey === 'quick-link' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  <span>{copiedKey === 'quick-link' ? 'تم النسخ!' : 'نسخ الرابط'}</span>
+                  {copiedKey === 'quick-join-all' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedKey === 'quick-join-all' ? 'تم نسخ رابط التسجيل!' : 'نسخ رابط التسجيل المباشر'}</span>
                 </button>
 
                 <button
-                  onClick={() => openWhatsApp(`أهلاً بك! اطلع على منظومة RADAR لمتجرك:\n${publicLink}`)}
+                  onClick={() => openWhatsApp(`أهلاً بك! سجّل متجرك في منصة RADAR مع كود الشريك [${partnerRefCode}]:\n${directJoinLink}`)}
                   className="px-3 py-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center gap-1"
                   title="مشاركة عبر واتساب"
                 >
@@ -1041,50 +1088,86 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       {/* TAB 4: REFERRAL LINK & QR CODE (Section 25 & 26)                     */}
       {/* -------------------------------------------------------------------- */}
       {activeTab === 'qr' && (
-        <div className="max-w-2xl mx-auto space-y-6">
-          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 text-center shadow-2xl">
-            <div className="space-y-2">
-              <h3 className="text-xl font-black text-white">الباركود الذكي والرابط الشخصي للشريك</h3>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
-                امسح الـ QR أو شارك الرابط مباشرة مع أصحاب المتاجر لفتح صفحتك الشخصية المعتمدة والتسجيل.
-              </p>
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Card 1: Direct Merchant Registration Link & QR */}
+            <div className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-5 text-center shadow-2xl flex flex-col justify-between">
+              <div className="space-y-3">
+                <span className="px-3 py-1 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-400 border border-amber-500/30 inline-block">
+                  الأكثر استخداماً للتسجيل المباشر ⚡
+                </span>
+                <h3 className="text-base font-black text-white">رابط وباركود تسجيل التاجر المباشر</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  يفتح للتاجر نموذج التسجيل الفوري مع تثبيت كودك <strong className="text-amber-400 font-mono">({partnerRefCode})</strong> تلقائياً ليُحتسب العميل لك فور تسجيله.
+                </p>
+
+                <div className="p-4 bg-white rounded-2xl w-44 h-44 mx-auto shadow-xl flex items-center justify-center border-2 border-amber-500/30">
+                  <QRCodeSVG value={directJoinLink} size={150} level="H" includeMargin={true} />
+                </div>
+
+                <div className="bg-slate-950 p-3 rounded-xl border border-amber-500/20 font-mono text-xs text-amber-400 break-all select-all text-left" dir="ltr">
+                  {directJoinLink}
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <button
+                  onClick={() => copyText(directJoinLink, 'full-direct-join-link')}
+                  className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/20"
+                >
+                  {copiedKey === 'full-direct-join-link' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedKey === 'full-direct-join-link' ? 'تم النسخ!' : 'نسخ رابط التسجيل المباشر'}</span>
+                </button>
+
+                <button
+                  onClick={() => openWhatsApp(`أهلاً بك! سجّل متجرك عبر منظومة RADAR مع كود الشريك [${partnerRefCode}]:\n${directJoinLink}`)}
+                  className="w-full py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>إرسال عبر واتساب</span>
+                </button>
+              </div>
             </div>
 
-            {/* Live QR Element */}
-            <div ref={qrRef} className="p-6 bg-white rounded-3xl w-56 h-56 mx-auto shadow-2xl flex items-center justify-center border-4 border-amber-500/20">
-              <QRCodeSVG value={publicLink} size={190} level="H" includeMargin={true} />
-            </div>
+            {/* Card 2: Promotional Landing Page Link & QR */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-5 text-center shadow-2xl flex flex-col justify-between">
+              <div className="space-y-3">
+                <span className="px-3 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 inline-block">
+                  صفحة الهبوط التعريفية 🌐
+                </span>
+                <h3 className="text-base font-black text-white">رابط وباركود صفحتك التعريفية</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  صفحة تسويقية خاصة باسمك تعرض مميزات رادار للتاجر، وبها أزرار تنقله لنموذج التسجيل مع كودك.
+                </p>
 
-            {/* Display Link */}
-            <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 font-mono text-sm text-amber-400 break-all select-all">
-              {publicLink}
-            </div>
+                <div className="p-4 bg-white rounded-2xl w-44 h-44 mx-auto shadow-xl flex items-center justify-center border-2 border-slate-700">
+                  <QRCodeSVG value={publicLandingLink} size={150} level="H" includeMargin={true} />
+                </div>
 
-            {/* Actions Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-              <button
-                onClick={() => copyText(publicLink, 'full-qr-link')}
-                className="py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/20"
-              >
-                {copiedKey === 'full-qr-link' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                <span>{copiedKey === 'full-qr-link' ? 'تم النسخ!' : 'نسخ الرابط'}</span>
-              </button>
+                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 break-all select-all text-left" dir="ltr">
+                  {publicLandingLink}
+                </div>
+              </div>
 
-              <button
-                onClick={handleDownloadQR}
-                className="py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition flex items-center justify-center gap-1.5"
-              >
-                <Download className="w-4 h-4 text-amber-400" />
-                <span>تحميل الـ QR (SVG)</span>
-              </button>
+              <div className="space-y-2 pt-2">
+                <button
+                  onClick={() => copyText(publicLandingLink, 'full-public-landing-link')}
+                  className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition flex items-center justify-center gap-1.5"
+                >
+                  {copiedKey === 'full-public-landing-link' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedKey === 'full-public-landing-link' ? 'تم النسخ!' : 'نسخ رابط الصفحة التعريفية'}</span>
+                </button>
 
-              <button
-                onClick={() => shareText(`رابط الشريك المعتمد: ${partner.display_name}`, 'سجّل متجرك عبر منظومة رادار:', publicLink)}
-                className="py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition flex items-center justify-center gap-1.5"
-              >
-                <Share2 className="w-4 h-4 text-sky-400" />
-                <span>مشاركة الرابط</span>
-              </button>
+                <a
+                  href={publicLandingLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                >
+                  <ExternalLink className="w-4 h-4 text-amber-400" />
+                  <span>معاينة الصفحة في نافذة جديدة</span>
+                </a>
+              </div>
             </div>
           </div>
         </div>
