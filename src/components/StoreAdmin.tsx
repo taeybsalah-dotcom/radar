@@ -19,6 +19,7 @@ import {
   GlobalCategory,
   GlobalModifierGroup,
   ServiceBooking,
+  BillingPlan,
 } from '../types';
 import { LoyaltyService, normalizeStore } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
@@ -274,6 +275,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   const [updatingSettings, setUpdatingSettings] = useState(false);
   const [settingsSavedMessage, setSettingsSavedMessage] = useState<string | null>(null);
+  const [allPlans, setAllPlans] = useState<BillingPlan[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -403,6 +405,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         if (event.type === 'SUBSCRIPTION_UPDATED' || event.type === 'PAYMENT_COMPLETED') {
           LoyaltyService.checkAndUpdateStoreSubscription(currentStore.id).then(setSubscriptionInfo);
           LoyaltyService.getStoreInvoices(currentStore.id).then(setInvoices);
+          LoyaltyService.getAllSubscriptionPlans().then(setAllPlans);
           return;
         }
 
@@ -414,8 +417,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         if (event.type === 'STORE_UPDATED' || event.type === 'STAFF_UPDATED') {
           LoyaltyService.getStoreStaff(currentStore.id).then(setStaffList);
           LoyaltyService.resolveStore(currentStore.id).then((s) => { if (s) setStore(s); });
+          LoyaltyService.getAllSubscriptionPlans().then(setAllPlans);
           return;
         }
+      } else if (event.type === 'STORE_UPDATED') {
+        LoyaltyService.getAllSubscriptionPlans().then(setAllPlans);
       }
     });
 
@@ -428,7 +434,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     if (!currentStore?.id) return;
     setLoading(true);
     try {
-      const [s, c, a, t, staff, p, cpn, wallet, invs, subInfo, cat, specs, cats, mods, bks] = await Promise.all([
+      const [s, c, a, t, staff, p, cpn, wallet, invs, subInfo, cat, specs, cats, mods, bks, plansList] = await Promise.all([
         LoyaltyService.resolveStore(currentStore.id),
         LoyaltyService.getAllCustomers(currentStore.id),
         LoyaltyService.getAuditLogs(currentStore.id),
@@ -444,9 +450,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         LoyaltyService.getGlobalCategories(currentStore.id),
         LoyaltyService.getGlobalModifierGroups(currentStore.id),
         LoyaltyService.getStoreBookings(currentStore.id),
+        LoyaltyService.getAllSubscriptionPlans(),
       ]);
       const activeStore = normalizeStore(s || currentStore);
       setStore(activeStore);
+      setAllPlans(plansList || []);
       setSpecialists(specs || []);
       setGlobalCategories(cats || []);
       setGlobalModifierGroups(mods || []);
@@ -5542,270 +5550,235 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       )}
 
       {/* ========================================== */}
-      {/* 💳 TAB 8: الاشتراك والفوترة (Billing & Invoices) */}
+      {/* 💳 TAB 8: الاشتراك والفوترة */}
       {/* ========================================== */}
-      {!subscriptionInfo?.isSuspended && activeTab === 'billing' && (
-        <div className="space-y-6 animate-fade-in">
-          {/* Header Card */}
-          <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-              <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
-                <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <CreditCard className="w-6 h-6" />
+      {!subscriptionInfo?.isSuspended && activeTab === 'billing' && (() => {
+        const currentPlan: BillingPlan =
+          allPlans.find((p) => p.id === (store as any).subscription_plan_id || p.code === (store as any).plan_code) ||
+          allPlans.find((p) => p.code === 'PRO' || p.active) ||
+          allPlans[0] || {
+            id: 'plan-pro',
+            name: 'باقة المحترفين',
+            amount: 195,
+            currency: 'ر.س',
+            billing_interval: 'MONTHLY',
+            trial_days: 7,
+            features: [
+              'بطاقات ولاء رقمية (PWA) بدون تحميل تطبيق',
+              'كاشير سريع لمسح الباركود وصرف النقاط',
+              'نظام رتب ومستويات (Tiers) ذكي',
+              'رادار الإنقاذ الذكي (استهداف العملاء المنقطعين تلقائياً)',
+              'مساعد الكتابة والتسويق بالذكاء الاصطناعي',
+              'حملات واتساب المباشرة والعروض المخصصة',
+              'نظام حجز المواعيد والخدمات المتكامل',
+            ],
+            active: true,
+          };
+
+        return (
+          <div className="space-y-6 animate-fade-in" dir="rtl">
+            {/* Header Card */}
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+                <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <CreditCard className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white">
+                      إدارة الاشتراك والفوترة
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      متابعة باقة المتجر الحالية، دورة التجديد، المميزات المتاحة، وسجل الفواتير
+                    </p>
+                  </div>
                 </div>
+
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-bold border ${
+                      store.setup_fee_paid
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                    }`}
+                  >
+                    {store.setup_fee_paid ? '🟢 حساب نشط معتمد' : '🎁 فترة التجربة المجانية (7 أيام)'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Plan Metrics Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
+                  <span className="text-xs text-slate-400 font-medium">الخطة الحالية:</span>
+                  <p className="text-lg font-black text-white">{currentPlan.name}</p>
+                  <span className="text-[11px] text-amber-400 font-bold block">
+                    {store.setup_fee_paid ? 'تم سداد رسوم التأسيس (500 ر.س)' : 'بانتظار سداد التأسيس'}
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
+                  <span className="text-xs text-slate-400 font-medium">قيمة الاشتراك:</span>
+                  <p className="text-lg font-black text-amber-400 font-mono">
+                    {currentPlan.amount.toLocaleString()} <span className="text-xs text-slate-400 font-sans">{currentPlan.currency || 'ر.س'} / {currentPlan.billing_interval === 'YEARLY' ? 'سنة' : 'شهر'}</span>
+                  </p>
+                  <span className="text-[11px] text-emerald-400 font-bold block">تجديد آلي دوري</span>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
+                  <span className="text-xs text-slate-400 font-medium">تاريخ الاستحقاق القادم:</span>
+                  <p className="text-sm font-black text-white font-mono mt-1">
+                    {store.subscription_end_date
+                      ? new Date(store.subscription_end_date).toLocaleDateString('ar-SA', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                        })
+                      : 'غير محدد'}
+                  </p>
+                  <span className="text-[11px] text-slate-400 font-bold block">
+                    متبقي: {subscriptionInfo?.daysLeft ?? 0} أيام
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
+                  <span className="text-xs text-slate-400 font-medium">طرق الدفع المعتمدة:</span>
+                  <p className="text-sm font-black text-white flex items-center gap-1 mt-1">
+                    <span>مدفوعات إلكترونية فورية</span>
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                  </p>
+                  <span className="text-[11px] text-slate-400 block">مدى • Apple Pay • Visa</span>
+                </div>
+              </div>
+
+              {/* Current Plan Features */}
+              {currentPlan.features && currentPlan.features.length > 0 && (
+                <div className="p-5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4" />
+                      <span>المميزات المضمنة في باقتك الحالية ({currentPlan.name}):</span>
+                    </span>
+                    <span className="text-[11px] text-slate-500 font-mono">
+                      {currentPlan.features.length} ميزات نشطة
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                    {currentPlan.features.map((feat: string, idx: number) => (
+                      <div key={idx} className="flex items-start gap-2 text-xs text-slate-200">
+                        <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <span className="leading-relaxed">{feat}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Actions & Renewal Bar */}
+              <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h3 className="text-base sm:text-lg font-black text-white">
-                    إدارة الاشتراكات والفوترة (SaaS Billing & Invoices)
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    متابعة خطة المتجر، دورة التجديد الآلية، سجل الفواتير، وبوابات الدفع (Moyasar / Tap)
+                  <h4 className="text-xs font-black text-white">إجراءات الدفع والتجديد السريع:</h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {store.setup_fee_paid
+                      ? `يمكنك التجديد المسبق في أي وقت لإضافة فترة جديدة لاشتراكك بسعر ${currentPlan.amount} ${currentPlan.currency || 'ر.س'}.`
+                      : 'سدد رسوم التأسيس (500 ر.س) للاستفادة من عرض اشتراك أول شهر مجاناً.'}
                   </p>
                 </div>
-              </div>
 
-              <div className="flex items-center gap-2">
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-bold border ${
-                    store.setup_fee_paid
-                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                      : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
-                  }`}
-                >
-                  {store.setup_fee_paid ? '🟢 حساب نشط معتمد' : '🎁 فترة التجربة المجانية (7 أيام)'}
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {!store.setup_fee_paid ? (
+                    <button
+                      type="button"
+                      disabled={isPayingSetup}
+                      onClick={() => handlePaySetupFee('mada')}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-md disabled:opacity-50"
+                    >
+                      <Zap className="w-4 h-4" />
+                      <span>{isPayingSetup ? 'جاري الدفع...' : 'سداد التأسيس (500 ر.س) + شهر مجاناً 🎁'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={isPayingRenewal}
+                      onClick={() => handlePayRenewal('mada')}
+                      className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-md disabled:opacity-50"
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      <span>{isPayingRenewal ? 'جاري التجديد...' : `تجديد الاشتراك الآن (+30 يوماً بـ ${currentPlan.amount} ر.س) 💳`}</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
-            {/* Plan Metrics Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-xs text-slate-400 font-medium">الخطة الحالية:</span>
-                <p className="text-lg font-black text-white">باقة المحترفين (Pro Plan)</p>
-                <span className="text-[11px] text-amber-400 font-bold block">
-                  {store.setup_fee_paid ? 'تم سداد رسوم التأسيس (500 ر.س)' : 'بانتظار سداد التأسيس'}
-                </span>
+            {/* Invoices History Table Card */}
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                  <FileText className="w-5 h-5 text-amber-400" />
+                  <h4 className="text-sm font-black text-white">سجل الفواتير والمدفوعات الإلكترونية</h4>
+                </div>
+                <span className="text-xs font-mono text-slate-400">{invoices.length} فواتير مسجلة</span>
               </div>
 
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-xs text-slate-400 font-medium">قيمة الاشتراك الشهري:</span>
-                <p className="text-lg font-black text-amber-400 font-mono">195 <span className="text-xs text-slate-400 font-sans">ر.س / شهر</span></p>
-                <span className="text-[11px] text-emerald-400 font-bold block">تجديد آلي دوري</span>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-xs text-slate-400 font-medium">تاريخ الاستحقاق القادم:</span>
-                <p className="text-sm font-black text-white font-mono mt-1">
-                  {store.subscription_end_date
-                    ? new Date(store.subscription_end_date).toLocaleDateString('ar-SA', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                      })
-                    : 'غير محدد'}
-                </p>
-                <span className="text-[11px] text-slate-400 font-bold block">
-                  متبقي: {subscriptionInfo?.daysLeft ?? 0} أيام
-                </span>
-              </div>
-
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                <span className="text-xs text-slate-400 font-medium">بوابة الدفع المرتبطة:</span>
-                <p className="text-sm font-black text-white flex items-center gap-1 mt-1">
-                  <span>Moyasar Payments</span>
-                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
-                </p>
-                <span className="text-[11px] text-slate-400 block">مدى • Apple Pay • Visa</span>
-              </div>
-            </div>
-
-            {/* Quick Actions & Upgrade Bar */}
-            <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
-                <h4 className="text-xs font-black text-white">إجراءات الدفع والتجديد السريع:</h4>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  {store.setup_fee_paid
-                    ? 'يمكنك التجديد المسبق في أي وقت لإضافة 30 يوماً إضافية لاشتراكك.'
-                    : 'سدد رسوم التأسيس (500 ر.س) للاستفادة من عرض اشتراك أول شهر مجاناً.'}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 flex-wrap">
-                {!store.setup_fee_paid ? (
-                  <button
-                    type="button"
-                    disabled={isPayingSetup}
-                    onClick={() => handlePaySetupFee('mada')}
-                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-md disabled:opacity-50"
-                  >
-                    <Zap className="w-4 h-4" />
-                    <span>{isPayingSetup ? 'جاري الدفع...' : 'سداد التأسيس (500 ر.س) + شهر مجاناً 🎁'}</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={isPayingRenewal}
-                    onClick={() => handlePayRenewal('mada')}
-                    className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-md disabled:opacity-50"
-                  >
-                    <CreditCard className="w-4 h-4" />
-                    <span>{isPayingRenewal ? 'جاري التجديد...' : 'تجديد الاشتراك الآن (+30 يوماً بـ 195 ر.س) 💳'}</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Invoices History Table Card */}
-          <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <FileText className="w-5 h-5 text-amber-400" />
-                <h4 className="text-sm font-black text-white">سجل الفواتير والمدفوعات الإلكترونية</h4>
-              </div>
-              <span className="text-xs font-mono text-slate-400">{invoices.length} فواتير مسجلة</span>
-            </div>
-
-            {invoices.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500 space-y-2">
-                <FileText className="w-8 h-8 mx-auto text-slate-600" />
-                <p>لا توجد فواتير مسجلة بعد. ستظهر هنا الفواتير فور إتمام أول عملية دفع.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-right text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400">
-                      <th className="py-3 px-3">رقم الفاتورة</th>
-                      <th className="py-3 px-3">نوع العملية</th>
-                      <th className="py-3 px-3">المبلغ</th>
-                      <th className="py-3 px-3">بوابة الدفع</th>
-                      <th className="py-3 px-3">التاريخ</th>
-                      <th className="py-3 px-3">الحالة</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-mono">
-                    {invoices.map((inv) => (
-                      <tr key={inv.id} className="hover:bg-slate-800/30 transition">
-                        <td className="py-3 px-3 font-bold text-white select-all">{inv.invoice_number}</td>
-                        <td className="py-3 px-3 font-sans">
-                          {inv.invoice_type === 'setup' && (
-                            <span className="text-blue-400 font-bold">رسوم تأسيس المتجر</span>
-                          )}
-                          {inv.invoice_type === 'renewal' && (
-                            <span className="text-amber-400 font-bold">تجديد اشتراك شهري</span>
-                          )}
-                          {inv.invoice_type === 'extra_cashier' && (
-                            <span className="text-purple-400 font-bold">مقعد كاشير إضافي</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 font-bold text-amber-400 font-mono">
-                          {inv.amount} {inv.currency}
-                        </td>
-                        <td className="py-3 px-3 uppercase text-slate-300">
-                          {inv.payment_method || 'mada'} ({inv.gateway})
-                        </td>
-                        <td className="py-3 px-3 text-slate-400">
-                          {inv.created_at ? new Date(inv.created_at).toLocaleDateString('ar-SA') : '-'}
-                        </td>
-                        <td className="py-3 px-3">
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold font-sans">
-                            مدفوعة بنجاح ✅
-                          </span>
-                        </td>
+              {invoices.length === 0 ? (
+                <div className="p-8 text-center text-xs text-slate-500 space-y-2">
+                  <FileText className="w-8 h-8 mx-auto text-slate-600" />
+                  <p>لا توجد فواتير مسجلة بعد. ستظهر هنا الفواتير فور إتمام أول عملية دفع.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400">
+                        <th className="py-3 px-3">رقم الفاتورة</th>
+                        <th className="py-3 px-3">نوع العملية</th>
+                        <th className="py-3 px-3">المبلغ</th>
+                        <th className="py-3 px-3">وسيلة الدفع</th>
+                        <th className="py-3 px-3">التاريخ</th>
+                        <th className="py-3 px-3">الحالة</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Webhook Configuration & Testing Lab Card */}
-          <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse pb-3 border-b border-slate-800">
-              <Zap className="w-5 h-5 text-blue-400" />
-              <div>
-                <h4 className="text-sm font-black text-white">إعدادات ربط الـ Webhooks وبوابات الدفع</h4>
-                <p className="text-xs text-slate-400">
-                  ربط وتلقي إشعارات الدفع الآلية من Moyasar و Tap Payments لتحديث الاشتراكات فورياً
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                <span className="text-xs font-bold text-slate-300 block">رابط الـ Webhook المعتمد للنظام:</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={`${window.location.origin}/api/webhooks/billing`}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 select-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(`${window.location.origin}/api/webhooks/billing`, 'webhook_url')}
-                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold shrink-0 transition"
-                  >
-                    {copiedLinkKey === 'webhook_url' ? 'تم النسخ!' : 'نسخ'}
-                  </button>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono">
+                      {invoices.map((inv) => (
+                        <tr key={inv.id} className="hover:bg-slate-800/30 transition">
+                          <td className="py-3 px-3 font-bold text-white select-all">{inv.invoice_number}</td>
+                          <td className="py-3 px-3 font-sans">
+                            {inv.invoice_type === 'setup' && (
+                              <span className="text-blue-400 font-bold">رسوم تأسيس المتجر</span>
+                            )}
+                            {inv.invoice_type === 'renewal' && (
+                              <span className="text-amber-400 font-bold">تجديد اشتراك شهري</span>
+                            )}
+                            {inv.invoice_type === 'extra_cashier' && (
+                              <span className="text-purple-400 font-bold">مقعد كاشير إضافي</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 font-bold text-amber-400 font-mono">
+                            {inv.amount} {inv.currency}
+                          </td>
+                          <td className="py-3 px-3 uppercase text-slate-300 font-sans">
+                            {inv.payment_method || 'مدى'}
+                          </td>
+                          <td className="py-3 px-3 text-slate-400 font-sans">
+                            {inv.created_at ? new Date(inv.created_at).toLocaleDateString('ar-SA') : '-'}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold font-sans">
+                              مدفوعة بنجاح ✅
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <p className="text-[11px] text-slate-500">
-                  قم بوضع هذا الرابط في لوحة تحكم بوابة الدفع (Moyasar Webhook URL).
-                </p>
-              </div>
-
-              {/* Interactive Simulation Lab */}
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-black text-amber-400">🧪 مختبر فحص دورة حياة الاشتراكات (SaaS Sandbox):</span>
-                  {isSimulatingState && <span className="text-[10px] text-amber-400 animate-pulse font-bold">جاري المحاكاة...</span>}
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  اختر أي حالة لمحاكاتها فورياً ومعاينة استجابة النظام وشاشات الكاشير:
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateSubscription('trial_active')}
-                    className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 text-[11px] font-bold border border-slate-800 hover:border-slate-700 transition text-center"
-                  >
-                    1. تجربة (5 أيام)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateSubscription('trial_expired')}
-                    className="p-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 text-[11px] font-bold border border-rose-800/40 transition text-center"
-                  >
-                    2. انتهاء التجربة (500 ر.س)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateSubscription('active_sub')}
-                    className="p-2 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 text-[11px] font-bold border border-emerald-800/40 transition text-center"
-                  >
-                    3. اشتراك نشط (20 يوماً)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateSubscription('expiring_soon')}
-                    className="p-2 rounded-xl bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 text-[11px] font-bold border border-amber-800/40 transition text-center"
-                  >
-                    4. تنبيه تجديد (يومان)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSimulateSubscription('suspended')}
-                    className="p-2 rounded-xl bg-rose-950/60 hover:bg-rose-900 text-rose-200 text-[11px] font-bold border border-rose-600/40 transition text-center"
-                  >
-                    5. تعليق المتجر (حظر 195 ر.س)
-                  </button>
-                </div>
-              </div>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ========================================== */}
       {/* ➕ Modals (Outside tabs for clean overlays) */}

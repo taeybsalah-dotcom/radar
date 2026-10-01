@@ -21,6 +21,7 @@ import {
   GlobalCategory,
   GlobalModifierGroup,
   ServiceBooking,
+  BillingPlan,
 } from '../types';
 import {
   INITIAL_STORES,
@@ -60,6 +61,7 @@ const STORAGE_KEYS = {
   LOCAL_BOOKINGS: 'radar_local_service_bookings',
   LOCAL_ORDERS: 'radar_local_whatsapp_orders',
   LOCAL_PARTNERS: 'radar_local_partners',
+  LOCAL_BILLING_PLANS: 'radar_local_billing_plans',
   CONSUMED_TOKENS: 'radar_consumed_tokens',
 };
 
@@ -5075,5 +5077,217 @@ export const LoyaltyService = {
       localStorage.removeItem('radar_partner_session');
     } catch {}
   },
+
+  // ==============================================================================
+  // 💳 إدارة خطط الاشتراك الديناميكية (Dynamic Subscription Plans)
+  // ==============================================================================
+  async getAllSubscriptionPlans(): Promise<BillingPlan[]> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('billing_plans')
+          .select('*')
+          .order('amount', { ascending: true });
+        if (!error && data && data.length > 0) {
+          const formatted: BillingPlan[] = data.map((p: any) => ({
+            id: p.id,
+            code: p.code || p.id,
+            name: p.name,
+            description: p.description || '',
+            amount: Number(p.amount) || 0,
+            currency: p.currency || 'ر.س',
+            billing_interval: p.billing_interval || 'MONTHLY',
+            trial_days: p.trial_days || 7,
+            features: Array.isArray(p.features) ? p.features : typeof p.features === 'string' ? JSON.parse(p.features) : [],
+            active: p.active !== false,
+            created_at: p.created_at,
+          }));
+          saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, formatted);
+          return formatted;
+        }
+      } catch (e) {
+        console.warn('Supabase getAllSubscriptionPlans fallback:', e);
+      }
+    }
+    const local = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_BILLING_PLANS);
+    if (!local || local.length === 0) {
+      saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_BILLING_PLANS);
+      return DEFAULT_BILLING_PLANS;
+    }
+    return local;
+  },
+
+  async addSubscriptionPlan(planData: Omit<BillingPlan, 'id'>): Promise<BillingPlan> {
+    const planId = 'plan-' + Date.now();
+    const newPlan: BillingPlan = {
+      ...planData,
+      id: planId,
+      currency: planData.currency || 'ر.س',
+      active: planData.active !== false,
+      created_at: new Date().toISOString(),
+    };
+
+    const local = await this.getAllSubscriptionPlans();
+    const updated = [...local, newPlan];
+    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, updated);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('billing_plans').insert([{
+          id: planId,
+          code: newPlan.code || planId,
+          name: newPlan.name,
+          description: newPlan.description || '',
+          amount: newPlan.amount,
+          currency: newPlan.currency,
+          billing_interval: newPlan.billing_interval,
+          trial_days: newPlan.trial_days || 7,
+          features: newPlan.features || [],
+          active: newPlan.active,
+        }]);
+      } catch (e) {
+        console.warn('Supabase addSubscriptionPlan error:', e);
+      }
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+    return newPlan;
+  },
+
+  async updateSubscriptionPlan(planId: string, updates: Partial<BillingPlan>): Promise<BillingPlan> {
+    const local = await this.getAllSubscriptionPlans();
+    const idx = local.findIndex((p) => p.id === planId || p.code === planId);
+    if (idx === -1) throw new Error('الخطة غير موجودة');
+
+    const updatedPlan: BillingPlan = {
+      ...local[idx],
+      ...updates,
+    };
+    local[idx] = updatedPlan;
+    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, local);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('billing_plans').update({
+          name: updatedPlan.name,
+          description: updatedPlan.description,
+          amount: updatedPlan.amount,
+          currency: updatedPlan.currency,
+          billing_interval: updatedPlan.billing_interval,
+          trial_days: updatedPlan.trial_days,
+          features: updatedPlan.features,
+          active: updatedPlan.active,
+        }).eq('id', planId);
+      } catch (e) {
+        console.warn('Supabase updateSubscriptionPlan error:', e);
+      }
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+    return updatedPlan;
+  },
+
+  async toggleSubscriptionPlanActive(planId: string): Promise<boolean> {
+    const local = await this.getAllSubscriptionPlans();
+    const idx = local.findIndex((p) => p.id === planId || p.code === planId);
+    if (idx === -1) return false;
+
+    const nextActive = !local[idx].active;
+    local[idx].active = nextActive;
+    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, local);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('billing_plans').update({ active: nextActive }).eq('id', planId);
+      } catch (e) {
+        console.warn('Supabase toggleSubscriptionPlanActive error:', e);
+      }
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+    return nextActive;
+  },
+
+  async deleteSubscriptionPlan(planId: string): Promise<boolean> {
+    const local = await this.getAllSubscriptionPlans();
+    const filtered = local.filter((p) => p.id !== planId && p.code !== planId);
+    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, filtered);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('billing_plans').delete().eq('id', planId);
+      } catch (e) {
+        console.warn('Supabase deleteSubscriptionPlan error:', e);
+      }
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+    return true;
+  },
 };
+
+export const DEFAULT_BILLING_PLANS: BillingPlan[] = [
+  {
+    id: 'plan-basic',
+    code: 'BASIC',
+    name: 'باقة الانطلاق (الأساسية)',
+    description: 'مثالية للمتاجر الناشئة والمقاهي لبدء بناء قاعدة عملاء أوفياء.',
+    amount: 99,
+    currency: 'ر.س',
+    billing_interval: 'MONTHLY',
+    trial_days: 7,
+    features: [
+      'بطاقات ولاء رقمية (PWA) بدون تحميل تطبيق',
+      'كاشير سريع لمسح الباركود وصرف النقاط',
+      'نظام رتب ومستويات (Tiers) ذكي',
+      'دعم حتى 1,000 عميل نشط',
+      'تقارير وإحصائيات المبيعات الأساسية',
+    ],
+    active: true,
+  },
+  {
+    id: 'plan-pro',
+    code: 'PRO',
+    name: 'باقة المحترفين (الأكثر طلباً)',
+    description: 'الحل الشامل لنمو المبيعات واستعادة العملاء المنقطعين بالذكاء الاصطناعي.',
+    amount: 195,
+    currency: 'ر.س',
+    billing_interval: 'MONTHLY',
+    trial_days: 7,
+    features: [
+      'كل مميزات الباقة الأساسية',
+      'رادار الإنقاذ الذكي (استهداف العملاء المنقطعين تلقائياً)',
+      'مساعد الكتابة والتسويق بالذكاء الاصطناعي',
+      'حملات واتساب المباشرة والعروض المخصصة',
+      'نظام حجز المواعيد والخدمات المتكامل',
+      'عدد عملاء وكاشيرات غير محدود',
+      'دعم فني مخصص على مدار الساعة',
+    ],
+    active: true,
+  },
+  {
+    id: 'plan-yearly-vip',
+    code: 'VIP_YEARLY',
+    name: 'الباقة السنوية VIP (توفير شهرين)',
+    description: 'للمتاجر المتوسعة وسلاسل الفروع الراغبة بأعلى عائد استثمار وأولوية الميزات.',
+    amount: 1950,
+    currency: 'ر.س',
+    billing_interval: 'YEARLY',
+    trial_days: 14,
+    features: [
+      'كل مميزات باقة المحترفين بلا استثناء',
+      'ربط نطاق خاص مخصص (Custom Domain)',
+      'تخصيص كامل للألوان وهوية المتجر والصور بدون شعار رادار',
+      'توفير اشتراك شهرين كاملين',
+      'أولوية التحديثات والوصول المبكر للميزات الجديدة',
+      'مدير حساب استراتيجي لمضاعفة العائد',
+    ],
+    active: true,
+  },
+];
 

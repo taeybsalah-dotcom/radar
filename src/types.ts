@@ -440,14 +440,16 @@ export type BillingPlanCode = 'BASIC' | 'ADVANCED' | 'PRO';
 
 export interface BillingPlan {
   id?: string;
-  code: BillingPlanCode;
+  code?: string;
   name: string;
   description?: string;
   amount: number;
   currency: string;
   billing_interval: 'MONTHLY' | 'YEARLY';
-  trial_days: number;
+  trial_days?: number;
+  features?: string[];
   active?: boolean;
+  created_at?: string;
 }
 
 export type MerchantSubscriptionStatus =
