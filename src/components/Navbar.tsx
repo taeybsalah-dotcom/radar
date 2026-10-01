@@ -62,16 +62,31 @@ export const Navbar: React.FC<NavbarProps> = ({
           
           {/* Logo & Store Switcher */}
           <div className="flex items-center space-x-3 rtl:space-x-reverse">
-            <div
-              className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-extrabold text-xl sm:text-2xl shadow-lg border"
-              style={{
-                backgroundColor: activeTab === 'super-admin' ? '#F59E0B' : store.primary_color,
-                borderColor: store.secondary_color,
-                color: activeTab === 'super-admin' ? '#000000' : store.secondary_color,
-              }}
-            >
-              {activeTab === 'super-admin' ? '👑' : store.name.slice(0, 2)}
-            </div>
+            {activeTab === 'super-admin' ? (
+              <div
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-extrabold text-xl sm:text-2xl shadow-lg border bg-amber-500 border-amber-400 text-black shrink-0"
+              >
+                👑
+              </div>
+            ) : store.logo_url ? (
+              <img
+                src={store.logo_url}
+                alt={store.name}
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-cover shadow-lg border bg-slate-900 shrink-0"
+                style={{ borderColor: store.secondary_color || '#F59E0B' }}
+              />
+            ) : (
+              <div
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-extrabold text-xl sm:text-2xl shadow-lg border shrink-0"
+                style={{
+                  backgroundColor: store.primary_color || '#0F172A',
+                  borderColor: store.secondary_color || '#F59E0B',
+                  color: store.secondary_color || '#F59E0B',
+                }}
+              >
+                {store.name.slice(0, 2)}
+              </div>
+            )}
 
             <div className="relative">
               <button

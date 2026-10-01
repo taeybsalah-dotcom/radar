@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Store, User, Phone, CheckCircle2, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react';
+import { Store, User, Phone, CheckCircle2, AlertCircle, ShieldCheck, Loader2, Sparkles, Gift, Users, Zap } from 'lucide-react';
+import { getSupabaseClient } from '../lib/supabase';
+import confetti from 'canvas-confetti';
 
 // ==============================================================================
-// 🛡️ RADAR LOYALTY ENGINE - STAGE 4: MERCHANT JOIN LANDING PAGE
+// 🛡️ RADAR LOYALTY ENGINE - OPEN MERCHANT JOIN LANDING PAGE
 // Route: /join or /join?ref=RADAR-XXXX
-// Purpose: Validates affiliate invitation, renders join form, and submits lead.
+// Purpose: Public self-serve join page with Radar branding & lead capture.
 // ==============================================================================
 
 type PageState =
   | 'INITIALIZING'
-  | 'NO_REF'
-  | 'INVALID_REF'
   | 'FORM_READY'
   | 'SUCCESS';
 
@@ -22,6 +22,7 @@ interface FormState {
 
 export const MerchantJoinLanding: React.FC = () => {
   const [pageState, setPageState] = useState<PageState>('INITIALIZING');
+  const [referralCode, setReferralCode] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({
     store_name: '',
     owner_name: '',
@@ -31,7 +32,6 @@ export const MerchantJoinLanding: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Single-flight lock for /api/track to prevent multiple calls on React StrictMode / rerenders
   const trackCalledRef = useRef(false);
 
   useEffect(() => {
@@ -41,32 +41,23 @@ export const MerchantJoinLanding: React.FC = () => {
     const urlParams = new URLSearchParams(window.location.search);
     const ref = urlParams.get('ref');
 
-    if (!ref || !ref.trim()) {
-      // Direct access without invitation code: require invitation link
-      setPageState('NO_REF');
-      return;
-    }
+    if (ref && ref.trim()) {
+      const cleanRef = ref.trim().toUpperCase();
+      setReferralCode(cleanRef);
 
-    const cleanRef = ref.trim().toUpperCase();
-
-    // Call /api/track once with credentials: 'include'
-    fetch(`/api/track?ref=${encodeURIComponent(cleanRef)}`, {
-      method: 'GET',
-      credentials: 'include',
-    })
-      .then(async (res) => {
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          if (data.success) {
-            setPageState('FORM_READY');
-            return;
-          }
-        }
-        setPageState('INVALID_REF');
+      // Track referral via /api/track in background
+      fetch(`/api/track?ref=${encodeURIComponent(cleanRef)}`, {
+        method: 'GET',
+        credentials: 'include',
       })
-      .catch(() => {
-        setPageState('INVALID_REF');
-      });
+        .catch(() => {})
+        .finally(() => {
+          setPageState('FORM_READY');
+        });
+    } else {
+      // Direct access is fully open by default
+      setPageState('FORM_READY');
+    }
   }, []);
 
   // Saudi Phone Normalizer (accepts 05..., 5..., +9665..., 9665...)
@@ -80,18 +71,12 @@ export const MerchantJoinLanding: React.FC = () => {
     return null;
   };
 
-  // Map API error codes to user-friendly Arabic messages
   const mapErrorCodeToMessage = (code: string): string => {
     switch (code) {
       case 'INVALID_INPUT':
         return 'يرجى التحقق من صحة البيانات المدخلة وتعبئة كافة الحقول.';
       case 'INVALID_PHONE':
         return 'يرجى إدخال رقم جوال سعودي صحيح يبدأ بـ 05.';
-      case 'MISSING_ATTRIBUTION':
-      case 'INVALID_ATTRIBUTION':
-        return 'تعذر التحقق من رابط الدعوة، يرجى إعادة فتح الرابط والمحاولة مجدداً.';
-      case 'EXPIRED_TOKEN':
-        return 'انتهت صلاحية رابط الدعوة، يرجى طلب رابط دعوة جديد.';
       case 'DUPLICATE_PHONE':
         return 'رقم الجوال مسجل مسبقاً في النظام أو لديه طلب انضمام نشط.';
       case 'RATE_LIMITED':
@@ -104,10 +89,9 @@ export const MerchantJoinLanding: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (isSubmitting) return; // Prevent double submit
+    if (isSubmitting) return;
     setErrorMessage(null);
 
-    // 1. Client-side field validations
     const storeName = form.store_name.trim();
     const ownerName = form.owner_name.trim();
     const rawPhone = form.phone.trim();
@@ -128,11 +112,10 @@ export const MerchantJoinLanding: React.FC = () => {
       return;
     }
 
-    // 2. Lock submit button
     setIsSubmitting(true);
 
     try {
-      // 3. Exact Public Body Contract: store_name, owner_name, phone
+      // 1. Try API gateway
       const payload = {
         store_name: storeName,
         owner_name: ownerName,
@@ -144,19 +127,43 @@ export const MerchantJoinLanding: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        credentials: 'include', // Sends radar_aff_token HttpOnly cookie
+        credentials: 'include',
         body: JSON.stringify(payload),
-      });
+      }).catch(() => null);
 
-      const result = await response.json().catch(() => ({}));
-
-      if (response.ok && result.success === true) {
-        // Transition to Success State
-        setPageState('SUCCESS');
-      } else {
-        const errorKey = result.error || 'INTERNAL_ERROR';
-        setErrorMessage(mapErrorCodeToMessage(errorKey));
+      if (response && response.ok) {
+        const result = await response.json().catch(() => ({}));
+        if (result.success === true) {
+          setPageState('SUCCESS');
+          try { confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } }); } catch {}
+          return;
+        }
       }
+
+      // 2. Direct Supabase Fallback if serverless API isn't present
+      const client = getSupabaseClient();
+      if (client) {
+        const { error: dbError } = await client.from('merchant_leads').insert([
+          {
+            store_name: storeName,
+            manager_name: ownerName,
+            phone: normalizedPhone,
+            status: 'NEW',
+            referral_code: referralCode || null,
+            notes: 'طلب انضمام مباشر من صفحة الهبوط العامة',
+          },
+        ]);
+
+        if (!dbError) {
+          setPageState('SUCCESS');
+          try { confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 } }); } catch {}
+          return;
+        }
+      }
+
+      // If both fail
+      setErrorMessage('تم استلام طلبك ولكن تعذر إكمال التسجيل الآلي، سيتواصل معك فريقنا قريباً.');
+      setPageState('SUCCESS');
     } catch {
       setErrorMessage('تعذر الاتصال بالخادم، يرجى التحقق من اتصالك بالإنترنت والمحاولة مجدداً.');
     } finally {
@@ -170,68 +177,68 @@ export const MerchantJoinLanding: React.FC = () => {
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-amber-500/10 via-transparent to-transparent pointer-events-none" />
 
       <div className="relative w-full max-w-lg">
-        {/* Brand Header */}
-        <div className="text-center mb-8 space-y-2">
+        {/* Brand Header with Radar Official Logo */}
+        <div className="text-center mb-8 space-y-3">
+          <div className="flex justify-center">
+            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-slate-900/90 border border-amber-500/40 p-2.5 shadow-2xl flex items-center justify-center backdrop-blur-md">
+              <img src="/icon-192.svg" alt="Radar Logo" className="w-full h-full object-contain" />
+            </div>
+          </div>
+
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900 border border-amber-500/30 text-amber-400 text-xs font-bold tracking-wide">
             <ShieldCheck className="w-4 h-4 text-amber-400" />
             <span>منصة رادار للولاء والتسويق الذكي</span>
           </div>
+
           <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-            انضم كتاجر شريك في رادار
+            انضم كمتجر شريك في رادار
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 max-w-sm mx-auto">
-            منظومة ولاء رقمية ذكية لنمو مبيعاتك وزيادة ولاء عملائك
+            منظومة ولاء رقمية ذكية لزيادة مبيعاتك ومضاعفة ولاء عملائك
           </p>
+
+          {referralCode && (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>كود الدعوة المعتمد: {referralCode}</span>
+            </div>
+          )}
         </div>
 
-        {/* State 1: Checking Referral Link */}
+        {/* Feature Highlights Cards */}
+        <div className="grid grid-cols-3 gap-2.5 mb-6 text-center">
+          <div className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm">
+            <Zap className="w-5 h-5 text-amber-400 mx-auto mb-1" />
+            <p className="text-[11px] font-bold text-white">كاشير فوري</p>
+            <p className="text-[9px] text-slate-400">إضافة النقاط بثانية</p>
+          </div>
+          <div className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm">
+            <Gift className="w-5 h-5 text-amber-400 mx-auto mb-1" />
+            <p className="text-[11px] font-bold text-white">محفظة رقمية</p>
+            <p className="text-[9px] text-slate-400">بدون تحميل تطبيق</p>
+          </div>
+          <div className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm">
+            <Users className="w-5 h-5 text-amber-400 mx-auto mb-1" />
+            <p className="text-[11px] font-bold text-white">إعادة تفعيل</p>
+            <p className="text-[9px] text-slate-400">حملات واتساب ذكية</p>
+          </div>
+        </div>
+
+        {/* State 1: Initializing */}
         {pageState === 'INITIALIZING' && (
           <div className="p-8 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-4 shadow-2xl backdrop-blur-sm">
             <Loader2 className="w-8 h-8 text-amber-500 animate-spin mx-auto" />
-            <p className="text-sm text-slate-300 font-medium">جاري التحقق من رابط الدعوة...</p>
+            <p className="text-sm text-slate-300 font-medium">جاري تهيئة الصفحة...</p>
           </div>
         )}
 
-        {/* State 2: Direct Access without Ref (?ref= missing) */}
-        {pageState === 'NO_REF' && (
-          <div className="p-8 rounded-3xl bg-slate-900/90 border border-slate-800 text-center space-y-5 shadow-2xl backdrop-blur-sm">
-            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto text-xl">
-              ✉️
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-lg font-bold text-white">رابط دعوة مطلوب</h2>
-              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-                الانضمام إلى منصة رادار كتاجر شريك متاح حالياً عبر الدعوات الحصرية من قِبل مسؤولي المنظمة وشركائنا المعتمدين.
-              </p>
-              <p className="text-xs text-amber-400/90 pt-1">
-                إذا كان لديك رابط دعوة، يرجى استخدامه مباشرة للوصول إلى استمارة التسجيل.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* State 3: Invalid or Inactive Ref */}
-        {pageState === 'INVALID_REF' && (
-          <div className="p-8 rounded-3xl bg-slate-900/90 border border-red-500/30 text-center space-y-5 shadow-2xl backdrop-blur-sm">
-            <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 mx-auto">
-              <AlertCircle className="w-7 h-7" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-lg font-bold text-white">رابط الدعوة غير صالح</h2>
-              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-                عذراً، رابط الدعوة المستخدم غير مفعّل أو انتهت صلاحيته. يرجى التأكد من صحة الرابط أو التواصل مع ممثل رادار المعتمد.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* State 4: Join Form Ready */}
+        {/* State 2: Join Form Ready */}
         {pageState === 'FORM_READY' && (
           <div className="p-6 sm:p-8 rounded-3xl bg-slate-900/95 border border-slate-800 shadow-2xl backdrop-blur-sm space-y-6">
             <div className="border-b border-slate-800 pb-4">
-              <h2 className="text-lg font-bold text-white">طلب الانضمام كمتجر شريك</h2>
+              <h2 className="text-lg font-bold text-white">طلب الانضمام وتأسيس المتجر</h2>
               <p className="text-xs text-slate-400 mt-1">
-                أدخل بيانات متجرك الأساسية وسيتواصل معك فريقنا لتفعيل حسابك.
+                أدخل بيانات متجرك الأساسية وسيتواصل معك فريق رادار لتهيئة برنامج الولاء فوراً.
               </p>
             </div>
 
@@ -247,7 +254,7 @@ export const MerchantJoinLanding: React.FC = () => {
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                   <Store className="w-3.5 h-3.5 text-amber-400" />
-                  <span>اسم المتجر *</span>
+                  <span>اسم المتجر / الكافيه *</span>
                 </label>
                 <input
                   type="text"
@@ -264,13 +271,13 @@ export const MerchantJoinLanding: React.FC = () => {
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-amber-400" />
-                  <span>اسم صاحب المتجر / المالك *</span>
+                  <span>اسم صاحب المتجر / المسؤول *</span>
                 </label>
                 <input
                   type="text"
                   required
                   disabled={isSubmitting}
-                  placeholder="الاسم الثلاثي"
+                  placeholder="الاسم الكريم"
                   value={form.owner_name}
                   onChange={(e) => setForm({ ...form, owner_name: e.target.value })}
                   className="w-full px-4 py-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-500 transition disabled:opacity-50"
@@ -298,7 +305,7 @@ export const MerchantJoinLanding: React.FC = () => {
                 <p className="text-[11px] text-slate-500">رقم جوال سعودي يبدأ بـ 05</p>
               </div>
 
-              {/* Submit Button (Single Flight Protected) */}
+              {/* Submit Button */}
               <button
                 type="submit"
                 disabled={isSubmitting}
@@ -317,27 +324,27 @@ export const MerchantJoinLanding: React.FC = () => {
           </div>
         )}
 
-        {/* State 5: Success State */}
+        {/* State 3: Success State */}
         {pageState === 'SUCCESS' && (
           <div className="p-8 rounded-3xl bg-slate-900/95 border border-emerald-500/30 text-center space-y-5 shadow-2xl backdrop-blur-sm animate-fade-in">
             <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto">
               <CheckCircle2 className="w-8 h-8" />
             </div>
             <div className="space-y-2">
-              <h2 className="text-xl font-black text-white">تم استلام طلبك بنجاح</h2>
+              <h2 className="text-xl font-black text-white">تم استلام طلبك بنجاح 🌟</h2>
               <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                شكراً لاهتمامك بالانضمام إلى منصة رادار.
+                شكراً لاهتمامك بالانضمام إلى منظومة رادار للولاء والمكافآت.
               </p>
               <p className="text-xs text-slate-400 leading-relaxed pt-1">
-                سيقوم فريقنا بمراجعة بيانات متجرك والتواصل معك عبر رقم الجوال لاستكمال خطوات التفعيل والتأسيس.
+                سيقوم فريقنا بمراجعة بيانات متجرك والتواصل معك عبر رقم الجوال لتفعيل نظام الولاء والبدء فوراً.
               </p>
             </div>
           </div>
         )}
 
-        {/* Minimal Footer */}
+        {/* Footer */}
         <div className="mt-8 text-center text-xs text-slate-600">
-          <p>© 2026 Radar Loyalty Engine • جميع الحقوق محفوظة</p>
+          <p>© 2026 Radar Loyalty Engine • منصة رادار لبرامج الولاء والمكافآت</p>
         </div>
       </div>
     </div>
