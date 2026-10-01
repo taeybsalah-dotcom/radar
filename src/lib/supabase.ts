@@ -680,6 +680,9 @@ export const LoyaltyService = {
           p_manager_pin: payload.manager_pin || '9999',
         });
 
+        const nowIso = new Date().toISOString();
+        const trialEndIso = new Date(Date.now() + 7 * 86400000).toISOString();
+
         if (!error && data && data.success) {
           createdStore = data.store as Store;
           createdManager = data.manager as StoreStaff;
@@ -691,13 +694,23 @@ export const LoyaltyService = {
               {
                 name: payload.name.trim(),
                 slug: cleanSlug,
+                custom_domain: payload.custom_domain ? payload.custom_domain.replace(/^https?:\/\//, '').replace(/\/$/, '') : null,
                 logo_url: payload.logo_url,
-                primary_color: payload.primary_color,
-                secondary_color: payload.secondary_color,
-                points_per_riyal: payload.points_per_riyal,
+                primary_color: payload.primary_color || '#0F172A',
+                secondary_color: payload.secondary_color || '#F59E0B',
+                points_per_riyal: payload.points_per_riyal || 1.0,
                 manager_name: payload.manager_name.trim(),
                 manager_contact: payload.manager_contact.trim(),
                 subscription_active: true,
+                status: 'trial',
+                subscription_status: 'trial',
+                subscription_plan: 'trial',
+                setup_fee_paid: false,
+                trial_start_date: nowIso,
+                trial_end_date: trialEndIso,
+                subscription_start_date: nowIso,
+                subscription_end_date: trialEndIso,
+                renewal_amount: 195,
               },
             ])
             .select()
@@ -732,6 +745,40 @@ export const LoyaltyService = {
             ]);
           }
         }
+
+        // 🛡️ Always enforce strict trial subscription defaults on newly founded store
+        if (createdStore) {
+          createdStore = {
+            ...createdStore,
+            status: 'trial',
+            subscription_status: 'trial',
+            subscription_plan: 'trial',
+            setup_fee_paid: false,
+            subscription_active: true,
+            trial_start_date: createdStore.trial_start_date || nowIso,
+            trial_end_date: createdStore.trial_end_date || trialEndIso,
+            subscription_end_date: createdStore.trial_end_date || trialEndIso,
+          };
+
+          if (isUUID(createdStore.id)) {
+            try {
+              await supabase
+                .from('stores')
+                .update({
+                  subscription_status: 'trial',
+                  status: 'trial',
+                  setup_fee_paid: false,
+                  subscription_active: true,
+                  trial_start_date: createdStore.trial_start_date,
+                  trial_end_date: createdStore.trial_end_date,
+                  subscription_end_date: createdStore.trial_end_date,
+                })
+                .eq('id', createdStore.id);
+            } catch (syncErr) {
+              console.warn('Sync store trial status update warning:', syncErr);
+            }
+          }
+        }
       } catch (e) {
         console.warn('Supabase createStoreConcierge exception', e);
       }
@@ -743,6 +790,7 @@ export const LoyaltyService = {
       id: 'store-' + Date.now(),
       slug: cleanSlug,
       name: payload.name.trim(),
+      custom_domain: payload.custom_domain || undefined,
       logo_url:
         payload.logo_url ||
         'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=150&auto=format&fit=crop&q=80',
@@ -3988,13 +4036,20 @@ export const LoyaltyService = {
             store.subscription_status === 'suspended'
               ? true
               : Boolean(data.is_suspended);
+
+          const statusFinal: StoreSubscriptionStatus = isSuspendedFinal
+            ? 'suspended'
+            : !store.setup_fee_paid || data.status === 'trial' || data.status === 'trialing'
+            ? 'trial'
+            : (data.status as StoreSubscriptionStatus);
+
           return {
-            status: isSuspendedFinal ? 'suspended' : (data.status as StoreSubscriptionStatus),
+            status: statusFinal,
             daysLeft: Number(data.days_left),
             subscriptionEndDate: data.subscription_end_date,
             trialEndDate: data.trial_end_date,
             isSuspended: isSuspendedFinal,
-            requiresSetup: Boolean(data.requires_setup),
+            requiresSetup: Boolean(data.requires_setup || !store.setup_fee_paid),
             requiresRenewal: Boolean(data.requires_renewal),
             renewalAmount: Number(data.renewal_amount || 195),
           };
@@ -4015,9 +4070,9 @@ export const LoyaltyService = {
     const targetEndMs = store.setup_fee_paid ? subEndMs : trialEndMs;
     const daysLeft = Math.round(((targetEndMs - now) / 86400000) * 10) / 10;
 
-    let status: StoreSubscriptionStatus = store.subscription_status || 'trial';
+    let status: StoreSubscriptionStatus = store.setup_fee_paid ? (store.subscription_status || 'active') : 'trial';
     let isSuspended = false;
-    let requiresSetup = false;
+    let requiresSetup = !store.setup_fee_paid;
     let requiresRenewal = false;
 
     // 0. متجر معطل يدوياً من قبل إدارة المنصة (Kill Switch)

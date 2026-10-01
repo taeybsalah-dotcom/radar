@@ -5716,8 +5716,20 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
           {/* Sub-Section 2: Billing */}
           {settingsSection === 'billing' && (() => {
+        const isTrial =
+          !isStoreSuspended &&
+          (!store.setup_fee_paid ||
+            subscriptionInfo?.status === 'trial' ||
+            store.subscription_status === 'trial');
+
         const currentPlan: BillingPlan =
-          allPlans.find((p) => p.id === (store as any).subscription_plan_id || p.code === (store as any).plan_code) ||
+          (!isTrial &&
+            store.setup_fee_paid &&
+            allPlans.find(
+              (p) =>
+                p.id === (store as any).subscription_plan_id ||
+                p.code === (store as any).plan_code
+            )) ||
           allPlans.find((p) => p.code === 'PRO' || p.active) ||
           allPlans[0] || {
             id: 'plan-pro',
@@ -5753,7 +5765,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
             {/* ⏱️ شريط عداد الأيام المتبقية وحالة الاشتراك المباشرة */}
             {(() => {
-              const isTrial = !store.setup_fee_paid || subscriptionInfo?.status === 'trial';
               const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 7 : 30)));
               const totalCycleDays = isTrial
                 ? (currentPlan.trial_days || 7)
@@ -5909,9 +5920,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {activePlans.map((plan) => {
                     const isCurrent =
-                      (plan.id && (plan.id === (store as any).subscription_plan_id || plan.id === currentPlan.id)) ||
-                      (plan.code && (plan.code === (store as any).plan_code || plan.code === currentPlan.code)) ||
-                      plan.name === currentPlan.name;
+                      !isTrial &&
+                      Boolean(store.setup_fee_paid) &&
+                      ((plan.id && (plan.id === (store as any).subscription_plan_id || plan.id === currentPlan.id)) ||
+                        (plan.code && (plan.code === (store as any).plan_code || plan.code === currentPlan.code)) ||
+                        plan.name === currentPlan.name);
 
                     const planKey = plan.id || plan.code || plan.name;
                     const isUpgradingThis = isUpgradingPlanId === planKey;
@@ -5997,17 +6010,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                               type="button"
                               onClick={() => handleUpgradePlan(plan)}
                               disabled={isUpgradingThis}
-                              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50 hover:scale-[1.01] active:scale-[0.99]"
                             >
                               {isUpgradingThis ? (
                                 <>
                                   <RefreshCw className="w-4 h-4 animate-spin" />
-                                  <span>جاري الترقية والتفعيل...</span>
+                                  <span>جاري المعالجة...</span>
+                                </>
+                              ) : isTrial ? (
+                                <>
+                                  <Zap className="w-4 h-4" />
+                                  <span>الاشتراك وتفعيل هذه الباقة 🚀</span>
                                 </>
                               ) : (
                                 <>
                                   <Zap className="w-4 h-4" />
-                                  <span>ترقية إلى هذه الباقة الآن 🚀</span>
+                                  <span>ترقية أو تغيير الباقة 🚀</span>
                                 </>
                               )}
                             </button>
