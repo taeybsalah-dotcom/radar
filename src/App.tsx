@@ -43,9 +43,30 @@ function parseRouteParams() {
   let slugParam = urlParams.get('store');
   const previewParam = urlParams.get('preview') === 'true';
 
-  // 🚪 Stage 4: Merchant Join Route (/join or /join?ref=RADAR-XXXX or portal=join)
+  // 👑 Stage 1: Super Admin / Platform Owner Route (/super-admin, /superadmin, /owner, portal=super-admin, #super-admin)
   const pathname = (window.location.pathname || '').toLowerCase();
   const rawHash = window.location.hash ? window.location.hash.replace(/^#\/?/, '').trim() : '';
+
+  const isSuperAdmin =
+    pathname === '/super-admin' ||
+    pathname === '/super-admin/' ||
+    pathname === '/superadmin' ||
+    pathname === '/superadmin/' ||
+    pathname === '/owner' ||
+    pathname === '/owner/' ||
+    portalParam === 'super-admin' ||
+    rawHash === 'super-admin' ||
+    rawHash === 'superadmin';
+  if (isSuperAdmin) {
+    return {
+      portal: 'super-admin' as const,
+      isPreview: false,
+      storeSlug: null,
+      partnerSlug: null,
+    };
+  }
+
+  // 🚪 Stage 4: Merchant Join Route (/join or /join?ref=RADAR-XXXX or portal=join)
   const isJoin = pathname === '/join' || pathname === '/join/' || portalParam === 'join' || rawHash === 'join';
   if (isJoin) {
     return {
