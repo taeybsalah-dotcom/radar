@@ -59,6 +59,7 @@ const STORAGE_KEYS = {
   LOCAL_GLOBAL_MODIFIERS: 'radar_local_global_modifiers',
   LOCAL_BOOKINGS: 'radar_local_service_bookings',
   LOCAL_ORDERS: 'radar_local_whatsapp_orders',
+  LOCAL_PARTNERS: 'radar_local_partners',
   CONSUMED_TOKENS: 'radar_consumed_tokens',
 };
 
@@ -4785,6 +4786,126 @@ export const LoyaltyService = {
     const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
     const encoded = encodeURIComponent(rawText);
     return `https://wa.me/${intlPhone}?text=${encoded}`;
+  },
+
+  async getAllPartners(): Promise<any[]> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('partner_accounts')
+          .select('id, affiliate_id, display_name, slug, region, target_value, active, created_at, affiliates(id, name, phone, referral_code, status)')
+          .order('created_at', { ascending: false });
+        if (!error && data && data.length > 0) {
+          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, data);
+          return data;
+        }
+      } catch (e) {
+        console.warn('Supabase getAllPartners error:', e);
+      }
+    }
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    return local;
+  },
+
+  async addPartner(payload: {
+    name: string;
+    phone: string;
+    referral_code?: string;
+    slug?: string;
+    region?: string;
+    target_value?: number;
+  }): Promise<any> {
+    const cleanName = payload.name.trim();
+    const cleanPhone = payload.phone.trim();
+    const cleanCode = (payload.referral_code || `RADAR-${cleanName.replace(/\s+/g, '')}`).toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    const cleanSlug = (payload.slug || cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-')).toLowerCase();
+
+    const partnerId = 'partner-' + Date.now();
+    const affiliateId = 'aff-' + Date.now();
+
+    const newPartnerObj = {
+      id: partnerId,
+      affiliate_id: affiliateId,
+      display_name: cleanName,
+      slug: cleanSlug,
+      region: payload.region || 'الرياض',
+      target_value: payload.target_value || 20,
+      active: true,
+      created_at: new Date().toISOString(),
+      affiliates: {
+        id: affiliateId,
+        name: cleanName,
+        phone: cleanPhone,
+        referral_code: cleanCode,
+        status: 'ACTIVE',
+      },
+    };
+
+    // Save locally first (guaranteed instant success)
+    const existing = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const updated = [newPartnerObj, ...existing.filter((p: any) => p.slug !== cleanSlug && p.id !== partnerId)];
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updated);
+
+    // Sync to Supabase in background
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data: affData } = await supabase
+          .from('affiliates')
+          .upsert([{ name: cleanName, phone: cleanPhone, referral_code: cleanCode, status: 'ACTIVE' }], { onConflict: 'phone' })
+          .select('id')
+          .single();
+
+        const realAffId = affData?.id || affiliateId;
+
+        await supabase
+          .from('partner_accounts')
+          .insert([{
+            affiliate_id: realAffId,
+            display_name: cleanName,
+            slug: cleanSlug,
+            region: payload.region || 'عام',
+            target_value: payload.target_value || 20,
+            active: true
+          }]);
+      } catch (e) {
+        console.warn('Supabase sync partner error:', e);
+      }
+    }
+
+    return newPartnerObj;
+  },
+
+  async togglePartnerStatus(partnerId: string, affiliateId: string, currentActive: boolean): Promise<boolean> {
+    const nextActive = !currentActive;
+    const nextStatus = nextActive ? 'ACTIVE' : 'SUSPENDED';
+
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const updated = local.map((p: any) => {
+      if (p.id === partnerId) {
+        return {
+          ...p,
+          active: nextActive,
+          affiliates: p.affiliates ? { ...p.affiliates, status: nextStatus } : p.affiliates,
+        };
+      }
+      return p;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updated);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('partner_accounts').update({ active: nextActive }).eq('id', partnerId);
+        if (affiliateId) {
+          await supabase.from('affiliates').update({ status: nextStatus }).eq('id', affiliateId);
+        }
+      } catch (e) {
+        console.warn('Supabase toggle partner error:', e);
+      }
+    }
+    return nextActive;
   },
 };
 

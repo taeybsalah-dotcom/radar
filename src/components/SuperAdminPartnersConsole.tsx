@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getSupabaseClient } from '../lib/supabase';
+import { LoyaltyService } from '../lib/supabase';
+import confetti from 'canvas-confetti';
 import {
   Users,
   PlusCircle,
@@ -18,12 +19,14 @@ import {
   Tag,
   MapPin,
   Target,
+  Loader2,
 } from 'lucide-react';
 
 export const SuperAdminPartnersConsole: React.FC = () => {
   const [partners, setPartners] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   // New Marketer / Partner Direct Form Modal
@@ -41,29 +44,12 @@ export const SuperAdminPartnersConsole: React.FC = () => {
   const fetchPartners = useCallback(async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const client = getSupabaseClient();
-      if (client) {
-        const { data, error: dbErr } = await client
-          .from('partner_accounts')
-          .select('id, affiliate_id, display_name, slug, region, target_value, active, created_at, affiliates(id, name, phone, referral_code, status)')
-          .order('created_at', { ascending: false });
-
-        if (!dbErr && data) {
-          setPartners(data);
-          setLoading(false);
-          return;
-        }
-      }
-
-      const res = await fetch('/api/admin/partners');
-      const data = await res.json().catch(() => ({}));
-      if (data.success) {
-        setPartners(data.partners || []);
-      }
+      const list = await LoyaltyService.getAllPartners();
+      setPartners(list || []);
     } catch (err: any) {
       console.error('[SuperAdminPartnersConsole] Fetch error:', err);
+      setError('تعذر استرجاع قائمة الشركاء');
     } finally {
       setLoading(false);
     }
@@ -76,6 +62,8 @@ export const SuperAdminPartnersConsole: React.FC = () => {
   // Auto-generate code & slug when typing name
   const handleNameChange = (val: string) => {
     setPartnerName(val);
+    setModalError(null);
+
     const cleanLatin = val
       .trim()
       .replace(/[^\w\s-]/g, '')
@@ -104,6 +92,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setModalError(null);
     setError(null);
     setSuccess(null);
 
@@ -113,12 +102,12 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     let cleanSlug = (partnerSlug.trim() || cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-')).toLowerCase();
 
     if (!cleanName || cleanName.length < 2) {
-      setError('يرجى كتابة اسم المسوق (حرفين على الأقل)');
+      setModalError('يرجى كتابة اسم المسوق (حرفين على الأقل)');
       return;
     }
 
     if (!cleanPhone || cleanPhone.length < 9) {
-      setError('يرجى إدخال رقم جوال صحيح للمسوق (05XXXXXXXX)');
+      setModalError('يرجى إدخال رقم جوال صحيح للمسوق (05XXXXXXXX)');
       return;
     }
 
@@ -128,69 +117,29 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const client = getSupabaseClient();
-      if (!client) {
-        throw new Error('تعذر الاتصال بقاعدة البيانات');
-      }
+      const created = await LoyaltyService.addPartner({
+        name: cleanName,
+        phone: cleanPhone,
+        referral_code: cleanCode,
+        slug: cleanSlug,
+        region: region.trim() || 'الرياض',
+        target_value: monthlyTarget,
+      });
 
-      // 1. Check if affiliate already exists by phone
-      const { data: existingAff } = await client
-        .from('affiliates')
-        .select('id, name, referral_code')
-        .eq('phone', cleanPhone)
-        .maybeSingle();
-
-      let affiliateId = existingAff?.id;
-
-      if (!affiliateId) {
-        // Create new affiliate row
-        const { data: newAff, error: affErr } = await client
-          .from('affiliates')
-          .insert([
-            {
-              name: cleanName,
-              phone: cleanPhone,
-              referral_code: cleanCode,
-              status: 'ACTIVE',
-              notes: `تمت الإضافة بواسطة المالك من لوحة التحكم`,
-            },
-          ])
-          .select('id')
-          .single();
-
-        if (affErr) {
-          throw new Error(affErr.message || 'فشل في حفظ بيانات المسوق');
-        }
-        affiliateId = newAff?.id;
-      }
-
-      // 2. Create partner account with landing slug
-      const { error: partnerErr } = await client.from('partner_accounts').insert([
-        {
-          affiliate_id: affiliateId,
-          display_name: cleanName,
-          slug: cleanSlug,
-          region: region.trim() || 'عام',
-          target_value: monthlyTarget,
-          active: true,
-        },
-      ]);
-
-      if (partnerErr) {
-        throw new Error(partnerErr.message || 'فشل في إنشاء صفحة ورابط الشريك');
-      }
-
-      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بكود إحالة: ${cleanCode} ورابط: /${cleanSlug}`);
+      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بكود إحالة: ${cleanCode} ورابط: /${cleanSlug} 🎉`);
       setIsModalOpen(false);
       setPartnerName('');
       setPartnerPhone('');
       setReferralCode('');
       setPartnerSlug('');
       setRegion('الرياض');
+      setModalError(null);
+
+      try { confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } }); } catch {}
       await fetchPartners();
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'حدث خطأ أثناء حفظ المسوق');
+      setModalError(err.message || 'حدث خطأ أثناء حفظ المسوق');
     } finally {
       setIsSubmitting(false);
     }
@@ -198,35 +147,18 @@ export const SuperAdminPartnersConsole: React.FC = () => {
 
   const handleToggleStatus = async (partnerId: string, affiliateId: string, currentActive: boolean) => {
     try {
-      const client = getSupabaseClient();
-      if (client) {
-        const nextActive = !currentActive;
-        const nextAffStatus = nextActive ? 'ACTIVE' : 'SUSPENDED';
-
-        await client
-          .from('partner_accounts')
-          .update({ active: nextActive })
-          .eq('id', partnerId);
-
-        if (affiliateId) {
-          await client
-            .from('affiliates')
-            .update({ status: nextAffStatus })
-            .eq('id', affiliateId);
-        }
-
-        setPartners(
-          partners.map((p) =>
-            p.id === partnerId
-              ? {
-                  ...p,
-                  active: nextActive,
-                  affiliates: p.affiliates ? { ...p.affiliates, status: nextAffStatus } : p.affiliates,
-                }
-              : p
-          )
-        );
-      }
+      const nextActive = await LoyaltyService.togglePartnerStatus(partnerId, affiliateId, currentActive);
+      setPartners(
+        partners.map((p) =>
+          p.id === partnerId
+            ? {
+                ...p,
+                active: nextActive,
+                affiliates: p.affiliates ? { ...p.affiliates, status: nextActive ? 'ACTIVE' : 'SUSPENDED' } : p.affiliates,
+              }
+            : p
+        )
+      );
     } catch (err: any) {
       setError(err.message || 'فشل في تحديث حالة المسوق');
     }
@@ -264,7 +196,10 @@ export const SuperAdminPartnersConsole: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => {
+              setModalError(null);
+              setIsModalOpen(true);
+            }}
             className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl text-xs transition shadow-lg shadow-amber-500/20"
           >
             <PlusCircle className="w-4 h-4" />
@@ -331,7 +266,6 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 {partners.map((p) => {
                   const refCode = p.affiliates?.referral_code || '—';
                   const phone = p.affiliates?.phone || '—';
-                  const joinUrl = `${window.location.origin}/join?ref=${refCode}`;
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/40 transition">
@@ -441,6 +375,14 @@ export const SuperAdminPartnersConsole: React.FC = () => {
               </button>
             </div>
 
+            {/* Error inside modal */}
+            {modalError && (
+              <div className="p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-400 text-xs font-bold flex items-center gap-2 animate-shake">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{modalError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleCreateSubmit} className="space-y-4">
               {/* Field 1: Marketer Name */}
               <div className="space-y-1.5">
@@ -469,7 +411,10 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                   required
                   dir="ltr"
                   value={partnerPhone}
-                  onChange={(e) => setPartnerPhone(e.target.value)}
+                  onChange={(e) => {
+                    setPartnerPhone(e.target.value);
+                    setModalError(null);
+                  }}
                   placeholder="05XXXXXXXX"
                   className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-mono text-white placeholder-slate-600 outline-none transition text-right"
                 />
@@ -511,7 +456,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 </div>
               </div>
 
-              {/* Field 5: Region & Target (Inline Grid) */}
+              {/* Field 5: Region & Target */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
@@ -547,9 +492,16 @@ export const SuperAdminPartnersConsole: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="flex-1 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-lg shadow-amber-500/20 disabled:opacity-50"
+                  className="flex-1 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {isSubmitting ? 'جاري الحفظ...' : 'حفظ وتفعيل المسوق فوراً 🚀'}
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>جاري الحفظ...</span>
+                    </>
+                  ) : (
+                    <span>حفظ وتفعيل المسوق فوراً 🚀</span>
+                  )}
                 </button>
                 <button
                   type="button"
