@@ -166,6 +166,59 @@ export default async function handler(req: any, res: any) {
                 });
               }
             }
+
+            // 💰 Unlock pending commissions to EARNED upon successful payment
+            const { data: updatedComms } = await supabase
+              .from('partner_commissions')
+              .update({
+                status: 'EARNED',
+                qualifying_event: 'تم سداد الاشتراك وتثبيت المتجر بنجاح',
+                basis_amount: event.amount || 195.0,
+                updated_at: now.toISOString(),
+              })
+              .eq('store_id', event.storeId)
+              .eq('status', 'PENDING')
+              .select('partner_account_id');
+
+            // 🏆 Evaluate milestone bonuses for the partner based on paid stores
+            if (updatedComms && updatedComms.length > 0) {
+              for (const comm of updatedComms) {
+                if (comm.partner_account_id) {
+                  const { data: paidComms } = await supabase
+                    .from('partner_commissions')
+                    .select('store_id')
+                    .eq('partner_account_id', comm.partner_account_id)
+                    .in('status', ['EARNED', 'PAID']);
+
+                  const paidStoreCount = new Set((paidComms || []).map((c: any) => c.store_id).filter(Boolean)).size;
+
+                  const defaultMilestones = [
+                    { id: 'rule-3', milestone: 3, bonus_amount: 100 },
+                    { id: 'rule-5', milestone: 5, bonus_amount: 250 },
+                    { id: 'rule-10', milestone: 10, bonus_amount: 500 },
+                    { id: 'rule-20', milestone: 20, bonus_amount: 1000 },
+                  ];
+
+                  for (const rule of defaultMilestones) {
+                    if (paidStoreCount >= rule.milestone) {
+                      const awardKey = `bonus_${comm.partner_account_id}_${rule.milestone}`;
+                      await supabase.from('partner_bonus_awards').upsert(
+                        {
+                          partner_account_id: comm.partner_account_id,
+                          bonus_rule_id: rule.id,
+                          milestone: rule.milestone,
+                          bonus_amount: rule.bonus_amount,
+                          status: 'ACHIEVED',
+                          idempotency_key: awardKey,
+                          awarded_at: now.toISOString(),
+                        },
+                        { onConflict: 'idempotency_key' }
+                      );
+                    }
+                  }
+                }
+              }
+            }
           } catch (leadErr) {
             console.warn('[api/billing/webhook] Lead commission auto-record non-blocking warning:', leadErr);
           }

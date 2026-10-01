@@ -813,7 +813,7 @@ export const LoyaltyService = {
       created_at: new Date().toISOString(),
     };
 
-    const existingIdx = localStores.findIndex((s) => s.slug === cleanSlug);
+    const existingIdx = localStores.findIndex((s) => s.slug === cleanSlug || (createdStore && s.id === createdStore.id));
     if (existingIdx !== -1) {
       localStores[existingIdx] = newStore;
     } else {
@@ -821,7 +821,7 @@ export const LoyaltyService = {
     }
     saveLocalData(STORAGE_KEYS.LOCAL_STORES, localStores);
 
-    // Save manager staff locally
+    // Save manager staff locally without duplicating or overwriting unrelated store staff
     const staffList = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, INITIAL_STAFF);
     const newManager: StoreStaff = createdManager || {
       id: 'staff-' + Date.now(),
@@ -833,7 +833,12 @@ export const LoyaltyService = {
       is_active: true,
       can_manual_input_phone: true,
     };
-    staffList.push(newManager);
+    const staffIdx = staffList.findIndex((st) => st.store_id === newStore.id && (st.role === 'admin' || st.phone === newManager.phone));
+    if (staffIdx !== -1) {
+      staffList[staffIdx] = { ...staffList[staffIdx], ...newManager };
+    } else {
+      staffList.unshift(newManager);
+    }
     saveLocalData(STORAGE_KEYS.LOCAL_STAFF, staffList);
 
     // Save default tiers locally
@@ -3996,9 +4001,19 @@ export const LoyaltyService = {
       console.warn('Non-blocking lead conversion on payment notice:', leadConvErr);
     }
 
+    // 💰 Unlock pending affiliate commissions to EARNED and evaluate milestone bonuses upon actual payment
+    try {
+      if (payload.invoiceType === 'setup' || payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') {
+        await this.unlockPaidStoreCommission(payload.storeId, payload.amount);
+      }
+    } catch (commUnlockErr) {
+      console.warn('Non-blocking commission unlock on payment error:', commUnlockErr);
+    }
+
     // إطلاق الأحداث اللحظية لتحديث كافة الشاشات
     LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: payload.storeId });
 
@@ -5262,10 +5277,28 @@ export const LoyaltyService = {
     const cleanPhone = payload.phone.trim();
     const refCode = payload.referral_code?.trim() || null;
 
-    let normPhone = cleanPhone.replace(/[^0-9]/g, '');
-    if (normPhone.startsWith('00966')) normPhone = normPhone.substring(5);
-    else if (normPhone.startsWith('966')) normPhone = normPhone.substring(3);
-    if (normPhone.length === 10 && normPhone.startsWith('05')) normPhone = normPhone.substring(1);
+    const normalizeP = (p?: string | null) => {
+      let c = (p || '').replace(/[^0-9]/g, '');
+      if (c.startsWith('00966')) c = c.substring(5);
+      else if (c.startsWith('966')) c = c.substring(3);
+      if (c.length === 10 && c.startsWith('05')) c = c.substring(1);
+      return c;
+    };
+    const normPhone = normalizeP(cleanPhone);
+
+    // 🛡️ Pre-validation & Phone collision protection against active stores:
+    const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
+    const localStaff = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, INITIAL_STAFF);
+    const hasActiveStore = localStores.some(
+      (s) => normalizeP(s.manager_contact) === normPhone && (s.subscription_active || s.status === 'active' || s.status === 'trial')
+    ) || localStaff.some((st) => normalizeP(st.phone) === normPhone && st.is_active);
+
+    if (hasActiveStore) {
+      return {
+        success: false,
+        error: 'رقم الجوال مسجل مسبقاً لمتجر نشط في المنصة، يرجى تسجيل الدخول أو استخدام رقم آخر.',
+      };
+    }
 
     const tempId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `lead-${Date.now()}`;
     const newLead: MerchantLead = {
@@ -5305,7 +5338,21 @@ export const LoyaltyService = {
         if (data.success) {
           newLead.id = data.lead_id || tempId;
           const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-          saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.phone !== cleanPhone)]);
+          // 🛡️ Deduplicate safely; preserve CONVERTED leads and history
+          const existingIdx = current.findIndex((l) => normalizeP(l.phone) === normPhone && l.status !== 'CONVERTED');
+          if (existingIdx !== -1) {
+            current[existingIdx] = {
+              ...current[existingIdx],
+              store_name: cleanStore,
+              manager_name: cleanManager,
+              referral_code: refCode || current[existingIdx].referral_code,
+              notes: payload.notes || current[existingIdx].notes,
+              updated_at: new Date().toISOString(),
+            };
+            saveLocalData(STORAGE_KEYS.LOCAL_LEADS, current);
+            return { success: true, lead_id: current[existingIdx].id };
+          }
+          saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.id !== newLead.id)]);
           return { success: true, lead_id: newLead.id };
         }
       } else {
@@ -5360,7 +5407,21 @@ export const LoyaltyService = {
 
     // 3. Local fallback persistence
     const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-    saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.phone !== cleanPhone)]);
+    const existingIdx = current.findIndex((l) => normalizeP(l.phone) === normPhone && l.status !== 'CONVERTED');
+    if (existingIdx !== -1) {
+      current[existingIdx] = {
+        ...current[existingIdx],
+        store_name: cleanStore,
+        manager_name: cleanManager,
+        referral_code: refCode || current[existingIdx].referral_code,
+        notes: payload.notes || current[existingIdx].notes,
+        updated_at: new Date().toISOString(),
+      };
+      saveLocalData(STORAGE_KEYS.LOCAL_LEADS, current);
+      return { success: true, lead_id: current[existingIdx].id };
+    }
+
+    saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.id !== newLead.id)]);
     return { success: true, lead_id: newLead.id };
   },
 
@@ -5457,29 +5518,7 @@ export const LoyaltyService = {
   ): Promise<{ success: boolean; commission_id?: string; amount?: number; rate?: number; error?: string }> {
     const supabase = getSupabaseClient();
 
-    // 1. Try Supabase RPC first if available
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.rpc('record_lead_conversion_commission', {
-          p_lead_id: leadId,
-          p_store_id: storeId,
-          p_basis_amount: basisAmount,
-        });
-
-        if (!error && data?.success) {
-          return {
-            success: true,
-            commission_id: data.commission_id,
-            amount: data.commission_amount,
-            rate: data.commission_rate,
-          };
-        }
-      } catch (e) {
-        console.warn('Supabase record_lead_conversion_commission RPC failed, using dual-mode fallback:', e);
-      }
-    }
-
-    // 2. Dual-mode Client Fallback:
+    // 1. Dual-mode Client / Local Fallback calculation:
     const allLeads = await this.getAllLeads();
     const lead = allLeads.find((l) => l.id === leadId);
     if (!lead || !lead.referral_code) {
@@ -5504,6 +5543,7 @@ export const LoyaltyService = {
     const commId = `comm-${leadId}`;
     const idempotencyKey = `conv_comm_${leadId}`;
 
+    // 🛡️ INITIAL STATE IS STRICTLY PENDING UNTIL MERCHANT PAYS SUBSCRIPTION / SETUP
     const newComm = {
       id: commId,
       partner_account_id: partner.id,
@@ -5513,8 +5553,8 @@ export const LoyaltyService = {
       basis_amount: basisAmount,
       commission_rate: rate,
       commission_amount: commAmount,
-      status: 'EARNED',
-      qualifying_event: 'تأسيس وتفعيل المتجر بنجاح',
+      status: 'PENDING',
+      qualifying_event: 'تأسيس المتجر - بانتظار سداد رسوم الاشتراك/التأسيس',
       idempotency_key: idempotencyKey,
       merchant_name: lead.store_name,
       created_at: new Date().toISOString(),
@@ -5531,11 +5571,96 @@ export const LoyaltyService = {
     }
     saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, existingComms);
 
-    // Evaluate Milestone Bonus Rules
-    const convertedLeadsCount = allLeads.filter(
-      (l) => (l.referral_code?.toLowerCase().trim() === leadRef) && (l.status === 'CONVERTED' || l.id === leadId)
-    ).length;
+    // Sync to Supabase partner_commissions if connected
+    if (supabase) {
+      try {
+        await supabase
+          .from('partner_commissions')
+          .upsert([newComm], { onConflict: 'idempotency_key' });
+      } catch (dbErr) {
+        console.warn('Supabase partner_commissions sync warning:', dbErr);
+      }
+    }
 
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+
+    return {
+      success: true,
+      commission_id: commId,
+      amount: commAmount,
+      rate,
+    };
+  },
+
+  // 💰 تفعيل وتحرير العمولة المكتسبة عند سداد الاشتراك فعلياً (Unlock Commission on Payment)
+  async unlockPaidStoreCommission(
+    storeId: string,
+    paidAmount: number = 195.00
+  ): Promise<{ success: boolean; unlockedCommissionsCount: number }> {
+    const now = new Date().toISOString();
+    const supabase = getSupabaseClient();
+    const partnerIdsToEvaluate = new Set<string>();
+
+    // 1. Supabase sync if connected
+    if (supabase) {
+      try {
+        const { data: updatedRows, error } = await supabase
+          .from('partner_commissions')
+          .update({
+            status: 'EARNED',
+            qualifying_event: 'تم سداد الاشتراك وتثبيت المتجر بنجاح',
+            updated_at: now,
+          })
+          .eq('store_id', storeId)
+          .eq('status', 'PENDING')
+          .select('partner_account_id');
+
+        if (!error && Array.isArray(updatedRows)) {
+          updatedRows.forEach((r) => {
+            if (r.partner_account_id) partnerIdsToEvaluate.add(r.partner_account_id);
+          });
+        }
+      } catch (dbErr) {
+        console.warn('Supabase unlockPaidStoreCommission warning:', dbErr);
+      }
+    }
+
+    // 2. Local commissions update
+    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    let unlockedCount = 0;
+    const updatedComms = localComms.map((c) => {
+      if ((c.store_id === storeId || c.merchant_lead_id === storeId) && c.status === 'PENDING') {
+        unlockedCount++;
+        if (c.partner_account_id) partnerIdsToEvaluate.add(c.partner_account_id);
+        const rate = c.commission_rate || 0.20;
+        const basis = paidAmount || c.basis_amount || 195.00;
+        return {
+          ...c,
+          status: 'EARNED',
+          qualifying_event: 'تم سداد الاشتراك وتثبيت المتجر بنجاح',
+          basis_amount: basis,
+          commission_amount: Math.round(basis * rate * 100) / 100,
+          updated_at: now,
+        };
+      }
+      return c;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
+
+    // 3. Evaluate milestone bonuses for affected partners based strictly on PAID stores
+    for (const partnerId of Array.from(partnerIdsToEvaluate)) {
+      await this.evaluatePartnerMilestones(partnerId);
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+
+    return { success: true, unlockedCommissionsCount: unlockedCount };
+  },
+
+  // 🏆 تقييم واحتساب مكافآت التارقت للأعضاء بناءً على المتاجر المدفوعة فقط
+  async evaluatePartnerMilestones(partnerId: string): Promise<void> {
     const defaultMilestones = [
       { id: 'rule-3', milestone: 3, bonus_amount: 100 },
       { id: 'rule-5', milestone: 5, bonus_amount: 250 },
@@ -5543,14 +5668,27 @@ export const LoyaltyService = {
       { id: 'rule-20', milestone: 20, bonus_amount: 1000 },
     ];
 
+    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    const earnedOrPaidComms = localComms.filter(
+      (c) => c.partner_account_id === partnerId && (c.status === 'EARNED' || c.status === 'PAID')
+    );
+
+    const paidStoreIds = new Set<string>();
+    earnedOrPaidComms.forEach((c) => {
+      if (c.store_id) paidStoreIds.add(c.store_id);
+    });
+
+    const paidCount = paidStoreIds.size;
     const existingAwards = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+    let newAwardAdded = false;
+
     for (const rule of defaultMilestones) {
-      if (convertedLeadsCount >= rule.milestone) {
-        const awardKey = `bonus_${partner.id}_${rule.milestone}`;
-        if (!existingAwards.some((a) => a.idempotency_key === awardKey)) {
-          existingAwards.push({
+      if (paidCount >= rule.milestone) {
+        const awardKey = `bonus_${partnerId}_${rule.milestone}`;
+        if (!existingAwards.some((a) => a.idempotency_key === awardKey || (a.partner_account_id === partnerId && a.milestone === rule.milestone))) {
+          const newAward = {
             id: `award-${Date.now()}-${rule.milestone}`,
-            partner_account_id: partner.id,
+            partner_account_id: partnerId,
             bonus_rule_id: rule.id,
             milestone: rule.milestone,
             bonus_amount: rule.bonus_amount,
@@ -5558,19 +5696,24 @@ export const LoyaltyService = {
             idempotency_key: awardKey,
             awarded_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
-          });
+          };
+          existingAwards.push(newAward);
+          newAwardAdded = true;
+
+          const supabase = getSupabaseClient();
+          if (supabase) {
+            try {
+              await supabase.from('partner_bonus_awards').upsert([newAward], { onConflict: 'idempotency_key' });
+            } catch {}
+          }
         }
       }
     }
-    saveLocalData(STORAGE_KEYS.LOCAL_BONUS_AWARDS, existingAwards);
 
-    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
-    return {
-      success: true,
-      commission_id: commId,
-      amount: commAmount,
-      rate,
-    };
+    if (newAwardAdded) {
+      saveLocalData(STORAGE_KEYS.LOCAL_BONUS_AWARDS, existingAwards);
+      LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+    }
   },
 
   async getPartnerCommissions(partnerId: string): Promise<any[]> {
@@ -5607,30 +5750,40 @@ export const LoyaltyService = {
       { id: 'rule-20', milestone: 20, bonus_amount: 1000 },
     ];
     let awards: any[] = [];
-    let convertedCount = 0;
+    let paidCount = 0;
 
     if (supabase) {
       try {
-        const [rulesRes, awardsRes, leadsRes] = await Promise.all([
+        const [rulesRes, awardsRes] = await Promise.all([
           supabase.from('partner_bonus_rules').select('*').eq('active', true).order('milestone', { ascending: true }),
           supabase.from('partner_bonus_awards').select('*').eq('partner_account_id', partnerId),
-          affiliateId ? supabase.from('merchant_leads').select('id', { count: 'exact', head: true }).eq('affiliate_id', affiliateId).eq('status', 'CONVERTED') : Promise.resolve({ count: 0 } as any),
         ]);
 
         if (rulesRes.data && rulesRes.data.length > 0) rules = rulesRes.data;
         if (awardsRes.data) awards = awardsRes.data;
-        if (typeof leadsRes.count === 'number') convertedCount = leadsRes.count;
+
+        const { data: commRows } = await supabase
+          .from('partner_commissions')
+          .select('store_id')
+          .eq('partner_account_id', partnerId)
+          .in('status', ['EARNED', 'PAID']);
+
+        if (commRows && Array.isArray(commRows)) {
+          const uniquePaid = new Set(commRows.map((c) => c.store_id).filter(Boolean));
+          paidCount = uniquePaid.size;
+        }
       } catch (e) {
         console.warn('Supabase getPartnerBonuses query failed:', e);
       }
     }
 
-    if (convertedCount === 0) {
-      const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-      const allPartners = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-      const targetPartner = allPartners.find((p) => p.id === partnerId || p.affiliate_id === partnerId || p.affiliate_id === affiliateId);
-      const refCode = (targetPartner?.affiliates?.referral_code || targetPartner?.referral_code || '').toLowerCase().trim();
-      convertedCount = allLeads.filter((l) => l.status === 'CONVERTED' && (l.referral_code || '').toLowerCase().trim() === refCode).length;
+    if (paidCount === 0) {
+      const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+      const partnerComms = localComms.filter(
+        (c) => c.partner_account_id === partnerId && (c.status === 'EARNED' || c.status === 'PAID')
+      );
+      const uniqueStores = new Set(partnerComms.map((c) => c.store_id).filter(Boolean));
+      paidCount = uniqueStores.size;
     }
 
     const localAwards = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []).filter((a) => a.partner_account_id === partnerId);
@@ -5647,9 +5800,9 @@ export const LoyaltyService = {
       let status: 'LOCKED' | 'IN_PROGRESS' | 'ACHIEVED' | 'AWARDED' = 'LOCKED';
       if (award) {
         status = award.status === 'PAID' ? 'AWARDED' : 'ACHIEVED';
-      } else if (convertedCount >= r.milestone) {
+      } else if (paidCount >= r.milestone) {
         status = 'ACHIEVED';
-      } else if (convertedCount > 0) {
+      } else if (paidCount > 0) {
         status = 'IN_PROGRESS';
       }
 
@@ -5658,13 +5811,13 @@ export const LoyaltyService = {
         milestone: r.milestone,
         bonus_amount: Number(r.bonus_amount),
         status,
-        current_progress: convertedCount,
+        current_progress: paidCount,
         required_merchants: r.milestone,
         awarded_at: award?.awarded_at || null,
       };
     });
 
-    return { milestones, paidCount: convertedCount };
+    return { milestones, paidCount };
   },
 
   async getPartnerFinancialSummary(partnerId: string, affiliateId?: string): Promise<{
