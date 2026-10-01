@@ -66,8 +66,14 @@ function parseRouteParams() {
     };
   }
 
-  // 🚪 Stage 4: Merchant Join Route (/join or /join?ref=RADAR-XXXX or portal=join)
-  const isJoin = pathname === '/join' || pathname === '/join/' || portalParam === 'join' || rawHash === 'join';
+  // 🚪 Stage 4: Merchant Join Route (/join, /join?ref=RADAR-XXXX, /?ref=..., or portal=join)
+  const isRefParam = urlParams.has('ref') || urlParams.has('r');
+  const isJoin =
+    pathname === '/join' ||
+    pathname === '/join/' ||
+    portalParam === 'join' ||
+    rawHash === 'join' ||
+    (pathname === '/' && isRefParam);
   if (isJoin) {
     return {
       portal: 'join' as const,
@@ -310,10 +316,31 @@ export function App() {
         return;
       }
 
-      // 🤝 Stage 6: If portal is partner-landing -> Render Public Partner Landing
+      // 🤝 Stage 6: Direct Affiliate Slug Resolution -> Straight to Final Landing Page (Bypasses intermediate landing)
       if (config.portal === 'partner-landing' && config.partnerSlug) {
-        setActiveTab('partner-landing');
-        setPartnerSlug(config.partnerSlug);
+        const cleanSlug = config.partnerSlug.trim().toLowerCase();
+        try {
+          const allPartners = await LoyaltyService.getAllPartners();
+          const found = allPartners.find(
+            (p: any) =>
+              (p.slug || '').toLowerCase() === cleanSlug ||
+              (p.affiliates?.referral_code || '').toLowerCase() === cleanSlug ||
+              (p.referral_code || '').toLowerCase() === cleanSlug
+          );
+
+          const refCode = found?.affiliates?.referral_code || found?.referral_code || cleanSlug;
+          sessionStorage.setItem('radar_captured_ref', refCode);
+
+          // Quietly notify tracking endpoint in background
+          fetch(`/api/track?ref=${encodeURIComponent(refCode)}`, {
+            method: 'GET',
+            credentials: 'include',
+          }).catch(() => {});
+        } catch (e) {
+          sessionStorage.setItem('radar_captured_ref', cleanSlug);
+        }
+
+        setActiveTab('join');
         setStore(null);
         setLoading(false);
         return;
