@@ -2354,12 +2354,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               <>
                 <div className="flex items-center justify-between border-b border-slate-800 pb-4">
                   <div>
-                    <span className="text-xs text-slate-400 font-bold block">رسوم الاشتراك الشهري (SaaS Subscription):</span>
-                    <h3 className="text-lg font-black text-white mt-0.5">تجديد باقة المحترفين (Pro Plan)</h3>
+                    <span className="text-xs text-slate-400 font-bold block">رسوم الاشتراك والخدمة (SaaS Subscription):</span>
+                    <h3 className="text-lg font-black text-white mt-0.5">
+                      {store.subscription_plan && store.subscription_plan !== 'trial'
+                        ? `تجديد ${store.subscription_plan}`
+                        : 'تجديد الاشتراك الدوري'}
+                    </h3>
                   </div>
                   <div className="text-left">
-                    <span className="text-3xl font-black text-amber-400 font-mono">195</span>
-                    <span className="text-xs text-slate-400 font-bold mr-1">ر.س / شهر</span>
+                    <span className="text-3xl font-black text-amber-400 font-mono">
+                      {subscriptionInfo?.renewalAmount || (store as any).renewal_amount || 195}
+                    </span>
+                    <span className="text-xs text-slate-400 font-bold mr-1">ر.س</span>
                   </div>
                 </div>
 
@@ -5737,9 +5743,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   (p.id && p.id === (store as any).subscription_plan_id) ||
                   (p.code && p.code === (store as any).plan_code) ||
                   (p.name && p.name === (store as any).subscription_plan)
-              ) ||
-              allPlans.find((p) => p.code === 'PRO' || p.active) ||
-              allPlans[0]
+              ) || null
             : null;
 
         const activePlans = allPlans.filter((p) => p.active !== false);

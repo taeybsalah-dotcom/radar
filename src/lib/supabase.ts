@@ -3883,12 +3883,11 @@ export const LoyaltyService = {
     let currentStore = storeIdx !== -1 ? stores[storeIdx] : INITIAL_STORE;
 
     // استخراج الخطة لمعرفة مدة الاشتراك بالأشهر (duration_months)
-    const allBillingPlans = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_BILLING_PLANS);
+    const allBillingPlans = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, []);
     const targetPlan =
       (payload.planId ? allBillingPlans.find((p) => p.id === payload.planId || p.code === payload.planId) : null) ||
       allBillingPlans.find((p) => p.id === currentStore.subscription_plan_id || p.code === currentStore.plan_code) ||
-      allBillingPlans.find((p) => p.code === 'PRO') ||
-      allBillingPlans[0];
+      null;
 
     const planMonths = targetPlan?.duration_months ?? (targetPlan?.billing_interval === 'YEARLY' ? 12 : 1);
     const durationDays = Math.max(1, planMonths * 30);
@@ -6002,12 +6001,8 @@ export const LoyaltyService = {
         console.warn('Supabase getAllSubscriptionPlans fallback:', e);
       }
     }
-    const local = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_BILLING_PLANS);
-    if (!local || local.length === 0) {
-      saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_BILLING_PLANS);
-      return DEFAULT_BILLING_PLANS;
-    }
-    return local;
+    const local = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, []);
+    return local || [];
   },
 
   async addSubscriptionPlan(planData: Omit<BillingPlan, 'id'>): Promise<BillingPlan> {
@@ -6153,85 +6148,4 @@ export const LoyaltyService = {
   },
 };
 
-export const DEFAULT_BILLING_PLANS: BillingPlan[] = [
-  {
-    id: 'plan-basic',
-    code: 'BASIC',
-    name: 'باقة الانطلاق (الأساسية)',
-    description: 'مثالية للمتاجر الناشئة والمقاهي لبدء بناء قاعدة عملاء أوفياء.',
-    amount: 99,
-    currency: 'ر.س',
-    duration_months: 1,
-    billing_interval: 'MONTHLY',
-    trial_days: 7,
-    features: [
-      'بطاقات ولاء رقمية (PWA) بدون تحميل تطبيق',
-      'كاشير سريع لمسح الباركود وصرف النقاط',
-      'نظام رتب ومستويات (Tiers) ذكي',
-      'دعم حتى 1,000 عميل نشط',
-      'تقارير وإحصائيات المبيعات الأساسية',
-    ],
-    active: true,
-  },
-  {
-    id: 'plan-pro',
-    code: 'PRO',
-    name: 'باقة المحترفين (الأكثر طلباً)',
-    description: 'الحل الشامل لنمو المبيعات واستعادة العملاء المنقطعين بالذكاء الاصطناعي.',
-    amount: 195,
-    currency: 'ر.س',
-    duration_months: 1,
-    billing_interval: 'MONTHLY',
-    trial_days: 7,
-    features: [
-      'كل مميزات الباقة الأساسية',
-      'رادار الإنقاذ الذكي (استهداف العملاء المنقطعين تلقائياً)',
-      'مساعد الكتابة والتسويق بالذكاء الاصطناعي',
-      'حملات واتساب المباشرة والعروض المخصصة',
-      'نظام حجز المواعيد والخدمات المتكامل',
-      'عدد عملاء وكاشيرات غير محدود',
-      'دعم فني مخصص على مدار الساعة',
-    ],
-    active: true,
-  },
-  {
-    id: 'plan-quarterly-growth',
-    code: 'GROWTH_3M',
-    name: 'باقة النمو (3 أشهر)',
-    description: 'خطة استراتيجية لـ 3 أشهر لدفع نمو المبيعات واستعادة العملاء.',
-    amount: 520,
-    currency: 'ر.س',
-    duration_months: 3,
-    billing_interval: 'MONTHLY',
-    trial_days: 7,
-    features: [
-      'كل مميزات باقة المحترفين',
-      'رادار الإنقاذ الذكي واستعادة العملاء',
-      'مساعد الذكاء الاصطناعي لكتابة العروض',
-      'دورة فوترة مرنة لكل 3 أشهر',
-      'أولوية الدعم الفني',
-    ],
-    active: true,
-  },
-  {
-    id: 'plan-yearly-vip',
-    code: 'VIP_YEARLY',
-    name: 'الباقة السنوية VIP (توفير شهرين)',
-    description: 'للمتاجر المتوسعة وسلاسل الفروع الراغبة بأعلى عائد استثمار وأولوية الميزات.',
-    amount: 1950,
-    currency: 'ر.س',
-    duration_months: 12,
-    billing_interval: 'YEARLY',
-    trial_days: 14,
-    features: [
-      'كل مميزات باقة المحترفين بلا استثناء',
-      'ربط نطاق خاص مخصص (Custom Domain)',
-      'تخصيص كامل للألوان وهوية المتجر والصور بدون شعار رادار',
-      'توفير اشتراك شهرين كاملين',
-      'أولوية التحديثات والوصول المبكر للميزات الجديدة',
-      'مدير حساب استراتيجي لمضاعفة العائد',
-    ],
-    active: true,
-  },
-];
 
