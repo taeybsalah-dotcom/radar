@@ -390,10 +390,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const isPaidActive = Boolean(
     stageInfo.isPaidActive ||
       unifiedStage === 'مشترك مدفوع' ||
-      store.setup_fee_paid === true ||
-      store.subscription_status === 'active' ||
-      store.status === 'active' ||
-      subscriptionInfo?.status === 'active'
+      store.setup_fee_paid === true
   );
 
   const isStoreSuspended =
@@ -656,21 +653,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   };
 
   const handleUpgradePlan = (plan: BillingPlan) => {
-    const isPaidActive = Boolean(
+    const isPaid = Boolean(
       resolveUnifiedStage(store).isPaidActive ||
         getStoreUnifiedStage(store) === 'مشترك مدفوع' ||
-        store.setup_fee_paid === true ||
-        store.subscription_status === 'active' ||
-        store.status === 'active' ||
-        subscriptionInfo?.status === 'active'
+        store.setup_fee_paid === true
     );
 
-    const currentPlan = isPaidActive
+    const currentPlan = isPaid
       ? allPlans.find(
           (p) =>
-            (p.id && p.id === (store as any).subscription_plan_id) ||
-            (p.code && p.code === (store as any).plan_code) ||
-            (p.name && p.name === (store as any).subscription_plan)
+            (p.id && (p.id === (store as any).subscription_plan_id || p.id === (store as any).plan_id)) ||
+            (p.code && (p.code === (store as any).plan_code || p.code === (store as any).plan_id)) ||
+            (p.name && (store as any).subscription_plan && (p.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(p.name) || p.name.includes((store as any).subscription_plan)))
         ) || null
       : null;
 
@@ -5906,10 +5900,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           isPaidActive
             ? allPlans.find(
                 (p) =>
-                  (p.id && p.id === (store as any).subscription_plan_id) ||
-                  (p.code && p.code === (store as any).plan_code) ||
-                  (p.name && p.name === (store as any).subscription_plan)
-              ) || null
+                  (p.id && (p.id === (store as any).subscription_plan_id || p.id === (store as any).plan_id)) ||
+                  (p.code && (p.code === (store as any).plan_code || p.code === (store as any).plan_id)) ||
+                  (p.name && (store as any).subscription_plan && (p.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(p.name) || p.name.includes((store as any).subscription_plan))) ||
+                  (p.amount && (store as any).renewal_amount && p.amount === (store as any).renewal_amount)
+              ) || (allPlans.length > 0 ? allPlans[0] : null)
             : null;
 
         const activePlans = allPlans.filter((p) => p.active !== false);
@@ -5926,7 +5921,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
             {/* ⏱️ شريط عداد الأيام المتبقية وحالة الاشتراك المباشرة */}
             {(() => {
-              const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 7 : 30)));
+              const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 7 : (currentPaidPlan?.duration_months ? currentPaidPlan.duration_months * 30 : 30))));
               const totalCycleDays = isTrial
                 ? 7
                 : currentPaidPlan
@@ -6089,7 +6084,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         currentPaidPlan &&
                           ((plan.id && (plan.id === currentPaidPlan.id || plan.id === (store as any).subscription_plan_id)) ||
                             (plan.code && (plan.code === currentPaidPlan.code || plan.code === (store as any).plan_code)) ||
-                            plan.name === currentPaidPlan.name)
+                            plan.name === currentPaidPlan.name ||
+                            (plan.name && (store as any).subscription_plan && (plan.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(plan.name) || plan.name.includes((store as any).subscription_plan))))
                       );
 
                     const planKey = plan.id || plan.code || plan.name;
@@ -6105,13 +6101,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         key={plan.id || plan.code}
                         className={`rounded-3xl p-6 sm:p-7 space-y-6 flex flex-col justify-between transition-all duration-300 relative ${
                           isCurrent
-                            ? 'bg-slate-950 border-2 border-emerald-500 shadow-xl shadow-emerald-500/15 ring-1 ring-emerald-500/30'
+                            ? 'bg-gradient-to-b from-slate-900 to-slate-950 border-2 border-emerald-500 shadow-2xl shadow-emerald-500/20 ring-2 ring-emerald-500/30'
                             : 'bg-slate-950/80 border border-slate-800 hover:border-amber-500/40 hover:shadow-lg'
                         }`}
                       >
                         {isCurrent && (
-                          <div className="absolute -top-3.5 right-6 px-3.5 py-1 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 text-[11px] font-black shadow-md flex items-center gap-1.5 animate-fade-in">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          <div className="absolute -top-3.5 right-6 px-4 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 text-slate-950 text-xs font-black shadow-lg shadow-emerald-500/30 flex items-center gap-1.5 animate-bounce">
+                            <CheckCircle2 className="w-4 h-4 text-slate-950 stroke-[2.5]" />
                             <span>باقتك الحالية النشطة ✅</span>
                           </div>
                         )}
@@ -6201,9 +6197,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         {/* Action Button */}
                         <div className="pt-4 mt-2 border-t border-slate-800/80">
                           {isCurrent ? (
-                            <div className="w-full py-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-black flex items-center justify-center gap-2">
-                              <CheckCircle2 className="w-4 h-4" />
-                              <span>باقتك الحالية النشطة ✅</span>
+                            <div className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/20 to-teal-500/10 border-2 border-emerald-500/40 text-emerald-300 text-xs font-black flex items-center justify-center gap-2 shadow-inner">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                              <span>باقتك الحالية (نشطة ومفعلة) ✅</span>
                             </div>
                           ) : (
                             <button

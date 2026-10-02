@@ -228,15 +228,79 @@ export function normalizeStore(s: any): Store {
 
   let manager_contact = s.manager_contact || null;
 
-  const stageInfo = resolveUnifiedStage(s);
-  const isPaid = stageInfo.isPaidActive;
+  // 1. التحقق من وجود فواتير مدفوعة للمتجر في سجل الفواتير المحلي
+  let latestPaidInvoice: StoreInvoice | null = null;
+  try {
+    const allInvoices = getLocalData<Record<string, StoreInvoice[]>>(STORAGE_KEYS.LOCAL_INVOICES, {});
+    const storeInvoices: StoreInvoice[] = (s.id && allInvoices[s.id]) || (s.slug && allInvoices[s.slug]) || [];
+    const paidInvs = storeInvoices.filter((inv: StoreInvoice) => inv && inv.status === 'paid');
+    if (paidInvs.length > 0) {
+      latestPaidInvoice = paidInvs[0];
+    }
+  } catch {}
+
+  const hasPaidInvoice = Boolean(latestPaidInvoice);
+
+  // 2. التحقق الحتمي من حالة الاشتراك المدفوع (Paid Active)
+  const isPaid = Boolean(
+    hasPaidInvoice ||
+      s.setup_fee_paid === true ||
+      s.status === 'مشترك مدفوع' ||
+      s.lifecycle_stage === 'مشترك مدفوع' ||
+      (s.subscription_status === 'active' && s.setup_fee_paid === true)
+  );
+
+  // حساب باقة الاشتراك وتواريخ النهاية بذكاء
+  let computedPlanName = s.subscription_plan;
+  let computedPlanId = s.subscription_plan_id;
+  let computedPlanCode = s.plan_code;
+  let computedEndDate = s.subscription_end_date;
+  let computedStartDate = s.subscription_start_date || s.created_at || new Date().toISOString();
+
+  if (latestPaidInvoice) {
+    if (latestPaidInvoice.plan_name) computedPlanName = latestPaidInvoice.plan_name;
+    if (latestPaidInvoice.plan_id) computedPlanId = latestPaidInvoice.plan_id;
+    if (latestPaidInvoice.paid_at) computedStartDate = latestPaidInvoice.paid_at;
+
+    // حساب مدة الباقة من قيمة الفاتورة أو اسم الباقة
+    if (!computedEndDate) {
+      const invAmount = Number(latestPaidInvoice.amount) || 195;
+      const startMs = new Date(computedStartDate).getTime();
+      let durationDays = 30;
+      if (invAmount >= 1000 || (computedPlanName && computedPlanName.includes('6'))) {
+        durationDays = 180;
+      } else if (invAmount >= 500 || (computedPlanName && (computedPlanName.includes('3') || computedPlanName.includes('الأساسية')))) {
+        durationDays = 90;
+      } else if (invAmount >= 1800 || (computedPlanName && computedPlanName.includes('سنوي'))) {
+        durationDays = 365;
+      }
+      computedEndDate = new Date(startMs + durationDays * 86400000).toISOString();
+    }
+  }
+
+  // إذا لم يكن مشتركاً مدفوعاً، فهو في فترة التجربة المجانية (7 أيام)
+  const trialStart = s.trial_start_date || s.created_at || new Date().toISOString();
+  const trialEnd = s.trial_end_date || new Date(new Date(trialStart).getTime() + 7 * 86400000).toISOString();
+
+  const finalStage: UnifiedLifecycleStage = isPaid
+    ? 'مشترك مدفوع'
+    : s.status === 'suspended' || s.subscription_status === 'suspended'
+    ? 'تحت المراجعة'
+    : 'تم التأسيس';
 
   return {
     ...s,
-    setup_fee_paid: isPaid ? true : Boolean(s.setup_fee_paid),
-    status: isPaid ? (s.status === 'suspended' ? 'suspended' : 'active') : (s.status || stageInfo.label),
-    subscription_status: isPaid ? (s.subscription_status === 'suspended' ? 'suspended' : 'active') : (s.subscription_status || 'trial'),
-    lifecycle_stage: stageInfo.label,
+    setup_fee_paid: isPaid,
+    status: isPaid ? (s.status === 'suspended' ? 'suspended' : 'active') : (s.status === 'suspended' ? 'suspended' : 'trial'),
+    subscription_status: isPaid ? (s.subscription_status === 'suspended' ? 'suspended' : 'active') : (s.subscription_status === 'suspended' ? 'suspended' : 'trial'),
+    lifecycle_stage: finalStage,
+    subscription_plan: computedPlanName || (isPaid ? 'الباقة الأساسية' : 'تجربة مجانية (7 أيام)'),
+    subscription_plan_id: computedPlanId || (isPaid ? 'plan-3m' : undefined),
+    plan_code: computedPlanCode || (isPaid ? 'PLAN_3M' : undefined),
+    subscription_start_date: isPaid ? computedStartDate : trialStart,
+    subscription_end_date: isPaid ? (computedEndDate || new Date(Date.now() + 30 * 86400000).toISOString()) : trialEnd,
+    trial_start_date: trialStart,
+    trial_end_date: trialEnd,
     manager_contact,
     slider_images: slider_images.filter((img) => img && typeof img === 'object' && Boolean(img.image_url)),
   };
@@ -286,6 +350,7 @@ export const LoyaltyService = {
   // 1. جلب جميع المتاجر (من Supabase مباشرة مع كاش محلي سريع)
   async getAllStores(): Promise<Store[]> {
     const supabase = getSupabaseClient();
+    const currentLocal = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
 
     if (supabase) {
       try {
@@ -294,7 +359,19 @@ export const LoyaltyService = {
           .select('*')
           .order('created_at', { ascending: false });
         if (!error && Array.isArray(data)) {
-          const validStores = data.filter((s: any) => Boolean(s && s.id)).map(normalizeStore) as Store[];
+          const validStores = data.filter((s: any) => Boolean(s && s.id)).map((dbStore: any) => {
+            const localMatch = currentLocal.find((l) => l.id === dbStore.id || l.slug === dbStore.slug);
+            return normalizeStore({
+              ...(localMatch || {}),
+              ...dbStore,
+              subscription_plan: localMatch?.subscription_plan || dbStore.subscription_plan,
+              subscription_plan_id: localMatch?.subscription_plan_id || dbStore.subscription_plan_id,
+              plan_code: localMatch?.plan_code || dbStore.plan_code,
+              subscription_end_date: localMatch?.subscription_end_date || dbStore.subscription_end_date,
+              subscription_start_date: localMatch?.subscription_start_date || dbStore.subscription_start_date,
+              setup_fee_paid: localMatch?.setup_fee_paid ?? dbStore.setup_fee_paid,
+            });
+          }) as Store[];
           saveLocalData(STORAGE_KEYS.LOCAL_STORES, validStores);
           return validStores;
         }
@@ -304,9 +381,8 @@ export const LoyaltyService = {
     }
 
     // في حال عدم توفر اتصال بـ Supabase نستخدم الكاش المحلي
-    const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
-    if (localStores && Array.isArray(localStores)) {
-      const valid = localStores.filter((s) => Boolean(s && s.id)).map(normalizeStore);
+    if (currentLocal && Array.isArray(currentLocal)) {
+      const valid = currentLocal.filter((s) => Boolean(s && s.id)).map(normalizeStore);
       return valid;
     }
     return [];

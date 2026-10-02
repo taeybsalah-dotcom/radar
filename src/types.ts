@@ -88,18 +88,15 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 1. مشترك مدفوع (Paid Subscriber) - أولوية مطلقة وحتمية
+  // 1. مشترك مدفوع (Paid Subscriber) - أولوية مطلقة وحتمية بشرط سداد الرسوم
   const isPaid = Boolean(
-    item.setup_fee_paid === true ||
-      item.subscription_status === 'active' ||
-      item.status === 'active' ||
+    Boolean(item.setup_fee_paid) ||
       item.status === 'مشترك مدفوع' ||
       item.status === 'PAID_ACTIVE' ||
-      item.status === 'CONVERTED' ||
       item.lifecycle_stage === 'مشترك مدفوع'
   );
 
-  if (isPaid) {
+  if (isPaid && item.status !== 'trial' && item.subscription_status !== 'trial') {
     return {
       key: 'PAID_ACTIVE',
       label: 'مشترك مدفوع',
