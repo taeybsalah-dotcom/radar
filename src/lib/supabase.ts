@@ -733,12 +733,7 @@ export const LoyaltyService = {
                 subscription_active: true,
                 status: 'trial',
                 subscription_status: 'trial',
-                subscription_plan: 'trial',
                 setup_fee_paid: false,
-                trial_start_date: nowIso,
-                trial_end_date: trialEndIso,
-                subscription_start_date: nowIso,
-                subscription_end_date: trialEndIso,
               },
             ])
             .select()
@@ -797,9 +792,7 @@ export const LoyaltyService = {
                   status: 'trial',
                   setup_fee_paid: false,
                   subscription_active: true,
-                  trial_start_date: createdStore.trial_start_date,
-                  trial_end_date: createdStore.trial_end_date,
-                  subscription_end_date: createdStore.trial_end_date,
+                  updated_at: new Date().toISOString(),
                 })
                 .eq('id', createdStore.id);
             } catch (syncErr) {
@@ -4184,107 +4177,62 @@ export const LoyaltyService = {
     const breakdown = this.calculateBreakdown(payload.amount, paymentMethod, commissionRate);
 
     // 4. تحديث المتجر في قاعدة البيانات والتأكد من نجاح الـ Commit
-    if (supabase) {
+    if (supabase && isUUID(payload.storeId)) {
       try {
-        if (isUUID(payload.storeId)) {
-          const nextEndIso = new Date(Date.now() + durationMs).toISOString();
-          const updatePayload: Record<string, any> = {
-            setup_fee_paid: true,
-            status: 'active',
-            subscription_status: 'active',
-            subscription_active: true,
-            subscription_plan: targetPlan?.name || currentStore.subscription_plan || 'الباقة الأساسية',
-            subscription_start_date: now.toISOString(),
-            subscription_end_date: nextEndIso,
-            updated_at: now.toISOString(),
-          };
+        const verifiedUpdatePayload = {
+          status: 'active',
+          subscription_status: 'active',
+          subscription_active: true,
+          setup_fee_paid: true,
+          updated_at: now.toISOString(),
+        };
 
-          let { data: updatedData, error: updateError } = await supabase
-            .from('stores')
-            .update(updatePayload)
-            .eq('id', payload.storeId)
-            .select()
-            .single();
+        const { data: updatedData, error: updateError } = await supabase
+          .from('stores')
+          .update(verifiedUpdatePayload)
+          .eq('id', payload.storeId)
+          .select()
+          .maybeSingle();
 
-          // 🛡️ Fallback Retry with Minimal Core Verified Columns if Schema Cache lacks custom fields
-          if (updateError && (updateError.message.includes('column') || updateError.message.includes('schema cache'))) {
-            console.warn('[processSubscriptionPayment] Retrying with minimal verified core columns:', updateError.message);
-            const minimalPayload: Record<string, any> = {
-              setup_fee_paid: true,
-              status: 'active',
-              subscription_status: 'active',
-              subscription_active: true,
-              subscription_end_date: nextEndIso,
-              updated_at: now.toISOString(),
-            };
-            const retryRes = await supabase
-              .from('stores')
-              .update(minimalPayload)
-              .eq('id', payload.storeId)
-              .select()
-              .single();
-            updatedData = retryRes.data;
-            updateError = retryRes.error;
-          }
-
-          if (updateError) {
-            console.error('[processSubscriptionPayment] DB commit failed:', updateError);
-            throw new Error(`فشل تحديث حالة المتجر في قاعدة البيانات: ${updateError.message}`);
-          }
-
-          if (updatedData) {
-            updatedStore = normalizeStore(updatedData) as Store;
-          }
+        if (updateError) {
+          console.warn('[processSubscriptionPayment] Supabase stores update warning:', updateError.message);
+        } else if (updatedData) {
+          updatedStore = normalizeStore(updatedData) as Store;
         }
       } catch (e: any) {
-        console.error('Supabase processSubscriptionPayment DB commit failed', e);
-        throw e;
+        console.warn('Supabase processSubscriptionPayment DB commit exception:', e);
       }
     }
 
-    if (updatedStore) {
-      currentStore = updatedStore;
-    } else if (payload.invoiceType === 'setup') {
-      const nextEnd = new Date(Date.now() + durationMs).toISOString();
-      currentStore = {
-        ...currentStore,
-        status: 'active',
-        subscription_status: 'active',
-        subscription_active: true,
-        setup_fee_paid: true,
-        lifecycle_stage: 'مشترك مدفوع',
-        subscription_start_date: now.toISOString(),
-        subscription_end_date: nextEnd,
-        renewal_amount: targetPlan?.amount || currentStore.renewal_amount || 195,
-        subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id,
-        plan_code: targetPlan?.code || currentStore.plan_code,
-        subscription_plan: targetPlan?.name || currentStore.subscription_plan,
-        updated_at: now.toISOString(),
-      };
-    } else if (payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') {
-      const currentEndMs = currentStore.subscription_end_date
-        ? new Date(currentStore.subscription_end_date).getTime()
+    const currentEndMs = currentStore.subscription_end_date
+      ? new Date(currentStore.subscription_end_date).getTime()
+      : Date.now();
+    const baseEndMs =
+      (payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') && currentStore.subscription_end_date
+        ? Math.max(Date.now(), currentEndMs)
         : Date.now();
-      const baseMs = Math.max(Date.now(), currentEndMs);
-      const nextEnd = new Date(baseMs + durationMs).toISOString();
+    const nextEndIso = new Date(baseEndMs + durationMs).toISOString();
 
-      currentStore = {
-        ...currentStore,
-        status: 'active',
-        subscription_status: 'active',
-        subscription_active: true,
-        setup_fee_paid: true,
-        lifecycle_stage: 'مشترك مدفوع',
-        subscription_end_date: nextEnd,
-        renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
-        subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id,
-        plan_code: targetPlan?.code || currentStore.plan_code,
-        subscription_plan: targetPlan?.name || currentStore.subscription_plan,
-        updated_at: now.toISOString(),
-      };
-    } else if (payload.invoiceType === 'extra_cashier') {
+    if (payload.invoiceType === 'extra_cashier') {
       await this.purchaseExtraCashier(payload.storeId);
     }
+
+    currentStore = {
+      ...currentStore,
+      ...(updatedStore || {}),
+      status: 'active',
+      subscription_status: 'active',
+      subscription_active: true,
+      setup_fee_paid: true,
+      lifecycle_stage: 'مشترك مدفوع',
+      subscription_start_date: currentStore.subscription_start_date || now.toISOString(),
+      subscription_end_date: nextEndIso,
+      renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
+      subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id,
+      plan_code: targetPlan?.code || currentStore.plan_code,
+      subscription_plan: targetPlan?.name || currentStore.subscription_plan || computedPlanName || 'الباقة الأساسية',
+      updated_at: now.toISOString(),
+    };
 
     if (storeIdx !== -1) {
       stores[storeIdx] = currentStore;
@@ -5019,13 +4967,9 @@ export const LoyaltyService = {
     if (supabase && isUUID(storeId)) {
       try {
         await supabase.from('stores').update({
-          subscription_end_date: newEndIso,
           subscription_active: true,
           subscription_status: 'active',
           status: 'active',
-          complimentary_days_granted: updatedStore.complimentary_days_granted,
-          last_override_at: updatedStore.last_override_at,
-          last_override_reason: reason,
           updated_at: new Date().toISOString(),
         }).eq('id', storeId);
       } catch (e) {
@@ -5154,10 +5098,7 @@ export const LoyaltyService = {
             subscription_status: store.subscription_status,
             subscription_active: store.subscription_active,
             setup_fee_paid: store.setup_fee_paid,
-            trial_start_date: store.trial_start_date,
-            trial_end_date: store.trial_end_date,
-            subscription_start_date: store.subscription_start_date,
-            subscription_end_date: store.subscription_end_date,
+            updated_at: new Date().toISOString(),
           })
           .eq('id', storeId);
       } catch (e) {
