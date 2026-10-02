@@ -34,6 +34,7 @@ import {
   FinancialBreakdown,
   MasterFinancialMetrics,
   ProratedUpgradeCalculation,
+  FinancialPlatformConfig,
 } from '../types';
 import {
   INITIAL_STORES,
@@ -84,6 +85,7 @@ const STORAGE_KEYS = {
   LOCAL_AFFILIATE_PAYOUTS: 'radar_affiliate_payouts',
   LOCAL_WEBHOOK_EVENTS: 'radar_webhook_events',
   CONSUMED_TOKENS: 'radar_consumed_tokens',
+  LOCAL_FINANCIAL_CONFIG: 'radar_financial_config',
 };
 
 const ENV_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://zagpvflyizbmzsbmhnts.supabase.co';
@@ -3852,17 +3854,59 @@ export const LoyaltyService = {
     return localInvoices[storeId] || [];
   },
 
-  // حساب التفكيك المالي الدقيق والضريبة (15% VAT, Gateway Fee, Affiliate Commission, Net Platform Revenue)
+  // ⚙️ إعدادات النموذج المالي والضريبي للمنصة (ZATCA & Freelance Document Config)
+  getFinancialConfig(): FinancialPlatformConfig {
+    const defaultCfg: FinancialPlatformConfig = {
+      vat_enabled: false, // Default: 0% VAT for Freelance Document status (وثيقة عمل حر بدون رقم ضريبي)
+      vat_rate: 0.00,
+      default_commission_rate: 0.20,
+      business_legal_status: 'FREELANCE_DOCUMENT',
+      tax_number: '',
+    };
+    return getLocalData<FinancialPlatformConfig>(STORAGE_KEYS.LOCAL_FINANCIAL_CONFIG, defaultCfg);
+  },
+
+  updateFinancialConfig(patch: Partial<FinancialPlatformConfig>): FinancialPlatformConfig {
+    const current = this.getFinancialConfig();
+    const isVatEnabled = patch.vat_enabled !== undefined ? patch.vat_enabled : current.vat_enabled;
+    const computedVatRate = isVatEnabled ? (patch.vat_rate || (current.vat_rate > 0 ? current.vat_rate : 0.15)) : 0.00;
+
+    const updated: FinancialPlatformConfig = {
+      ...current,
+      ...patch,
+      vat_enabled: isVatEnabled,
+      vat_rate: computedVatRate,
+    };
+    saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_CONFIG, updated);
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global_financial_config' });
+    return updated;
+  },
+
+  // حساب التفكيك المالي الدقيق والضريبة (Flexible VAT 0%-15%, Gateway Fee, Absolute Marketer Commission, Net Platform Revenue)
   calculateBreakdown(
     grossAmount: number,
     paymentMethod: string = 'mada',
-    commissionRate: number = 0.20
+    commissionRate: number = 0.20,
+    customVatRate?: number
   ): FinancialBreakdown {
     const gross = Math.max(0, Number(grossAmount) || 0);
-    const netBeforeVat = Math.round((gross / 1.15) * 100) / 100;
-    const vatAmount = Math.round((gross - netBeforeVat) * 100) / 100;
+    const config = this.getFinancialConfig();
 
-    let gatewayRate = 0.015;
+    // 🏛️ Flexible VAT Engine: 0% default for Freelance Document (or 15% when ZATCA mode is activated)
+    const effectiveVatRate = typeof customVatRate === 'number'
+      ? customVatRate
+      : config.vat_enabled ? (config.vat_rate || 0.15) : 0.00;
+
+    let netBeforeVat = gross;
+    let vatAmount = 0.00;
+
+    if (effectiveVatRate > 0) {
+      netBeforeVat = Math.round((gross / (1 + effectiveVatRate)) * 100) / 100;
+      vatAmount = Math.round((gross - netBeforeVat) * 100) / 100;
+    }
+
+    // 💳 Payment Gateway Fee (Independent platform operating expense)
+    let gatewayRate = 0.010;
     let fixedFee = 1.0;
     const cleanMethod = (paymentMethod || '').toLowerCase();
 
@@ -3875,15 +3919,24 @@ export const LoyaltyService = {
     } else if (cleanMethod === 'apple_pay') {
       gatewayRate = 0.022;
       fixedFee = 1.0;
+    } else if (cleanMethod === 'sandbox') {
+      gatewayRate = 0.00;
+      fixedFee = 0.0;
     } else {
       gatewayRate = 0.015;
       fixedFee = 1.0;
     }
 
-    const gatewayFee = gross > 0 ? Math.round(((gross * gatewayRate) + fixedFee) * 100) / 100 : 0;
+    const gatewayFee = (gross > 0 && cleanMethod !== 'sandbox')
+      ? Math.round(((gross * gatewayRate) + fixedFee) * 100) / 100
+      : 0;
+
+    // 🌟 Absolute Marketer Commission Base: Calculated strictly against the FULL Gross Total Amount (e.g. 520 SAR = 104 SAR fixed)
     const cleanCommRate = Math.max(0, Math.min(1.0, Number(commissionRate) || 0.20));
-    const affiliateCommission = Math.round((netBeforeVat * cleanCommRate) * 100) / 100;
-    const netPlatformAmount = Math.round((gross - vatAmount - gatewayFee - affiliateCommission) * 100) / 100;
+    const affiliateCommission = Math.round((gross * cleanCommRate) * 100) / 100;
+
+    // 💰 Net Platform Revenue: Clean absorption of gateway fees without artificial negative glitching
+    const netPlatformAmount = Math.max(0, Math.round((gross - vatAmount - gatewayFee - affiliateCommission) * 100) / 100);
 
     return {
       grossAmount: gross,
@@ -3892,7 +3945,7 @@ export const LoyaltyService = {
       gatewayFee,
       affiliateCommission,
       netPlatformAmount,
-      vatRate: 0.15,
+      vatRate: effectiveVatRate,
       gatewayRate,
       commissionRate: cleanCommRate,
     };
@@ -4318,7 +4371,7 @@ export const LoyaltyService = {
         gateway,
         plan_name: computedPlanName,
         plan_id: targetPlan?.id,
-        tax_rate: 0.15,
+        tax_rate: breakdown.vatRate,
         base_amount: breakdown.netBeforeVat,
         invoice_number: invoiceNum,
         commission_type: commissionType,
@@ -4714,15 +4767,15 @@ export const LoyaltyService = {
     }
 
     return {
-      totalGrossVolume: Math.round(totalGrossVolume * 100) / 100,
-      totalVatPayable: Math.round(totalVatPayable * 100) / 100,
-      totalGatewayFees: Math.round(totalGatewayFees * 100) / 100,
-      totalAffiliatePayable: Math.round(totalAffiliatePayable * 100) / 100,
-      totalAffiliatePaid: Math.round(totalAffiliatePaid * 100) / 100,
-      totalAffiliatePending: Math.round(totalAffiliatePending * 100) / 100,
-      totalAffiliateReversed: Math.round(totalAffiliateReversed * 100) / 100,
-      totalNetPlatformRevenue: Math.round(totalNetPlatformRevenue * 100) / 100,
-      totalRefundsVolume: Math.round(totalRefundsVolume * 100) / 100,
+      totalGrossVolume: Math.max(0, Math.round(totalGrossVolume * 100) / 100),
+      totalVatPayable: Math.max(0, Math.round(totalVatPayable * 100) / 100),
+      totalGatewayFees: Math.max(0, Math.round(totalGatewayFees * 100) / 100),
+      totalAffiliatePayable: Math.max(0, Math.round(totalAffiliatePayable * 100) / 100),
+      totalAffiliatePaid: Math.max(0, Math.round(totalAffiliatePaid * 100) / 100),
+      totalAffiliatePending: Math.max(0, Math.round(totalAffiliatePending * 100) / 100),
+      totalAffiliateReversed: Math.max(0, Math.round(totalAffiliateReversed * 100) / 100),
+      totalNetPlatformRevenue: Math.max(0, Math.round(totalNetPlatformRevenue * 100) / 100),
+      totalRefundsVolume: Math.max(0, Math.round(totalRefundsVolume * 100) / 100),
       totalCreditNotesCount: creditNotes.length,
       totalTransactionsCount: ledger.length,
     };

@@ -37,6 +37,8 @@ import {
   ChevronRight,
   Calculator,
   UserCheck,
+  Briefcase,
+  Landmark,
 } from 'lucide-react';
 import {
   BillingPlan,
@@ -50,6 +52,7 @@ import {
   StoreInvoice,
   PartnerAccount,
   FinancialTransactionType,
+  FinancialPlatformConfig,
 } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
@@ -118,6 +121,11 @@ export const SuperAdminBillingConsole: React.FC = () => {
   const [refundNotes, setRefundNotes] = useState('');
   const [isSubmittingRefund, setIsSubmittingRefund] = useState(false);
 
+  // Financial Platform Config (VAT 0% Freelance Document vs 15% ZATCA)
+  const [financialConfig, setFinancialConfig] = useState<FinancialPlatformConfig>(() =>
+    LoyaltyService.getFinancialConfig()
+  );
+
   // Interactive 520 SAR Calculator State
   const [calcGross, setCalcGross] = useState<number>(520);
   const [calcMethod, setCalcMethod] = useState<string>('mada');
@@ -127,6 +135,9 @@ export const SuperAdminBillingConsole: React.FC = () => {
   const loadAllFinancialData = async () => {
     setLoading(true);
     try {
+      const cfg = LoyaltyService.getFinancialConfig();
+      setFinancialConfig(cfg);
+
       const [
         metricsData,
         ledgerData,
@@ -160,6 +171,22 @@ export const SuperAdminBillingConsole: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleToggleVatMode = (enableVat: boolean) => {
+    const updated = LoyaltyService.updateFinancialConfig({
+      vat_enabled: enableVat,
+      vat_rate: enableVat ? 0.15 : 0.00,
+      business_legal_status: enableVat ? 'ESTABLISHMENT_TAXABLE' : 'FREELANCE_DOCUMENT',
+    });
+    setFinancialConfig(updated);
+    setActionSuccess(
+      enableVat
+        ? 'تم تفعيل وضع التسجيل الضريبي الرسمي ZATCA (15%) بنجاح 🏛️'
+        : 'تم تفعيل وضع وثيقة العمل الحر (0% ضريبة - بدون خصم ضريبي) بنجاح 🏢'
+    );
+    loadAllFinancialData();
+    setTimeout(() => setActionSuccess(null), 3500);
   };
 
   useEffect(() => {
@@ -483,7 +510,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
       )}
 
       {/* Header Banner */}
-      <div className="relative rounded-3xl bg-gradient-to-r from-emerald-500/20 via-slate-900 to-slate-900 border-2 border-emerald-500/30 p-6 sm:p-8 overflow-hidden shadow-2xl">
+      <div className="relative rounded-3xl bg-gradient-to-r from-emerald-500/15 via-slate-900 to-slate-900 border-2 border-emerald-500/30 p-6 sm:p-8 overflow-hidden shadow-2xl">
         <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-x-4 rtl:space-x-reverse flex items-start">
@@ -491,16 +518,16 @@ export const SuperAdminBillingConsole: React.FC = () => {
               🏛️
             </div>
             <div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <h3 className="text-xl sm:text-2xl font-black text-white">
-                  السجل المالي العام والامتثال الضريبي (ZATCA Master Ledger)
+                  السجل المالي العام وإدارة الإيرادات والعمولات
                 </h3>
                 <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-                  سجل غير قابل للتعديل 🔒
+                  Master Financial Ledger 🔒
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-3xl leading-relaxed">
-                سجل القيود المحاسبية الدائم، فصل ضريبة القيمة المضافة 15%، رسوم بوابات الدفع، التزامات الشركاء، والإشعارات الدائنة ZATCA.
+                سجل القيود المحاسبية الدائم، احتساب عمولات المسوقين على الإجمالي، معالجة رسوم بوابات الدفع، وإدارة الوضع الضريبي المرن.
               </p>
             </div>
           </div>
@@ -537,7 +564,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
           }`}
         >
           <Building className="w-4 h-4" />
-          <span>المؤشرات والتحليلات ZATCA 📊</span>
+          <span>المؤشرات والتحليلات المالية 📊</span>
         </button>
 
         <button
@@ -590,208 +617,321 @@ export const SuperAdminBillingConsole: React.FC = () => {
       </div>
 
       {/* ========================================================================= */}
-      {/* TAB 1: OVERVIEW & ZATCA METRICS */}
+      {/* TAB 1: OVERVIEW & REDESIGNED FINANCIAL METRICS */}
       {/* ========================================================================= */}
       {activeTab === 'overview' && (
-        <div className="space-y-8 animate-fadeIn">
-          {/* KPI Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {/* Gross Volume */}
-            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 space-y-3 shadow-xl">
+        <div className="space-y-6 animate-fadeIn">
+          {/* 🏢 1. Flexible Legal & Tax Compliance Switcher */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 sm:p-6 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-5">
+            <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xl shrink-0 shadow-lg ${
+                financialConfig.vat_enabled
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-amber-500/10'
+                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-emerald-500/10'
+              }`}>
+                {financialConfig.vat_enabled ? <Landmark className="w-6 h-6" /> : <Briefcase className="w-6 h-6" />}
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-sm sm:text-base font-black text-white">
+                    الوضع القانوني والضريبي للمنصة:
+                  </h4>
+                  <span className={`text-xs font-bold px-3 py-0.5 rounded-full border ${
+                    financialConfig.vat_enabled
+                      ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                      : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                  }`}>
+                    {financialConfig.vat_enabled
+                      ? 'منشأة مسجلة ضريبياً (15% ZATCA) 🏛️'
+                      : 'وثيقة عمل حر (معفى ضريبياً 0%) 🏢'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  {financialConfig.vat_enabled
+                    ? 'يتم استقطاع ضريبة القيمة المضافة 15% تلقائياً وتوثيقها في قيود السجل المالي للامتثال الضريبي لهيئة الزكاة والضريبة والجمارك.'
+                    : 'الوضع الافتراضي الحالي: لا يتم فرض أي استقطاعات ضريبية وتذهب المبالغ مباشرة كإيراد صافٍ ومستحقات مسوقين.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 bg-slate-950/80 p-1.5 rounded-2xl border border-slate-800 self-start md:self-auto shrink-0 shadow-inner">
+              <button
+                type="button"
+                onClick={() => handleToggleVatMode(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                  !financialConfig.vat_enabled
+                    ? 'bg-emerald-500 text-slate-950 font-black shadow-md shadow-emerald-500/25'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Briefcase className="w-3.5 h-3.5" />
+                <span>وثيقة عمل حر (0% ضريبة)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleVatMode(true)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                  financialConfig.vat_enabled
+                    ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/25'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Landmark className="w-3.5 h-3.5" />
+                <span>تسجيل ZATCA (15%)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 📊 2. Clean Metric Cards Grid (Zero Overlapping, Crisp Typography) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Total Gross Volume */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 space-y-3 shadow-xl hover:border-slate-700 transition">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400 font-bold">إجمالي التدفقات والمدفوعات</span>
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                  <DollarSign className="w-5 h-5" />
+                <span className="text-xs text-slate-400 font-bold">إجمالي التدفقات والمبيعات</span>
+                <div className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300">
+                  <DollarSign className="w-4 h-4" />
                 </div>
               </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-white font-mono">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl sm:text-3xl font-black text-white font-mono">
                   {(metrics?.totalGrossVolume || 0).toLocaleString()}
                 </span>
                 <span className="text-xs text-slate-400 font-bold">ر.س</span>
               </div>
-              <p className="text-[11px] text-slate-500">إجمالي المبالغ المحصلة من المتاجر شاملة الضريبة</p>
-            </div>
-
-            {/* VAT 15% ZATCA */}
-            <div className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 space-y-3 shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-24 h-24 bg-amber-500/5 rounded-full blur-xl pointer-events-none"></div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-amber-300 font-bold">ضريبة القيمة المضافة 15%</span>
-                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 font-bold">
-                    ZATCA
-                  </span>
-                </div>
-                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <Scale className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-amber-400 font-mono">
-                  {(metrics?.totalVatPayable || 0).toLocaleString()}
-                </span>
-                <span className="text-xs text-amber-300/80 font-bold">ر.س</span>
-              </div>
-              <p className="text-[11px] text-amber-200/60">المستحق لهيئة الزكاة والضريبة والجمارك (مفصول تلقائياً)</p>
+              <p className="text-[11px] text-slate-500">إجمالي ما سدده التجار بالكامل عبر المنصة</p>
             </div>
 
             {/* Net Platform Revenue */}
-            <div className="bg-slate-900/90 border border-cyan-500/30 rounded-3xl p-6 space-y-3 shadow-xl relative overflow-hidden">
+            <div className="bg-slate-900/90 border border-emerald-500/30 rounded-3xl p-5 space-y-3 shadow-xl hover:border-emerald-500/50 transition relative overflow-hidden">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-cyan-300 font-bold">صافي إيراد المنصة الفعلي</span>
-                <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
-                  <Sparkles className="w-5 h-5" />
+                <span className="text-xs text-emerald-400 font-bold">صافي دخل المنصة الفعلي</span>
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <Sparkles className="w-4 h-4" />
                 </div>
               </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-cyan-400 font-mono">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono">
                   {(metrics?.totalNetPlatformRevenue || 0).toLocaleString()}
                 </span>
-                <span className="text-xs text-cyan-300/80 font-bold">ر.س</span>
+                <span className="text-xs text-emerald-300/80 font-bold">ر.س</span>
               </div>
-              <p className="text-[11px] text-cyan-200/60">بعد خصم الضريبة 15% ورسوم البوابات وعمولات الشركاء</p>
+              <p className="text-[11px] text-slate-400">بعد خصم العمولات ورسوم البوابات التشغيلية</p>
+            </div>
+
+            {/* Marketer Liabilities */}
+            <div className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-5 space-y-3 shadow-xl hover:border-amber-500/50 transition">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-amber-300 font-bold">عمولات المسوقين المستحقة</span>
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl sm:text-3xl font-black text-amber-400 font-mono">
+                  {(metrics?.totalAffiliatePayable || 0).toLocaleString()}
+                </span>
+                <span className="text-xs text-amber-300/80 font-bold">ر.س</span>
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-400">مستحقة وجاهزة للصرف</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('payouts')}
+                  className="text-amber-400 hover:text-amber-300 font-bold underline"
+                >
+                  صرف الآن 💸
+                </button>
+              </div>
             </div>
 
             {/* Gateway Fees */}
-            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 space-y-3 shadow-xl">
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 space-y-3 shadow-xl hover:border-slate-700 transition">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400 font-bold">رسوم بوابات الدفع (Mada / Visa)</span>
+                <span className="text-xs text-slate-400 font-bold">رسوم معالجة بوابات الدفع</span>
                 <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                  <CreditCard className="w-5 h-5" />
+                  <CreditCard className="w-4 h-4" />
                 </div>
               </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-white font-mono">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl sm:text-3xl font-black text-purple-400 font-mono">
                   {(metrics?.totalGatewayFees || 0).toLocaleString()}
                 </span>
                 <span className="text-xs text-slate-400 font-bold">ر.س</span>
               </div>
-              <p className="text-[11px] text-slate-500">رسوم المعالجة التقنية المحسومة من بوابات الدفع</p>
-            </div>
-
-            {/* Affiliate Liabilities (Available) */}
-            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 space-y-3 shadow-xl">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400 font-bold">عمولات المسوقين المستحقة للصرف</span>
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                  <UserCheck className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-emerald-400 font-mono">
-                  {(metrics?.totalAffiliatePayable || 0).toLocaleString()}
-                </span>
-                <span className="text-xs text-slate-400 font-bold">ر.س</span>
-              </div>
-              <p className="text-[11px] text-slate-500">
-                مؤهلة للصرف الفوري بالحوالة البنكية (تم صرف {(metrics?.totalAffiliatePaid || 0).toLocaleString()} ر.س)
-              </p>
-            </div>
-
-            {/* Refunds Volume */}
-            <div className="bg-slate-900/90 border border-rose-500/30 rounded-3xl p-6 space-y-3 shadow-xl">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-rose-300 font-bold">المبالغ المستردة والإشعارات الدائنة</span>
-                <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                  <RotateCcw className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-black text-rose-400 font-mono">
-                  {(metrics?.totalRefundsVolume || 0).toLocaleString()}
-                </span>
-                <span className="text-xs text-rose-300/80 font-bold">ر.س</span>
-              </div>
-              <p className="text-[11px] text-rose-200/60">
-                إجمالي {metrics?.totalCreditNotesCount || 0} إشعار دائن صادر ومعكوس
-              </p>
+              <p className="text-[11px] text-slate-500">مصاريف تشغيلية محسومة (Mada / Visa)</p>
             </div>
           </div>
 
-          {/* 🧮 Interactive 520 SAR Breakdown Diagram & Simulator */}
+          {/* 🧮 3. Interactive Architecture Simulator (520 SAR Architecture Simulator) */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black">
                   <Calculator className="w-5 h-5" />
                 </div>
                 <div>
                   <h4 className="text-base sm:text-lg font-black text-white">
-                    حاسبة التفكيك المالي المعياري والضريبي (520 SAR Architecture Simulator)
+                    حاسبة التفكيك المالي المعياري وتوزيع الأرباح (Architecture Simulator)
                   </h4>
-                  <p className="text-xs text-slate-400">
-                    محاكاة حية لطريقة تفكيك كل عملية دفع وتوزيعها التلقائي بين الضريبة وبوابة الدفع والمسوق والمنصة.
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    محاكاة حية لطريقة تفكيك كل عملية دفع بدقة وبدون أي أخطاء أو تشويش في الحسابات.
                   </p>
                 </div>
               </div>
 
-              {/* Calculator Inputs */}
+              {/* Simulator Controls */}
               <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
-                  <span className="text-[11px] text-slate-400 font-bold">المبلغ الإجمالي:</span>
+                <div className="flex items-center gap-2 bg-slate-950 px-3.5 py-2 rounded-xl border border-slate-800">
+                  <span className="text-xs text-slate-400 font-bold">المبلغ المدفوع:</span>
                   <input
                     type="number"
                     value={calcGross}
-                    onChange={(e) => setCalcGross(Number(e.target.value))}
-                    className="w-20 bg-transparent text-amber-400 font-bold font-mono text-sm outline-none"
+                    onChange={(e) => setCalcGross(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-20 bg-transparent text-amber-400 font-black font-mono text-sm outline-none"
                   />
-                  <span className="text-[11px] text-slate-400">ر.س</span>
+                  <span className="text-xs text-slate-400 font-bold">ر.س</span>
                 </div>
 
-                <div className="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
-                  <span className="text-[11px] text-slate-400 font-bold">طريقة الدفع:</span>
+                <div className="flex items-center gap-2 bg-slate-950 px-3.5 py-2 rounded-xl border border-slate-800">
+                  <span className="text-xs text-slate-400 font-bold">بوابة الدفع:</span>
                   <select
                     value={calcMethod}
                     onChange={(e) => setCalcMethod(e.target.value)}
                     className="bg-transparent text-white text-xs font-bold outline-none cursor-pointer"
                   >
-                    <option value="mada" className="bg-slate-900">مدى (1% + 1 ريال)</option>
-                    <option value="visa" className="bg-slate-900">فيزا / ماستركارد (2.75% + 1 ريال)</option>
-                    <option value="apple_pay" className="bg-slate-900">أبل باي (2.2% + 1 ريال)</option>
-                    <option value="sandbox" className="bg-slate-900">ساندبوكس تجريبي</option>
+                    <option value="mada" className="bg-slate-900">مدى Mada (1% + 1 ر.س)</option>
+                    <option value="visa" className="bg-slate-900">فيزا / ماستر (2.75% + 1 ر.س)</option>
+                    <option value="apple_pay" className="bg-slate-900">أبل باي (2.2% + 1 ر.س)</option>
+                    <option value="sandbox" className="bg-slate-900">تجريبي Sandbox (0%)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2 bg-slate-950 px-3.5 py-2 rounded-xl border border-slate-800">
+                  <span className="text-xs text-slate-400 font-bold">نسبة المسوق:</span>
+                  <select
+                    value={calcRate}
+                    onChange={(e) => setCalcRate(Number(e.target.value))}
+                    className="bg-transparent text-amber-400 text-xs font-bold outline-none cursor-pointer"
+                  >
+                    <option value={0.20} className="bg-slate-900">20% (عمولة تأسيس واستحواذ)</option>
+                    <option value={0.10} className="bg-slate-900">10% (عمولة تجديد دوري)</option>
+                    <option value={0.15} className="bg-slate-900">15% (مستوى مخصص)</option>
+                    <option value={0.25} className="bg-slate-900">25% (شريك VIP)</option>
                   </select>
                 </div>
               </div>
             </div>
 
-            {/* Visual Breakdown Flow */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-              {/* Gross Total */}
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1 text-center">
-                <span className="text-[11px] text-slate-400 font-bold block">1. المبلغ الإجمالي</span>
-                <span className="text-xl font-black text-white font-mono">{liveBreakdown.grossAmount.toFixed(2)}</span>
-                <span className="text-[10px] text-slate-500 block">شامل الضريبة</span>
+            {/* Simulator Breakdown Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Step 1: Gross Paid */}
+              <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span className="font-bold">1. إجمالي ما دفعه التاجر</span>
+                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800">100%</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-white font-mono">
+                    {liveBreakdown.grossAmount.toFixed(2)}
+                  </span>
+                  <span className="text-xs text-slate-400 font-bold">ر.س</span>
+                </div>
+                <p className="text-[11px] text-slate-500">القيمة الإجمالية المسددة من التاجر</p>
               </div>
 
-              {/* VAT 15% */}
-              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-1 text-center">
-                <span className="text-[11px] text-amber-400 font-bold block">2. ضريبة ZATCA (15%)</span>
-                <span className="text-xl font-black text-amber-400 font-mono">{liveBreakdown.vatAmount.toFixed(2)}</span>
-                <span className="text-[10px] text-amber-300/70 block">أساس {liveBreakdown.netBeforeVat.toFixed(2)} ر.س</span>
+              {/* Step 2: Marketer Commission */}
+              <div className="p-5 rounded-2xl bg-slate-950 border border-amber-500/40 space-y-2">
+                <div className="flex items-center justify-between text-xs text-amber-400">
+                  <span className="font-bold">2. عمولة المسوق المحمية</span>
+                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30">
+                    {Math.round(calcRate * 100)}% ثابتة
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-amber-400 font-mono">
+                    {liveBreakdown.affiliateCommission.toFixed(2)}
+                  </span>
+                  <span className="text-xs text-amber-300 font-bold">ر.س</span>
+                </div>
+                <p className="text-[11px] text-amber-300/70">
+                  محسوبة على كامل المبلغ ({liveBreakdown.grossAmount} × {Math.round(calcRate * 100)}%) دون اقتطاع
+                </p>
               </div>
 
-              {/* Gateway Fee */}
-              <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/30 space-y-1 text-center">
-                <span className="text-[11px] text-purple-400 font-bold block">3. رسوم البوابة</span>
-                <span className="text-xl font-black text-purple-400 font-mono">{liveBreakdown.gatewayFee.toFixed(2)}</span>
-                <span className="text-[10px] text-purple-300/70 block">معالجة تقنية</span>
+              {/* Step 3: Gateway Fees */}
+              <div className="p-5 rounded-2xl bg-slate-950 border border-purple-500/30 space-y-2">
+                <div className="flex items-center justify-between text-xs text-purple-400">
+                  <span className="font-bold">3. رسوم بوابة الدفع</span>
+                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-purple-500/10 border border-purple-500/30">
+                    تشغيلي
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-purple-400 font-mono">
+                    {liveBreakdown.gatewayFee.toFixed(2)}
+                  </span>
+                  <span className="text-xs text-purple-300 font-bold">ر.س</span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  رسوم معالجة تقنية تتحملها المنصة فقط
+                </p>
               </div>
 
-              {/* Affiliate Share */}
-              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-1 text-center">
-                <span className="text-[11px] text-emerald-400 font-bold block">4. عمولة الشريك (20%)</span>
-                <span className="text-xl font-black text-emerald-400 font-mono">{liveBreakdown.affiliateCommission.toFixed(2)}</span>
-                <span className="text-[10px] text-emerald-300/70 block">تخصيص داخلي</span>
-              </div>
-
-              {/* Net Platform Share */}
-              <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 space-y-1 text-center">
-                <span className="text-[11px] text-cyan-400 font-bold block">5. صافي المنصة</span>
-                <span className="text-xl font-black text-cyan-400 font-mono">{liveBreakdown.netPlatformAmount.toFixed(2)}</span>
-                <span className="text-[10px] text-cyan-300/70 block">إيراد فعلي</span>
+              {/* Step 4: Net Platform Profit */}
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 border-2 border-emerald-500/50 space-y-2 shadow-lg shadow-emerald-500/10">
+                <div className="flex items-center justify-between text-xs text-emerald-400">
+                  <span className="font-black">4. صافي إيراد المنصة 🚀</span>
+                  <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold">
+                    {liveBreakdown.grossAmount > 0 ? Math.round((liveBreakdown.netPlatformAmount / liveBreakdown.grossAmount) * 100) : 0}%
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-2xl font-black text-emerald-400 font-mono">
+                    {liveBreakdown.netPlatformAmount.toFixed(2)}
+                  </span>
+                  <span className="text-xs text-emerald-300 font-bold">ر.س</span>
+                </div>
+                <p className="text-[11px] text-emerald-300/80">
+                  صافي ربح حقيقي بعد خصم العمولة والرسوم
+                </p>
               </div>
             </div>
+
+            {/* Proportional Distribution Visual Bar */}
+            {liveBreakdown.grossAmount > 0 && (
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between text-[11px] text-slate-400 font-bold">
+                  <span>توزيع التدفق المالي للعملية:</span>
+                  <span className="font-mono">
+                    المنصة: {((liveBreakdown.netPlatformAmount / liveBreakdown.grossAmount) * 100).toFixed(1)}% | المسوق: {((liveBreakdown.affiliateCommission / liveBreakdown.grossAmount) * 100).toFixed(1)}% | البوابة: {((liveBreakdown.gatewayFee / liveBreakdown.grossAmount) * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="h-3 w-full rounded-full bg-slate-950 border border-slate-800 overflow-hidden flex">
+                  <div
+                    style={{ width: `${(liveBreakdown.netPlatformAmount / liveBreakdown.grossAmount) * 100}%` }}
+                    className="bg-emerald-500 h-full transition-all duration-500"
+                    title="صافي المنصة"
+                  ></div>
+                  <div
+                    style={{ width: `${(liveBreakdown.affiliateCommission / liveBreakdown.grossAmount) * 100}%` }}
+                    className="bg-amber-500 h-full transition-all duration-500"
+                    title="عمولة المسوق"
+                  ></div>
+                  <div
+                    style={{ width: `${(liveBreakdown.gatewayFee / liveBreakdown.grossAmount) * 100}%` }}
+                    className="bg-purple-500 h-full transition-all duration-500"
+                    title="رسوم البوابة"
+                  ></div>
+                  {liveBreakdown.vatAmount > 0 && (
+                    <div
+                      style={{ width: `${(liveBreakdown.vatAmount / liveBreakdown.grossAmount) * 100}%` }}
+                      className="bg-blue-500 h-full transition-all duration-500"
+                      title="ضريبة ZATCA"
+                    ></div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

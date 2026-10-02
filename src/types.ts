@@ -710,4 +710,12 @@ export interface MasterFinancialMetrics {
   totalTransactionsCount: number; // إجمالي عدد العمليات
 }
 
+export interface FinancialPlatformConfig {
+  vat_enabled: boolean; // false = 0% Freelance Document status (وثيقة عمل حر بدون رقم ضريبي), true = 15% ZATCA
+  vat_rate: number; // e.g. 0.0 or 0.15
+  default_commission_rate: number; // e.g. 0.20
+  business_legal_status: 'FREELANCE_DOCUMENT' | 'ESTABLISHMENT_TAXABLE' | 'COMPANY_ZATCA';
+  tax_number?: string;
+}
+
 
