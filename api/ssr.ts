@@ -181,15 +181,15 @@ export default async function handler(req: any, res: any) {
       : `/api/manifest?portal=${encodeURIComponent(portal)}&t=${timestamp}`;
 
     const httpIconUrl = (portal === 'super-admin' || !foundSlug)
-      ? '/icon-192.svg'
+      ? '/icon-192.png'
       : `/api/icon?store=${encodeURIComponent(foundSlug)}&v=${timestamp}`;
 
     const appleIconHref = foundSlug
       ? `${httpIconUrl}&size=180`
-      : '/icon-192.svg';
+      : '/icon-192.png';
     const faviconHref = foundSlug
       ? `${httpIconUrl}&size=192`
-      : '/icon-192.svg';
+      : '/favicon.png';
 
     // 1. Replace <title>
     rawHtml = rawHtml.replace(/<title>.*?<\/title>/i, `<title>${storeName}</title>`);

@@ -58,8 +58,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <>{children}</>;
   }
 
-  // 3. Hierarchical Isolation: If authenticated BUT role is NOT in allowedRoles -> Strict 403 Forbidden Guard
-  if (!allowedRoles.includes(role)) {
+  // 3. Hierarchical Isolation: Super Admin has master access to all portals; others must match allowedRoles
+  if (role !== 'super_admin' && !allowedRoles.includes(role)) {
     const userRoleLabel = ROLE_LABELS[role] || role;
     const requiredRolesLabel = allowedRoles.map((r) => ROLE_LABELS[r] || r).join(' أو ');
     const authorizedRoute = ROLE_DEFAULT_ROUTES[role] || { path: '/partner', portal: 'partner' };

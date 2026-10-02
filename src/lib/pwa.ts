@@ -117,7 +117,7 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
   }
 
   // Determine active icon: Store custom logo -> Store SVG icon -> Platform icon
-  let storeIconUrl = '/icon-192.svg';
+  let storeIconUrl = '/icon-192.png';
   if (effectiveStore) {
     if (effectiveStore.logo_url && effectiveStore.logo_url.trim()) {
       storeIconUrl = effectiveStore.logo_url;
@@ -140,23 +140,23 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
           purpose: 'any maskable',
         },
         {
-          src: '/icon-192.svg',
+          src: '/icon-192.png',
           sizes: '192x192',
-          type: 'image/svg+xml',
+          type: 'image/png',
           purpose: 'any',
         },
       ]
     : [
         {
-          src: '/icon-192.svg',
+          src: '/icon-192.png',
           sizes: '192x192',
-          type: 'image/svg+xml',
+          type: 'image/png',
           purpose: 'any',
         },
         {
-          src: '/icon-512.svg',
+          src: '/icon-512.png',
           sizes: '512x512',
-          type: 'image/svg+xml',
+          type: 'image/png',
           purpose: 'any',
         },
       ];
