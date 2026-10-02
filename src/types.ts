@@ -550,3 +550,139 @@ export interface BillingWebhookEvent {
   metadata?: any;
 }
 
+// ==============================================================================
+// 🏛️ STAGE 14 — Master Financial Ledger & ZATCA Compliance Types
+// ==============================================================================
+
+export type FinancialTransactionType =
+  | 'PAYMENT'
+  | 'REFUND'
+  | 'ADJUSTMENT'
+  | 'PAYOUT'
+  | 'COMMISSION_ACCRUED'
+  | 'COMMISSION_REVERSED'
+  | 'CREDIT_NOTE';
+
+export type FinancialEntryStatus = 'PENDING' | 'SETTLED' | 'REVERSED' | 'FAILED';
+
+export type PartnerCommissionStatus = 'PENDING' | 'EARNED' | 'AVAILABLE' | 'PAID' | 'REVERSED' | 'VOID';
+
+export interface FinancialLedgerEntry {
+  id: string;
+  ledger_id?: string;
+  transaction_id: string;
+  invoice_id?: string | null;
+  store_id?: string | null;
+  store_name?: string | null;
+  affiliate_id?: string | null;
+  affiliate_name?: string | null;
+  payment_id?: string | null;
+  transaction_type: FinancialTransactionType;
+  gross_amount: number; // Total gross amount (SAR)
+  vat_amount: number; // 15% VAT for ZATCA (SAR)
+  gateway_fee: number; // Estimated / captured gateway processing fee (SAR)
+  affiliate_commission: number; // Partner commission liability (SAR)
+  net_platform_amount: number; // Net platform share (SAR)
+  status: FinancialEntryStatus;
+  created_at: string;
+  effective_at: string;
+  reversal_of?: string | null; // ID of ledger entry being reversed
+  refund_of?: string | null; // ID of invoice/payment being refunded
+  created_by: string; // 'SYSTEM' | 'GATEWAY_WEBHOOK' | 'SUPER_ADMIN' | string
+  metadata?: {
+    notes?: string;
+    payment_method?: string;
+    gateway?: string;
+    plan_name?: string;
+    plan_id?: string;
+    tax_rate?: number;
+    base_amount?: number;
+    reason?: string;
+    reference_number?: string;
+    admin_name?: string;
+    original_invoice_number?: string;
+    credit_note_number?: string;
+    iban?: string;
+    bank_name?: string;
+    payout_id?: string;
+    [key: string]: any;
+  };
+}
+
+export interface CreditNote {
+  id: string;
+  credit_note_number: string; // CN-YYYYMMDD-XXXXX
+  original_invoice_id: string;
+  original_invoice_number: string;
+  store_id: string;
+  store_name?: string;
+  gross_refund_amount: number;
+  vat_refund_amount: number;
+  net_refund_amount: number;
+  clawback_commission: number;
+  affiliate_id?: string | null;
+  reason: string;
+  status: 'ISSUED' | 'APPLIED' | 'CANCELLED';
+  issued_by: string;
+  issued_at: string;
+  ledger_entry_id?: string;
+  notes?: string;
+}
+
+export interface AffiliatePayoutRecord {
+  id: string;
+  payout_number: string; // PAY-YYYYMMDD-XXXXX
+  affiliate_id: string;
+  partner_name: string;
+  phone?: string;
+  iban: string;
+  bank_name: string;
+  transfer_reference: string;
+  amount: number;
+  commissions_count: number;
+  commission_ids: string[];
+  status: 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  disbursed_by: string;
+  disbursed_at: string;
+  ledger_entry_id?: string;
+  notes?: string;
+}
+
+export interface ManualAdjustmentPayload {
+  store_id?: string | null;
+  affiliate_id?: string | null;
+  adjustment_type: 'CREDIT' | 'DEBIT';
+  amount: number;
+  reason_category: 'BANK_SETTLEMENT' | 'CUSTOMER_COMPENSATION' | 'ACCOUNTING_CORRECTION' | 'DISPUTE_RESOLUTION' | 'OTHER';
+  reference_number: string;
+  admin_user: string;
+  admin_notes: string;
+}
+
+export interface FinancialBreakdown {
+  grossAmount: number;
+  netBeforeVat: number;
+  vatAmount: number; // 15%
+  gatewayFee: number;
+  affiliateCommission: number;
+  netPlatformAmount: number;
+  vatRate: number; // 0.15
+  gatewayRate: number;
+  commissionRate: number;
+}
+
+export interface MasterFinancialMetrics {
+  totalGrossVolume: number; // إجمالي المدفوعات
+  totalVatPayable: number; // ضريبة القيمة المضافة 15% ZATCA
+  totalGatewayFees: number; // رسوم بوابات الدفع
+  totalAffiliatePayable: number; // عمولات المسوقين المستحقة (Available)
+  totalAffiliatePaid: number; // عمولات المسوقين المصروفة (Paid)
+  totalAffiliatePending: number; // عمولات المسوقين المعلقة (Pending)
+  totalAffiliateReversed: number; // عمولات المسوقين المستردة (Reversed)
+  totalNetPlatformRevenue: number; // صافي إيرادات المنصة
+  totalRefundsVolume: number; // إجمالي المبالغ المستردة
+  totalCreditNotesCount: number; // عدد الإشعارات الدائنة
+  totalTransactionsCount: number; // إجمالي عدد العمليات
+}
+
+

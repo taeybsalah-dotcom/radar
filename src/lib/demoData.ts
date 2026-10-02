@@ -11,6 +11,7 @@ import {
   GlobalCategory,
   GlobalModifierGroup,
   ServiceBooking,
+  FinancialLedgerEntry,
 } from '../types';
 
 export const INITIAL_STORES: Store[] = [
@@ -348,6 +349,35 @@ export const INITIAL_INVOICES: Record<string, import('../types').StoreInvoice[]>
     }
   ]
 };
+
+export const INITIAL_FINANCIAL_LEDGER: FinancialLedgerEntry[] = [
+  {
+    id: 'ledg-001',
+    transaction_id: 'tx_pay_0182746192',
+    invoice_id: 'inv-01',
+    store_id: INITIAL_STORES[0].id,
+    store_name: 'متجر رادار النموذجي',
+    payment_id: 'pay_moyasar_0182746192',
+    transaction_type: 'PAYMENT',
+    gross_amount: 500.00,
+    vat_amount: 65.22, // 15% VAT for ZATCA
+    gateway_fee: 6.00, // Mada: 1% + 1 SAR
+    affiliate_commission: 86.96, // 20% on net before VAT
+    net_platform_amount: 341.82,
+    status: 'SETTLED',
+    created_at: new Date(Date.now() - 23 * 86400000).toISOString(),
+    effective_at: new Date(Date.now() - 23 * 86400000).toISOString(),
+    created_by: 'GATEWAY_WEBHOOK',
+    metadata: {
+      payment_method: 'mada',
+      gateway: 'moyasar',
+      plan_name: 'باقة تأسيس المتجر (Setup Fee)',
+      tax_rate: 0.15,
+      base_amount: 434.78,
+      notes: 'سداد رسوم التأسيس الأولية عبر مدى - مويسر',
+    },
+  },
+];
 
 export const INITIAL_CATALOG_ITEMS: CatalogItem[] = [
   {

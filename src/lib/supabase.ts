@@ -27,6 +27,12 @@ import {
   PartnerAccount,
   PartnerCommission,
   PartnerBonusMilestone,
+  FinancialLedgerEntry,
+  CreditNote,
+  AffiliatePayoutRecord,
+  ManualAdjustmentPayload,
+  FinancialBreakdown,
+  MasterFinancialMetrics,
 } from '../types';
 import {
   INITIAL_STORES,
@@ -39,6 +45,7 @@ import {
   INITIAL_CUSTOMER_COUPONS,
   INITIAL_STORE_WALLETS,
   INITIAL_INVOICES,
+  INITIAL_FINANCIAL_LEDGER,
   INITIAL_CATALOG_ITEMS,
   INITIAL_SPECIALISTS,
   INITIAL_GLOBAL_CATEGORIES,
@@ -71,6 +78,10 @@ const STORAGE_KEYS = {
   LOCAL_BONUS_AWARDS: 'radar_local_partner_bonus_awards',
   LOCAL_BONUS_RULES: 'radar_local_partner_bonus_rules',
   LOCAL_BILLING_PLANS: 'radar_local_billing_plans',
+  LOCAL_FINANCIAL_LEDGER: 'radar_financial_ledger',
+  LOCAL_CREDIT_NOTES: 'radar_credit_notes',
+  LOCAL_AFFILIATE_PAYOUTS: 'radar_affiliate_payouts',
+  LOCAL_WEBHOOK_EVENTS: 'radar_webhook_events',
   CONSUMED_TOKENS: 'radar_consumed_tokens',
 };
 
@@ -3819,7 +3830,7 @@ export const LoyaltyService = {
   },
 
   // ==============================================================================
-  // 17. إدارة الفواتير ودورة الاشتراك وبوابات الدفع (SaaS Billing & Subscriptions)
+  // 17. إدارة الفواتير والسجل المالي العام (Immutable Master Financial Ledger & ZATCA)
   // ==============================================================================
 
   // جلب كافة الفواتير لجميع المتاجر (Super Admin Financial Log)
@@ -3840,7 +3851,194 @@ export const LoyaltyService = {
     return localInvoices[storeId] || [];
   },
 
-  // معالجة الدفع والاشتراك (التأسيس 500 ر.س / التجديد / الترقية / كاشير إضافي 200 ر.س)
+  // حساب التفكيك المالي الدقيق والضريبة (15% VAT, Gateway Fee, Affiliate Commission, Net Platform Revenue)
+  calculateBreakdown(
+    grossAmount: number,
+    paymentMethod: string = 'mada',
+    commissionRate: number = 0.20
+  ): FinancialBreakdown {
+    const gross = Math.max(0, Number(grossAmount) || 0);
+    const netBeforeVat = Math.round((gross / 1.15) * 100) / 100;
+    const vatAmount = Math.round((gross - netBeforeVat) * 100) / 100;
+
+    let gatewayRate = 0.015;
+    let fixedFee = 1.0;
+    const cleanMethod = (paymentMethod || '').toLowerCase();
+
+    if (cleanMethod === 'mada') {
+      gatewayRate = 0.010;
+      fixedFee = 1.0;
+    } else if (cleanMethod === 'credit_card' || cleanMethod === 'visa' || cleanMethod === 'mastercard') {
+      gatewayRate = 0.0275;
+      fixedFee = 1.0;
+    } else if (cleanMethod === 'apple_pay') {
+      gatewayRate = 0.022;
+      fixedFee = 1.0;
+    } else {
+      gatewayRate = 0.015;
+      fixedFee = 1.0;
+    }
+
+    const gatewayFee = gross > 0 ? Math.round(((gross * gatewayRate) + fixedFee) * 100) / 100 : 0;
+    const cleanCommRate = Math.max(0, Math.min(1.0, Number(commissionRate) || 0.20));
+    const affiliateCommission = Math.round((netBeforeVat * cleanCommRate) * 100) / 100;
+    const netPlatformAmount = Math.round((gross - vatAmount - gatewayFee - affiliateCommission) * 100) / 100;
+
+    return {
+      grossAmount: gross,
+      netBeforeVat,
+      vatAmount,
+      gatewayFee,
+      affiliateCommission,
+      netPlatformAmount,
+      vatRate: 0.15,
+      gatewayRate,
+      commissionRate: cleanCommRate,
+    };
+  },
+
+  // جلب السجل المالي العام غير القابل للتعديل (Master Financial Ledger)
+  async getFinancialLedger(filters?: {
+    type?: string;
+    storeId?: string;
+    affiliateId?: string;
+  }): Promise<FinancialLedgerEntry[]> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        let query = supabase
+          .from('financial_ledger')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (filters?.type && filters.type !== 'ALL') {
+          query = query.eq('transaction_type', filters.type);
+        }
+        if (filters?.storeId) {
+          query = query.eq('store_id', filters.storeId);
+        }
+        if (filters?.affiliateId) {
+          query = query.eq('affiliate_id', filters.affiliateId);
+        }
+
+        const { data, error } = await query;
+        if (!error && data && data.length > 0) {
+          const formatted: FinancialLedgerEntry[] = data.map((d: any) => ({
+            id: d.id,
+            transaction_id: d.transaction_id,
+            invoice_id: d.invoice_id,
+            store_id: d.store_id,
+            affiliate_id: d.affiliate_id,
+            payment_id: d.payment_id,
+            transaction_type: d.transaction_type,
+            gross_amount: Number(d.gross_amount) || 0,
+            vat_amount: Number(d.vat_amount) || 0,
+            gateway_fee: Number(d.gateway_fee) || 0,
+            affiliate_commission: Number(d.affiliate_commission) || 0,
+            net_platform_amount: Number(d.net_platform_amount) || 0,
+            status: d.status || 'SETTLED',
+            created_at: d.created_at,
+            effective_at: d.effective_at || d.created_at,
+            reversal_of: d.reversal_of,
+            refund_of: d.refund_of,
+            created_by: d.created_by || 'SYSTEM',
+            metadata: d.metadata || {},
+          }));
+          saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, formatted);
+          return formatted;
+        }
+      } catch (e) {
+        console.warn('Supabase getFinancialLedger fallback to local:', e);
+      }
+    }
+
+    const localLedger = getLocalData<FinancialLedgerEntry[]>(
+      STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER,
+      INITIAL_FINANCIAL_LEDGER
+    );
+    let filtered = [...localLedger];
+    if (filters?.type && filters.type !== 'ALL') {
+      filtered = filtered.filter((l) => l.transaction_type === filters.type);
+    }
+    if (filters?.storeId) {
+      filtered = filtered.filter((l) => l.store_id === filters.storeId);
+    }
+    if (filters?.affiliateId) {
+      filtered = filtered.filter((l) => l.affiliate_id === filters.affiliateId);
+    }
+    return filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  },
+
+  // تسجيل قيد جديد في السجل المالي العام (Immutable Insert Only)
+  async recordFinancialLedgerEntry(entry: Partial<FinancialLedgerEntry>): Promise<FinancialLedgerEntry> {
+    const nowIso = new Date().toISOString();
+    const ledgerId = 'ledg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+    const txId = entry.transaction_id || `tx_${Date.now()}`;
+
+    const newRecord: FinancialLedgerEntry = {
+      id: ledgerId,
+      transaction_id: txId,
+      invoice_id: entry.invoice_id || null,
+      store_id: entry.store_id || null,
+      store_name: entry.store_name || null,
+      affiliate_id: entry.affiliate_id || null,
+      affiliate_name: entry.affiliate_name || null,
+      payment_id: entry.payment_id || null,
+      transaction_type: entry.transaction_type || 'PAYMENT',
+      gross_amount: Number(entry.gross_amount) || 0,
+      vat_amount: Number(entry.vat_amount) || 0,
+      gateway_fee: Number(entry.gateway_fee) || 0,
+      affiliate_commission: Number(entry.affiliate_commission) || 0,
+      net_platform_amount: Number(entry.net_platform_amount) || 0,
+      status: entry.status || 'SETTLED',
+      created_at: nowIso,
+      effective_at: entry.effective_at || nowIso,
+      reversal_of: entry.reversal_of || null,
+      refund_of: entry.refund_of || null,
+      created_by: entry.created_by || 'SYSTEM',
+      metadata: entry.metadata || {},
+    };
+
+    const currentLedger = getLocalData<FinancialLedgerEntry[]>(
+      STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER,
+      INITIAL_FINANCIAL_LEDGER
+    );
+    const updatedLedger = [newRecord, ...currentLedger];
+    saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, updatedLedger);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('financial_ledger').insert([{
+          transaction_id: newRecord.transaction_id,
+          invoice_id: newRecord.invoice_id,
+          store_id: newRecord.store_id,
+          affiliate_id: newRecord.affiliate_id,
+          payment_id: newRecord.payment_id,
+          transaction_type: newRecord.transaction_type,
+          gross_amount: newRecord.gross_amount,
+          vat_amount: newRecord.vat_amount,
+          gateway_fee: newRecord.gateway_fee,
+          affiliate_commission: newRecord.affiliate_commission,
+          net_platform_amount: newRecord.net_platform_amount,
+          status: newRecord.status,
+          reversal_of: newRecord.reversal_of,
+          refund_of: newRecord.refund_of,
+          created_by: newRecord.created_by,
+          metadata: newRecord.metadata,
+          effective_at: newRecord.effective_at,
+          created_at: newRecord.created_at,
+        }]);
+      } catch (e) {
+        console.warn('Supabase recordFinancialLedgerEntry error:', e);
+      }
+    }
+
+    LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: newRecord.store_id || 'global' });
+    return newRecord;
+  },
+
+  // معالجة الدفع والاشتراك مع تسجيل القيد المالي الدقيق والتحقق من التكرار (Idempotency)
   async processSubscriptionPayment(payload: {
     storeId: string;
     invoiceType: 'setup' | 'renewal' | 'upgrade' | 'extra_cashier';
@@ -3849,20 +4047,45 @@ export const LoyaltyService = {
     gateway?: 'moyasar' | 'tap' | 'sandbox';
     gatewayPaymentId?: string;
     planId?: string;
-  }): Promise<{ success: boolean; invoice: StoreInvoice; store: Store }> {
-    const supabase = getSupabaseClient();
-    let updatedStore: Store | null = null;
-    let createdInvoice: StoreInvoice | null = null;
-
+  }): Promise<{ success: boolean; invoice: StoreInvoice; store: Store; ledgerEntry?: FinancialLedgerEntry }> {
     const paymentMethod = payload.paymentMethod || 'mada';
     const gateway = payload.gateway || 'moyasar';
     const gatewayPaymentId = payload.gatewayPaymentId || `pay_${gateway}_${Date.now()}`;
 
-    // استخراج الخطة لمعرفة مدة الاشتراك بالأشهر (duration_months)
+    // 1. فحص التكرار الحتمي (Idempotency Check)
+    const existingLedger = getLocalData<FinancialLedgerEntry[]>(
+      STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER,
+      INITIAL_FINANCIAL_LEDGER
+    );
+    const duplicateEntry = existingLedger.find(
+      (l) => l.payment_id === gatewayPaymentId && l.transaction_type === 'PAYMENT'
+    );
+    const existingInvoices = getLocalData<Record<string, StoreInvoice[]>>(
+      STORAGE_KEYS.LOCAL_INVOICES,
+      INITIAL_INVOICES
+    );
+    const storeInvoicesList = existingInvoices[payload.storeId] || [];
+    const duplicateInvoice = storeInvoicesList.find((i) => i.gateway_payment_id === gatewayPaymentId);
+
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const storeIdx = stores.findIndex((s) => s.id === payload.storeId);
     let currentStore = storeIdx !== -1 ? stores[storeIdx] : INITIAL_STORE;
 
+    if (duplicateEntry && duplicateInvoice) {
+      console.warn('[Idempotency] Payment already processed:', gatewayPaymentId);
+      return {
+        success: true,
+        invoice: duplicateInvoice,
+        store: currentStore,
+        ledgerEntry: duplicateEntry,
+      };
+    }
+
+    const supabase = getSupabaseClient();
+    let updatedStore: Store | null = null;
+    let createdInvoice: StoreInvoice | null = null;
+
+    // استخراج الخطة لمعرفة مدة الاشتراك بالأشهر (duration_months)
     const allBillingPlans = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, []);
     const targetPlan =
       (payload.planId ? allBillingPlans.find((p) => p.id === payload.planId || p.code === payload.planId) : null) ||
@@ -3880,6 +4103,27 @@ export const LoyaltyService = {
 
     let computedPlanName = targetPlan?.name || currentStore.subscription_plan || (payload.invoiceType === 'setup' ? 'باقة تأسيس المتجر' : 'تجديد الاشتراك');
 
+    // 2. البحث عن الشريك/المسوق المرتبط لحساب عمولته بدقة
+    let partnerAccountId: string | null = null;
+    let partnerName: string | null = null;
+    let commissionRate = 0.20;
+
+    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+    const matchingLead = allLeads.find((l) => l.converted_store_id === payload.storeId || l.store_name === currentStore.name);
+    if (matchingLead && matchingLead.referral_code) {
+      const partner = allPartners.find((p) => p.referral_code === matchingLead.referral_code);
+      if (partner) {
+        partnerAccountId = partner.id;
+        partnerName = partner.display_name;
+        commissionRate = partner.commission_rate ?? 0.20;
+      }
+    }
+
+    // 3. حساب التفكيك المالي الدقيق والضريبة
+    const breakdown = this.calculateBreakdown(payload.amount, paymentMethod, commissionRate);
+
+    // 4. تحديث المتجر في قاعدة البيانات
     if (supabase) {
       try {
         const { data, error } = await supabase.rpc('process_subscription_payment', {
@@ -3901,7 +4145,6 @@ export const LoyaltyService = {
           if (sData) updatedStore = sData as Store;
         }
 
-        // Direct DB store update to guarantee active sync in Supabase
         if (isUUID(payload.storeId)) {
           const nextEndIso = new Date(Date.now() + durationMs).toISOString();
           await supabase
@@ -3927,7 +4170,6 @@ export const LoyaltyService = {
     }
 
     if (payload.invoiceType === 'setup') {
-      // 1. دورة التأسيس: 500 ريال لمرة واحدة + تفعيل فترة الاشتراك الأولى ديناميكياً
       const nextEnd = new Date(Date.now() + durationMs).toISOString();
       currentStore = {
         ...currentStore,
@@ -3944,7 +4186,6 @@ export const LoyaltyService = {
         updated_at: now.toISOString(),
       };
     } else if (payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') {
-      // 2. التجديد أو الترقية: تمديد المدة بناءً على عدد الأشهر الديناميكي
       const currentEndMs = currentStore.subscription_end_date
         ? new Date(currentStore.subscription_end_date).getTime()
         : Date.now();
@@ -3964,7 +4205,6 @@ export const LoyaltyService = {
         updated_at: now.toISOString(),
       };
     } else if (payload.invoiceType === 'extra_cashier') {
-      // 3. كاشير إضافي: 200 ريال
       await this.purchaseExtraCashier(payload.storeId);
     }
 
@@ -3975,7 +4215,7 @@ export const LoyaltyService = {
     }
     saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
 
-    // حفظ الفاتورة في السجل المحلي
+    // 5. حفظ الفاتورة
     createdInvoice = {
       id: 'inv-' + Date.now(),
       store_id: payload.storeId,
@@ -4003,34 +4243,44 @@ export const LoyaltyService = {
     allInvoices[payload.storeId].unshift(createdInvoice);
     saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, allInvoices);
 
-    // 💰 Auto-convert matching merchant lead and credit affiliate commissions if lead exists
+    // 6. قيد السجل المالي العام الدائم (Master Financial Ledger Entry)
+    const ledgerEntry = await this.recordFinancialLedgerEntry({
+      transaction_id: `tx_${gatewayPaymentId}`,
+      invoice_id: createdInvoice.id,
+      store_id: payload.storeId,
+      store_name: currentStore.name,
+      affiliate_id: partnerAccountId,
+      affiliate_name: partnerName,
+      payment_id: gatewayPaymentId,
+      transaction_type: 'PAYMENT',
+      gross_amount: breakdown.grossAmount,
+      vat_amount: breakdown.vatAmount,
+      gateway_fee: breakdown.gatewayFee,
+      affiliate_commission: breakdown.affiliateCommission,
+      net_platform_amount: breakdown.netPlatformAmount,
+      status: 'SETTLED',
+      created_by: 'GATEWAY_WEBHOOK',
+      metadata: {
+        payment_method: paymentMethod,
+        gateway,
+        plan_name: computedPlanName,
+        plan_id: targetPlan?.id,
+        tax_rate: 0.15,
+        base_amount: breakdown.netBeforeVat,
+        invoice_number: invoiceNum,
+        notes: `عملية دفع ناجحة عبر ${paymentMethod} لـ ${computedPlanName}`,
+      },
+    });
+
+    // 7. تحويل الـ Lead وتحديث عمولات المسوق إلى AVAILABLE / EARNED
     try {
-      const allLeads = await this.getAllLeads();
-      const normalizeStr = (s?: string | null) => (s || '').replace(/[\s\-\+\(\)]/g, '').toLowerCase();
-      const storePhone = normalizeStr(currentStore.manager_contact);
-      const storeName = (currentStore.name || '').trim().toLowerCase();
-
-      const matchingLead = allLeads.find((l) => {
-        if (l.status === 'CONVERTED') return false;
-        if (l.converted_store_id === payload.storeId) return true;
-        const leadPhone = normalizeStr(l.phone);
-        if (leadPhone && storePhone && (leadPhone.endsWith(storePhone) || storePhone.endsWith(leadPhone))) {
-          return true;
-        }
-        if (l.store_name && storeName && l.store_name.trim().toLowerCase() === storeName) {
-          return true;
-        }
-        return false;
-      });
-
-      if (matchingLead) {
+      if (matchingLead && matchingLead.status !== 'CONVERTED') {
         await this.convertLeadToStore(matchingLead.id, payload.storeId);
       }
     } catch (leadConvErr) {
       console.warn('Non-blocking lead conversion on payment notice:', leadConvErr);
     }
 
-    // 💰 Unlock pending affiliate commissions to EARNED and evaluate milestone bonuses upon actual payment
     try {
       if (payload.invoiceType === 'setup' || payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') {
         await this.unlockPaidStoreCommission(payload.storeId, payload.amount);
@@ -4039,7 +4289,7 @@ export const LoyaltyService = {
       console.warn('Non-blocking commission unlock on payment error:', commUnlockErr);
     }
 
-    // إطلاق الأحداث اللحظية لتحديث كافة الشاشات
+    // إطلاق الأحداث اللحظية
     LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
@@ -4050,6 +4300,421 @@ export const LoyaltyService = {
       success: true,
       invoice: createdInvoice,
       store: updatedStore || currentStore,
+      ledgerEntry,
+    };
+  },
+
+  // 8. معالجة الإشعار الدائن والاسترداد المالي المتوافق مع ZATCA (Refund & Credit Note Engine)
+  async processZatcaRefundAndCreditNote(payload: {
+    invoiceId: string;
+    storeId: string;
+    refundAmount?: number;
+    reason: string;
+    adminUser: string;
+    notes?: string;
+  }): Promise<{ success: boolean; creditNote: CreditNote; ledgerEntry: FinancialLedgerEntry; error?: string }> {
+    const allInvoices = await this.getAllInvoices();
+    let targetInvoice: StoreInvoice | null = null;
+    let foundStoreId = payload.storeId;
+
+    for (const [sId, invs] of Object.entries(allInvoices)) {
+      const match = invs.find((i) => i.id === payload.invoiceId || i.invoice_number === payload.invoiceId);
+      if (match) {
+        targetInvoice = match;
+        foundStoreId = sId;
+        break;
+      }
+    }
+
+    if (!targetInvoice) {
+      return { success: false, error: 'الفاتورة الأصلية غير موجودة' } as any;
+    }
+
+    const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
+    const store = stores.find((s) => s.id === foundStoreId) || INITIAL_STORE;
+
+    const refundGross = payload.refundAmount ? Number(payload.refundAmount) : targetInvoice.amount;
+    const netRefund = Math.round((refundGross / 1.15) * 100) / 100;
+    const vatRefund = Math.round((refundGross - netRefund) * 100) / 100;
+
+    // فحص عمولة المسوق لاستردادها (Clawback)
+    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    let clawbackAmount = 0;
+    let affiliateIdForNote: string | null = null;
+
+    const updatedComms = localComms.map((c) => {
+      if (c.store_id === foundStoreId && (c.status === 'EARNED' || c.status === 'AVAILABLE' || c.status === 'PENDING')) {
+        clawbackAmount += Number(c.commission_amount) || 0;
+        affiliateIdForNote = c.partner_account_id;
+        return {
+          ...c,
+          status: 'REVERSED',
+          updated_at: new Date().toISOString(),
+          notes: `تم استرداد العمولة بناءً على استرداد الفاتورة ${targetInvoice?.invoice_number}`,
+        };
+      }
+      return c;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
+
+    const now = new Date();
+    const cnNumber = `CN-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+      now.getDate()
+    ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    // 1. تسجيل قيد الاسترداد في السجل المالي العام (Reverse Ledger Entry)
+    const netPlatformReversal = -(refundGross - vatRefund - clawbackAmount);
+    const ledgerEntry = await this.recordFinancialLedgerEntry({
+      transaction_id: `tx_cn_${cnNumber}`,
+      invoice_id: targetInvoice.id,
+      store_id: foundStoreId,
+      store_name: store.name,
+      affiliate_id: affiliateIdForNote,
+      payment_id: targetInvoice.gateway_payment_id || null,
+      transaction_type: 'REFUND',
+      gross_amount: -refundGross,
+      vat_amount: -vatRefund,
+      gateway_fee: 0.00,
+      affiliate_commission: -clawbackAmount,
+      net_platform_amount: Math.round(netPlatformReversal * 100) / 100,
+      status: 'SETTLED',
+      refund_of: targetInvoice.invoice_number,
+      created_by: payload.adminUser || 'SUPER_ADMIN',
+      metadata: {
+        credit_note_number: cnNumber,
+        original_invoice_number: targetInvoice.invoice_number,
+        reason: payload.reason,
+        admin_notes: payload.notes || '',
+        tax_rate: 0.15,
+        clawback_applied: clawbackAmount > 0,
+      },
+    });
+
+    // 2. حفظ الإشعار الدائن (Credit Note)
+    const creditNote: CreditNote = {
+      id: 'cn-' + Date.now(),
+      credit_note_number: cnNumber,
+      original_invoice_id: targetInvoice.id,
+      original_invoice_number: targetInvoice.invoice_number,
+      store_id: foundStoreId,
+      store_name: store.name,
+      gross_refund_amount: refundGross,
+      vat_refund_amount: vatRefund,
+      net_refund_amount: netRefund,
+      clawback_commission: clawbackAmount,
+      affiliate_id: affiliateIdForNote,
+      reason: payload.reason,
+      status: 'ISSUED',
+      issued_by: payload.adminUser || 'SUPER_ADMIN',
+      issued_at: now.toISOString(),
+      ledger_entry_id: ledgerEntry.id,
+      notes: payload.notes || '',
+    };
+
+    const localCreditNotes = getLocalData<CreditNote[]>(STORAGE_KEYS.LOCAL_CREDIT_NOTES, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_CREDIT_NOTES, [creditNote, ...localCreditNotes]);
+
+    // 3. تحديث حالة الفاتورة والمتجر
+    targetInvoice.status = 'refunded';
+    saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, allInvoices);
+
+    const storeIdx = stores.findIndex((s) => s.id === foundStoreId);
+    if (storeIdx !== -1) {
+      stores[storeIdx] = {
+        ...stores[storeIdx],
+        setup_fee_paid: false,
+        subscription_status: 'trial',
+        status: 'trial',
+        updated_at: now.toISOString(),
+      };
+      saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: foundStoreId });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+
+    return {
+      success: true,
+      creditNote,
+      ledgerEntry,
+    };
+  },
+
+  // 9. تسجيل تسوية أو قيد يدوي من المشرف العام (Manual Ledger Adjustment)
+  async recordManualLedgerAdjustment(payload: ManualAdjustmentPayload): Promise<{
+    success: boolean;
+    ledgerEntry: FinancialLedgerEntry;
+    error?: string;
+  }> {
+    if (!payload.amount || Number(payload.amount) <= 0) {
+      return { success: false, error: 'المبلغ يجب أن يكون أكبر من صفر' } as any;
+    }
+    if (!payload.reference_number || !payload.admin_notes) {
+      return { success: false, error: 'رقم المرجع وملاحظات المشرف إلزامية لتوثيق التسوية المحاسبية' } as any;
+    }
+
+    const sign = payload.adjustment_type === 'DEBIT' ? -1 : 1;
+    const grossAdj = Math.round(Number(payload.amount) * sign * 100) / 100;
+    const netAdj = Math.round((grossAdj / 1.15) * 100) / 100;
+    const vatAdj = Math.round((grossAdj - netAdj) * 100) / 100;
+
+    let storeName: string | null = null;
+    if (payload.store_id) {
+      const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
+      const st = stores.find((s) => s.id === payload.store_id);
+      storeName = st?.name || null;
+    }
+
+    let affiliateName: string | null = null;
+    if (payload.affiliate_id) {
+      const partners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+      const pa = partners.find((p) => p.id === payload.affiliate_id || p.affiliate_id === payload.affiliate_id);
+      affiliateName = pa?.display_name || null;
+    }
+
+    const ledgerEntry = await this.recordFinancialLedgerEntry({
+      transaction_id: `tx_adj_${Date.now()}`,
+      store_id: payload.store_id || null,
+      store_name: storeName,
+      affiliate_id: payload.affiliate_id || null,
+      affiliate_name: affiliateName,
+      transaction_type: 'ADJUSTMENT',
+      gross_amount: grossAdj,
+      vat_amount: vatAdj,
+      gateway_fee: 0.00,
+      affiliate_commission: 0.00,
+      net_platform_amount: netAdj,
+      status: 'SETTLED',
+      created_by: payload.admin_user || 'SUPER_ADMIN',
+      metadata: {
+        adjustment_type: payload.adjustment_type,
+        reason_category: payload.reason_category,
+        reference_number: payload.reference_number,
+        admin_user: payload.admin_user,
+        admin_notes: payload.admin_notes,
+      },
+    });
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+    return { success: true, ledgerEntry };
+  },
+
+  // 10. تنفيذ صرف مستحقات المسوق/الشريك بالحوالة البنكية (Affiliate Payout Disbursement)
+  async processAffiliatePayout(payload: {
+    affiliateId: string;
+    partnerName: string;
+    iban: string;
+    bankName: string;
+    transferReference: string;
+    adminUser: string;
+    notes?: string;
+  }): Promise<{ success: boolean; payout: AffiliatePayoutRecord; ledgerEntry: FinancialLedgerEntry; error?: string }> {
+    if (!payload.iban || !payload.transferReference) {
+      return { success: false, error: 'الآيبان ورقم مرجع الحوالة البنكية إلزاميان للصرف' } as any;
+    }
+
+    // جلب العمولات المستحقة للصرف (EARNED / AVAILABLE)
+    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    const eligibleComms = localComms.filter(
+      (c) => (c.partner_account_id === payload.affiliateId || c.affiliate_id === payload.affiliateId) &&
+             (c.status === 'EARNED' || c.status === 'AVAILABLE')
+    );
+
+    const payoutAmount = eligibleComms.reduce((sum, c) => sum + (Number(c.commission_amount) || 0), 0);
+    if (payoutAmount <= 0) {
+      return { success: false, error: 'لا توجد عمولات معتمدة ومؤهلة للصرف لهذا الشريك' } as any;
+    }
+
+    const now = new Date();
+    const payoutNumber = `PAY-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+      now.getDate()
+    ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    // 1. تحديث حالات العمولات إلى PAID
+    const commIds = eligibleComms.map((c) => c.id);
+    const updatedComms = localComms.map((c) => {
+      if (commIds.includes(c.id)) {
+        return {
+          ...c,
+          status: 'PAID',
+          updated_at: now.toISOString(),
+          payout_reference: payload.transferReference,
+          payout_number: payoutNumber,
+        };
+      }
+      return c;
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
+
+    // 2. تسجيل قيد الصرف في السجل المالي العام
+    const ledgerEntry = await this.recordFinancialLedgerEntry({
+      transaction_id: `tx_payout_${payoutNumber}`,
+      affiliate_id: payload.affiliateId,
+      affiliate_name: payload.partnerName,
+      transaction_type: 'PAYOUT',
+      gross_amount: -payoutAmount,
+      vat_amount: 0.00,
+      gateway_fee: 0.00,
+      affiliate_commission: -payoutAmount,
+      net_platform_amount: 0.00, // Liability settled
+      status: 'SETTLED',
+      created_by: payload.adminUser || 'SUPER_ADMIN',
+      metadata: {
+        payout_number: payoutNumber,
+        iban: payload.iban,
+        bank_name: payload.bankName,
+        transfer_reference: payload.transferReference,
+        commissions_count: eligibleComms.length,
+        admin_notes: payload.notes || '',
+      },
+    });
+
+    // 3. حفظ سجل الصرف
+    const payoutRecord: AffiliatePayoutRecord = {
+      id: 'payout-' + Date.now(),
+      payout_number: payoutNumber,
+      affiliate_id: payload.affiliateId,
+      partner_name: payload.partnerName,
+      iban: payload.iban,
+      bank_name: payload.bankName,
+      transfer_reference: payload.transferReference,
+      amount: payoutAmount,
+      commissions_count: eligibleComms.length,
+      commission_ids: commIds,
+      status: 'COMPLETED',
+      disbursed_by: payload.adminUser || 'SUPER_ADMIN',
+      disbursed_at: now.toISOString(),
+      ledger_entry_id: ledgerEntry.id,
+      notes: payload.notes || '',
+    };
+
+    const localPayouts = getLocalData<AffiliatePayoutRecord[]>(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, [payoutRecord, ...localPayouts]);
+
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+    return { success: true, payout: payoutRecord, ledgerEntry };
+  },
+
+  // 11. جلب كافة الإشعارات الدائنة
+  async getAllCreditNotes(): Promise<CreditNote[]> {
+    const local = getLocalData<CreditNote[]>(STORAGE_KEYS.LOCAL_CREDIT_NOTES, []);
+    return local || [];
+  },
+
+  // 12. جلب كافة سجلات صرف مستحقات الشركاء
+  async getAllAffiliatePayouts(): Promise<AffiliatePayoutRecord[]> {
+    const local = getLocalData<AffiliatePayoutRecord[]>(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, []);
+    return local || [];
+  },
+
+  // 13. حساب وتلخيص كافة المؤشرات المالية للمنصة (Master Financial Metrics)
+  async getMasterFinancialMetrics(): Promise<MasterFinancialMetrics> {
+    const ledger = await this.getFinancialLedger();
+    const comms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    const creditNotes = await this.getAllCreditNotes();
+
+    let totalGrossVolume = 0;
+    let totalVatPayable = 0;
+    let totalGatewayFees = 0;
+    let totalNetPlatformRevenue = 0;
+    let totalRefundsVolume = 0;
+
+    for (const entry of ledger) {
+      if (entry.status !== 'SETTLED') continue;
+
+      if (entry.transaction_type === 'PAYMENT' || entry.transaction_type === 'ADJUSTMENT') {
+        totalGrossVolume += Number(entry.gross_amount) || 0;
+        totalVatPayable += Number(entry.vat_amount) || 0;
+        totalGatewayFees += Number(entry.gateway_fee) || 0;
+        totalNetPlatformRevenue += Number(entry.net_platform_amount) || 0;
+      } else if (entry.transaction_type === 'REFUND') {
+        totalRefundsVolume += Math.abs(Number(entry.gross_amount) || 0);
+        totalGrossVolume += Number(entry.gross_amount) || 0; // negative
+        totalVatPayable += Number(entry.vat_amount) || 0; // negative
+        totalNetPlatformRevenue += Number(entry.net_platform_amount) || 0; // negative
+      }
+    }
+
+    let totalAffiliatePayable = 0;
+    let totalAffiliatePaid = 0;
+    let totalAffiliatePending = 0;
+    let totalAffiliateReversed = 0;
+
+    for (const comm of comms) {
+      const amt = Number(comm.commission_amount) || 0;
+      if (comm.status === 'AVAILABLE' || comm.status === 'EARNED') {
+        totalAffiliatePayable += amt;
+      } else if (comm.status === 'PAID') {
+        totalAffiliatePaid += amt;
+      } else if (comm.status === 'PENDING') {
+        totalAffiliatePending += amt;
+      } else if (comm.status === 'REVERSED') {
+        totalAffiliateReversed += amt;
+      }
+    }
+
+    return {
+      totalGrossVolume: Math.round(totalGrossVolume * 100) / 100,
+      totalVatPayable: Math.round(totalVatPayable * 100) / 100,
+      totalGatewayFees: Math.round(totalGatewayFees * 100) / 100,
+      totalAffiliatePayable: Math.round(totalAffiliatePayable * 100) / 100,
+      totalAffiliatePaid: Math.round(totalAffiliatePaid * 100) / 100,
+      totalAffiliatePending: Math.round(totalAffiliatePending * 100) / 100,
+      totalAffiliateReversed: Math.round(totalAffiliateReversed * 100) / 100,
+      totalNetPlatformRevenue: Math.round(totalNetPlatformRevenue * 100) / 100,
+      totalRefundsVolume: Math.round(totalRefundsVolume * 100) / 100,
+      totalCreditNotesCount: creditNotes.length,
+      totalTransactionsCount: ledger.length,
+    };
+  },
+
+  // 14. معالج الويب هوك الحتمي لبوابات الدفع (Webhook Idempotency Handler)
+  async processPaymentWebhook(event: {
+    event_id: string;
+    event_type: string;
+    payment_id: string;
+    amount: number;
+    store_id: string;
+    gateway: string;
+    signature?: string;
+    plan_id?: string;
+    payment_method?: string;
+  }): Promise<{ success: boolean; idempotent: boolean; invoice?: StoreInvoice; ledgerEntry?: FinancialLedgerEntry }> {
+    const webhooks = getLocalData<any[]>(STORAGE_KEYS.LOCAL_WEBHOOK_EVENTS, []);
+    const existing = webhooks.find((w) => w.event_id === event.event_id || (w.metadata?.payment_id === event.payment_id && w.processed));
+
+    if (existing) {
+      return { success: true, idempotent: true };
+    }
+
+    const webhookRecord = {
+      id: 'wh_' + Date.now(),
+      provider: event.gateway,
+      event_id: event.event_id,
+      event_type: event.event_type,
+      signature_verified: Boolean(event.signature),
+      processed: true,
+      processed_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      metadata: event,
+    };
+    saveLocalData(STORAGE_KEYS.LOCAL_WEBHOOK_EVENTS, [webhookRecord, ...webhooks]);
+
+    const result = await this.processSubscriptionPayment({
+      storeId: event.store_id,
+      invoiceType: 'setup',
+      amount: event.amount,
+      paymentMethod: event.payment_method || 'mada',
+      gateway: (event.gateway as any) || 'moyasar',
+      gatewayPaymentId: event.payment_id,
+      planId: event.plan_id,
+    });
+
+    return {
+      success: result.success,
+      idempotent: false,
+      invoice: result.invoice,
+      ledgerEntry: result.ledgerEntry,
     };
   },
 

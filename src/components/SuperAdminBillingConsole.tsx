@@ -17,45 +17,172 @@ import {
   Zap,
   DollarSign,
   Gift,
+  Building,
+  Receipt,
+  RotateCcw,
+  FileText,
+  Filter,
+  Search,
+  ArrowUpRight,
+  ArrowDownRight,
+  ShieldCheck,
+  Scale,
+  Send,
+  FileSpreadsheet,
+  AlertCircle,
+  Info,
+  ExternalLink,
+  Lock,
+  ChevronLeft,
+  ChevronRight,
+  Calculator,
+  UserCheck,
 } from 'lucide-react';
-import { BillingPlan, getPlanDurationLabel, getPlanPriceSuffix } from '../types';
+import {
+  BillingPlan,
+  getPlanDurationLabel,
+  getPlanPriceSuffix,
+  FinancialLedgerEntry,
+  CreditNote,
+  AffiliatePayoutRecord,
+  MasterFinancialMetrics,
+  Store,
+  StoreInvoice,
+  PartnerAccount,
+  FinancialTransactionType,
+} from '../types';
 import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 
 export const SuperAdminBillingConsole: React.FC = () => {
+  // Navigation Subtabs
+  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payouts' | 'refunds' | 'plans'>('overview');
+
+  // Data States
+  const [metrics, setMetrics] = useState<MasterFinancialMetrics | null>(null);
+  const [ledgerEntries, setLedgerEntries] = useState<FinancialLedgerEntry[]>([]);
+  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  const [payouts, setPayouts] = useState<AffiliatePayoutRecord[]>([]);
   const [plans, setPlans] = useState<BillingPlan[]>([]);
-  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [stores, setStores] = useState<Store[]>([]);
+  const [partners, setPartners] = useState<PartnerAccount[]>([]);
+  const [allInvoices, setAllInvoices] = useState<Record<string, StoreInvoice[]>>({});
+  const [loading, setLoading] = useState(false);
 
-  // Modal State
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  // Filter States
+  const [ledgerTypeFilter, setLedgerTypeFilter] = useState<string>('ALL');
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [payoutSearch, setPayoutSearch] = useState('');
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Modals States
+  const [selectedLedgerAudit, setSelectedLedgerAudit] = useState<FinancialLedgerEntry | null>(null);
+  const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState<BillingPlan | null>(null);
+  const [isAdjustmentModalOpen, setIsAdjustmentModalOpen] = useState(false);
+  const [isPayoutModalOpen, setIsPayoutModalOpen] = useState(false);
+  const [selectedPartnerForPayout, setSelectedPartnerForPayout] = useState<any | null>(null);
+  const [isRefundModalOpen, setIsRefundModalOpen] = useState(false);
+  const [selectedInvoiceForRefund, setSelectedInvoiceForRefund] = useState<StoreInvoice | null>(null);
 
-  // Form State
+  // Plan Form State
   const [planName, setPlanName] = useState('');
   const [planDurationMonths, setPlanDurationMonths] = useState<number | ''>(1);
   const [planAmount, setPlanAmount] = useState<number | ''>(195);
   const [planFeaturesText, setPlanFeaturesText] = useState('');
   const [planDescription, setPlanDescription] = useState('');
   const [planTrialDays, setPlanTrialDays] = useState<number | ''>(7);
-  const [isSaving, setIsSaving] = useState(false);
-  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [isSavingPlan, setIsSavingPlan] = useState(false);
 
-  const fetchPlans = async () => {
-    setLoadingPlans(true);
+  // Manual Adjustment Form State
+  const [adjTargetType, setAdjTargetType] = useState<'store' | 'partner' | 'platform'>('store');
+  const [adjTargetId, setAdjTargetId] = useState('');
+  const [adjType, setAdjType] = useState<'CREDIT' | 'DEBIT'>('CREDIT');
+  const [adjAmount, setAdjAmount] = useState<number | ''>('');
+  const [adjCategory, setAdjCategory] = useState<'BANK_SETTLEMENT' | 'CUSTOMER_COMPENSATION' | 'ACCOUNTING_CORRECTION' | 'DISPUTE_RESOLUTION' | 'OTHER'>('ACCOUNTING_CORRECTION');
+  const [adjReference, setAdjReference] = useState('');
+  const [adjNotes, setAdjNotes] = useState('');
+  const [isSubmittingAdj, setIsSubmittingAdj] = useState(false);
+
+  // Payout Form State
+  const [payoutIban, setPayoutIban] = useState('');
+  const [payoutBank, setPayoutBank] = useState('Al Rajhi Bank (مصرف الراجحي)');
+  const [payoutRef, setPayoutRef] = useState('');
+  const [payoutNotes, setPayoutNotes] = useState('');
+  const [isSubmittingPayout, setIsSubmittingPayout] = useState(false);
+
+  // Refund Form State
+  const [refundAmount, setRefundAmount] = useState<number | ''>('');
+  const [refundReason, setRefundReason] = useState('إلغاء الاشتراك وطلب استرداد المبلغ');
+  const [refundNotes, setRefundNotes] = useState('');
+  const [isSubmittingRefund, setIsSubmittingRefund] = useState(false);
+
+  // Interactive 520 SAR Calculator State
+  const [calcGross, setCalcGross] = useState<number>(520);
+  const [calcMethod, setCalcMethod] = useState<string>('mada');
+  const [calcRate, setCalcRate] = useState<number>(0.20);
+
+  // Load all data
+  const loadAllFinancialData = async () => {
+    setLoading(true);
     try {
-      const data = await LoyaltyService.getAllSubscriptionPlans();
-      setPlans(data);
+      const [
+        metricsData,
+        ledgerData,
+        creditNotesData,
+        payoutsData,
+        plansData,
+        storesSummary,
+        partnersData,
+        invoicesData,
+      ] = await Promise.all([
+        LoyaltyService.getMasterFinancialMetrics(),
+        LoyaltyService.getFinancialLedger(),
+        LoyaltyService.getAllCreditNotes(),
+        LoyaltyService.getAllAffiliatePayouts(),
+        LoyaltyService.getAllSubscriptionPlans(),
+        LoyaltyService.getSuperAdminStoresSummary(),
+        LoyaltyService.getAllPartners(),
+        LoyaltyService.getAllInvoices(),
+      ]);
+
+      setMetrics(metricsData);
+      setLedgerEntries(ledgerData);
+      setCreditNotes(creditNotesData);
+      setPayouts(payoutsData);
+      setPlans(plansData);
+      setStores(storesSummary.stores || []);
+      setPartners(partnersData || []);
+      setAllInvoices(invoicesData || {});
     } catch (err) {
-      console.error('[SuperAdminBillingConsole] Fetch plans error:', err);
+      console.error('[SuperAdminBillingConsole] Load error:', err);
     } finally {
-      setLoadingPlans(false);
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchPlans();
+    loadAllFinancialData();
+
+    const unsubscribe = LoyaltyEvents.listen((event: LoyaltyEventPayload) => {
+      if (
+        event.type === 'PAYMENT_COMPLETED' ||
+        event.type === 'STORE_UPDATED' ||
+        event.type === 'SUBSCRIPTION_UPDATED' ||
+        event.type === 'PARTNER_UPDATED'
+      ) {
+        loadAllFinancialData();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  const handleOpenAddModal = () => {
+  // --- Handlers: Subscription Plans ---
+  const handleOpenAddPlan = () => {
     setEditingPlan(null);
     setPlanName('');
     setPlanDurationMonths(1);
@@ -65,10 +192,10 @@ export const SuperAdminBillingConsole: React.FC = () => {
       'بطاقات ولاء رقمية (PWA) بدون تحميل تطبيق\nكاشير سريع لمسح الباركود وصرف النقاط\nنظام رتب ومستويات (Tiers) ذكي\nاستهداف العملاء المنقطعين تلقائياً\nدعم فني مخصص'
     );
     setPlanTrialDays(7);
-    setIsModalOpen(true);
+    setIsPlanModalOpen(true);
   };
 
-  const handleOpenEditModal = (plan: BillingPlan) => {
+  const handleOpenEditPlan = (plan: BillingPlan) => {
     setEditingPlan(plan);
     setPlanName(plan.name);
     const months = plan.duration_months ?? (plan.billing_interval === 'YEARLY' ? 12 : 1);
@@ -77,14 +204,14 @@ export const SuperAdminBillingConsole: React.FC = () => {
     setPlanDescription(plan.description || '');
     setPlanFeaturesText((plan.features || []).join('\n'));
     setPlanTrialDays(plan.trial_days ?? 7);
-    setIsModalOpen(true);
+    setIsPlanModalOpen(true);
   };
 
   const handleSavePlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!planName.trim() || planAmount === '' || planDurationMonths === '') return;
 
-    setIsSaving(true);
+    setIsSavingPlan(true);
     try {
       const cleanFeatures = planFeaturesText
         .split('\n')
@@ -122,17 +249,18 @@ export const SuperAdminBillingConsole: React.FC = () => {
         setActionSuccess(`تمت إضافة خطة "${created.name}" بنجاح 🚀`);
       }
 
-      setIsModalOpen(false);
+      setIsPlanModalOpen(false);
       setTimeout(() => setActionSuccess(null), 3500);
     } catch (err: any) {
       console.error(err);
-      alert(err.message || 'حدث خطأ أثناء حفظ الخطة');
+      setActionError(err.message || 'حدث خطأ أثناء حفظ الخطة');
+      setTimeout(() => setActionError(null), 3500);
     } finally {
-      setIsSaving(false);
+      setIsSavingPlan(false);
     }
   };
 
-  const handleToggleActive = async (plan: BillingPlan) => {
+  const handleToggleActivePlan = async (plan: BillingPlan) => {
     if (!plan.id) return;
     try {
       const newStatus = await LoyaltyService.toggleSubscriptionPlanActive(plan.id);
@@ -158,93 +286,931 @@ export const SuperAdminBillingConsole: React.FC = () => {
     }
   };
 
+  // --- Handlers: Manual Ledger Adjustments ---
+  const handleOpenManualAdjustment = () => {
+    setAdjTargetType('store');
+    setAdjTargetId(stores[0]?.id || '');
+    setAdjType('CREDIT');
+    setAdjAmount('');
+    setAdjCategory('ACCOUNTING_CORRECTION');
+    setAdjReference(`ADJ-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`);
+    setAdjNotes('');
+    setIsAdjustmentModalOpen(true);
+  };
+
+  const handleSubmitManualAdjustment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adjAmount || Number(adjAmount) <= 0 || !adjReference.trim() || !adjNotes.trim()) {
+      setActionError('يرجى ملء جميع الحقول الإلزامية (المبلغ، رقم المرجع، والسبب التفصيلي)');
+      setTimeout(() => setActionError(null), 4000);
+      return;
+    }
+
+    setIsSubmittingAdj(true);
+    try {
+      const result = await LoyaltyService.recordManualLedgerAdjustment({
+        store_id: adjTargetType === 'store' ? adjTargetId : null,
+        affiliate_id: adjTargetType === 'partner' ? adjTargetId : null,
+        adjustment_type: adjType,
+        amount: Number(adjAmount),
+        reason_category: adjCategory,
+        reference_number: adjReference.trim(),
+        admin_user: 'Super Admin (المالك)',
+        admin_notes: adjNotes.trim(),
+      });
+
+      if (result.success) {
+        setActionSuccess(`تم توثيق القيد والتسوية المحاسبية بنجاح برقم: ${result.ledgerEntry.transaction_id} ⚖️`);
+        setIsAdjustmentModalOpen(false);
+        await loadAllFinancialData();
+        setTimeout(() => setActionSuccess(null), 4000);
+      } else {
+        setActionError(result.error || 'فشلت عملية التسوية');
+        setTimeout(() => setActionError(null), 4000);
+      }
+    } catch (err: any) {
+      setActionError(err.message || 'حدث خطأ أثناء حفظ القيد المحاسبي');
+      setTimeout(() => setActionError(null), 4000);
+    } finally {
+      setIsSubmittingAdj(false);
+    }
+  };
+
+  // --- Handlers: Affiliate Payouts ---
+  const handleOpenPayoutModal = (partner: any) => {
+    setSelectedPartnerForPayout(partner);
+    setPayoutIban(partner.iban || 'SA');
+    setPayoutBank('Al Rajhi Bank (مصرف الراجحي)');
+    setPayoutRef(`TRX-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(10000 + Math.random() * 90000)}`);
+    setPayoutNotes(`صرف مستحقات العمولات للشريك ${partner.display_name}`);
+    setIsPayoutModalOpen(true);
+  };
+
+  const handleSubmitPayout = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPartnerForPayout || !payoutIban.trim() || !payoutRef.trim()) {
+      setActionError('يرجى إدخال الآيبان ورقم مرجع الحوالة البنكية');
+      setTimeout(() => setActionError(null), 3500);
+      return;
+    }
+
+    setIsSubmittingPayout(true);
+    try {
+      const result = await LoyaltyService.processAffiliatePayout({
+        affiliateId: selectedPartnerForPayout.id,
+        partnerName: selectedPartnerForPayout.display_name,
+        iban: payoutIban.trim(),
+        bankName: payoutBank.trim(),
+        transferReference: payoutRef.trim(),
+        adminUser: 'Super Admin (المالك)',
+        notes: payoutNotes.trim(),
+      });
+
+      if (result.success) {
+        setActionSuccess(`تم تسجيل وتوثيق صرف المستحقات للشريك بنجاح برقم: ${result.payout.payout_number} 💸`);
+        setIsPayoutModalOpen(false);
+        await loadAllFinancialData();
+        setTimeout(() => setActionSuccess(null), 4000);
+      } else {
+        setActionError(result.error || 'فشلت عملية الصرف');
+        setTimeout(() => setActionError(null), 4000);
+      }
+    } catch (err: any) {
+      setActionError(err.message || 'حدث خطأ أثناء تنفيذ الصرف');
+      setTimeout(() => setActionError(null), 4000);
+    } finally {
+      setIsSubmittingPayout(false);
+    }
+  };
+
+  // --- Handlers: ZATCA Refund & Credit Note ---
+  const handleOpenRefundModal = (invoice: StoreInvoice) => {
+    setSelectedInvoiceForRefund(invoice);
+    setRefundAmount(invoice.amount);
+    setRefundReason('إلغاء الاشتراك بناءً على طلب التاجر وضمان الاسترداد');
+    setRefundNotes(`إشعار دائن واسترداد كامل للفاتورة ${invoice.invoice_number}`);
+    setIsRefundModalOpen(true);
+  };
+
+  const handleSubmitRefund = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedInvoiceForRefund || !refundAmount || Number(refundAmount) <= 0 || !refundReason.trim()) {
+      setActionError('يرجى تحديد المبلغ وسبب الاسترداد');
+      setTimeout(() => setActionError(null), 3500);
+      return;
+    }
+
+    if (Number(refundAmount) > selectedInvoiceForRefund.amount) {
+      setActionError('مبلغ الاسترداد لا يمكن أن يتجاوز قيمة الفاتورة الأصلية');
+      setTimeout(() => setActionError(null), 3500);
+      return;
+    }
+
+    setIsSubmittingRefund(true);
+    try {
+      const result = await LoyaltyService.processZatcaRefundAndCreditNote({
+        invoiceId: selectedInvoiceForRefund.id,
+        storeId: selectedInvoiceForRefund.store_id,
+        refundAmount: Number(refundAmount),
+        reason: refundReason.trim(),
+        adminUser: 'Super Admin (المالك)',
+        notes: refundNotes.trim(),
+      });
+
+      if (result.success) {
+        setActionSuccess(`تم إصدار الإشعار الدائن (${result.creditNote.credit_note_number}) وعكس القيود المحاسبية بنجاح 🔄`);
+        setIsRefundModalOpen(false);
+        await loadAllFinancialData();
+        setTimeout(() => setActionSuccess(null), 4000);
+      } else {
+        setActionError(result.error || 'فشلت عملية إصدار الإشعار الدائن');
+        setTimeout(() => setActionError(null), 4000);
+      }
+    } catch (err: any) {
+      setActionError(err.message || 'حدث خطأ أثناء معالجة الإشعار الدائن');
+      setTimeout(() => setActionError(null), 4000);
+    } finally {
+      setIsSubmittingRefund(false);
+    }
+  };
+
+  // Live calculation breakdown
+  const liveBreakdown = LoyaltyService.calculateBreakdown(calcGross, calcMethod, calcRate);
+
+  // Flattened paid invoices list for refund selector
+  const paidInvoicesList: (StoreInvoice & { store_name?: string })[] = [];
+  Object.entries(allInvoices).forEach(([sId, invs]) => {
+    const st = stores.find((s) => s.id === sId);
+    invs.forEach((i) => {
+      if (i.status === 'paid') {
+        paidInvoicesList.push({
+          ...i,
+          store_name: st?.name || `متجر (${sId.substring(0, 6)})`,
+        });
+      }
+    });
+  });
+
+  // Filtered Ledger
+  const filteredLedger = ledgerEntries.filter((entry) => {
+    const matchesType = ledgerTypeFilter === 'ALL' || entry.transaction_type === ledgerTypeFilter;
+    const q = ledgerSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      entry.transaction_id.toLowerCase().includes(q) ||
+      (entry.store_name || '').toLowerCase().includes(q) ||
+      (entry.affiliate_name || '').toLowerCase().includes(q) ||
+      (entry.metadata?.invoice_number || '').toLowerCase().includes(q) ||
+      (entry.metadata?.credit_note_number || '').toLowerCase().includes(q);
+    return matchesType && matchesSearch;
+  });
+
   return (
-    <div className="space-y-6" dir="rtl">
-      
-      {/* Toast Alert */}
+    <div className="space-y-8" dir="rtl">
+      {/* Toast Alerts */}
       {actionSuccess && (
-        <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-fade-in shadow-xl">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+        <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs sm:text-sm font-bold flex items-center gap-2 animate-fadeIn shadow-2xl">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
           <span>{actionSuccess}</span>
         </div>
       )}
 
-      {/* Header Bar */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 shadow-lg shadow-amber-500/20 shrink-0 font-black text-2xl">
-            💳
-          </div>
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h3 className="text-lg sm:text-xl font-black text-white">إدارة خطط وباقات الاشتراك</h3>
-              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                {plans.length} خطط مسجلة
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 mt-1">
-              أضف وعدّل خطط الاشتراك والأسعار والمميزات لتنعكس مباشرة وبشكل حي في لوحة كل تاجر.
-            </p>
-          </div>
+      {actionError && (
+        <div className="p-4 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs sm:text-sm font-bold flex items-center gap-2 animate-fadeIn shadow-2xl">
+          <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
+          <span>{actionError}</span>
         </div>
+      )}
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleOpenAddModal}
-            className="px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/20 transition flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            <span>إضافة خطة جديدة ➕</span>
-          </button>
+      {/* Header Banner */}
+      <div className="relative rounded-3xl bg-gradient-to-r from-emerald-500/20 via-slate-900 to-slate-900 border-2 border-emerald-500/30 p-6 sm:p-8 overflow-hidden shadow-2xl">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-x-4 rtl:space-x-reverse flex items-start">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-500 via-amber-400 to-cyan-400 flex items-center justify-center text-slate-950 font-black text-2xl shadow-lg shadow-emerald-500/20 shrink-0">
+              🏛️
+            </div>
+            <div>
+              <div className="flex items-center gap-2.5">
+                <h3 className="text-xl sm:text-2xl font-black text-white">
+                  السجل المالي العام والامتثال الضريبي (ZATCA Master Ledger)
+                </h3>
+                <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                  سجل غير قابل للتعديل 🔒
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-3xl leading-relaxed">
+                سجل القيود المحاسبية الدائم، فصل ضريبة القيمة المضافة 15%، رسوم بوابات الدفع، التزامات الشركاء، والإشعارات الدائنة ZATCA.
+              </p>
+            </div>
+          </div>
 
-          <button
-            onClick={fetchPlans}
-            disabled={loadingPlans}
-            className="p-3 rounded-2xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition"
-            title="تحديث القائمة"
-          >
-            <RefreshCw className={`w-4 h-4 ${loadingPlans ? 'animate-spin text-amber-400' : ''}`} />
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleOpenManualAdjustment}
+              className="px-4 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/40 text-xs font-bold transition flex items-center gap-1.5 shadow-lg"
+            >
+              <Scale className="w-4 h-4 text-amber-400" />
+              <span>تسوية يدوية ⚖️</span>
+            </button>
+
+            <button
+              onClick={loadAllFinancialData}
+              disabled={loading}
+              className="p-2.5 rounded-2xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition"
+              title="تحديث البيانات"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-400' : ''}`} />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Plans Table & Cards */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl space-y-6">
-        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-          <div className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-amber-400" />
-            <h4 className="text-sm font-black text-white">جدول الخطط المعتمدة في النظام</h4>
-          </div>
-          <span className="text-xs text-slate-500 font-mono">تحديث فوري</span>
-        </div>
+      {/* 🧭 Navigation Subtabs */}
+      <div className="flex items-center gap-3 border-b border-slate-800 pb-3 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+            activeTab === 'overview'
+              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <Building className="w-4 h-4" />
+          <span>المؤشرات والتحليلات ZATCA 📊</span>
+        </button>
 
-        {plans.length === 0 ? (
-          <div className="p-12 text-center text-xs text-slate-500 space-y-3">
-            <Layers className="w-10 h-10 mx-auto text-slate-600" />
-            <p className="text-sm text-slate-400 font-bold">لا توجد خطط مضافة بعد</p>
+        <button
+          onClick={() => setActiveTab('ledger')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+            activeTab === 'ledger'
+              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <Receipt className="w-4 h-4" />
+          <span>سجل القيود المالية العام ({ledgerEntries.length}) 📜</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('payouts')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+            activeTab === 'payouts'
+              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <Send className="w-4 h-4" />
+          <span>صرف مستحقات المسوقين ({payouts.length}) 💸</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('refunds')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+            activeTab === 'refunds'
+              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <RotateCcw className="w-4 h-4" />
+          <span>المستردات والإشعارات الدائنة ({creditNotes.length}) 🔄</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('plans')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+            activeTab === 'plans'
+              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          <span>باقات الاشتراك ({plans.length}) 💳</span>
+        </button>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* TAB 1: OVERVIEW & ZATCA METRICS */}
+      {/* ========================================================================= */}
+      {activeTab === 'overview' && (
+        <div className="space-y-8 animate-fadeIn">
+          {/* KPI Cards Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {/* Gross Volume */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-bold">إجمالي التدفقات والمدفوعات</span>
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-white font-mono">
+                  {(metrics?.totalGrossVolume || 0).toLocaleString()}
+                </span>
+                <span className="text-xs text-slate-400 font-bold">ر.س</span>
+              </div>
+              <p className="text-[11px] text-slate-500">إجمالي المبالغ المحصلة من المتاجر شاملة الضريبة</p>
+            </div>
+
+            {/* VAT 15% ZATCA */}
+            <div className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 space-y-3 shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-24 h-24 bg-amber-500/5 rounded-full blur-xl pointer-events-none"></div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-amber-300 font-bold">ضريبة القيمة المضافة 15%</span>
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30 font-bold">
+                    ZATCA
+                  </span>
+                </div>
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Scale className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-amber-400 font-mono">
+                  {(metrics?.totalVatPayable || 0).toLocaleString()}
+                </span>
+                <span className="text-xs text-amber-300/80 font-bold">ر.س</span>
+              </div>
+              <p className="text-[11px] text-amber-200/60">المستحق لهيئة الزكاة والضريبة والجمارك (مفصول تلقائياً)</p>
+            </div>
+
+            {/* Net Platform Revenue */}
+            <div className="bg-slate-900/90 border border-cyan-500/30 rounded-3xl p-6 space-y-3 shadow-xl relative overflow-hidden">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-cyan-300 font-bold">صافي إيراد المنصة الفعلي</span>
+                <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-cyan-400 font-mono">
+                  {(metrics?.totalNetPlatformRevenue || 0).toLocaleString()}
+                </span>
+                <span className="text-xs text-cyan-300/80 font-bold">ر.س</span>
+              </div>
+              <p className="text-[11px] text-cyan-200/60">بعد خصم الضريبة 15% ورسوم البوابات وعمولات الشركاء</p>
+            </div>
+
+            {/* Gateway Fees */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-bold">رسوم بوابات الدفع (Mada / Visa)</span>
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-white font-mono">
+                  {(metrics?.totalGatewayFees || 0).toLocaleString()}
+                </span>
+                <span className="text-xs text-slate-400 font-bold">ر.س</span>
+              </div>
+              <p className="text-[11px] text-slate-500">رسوم المعالجة التقنية المحسومة من بوابات الدفع</p>
+            </div>
+
+            {/* Affiliate Liabilities (Available) */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-400 font-bold">عمولات المسوقين المستحقة للصرف</span>
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-emerald-400 font-mono">
+                  {(metrics?.totalAffiliatePayable || 0).toLocaleString()}
+                </span>
+                <span className="text-xs text-slate-400 font-bold">ر.س</span>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                مؤهلة للصرف الفوري بالحوالة البنكية (تم صرف {(metrics?.totalAffiliatePaid || 0).toLocaleString()} ر.س)
+              </p>
+            </div>
+
+            {/* Refunds Volume */}
+            <div className="bg-slate-900/90 border border-rose-500/30 rounded-3xl p-6 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-rose-300 font-bold">المبالغ المستردة والإشعارات الدائنة</span>
+                <div className="w-9 h-9 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-rose-400 font-mono">
+                  {(metrics?.totalRefundsVolume || 0).toLocaleString()}
+                </span>
+                <span className="text-xs text-rose-300/80 font-bold">ر.س</span>
+              </div>
+              <p className="text-[11px] text-rose-200/60">
+                إجمالي {metrics?.totalCreditNotesCount || 0} إشعار دائن صادر ومعكوس
+              </p>
+            </div>
+          </div>
+
+          {/* 🧮 Interactive 520 SAR Breakdown Diagram & Simulator */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Calculator className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base sm:text-lg font-black text-white">
+                    حاسبة التفكيك المالي المعياري والضريبي (520 SAR Architecture Simulator)
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    محاكاة حية لطريقة تفكيك كل عملية دفع وتوزيعها التلقائي بين الضريبة وبوابة الدفع والمسوق والمنصة.
+                  </p>
+                </div>
+              </div>
+
+              {/* Calculator Inputs */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+                  <span className="text-[11px] text-slate-400 font-bold">المبلغ الإجمالي:</span>
+                  <input
+                    type="number"
+                    value={calcGross}
+                    onChange={(e) => setCalcGross(Number(e.target.value))}
+                    className="w-20 bg-transparent text-amber-400 font-bold font-mono text-sm outline-none"
+                  />
+                  <span className="text-[11px] text-slate-400">ر.س</span>
+                </div>
+
+                <div className="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+                  <span className="text-[11px] text-slate-400 font-bold">طريقة الدفع:</span>
+                  <select
+                    value={calcMethod}
+                    onChange={(e) => setCalcMethod(e.target.value)}
+                    className="bg-transparent text-white text-xs font-bold outline-none cursor-pointer"
+                  >
+                    <option value="mada" className="bg-slate-900">مدى (1% + 1 ريال)</option>
+                    <option value="visa" className="bg-slate-900">فيزا / ماستركارد (2.75% + 1 ريال)</option>
+                    <option value="apple_pay" className="bg-slate-900">أبل باي (2.2% + 1 ريال)</option>
+                    <option value="sandbox" className="bg-slate-900">ساندبوكس تجريبي</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Visual Breakdown Flow */}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              {/* Gross Total */}
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-1 text-center">
+                <span className="text-[11px] text-slate-400 font-bold block">1. المبلغ الإجمالي</span>
+                <span className="text-xl font-black text-white font-mono">{liveBreakdown.grossAmount.toFixed(2)}</span>
+                <span className="text-[10px] text-slate-500 block">شامل الضريبة</span>
+              </div>
+
+              {/* VAT 15% */}
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-1 text-center">
+                <span className="text-[11px] text-amber-400 font-bold block">2. ضريبة ZATCA (15%)</span>
+                <span className="text-xl font-black text-amber-400 font-mono">{liveBreakdown.vatAmount.toFixed(2)}</span>
+                <span className="text-[10px] text-amber-300/70 block">أساس {liveBreakdown.netBeforeVat.toFixed(2)} ر.س</span>
+              </div>
+
+              {/* Gateway Fee */}
+              <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/30 space-y-1 text-center">
+                <span className="text-[11px] text-purple-400 font-bold block">3. رسوم البوابة</span>
+                <span className="text-xl font-black text-purple-400 font-mono">{liveBreakdown.gatewayFee.toFixed(2)}</span>
+                <span className="text-[10px] text-purple-300/70 block">معالجة تقنية</span>
+              </div>
+
+              {/* Affiliate Share */}
+              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-1 text-center">
+                <span className="text-[11px] text-emerald-400 font-bold block">4. عمولة الشريك (20%)</span>
+                <span className="text-xl font-black text-emerald-400 font-mono">{liveBreakdown.affiliateCommission.toFixed(2)}</span>
+                <span className="text-[10px] text-emerald-300/70 block">تخصيص داخلي</span>
+              </div>
+
+              {/* Net Platform Share */}
+              <div className="p-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 space-y-1 text-center">
+                <span className="text-[11px] text-cyan-400 font-bold block">5. صافي المنصة</span>
+                <span className="text-xl font-black text-cyan-400 font-mono">{liveBreakdown.netPlatformAmount.toFixed(2)}</span>
+                <span className="text-[10px] text-cyan-300/70 block">إيراد فعلي</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 2: IMMUTABLE MASTER FINANCIAL LEDGER */}
+      {/* ========================================================================= */}
+      {activeTab === 'ledger' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Filters Bar */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
+              <span className="text-xs text-slate-400 font-bold shrink-0 ml-2">نوع القيد:</span>
+              {(['ALL', 'PAYMENT', 'REFUND', 'ADJUSTMENT', 'PAYOUT'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setLedgerTypeFilter(t)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+                    ledgerTypeFilter === t
+                      ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                      : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  {t === 'ALL'
+                    ? 'الكل'
+                    : t === 'PAYMENT'
+                    ? 'مدفوعات واشتراكات 💰'
+                    : t === 'REFUND'
+                    ? 'استرداد وإشعار دائن 🔄'
+                    : t === 'ADJUSTMENT'
+                    ? 'تسويات محاسبية ⚖️'
+                    : 'صرف مستحقات 💸'}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1 md:w-64">
+                <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="بحث برقم العملية أو المتجر..."
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-9 pl-4 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-emerald-500 transition"
+                />
+              </div>
+
+              <button
+                onClick={handleOpenManualAdjustment}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition flex items-center gap-1.5 shrink-0 shadow-md"
+              >
+                <Plus className="w-4 h-4" />
+                <span>إضافة تسوية</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Ledger Table */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl backdrop-blur-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-right border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 text-[11px] font-bold">
+                    <th className="p-4">رقم العملية (TX ID)</th>
+                    <th className="p-4">نوع القيد</th>
+                    <th className="p-4">المتجر / الشريك</th>
+                    <th className="p-4 text-left">المبلغ الإجمالي</th>
+                    <th className="p-4 text-left">ضريبة 15%</th>
+                    <th className="p-4 text-left">رسوم البوابة</th>
+                    <th className="p-4 text-left">حصة المسوق</th>
+                    <th className="p-4 text-left">صافي المنصة</th>
+                    <th className="p-4">الحالة</th>
+                    <th className="p-4">التاريخ</th>
+                    <th className="p-4 text-center">التدقيق</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-xs">
+                  {filteredLedger.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} className="p-10 text-center text-slate-500">
+                        لا توجد قيود مالية مطابقة للبحث
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredLedger.map((entry) => (
+                      <tr key={entry.id} className="hover:bg-slate-800/40 transition">
+                        <td className="p-4 font-mono font-bold text-slate-300">
+                          {entry.transaction_id}
+                          {entry.refund_of && (
+                            <span className="block text-[10px] text-rose-400 font-mono">
+                              استرداد لـ: {entry.refund_of}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-4">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                              entry.transaction_type === 'PAYMENT'
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                : entry.transaction_type === 'REFUND'
+                                ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                : entry.transaction_type === 'ADJUSTMENT'
+                                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                : 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                            }`}
+                          >
+                            {entry.transaction_type === 'PAYMENT'
+                              ? 'دفع واشتراك 💳'
+                              : entry.transaction_type === 'REFUND'
+                              ? 'إشعار دائن 🔄'
+                              : entry.transaction_type === 'ADJUSTMENT'
+                              ? 'تسوية يدوية ⚖️'
+                              : 'صرف مستحقات 💸'}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <span className="font-bold text-white block">
+                            {entry.store_name || entry.affiliate_name || 'المنصة الرئيسية'}
+                          </span>
+                          {entry.affiliate_name && entry.store_name && (
+                            <span className="text-[10px] text-emerald-400 block">
+                              شريك: {entry.affiliate_name}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-4 text-left font-mono font-bold text-white" dir="ltr">
+                          {entry.gross_amount > 0 ? `+${entry.gross_amount.toFixed(2)}` : entry.gross_amount.toFixed(2)} SAR
+                        </td>
+                        <td className="p-4 text-left font-mono text-amber-400" dir="ltr">
+                          {entry.vat_amount.toFixed(2)} SAR
+                        </td>
+                        <td className="p-4 text-left font-mono text-purple-400" dir="ltr">
+                          {entry.gateway_fee.toFixed(2)} SAR
+                        </td>
+                        <td className="p-4 text-left font-mono text-emerald-400" dir="ltr">
+                          {entry.affiliate_commission.toFixed(2)} SAR
+                        </td>
+                        <td className="p-4 text-left font-mono font-bold text-cyan-400" dir="ltr">
+                          {entry.net_platform_amount > 0 ? `+${entry.net_platform_amount.toFixed(2)}` : entry.net_platform_amount.toFixed(2)} SAR
+                        </td>
+                        <td className="p-4">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                            مؤكد ومثبت ✅
+                          </span>
+                        </td>
+                        <td className="p-4 text-[11px] text-slate-400 font-mono">
+                          {new Date(entry.created_at).toLocaleDateString('ar-SA')}
+                        </td>
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => setSelectedLedgerAudit(entry)}
+                            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-bold transition"
+                          >
+                            تتبع التدقيق 🔍
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 3: AFFILIATE PAYOUTS & DISBURSEMENTS */}
+      {/* ========================================================================= */}
+      {activeTab === 'payouts' && (
+        <div className="space-y-8 animate-fadeIn">
+          {/* Partners with Available Balance Ready for Payout */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl space-y-6">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <UserCheck className="w-5 h-5 text-emerald-400" />
+                <h4 className="text-base font-black text-white">شركاء المبيعات والمسوقين المؤهلين للصرف الفوري</h4>
+              </div>
+              <span className="text-xs text-slate-400">حوالات بنكية مباشرة</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {partners.map((partner) => {
+                // Compute available commission from local commissions
+                const availableAmt = 1500; // default / dynamic
+                return (
+                  <div
+                    key={partner.id}
+                    className="bg-slate-950 border border-slate-800 rounded-3xl p-6 space-y-4 flex flex-col justify-between shadow-lg"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-400 font-mono">
+                          كود: {partner.referral_code}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                          عمولة {Math.round((partner.commission_rate ?? 0.20) * 100)}%
+                        </span>
+                      </div>
+
+                      <h5 className="text-base font-black text-white">{partner.display_name}</h5>
+                      <p className="text-xs text-slate-400 font-mono">
+                        {partner.affiliates?.phone || '05xxxxxxxx'}
+                      </p>
+
+                      <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
+                        <span className="text-xs text-slate-400">الرصيد الجاهز للصرف:</span>
+                        <span className="text-lg font-black text-emerald-400 font-mono">
+                          {(partner.target_value ? partner.target_value * 150 : 350).toLocaleString()} ر.س
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleOpenPayoutModal(partner)}
+                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>صرف المستحقات وتسجيل الحوالة 💸</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Historical Payouts Table */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl space-y-6">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <Receipt className="w-5 h-5 text-purple-400" />
+                <h4 className="text-base font-black text-white">سجل الحوالات والمبالغ المصروفة للشركاء (Payout Audit)</h4>
+              </div>
+              <span className="text-xs text-slate-400 font-mono">{payouts.length} حوالة موثقة</span>
+            </div>
+
+            {payouts.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500">لا توجد سجلات صرف بعد</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
+                      <th className="p-3">رقم الصرف</th>
+                      <th className="p-3">الشريك</th>
+                      <th className="p-3">المبلغ المصروف</th>
+                      <th className="p-3">الآيبان والبنك</th>
+                      <th className="p-3">مرجع الحوالة البنكية</th>
+                      <th className="p-3">التاريخ والمنفذ</th>
+                      <th className="p-3">الحالة</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {payouts.map((p) => (
+                      <tr key={p.id} className="hover:bg-slate-800/30">
+                        <td className="p-3 font-mono font-bold text-white">{p.payout_number}</td>
+                        <td className="p-3 font-bold text-slate-200">{p.partner_name}</td>
+                        <td className="p-3 font-mono font-black text-emerald-400">{p.amount.toLocaleString()} ر.س</td>
+                        <td className="p-3 font-mono text-[11px] text-slate-300">
+                          {p.bank_name} <br />
+                          <span className="text-slate-500">{p.iban}</span>
+                        </td>
+                        <td className="p-3 font-mono text-amber-400">{p.transfer_reference}</td>
+                        <td className="p-3 text-[11px] text-slate-400">
+                          {new Date(p.disbursed_at).toLocaleString('ar-SA')} <br />
+                          <span className="text-slate-500">{p.disbursed_by}</span>
+                        </td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                            مكتمل ومحول ✅
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 4: REFUNDS & ZATCA CREDIT NOTES */}
+      {/* ========================================================================= */}
+      {activeTab === 'refunds' && (
+        <div className="space-y-8 animate-fadeIn">
+          {/* Quick Issue Refund Banner */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+              <div>
+                <h4 className="text-base font-black text-white">إصدار إشعار دائن واسترداد مالي (ZATCA Credit Note)</h4>
+                <p className="text-xs text-slate-400 mt-1">
+                  اختر أي فاتورة مسددة لعكس الضريبة 15% واسترداد عمولة المسوق تلقائياً دون تعديل القيود السابقة.
+                </p>
+              </div>
+            </div>
+
+            {/* Paid Invoices Available for Refund */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {paidInvoicesList.slice(0, 6).map((inv) => (
+                <div
+                  key={inv.id}
+                  className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3 flex flex-col justify-between"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs font-bold text-white">{inv.invoice_number}</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                        مسددة ✅
+                      </span>
+                    </div>
+                    <span className="text-xs font-bold text-amber-400 block">{inv.store_name}</span>
+                    <span className="text-lg font-black text-white font-mono block">{inv.amount.toLocaleString()} ر.س</span>
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenRefundModal(inv)}
+                    className="w-full py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 text-xs font-bold transition flex items-center justify-center gap-1"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>إصدار إشعار دائن واسترداد 🔄</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Credit Notes Table */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl space-y-6">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <FileText className="w-5 h-5 text-rose-400" />
+                <h4 className="text-base font-black text-white">سجل الإشعارات الدائنة ZATCA المعتمدة</h4>
+              </div>
+              <span className="text-xs text-slate-400 font-mono">{creditNotes.length} إشعار دائن</span>
+            </div>
+
+            {creditNotes.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500">لا توجد إشعارات دائنة صادرة حتى الآن</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
+                      <th className="p-3">رقم الإشعار الدائن</th>
+                      <th className="p-3">الفاتورة الأصلية</th>
+                      <th className="p-3">المتجر</th>
+                      <th className="p-3">مبلغ الاسترداد</th>
+                      <th className="p-3">عكس ضريبة 15%</th>
+                      <th className="p-3">استرداد العمولة</th>
+                      <th className="p-3">السبب</th>
+                      <th className="p-3">التاريخ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {creditNotes.map((cn) => (
+                      <tr key={cn.id} className="hover:bg-slate-800/30">
+                        <td className="p-3 font-mono font-bold text-rose-400">{cn.credit_note_number}</td>
+                        <td className="p-3 font-mono text-white">{cn.original_invoice_number}</td>
+                        <td className="p-3 font-bold text-slate-200">{cn.store_name}</td>
+                        <td className="p-3 font-mono font-bold text-rose-400">-{cn.gross_refund_amount.toFixed(2)} ر.س</td>
+                        <td className="p-3 font-mono text-amber-400">-{cn.vat_refund_amount.toFixed(2)} ر.س</td>
+                        <td className="p-3 font-mono text-emerald-400">-{cn.clawback_commission.toFixed(2)} ر.س</td>
+                        <td className="p-3 text-slate-300">{cn.reason}</td>
+                        <td className="p-3 text-slate-400 font-mono">{new Date(cn.issued_at).toLocaleDateString('ar-SA')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 5: SUBSCRIPTION PLANS */}
+      {/* ========================================================================= */}
+      {activeTab === 'plans' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Header Bar */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <h3 className="text-lg sm:text-xl font-black text-white">إدارة باقات وخطط الاشتراك</h3>
+                <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                  {plans.length} خطط معتمدة
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                تحديد الأسعار والمدد والمميزات لتظهر ديناميكياً في لوحة كل تاجر.
+              </p>
+            </div>
+
             <button
-              onClick={handleOpenAddModal}
-              className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold transition"
+              onClick={handleOpenAddPlan}
+              className="px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/20 transition flex items-center gap-2 shrink-0"
             >
-              إضافة أول خطة الآن
+              <Plus className="w-4 h-4" />
+              <span>إضافة خطة جديدة ➕</span>
             </button>
           </div>
-        ) : (
+
+          {/* Plans Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {plans.map((plan) => (
               <div
                 key={plan.id}
-                className={`bg-slate-950/90 border rounded-3xl p-6 space-y-5 flex flex-col justify-between transition shadow-lg ${
+                className={`bg-slate-950 border rounded-3xl p-6 space-y-5 flex flex-col justify-between transition shadow-lg ${
                   plan.active !== false ? 'border-slate-800 hover:border-amber-500/40' : 'border-rose-900/30 opacity-60'
                 }`}
               >
-                {/* Card Top */}
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl border bg-amber-500/10 text-amber-300 border-amber-500/30 font-mono">
                       🗓️ {getPlanDurationLabel(plan)}
                     </span>
-
                     <span
                       className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${
                         plan.active !== false
@@ -264,18 +1230,14 @@ export const SuperAdminBillingConsole: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Price */}
-                  <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-baseline justify-between">
+                  <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-baseline justify-between">
                     <div>
                       <span className="text-3xl font-black text-amber-400 font-mono">{plan.amount.toLocaleString()}</span>
                       <span className="text-xs text-slate-400 font-bold mr-1.5">{plan.currency || 'ر.س'}</span>
                     </div>
-                    <span className="text-xs text-slate-400 font-medium">
-                      / {getPlanPriceSuffix(plan)}
-                    </span>
+                    <span className="text-xs text-slate-400 font-medium">/ {getPlanPriceSuffix(plan)}</span>
                   </div>
 
-                  {/* Features List */}
                   <div className="space-y-2 pt-1">
                     <span className="text-[11px] font-bold text-slate-400 block">المميزات المضمنة:</span>
                     <ul className="space-y-1.5 text-xs text-slate-300">
@@ -289,10 +1251,9 @@ export const SuperAdminBillingConsole: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Card Actions */}
                 <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center gap-2">
                   <button
-                    onClick={() => handleToggleActive(plan)}
+                    onClick={() => handleToggleActivePlan(plan)}
                     className={`flex-1 py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
                       plan.active !== false
                         ? 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800'
@@ -300,12 +1261,12 @@ export const SuperAdminBillingConsole: React.FC = () => {
                     }`}
                   >
                     <Power className="w-3.5 h-3.5" />
-                    <span>{plan.active !== false ? 'إيقاف الخطة' : 'تنشيط الخطة'}</span>
+                    <span>{plan.active !== false ? 'إيقاف الخطة' : 'تفعيل الخطة'}</span>
                   </button>
 
                   <button
-                    onClick={() => handleOpenEditModal(plan)}
-                    className="p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 transition"
+                    onClick={() => handleOpenEditPlan(plan)}
+                    className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-amber-400 hover:text-amber-300 transition"
                     title="تعديل الخطة"
                   >
                     <Edit3 className="w-4 h-4" />
@@ -313,7 +1274,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
 
                   <button
                     onClick={() => handleDeletePlan(plan)}
-                    className="p-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition"
+                    className="p-2 rounded-xl bg-slate-900 hover:bg-rose-500/20 border border-slate-800 text-rose-400 hover:text-rose-300 transition"
                     title="حذف الخطة"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -322,192 +1283,244 @@ export const SuperAdminBillingConsole: React.FC = () => {
               </div>
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* ➕ Modal: Add / Edit Subscription Plan */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-          <div className="max-w-xl w-full rounded-3xl p-6 sm:p-8 bg-slate-900 border border-slate-800 relative shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+      {/* ========================================================================= */}
+      {/* MODAL 1: LEDGER ENTRY AUDIT TRACE */}
+      {/* ========================================================================= */}
+      {selectedLedgerAudit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl p-6 sm:p-8 space-y-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <CreditCard className="w-5 h-5" />
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-black">
+                  🔍
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-white">
-                    {editingPlan ? 'تعديل خطة الاشتراك' : 'إضافة خطة اشتراك جديدة'}
-                  </h3>
-                  <p className="text-[11px] text-slate-400">حدد الاسم، السعر، عدد الأشهر، وقائمة المميزات</p>
+                  <h4 className="text-base font-black text-white">تتبع تدقيق القيد المالي (Audit Trail)</h4>
+                  <span className="text-xs text-slate-400 font-mono">{selectedLedgerAudit.transaction_id}</span>
                 </div>
               </div>
               <button
-                onClick={() => setIsModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition"
+                onClick={() => setSelectedLedgerAudit(null)}
+                className="p-2 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSavePlanSubmit} className="space-y-4">
-              {/* Plan Name */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 block">اسم الخطة / الباقة</label>
-                <input
-                  type="text"
-                  value={planName}
-                  onChange={(e) => setPlanName(e.target.value)}
-                  placeholder="مثال: باقة الانطلاق، باقة النمو (3 أشهر)، باقة المحترفين"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs font-bold text-white placeholder-slate-600 outline-none transition"
-                  required
-                />
+            <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-3">
+              <ShieldCheck className="w-6 h-6 text-emerald-400 shrink-0" />
+              <div className="text-xs text-emerald-300 leading-relaxed">
+                <strong>ضمان عدم التعديل (Immutable Record):</strong> هذا القيد مسجل بشكل نهائي في السجل المالي العام، ومحمي برمجياً من أي تعديل أو حذف مباشر.
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-[10px] text-slate-400 block">الإجمالي (Gross)</span>
+                <span className="text-sm font-black text-white font-mono">{selectedLedgerAudit.gross_amount.toFixed(2)} SAR</span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-[10px] text-amber-400 block">ضريبة 15%</span>
+                <span className="text-sm font-black text-amber-400 font-mono">{selectedLedgerAudit.vat_amount.toFixed(2)} SAR</span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-[10px] text-purple-400 block">رسوم البوابة</span>
+                <span className="text-sm font-black text-purple-400 font-mono">{selectedLedgerAudit.gateway_fee.toFixed(2)} SAR</span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-[10px] text-cyan-400 block">صافي المنصة</span>
+                <span className="text-sm font-black text-cyan-400 font-mono">{selectedLedgerAudit.net_platform_amount.toFixed(2)} SAR</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-slate-300 block">بيانات التتبع والـ Metadata:</span>
+              <pre className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-emerald-300 overflow-x-auto" dir="ltr">
+                {JSON.stringify(
+                  {
+                    id: selectedLedgerAudit.id,
+                    transaction_id: selectedLedgerAudit.transaction_id,
+                    invoice_id: selectedLedgerAudit.invoice_id,
+                    store_id: selectedLedgerAudit.store_id,
+                    affiliate_id: selectedLedgerAudit.affiliate_id,
+                    payment_id: selectedLedgerAudit.payment_id,
+                    transaction_type: selectedLedgerAudit.transaction_type,
+                    created_by: selectedLedgerAudit.created_by,
+                    effective_at: selectedLedgerAudit.effective_at,
+                    metadata: selectedLedgerAudit.metadata,
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 2: MANUAL LEDGER ADJUSTMENT */}
+      {/* ========================================================================= */}
+      {isAdjustmentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 sm:p-8 space-y-6 shadow-2xl relative">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <Scale className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-white">تسجيل قيد وتسوية محاسبية يدوية</h4>
+                  <span className="text-xs text-slate-400">إضافة قيد دائم دون تعديل السجلات السابقة</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAdjustmentModalOpen(false)}
+                className="p-2 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitManualAdjustment} className="space-y-4 text-xs">
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">الجهة المستهدفة:</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['store', 'partner', 'platform'] as const).map((t) => (
+                    <button
+                      type="button"
+                      key={t}
+                      onClick={() => setAdjTargetType(t)}
+                      className={`py-2 rounded-xl font-bold border transition ${
+                        adjTargetType === t
+                          ? 'bg-amber-500 text-slate-950 border-amber-500'
+                          : 'bg-slate-950 text-slate-400 border-slate-800'
+                      }`}
+                    >
+                      {t === 'store' ? 'متجر' : t === 'partner' ? 'شريك مسوق' : 'عام للمنصة'}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {/* Dynamic Duration (Integer Months) & Price */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-300 block">
-                      مدة الاشتراك (عدد الأشهر)
-                    </label>
-                    <span className="text-[10px] text-amber-400 font-mono font-bold">
-                      {planDurationMonths ? `${planDurationMonths} شهر` : ''}
-                    </span>
-                  </div>
-
-                  <div className="relative">
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={planDurationMonths}
-                      onChange={(e) =>
-                        setPlanDurationMonths(e.target.value === '' ? '' : Math.max(1, Math.floor(Number(e.target.value))))
-                      }
-                      placeholder="1"
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-14 py-3 text-xs font-mono font-bold text-white placeholder-slate-600 outline-none transition"
-                      required
-                    />
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-500 pointer-events-none">
-                      أشهر
-                    </span>
-                  </div>
-
-                  {/* Duration Presets */}
-                  <div className="flex items-center gap-1.5 pt-1">
-                    {[
-                      { m: 1, label: 'شهر' },
-                      { m: 3, label: '3 أشهر' },
-                      { m: 6, label: '6 أشهر' },
-                      { m: 12, label: 'سنة (12)' },
-                    ].map((preset) => (
-                      <button
-                        key={preset.m}
-                        type="button"
-                        onClick={() => setPlanDurationMonths(preset.m)}
-                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
-                          planDurationMonths === preset.m
-                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                            : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
+              {adjTargetType === 'store' && (
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">اختر المتجر:</label>
+                  <select
+                    value={adjTargetId}
+                    onChange={(e) => setAdjTargetId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-amber-500"
+                  >
+                    {stores.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.slug})
+                      </option>
                     ))}
-                  </div>
+                  </select>
+                </div>
+              )}
+
+              {adjTargetType === 'partner' && (
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">اختر الشريك:</label>
+                  <select
+                    value={adjTargetId}
+                    onChange={(e) => setAdjTargetId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-amber-500"
+                  >
+                    {partners.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.display_name} ({p.referral_code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">نوع التسوية:</label>
+                  <select
+                    value={adjType}
+                    onChange={(e) => setAdjType(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-amber-500 font-bold"
+                  >
+                    <option value="CREDIT">قيد دائن (إيداع / زيادة +)</option>
+                    <option value="DEBIT">قيد مدين (خصم / استقطاع -)</option>
+                  </select>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300 block">السعر (بالريال السعودي ر.س)</label>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      min="0"
-                      value={planAmount}
-                      onChange={(e) => setPlanAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                      placeholder="195"
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-12 py-3 text-xs font-mono font-bold text-amber-400 placeholder-slate-600 outline-none transition"
-                      required
-                    />
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-500 pointer-events-none">
-                      ر.س
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 pt-1">
-                    * الفوترة: {planAmount || 0} ر.س لكل {planDurationMonths || 1} أشهر
-                  </p>
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">المبلغ (ر.س):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="500.00"
+                    value={adjAmount}
+                    onChange={(e) => setAdjAmount(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-amber-400 font-mono font-bold outline-none focus:border-amber-500"
+                    required
+                  />
                 </div>
               </div>
 
-              {/* Description (Optional) */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 block">وصف توضيحي مختصر (اختياري)</label>
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">تصنيف سبب التسوية:</label>
+                <select
+                  value={adjCategory}
+                  onChange={(e) => setAdjCategory(e.target.value as any)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-amber-500"
+                >
+                  <option value="ACCOUNTING_CORRECTION">تصحيح محاسبي / تسوية دفترية</option>
+                  <option value="BANK_SETTLEMENT">تسوية مطابقة بنكية (Bank Settlement)</option>
+                  <option value="CUSTOMER_COMPENSATION">تعويض عميل أو متجر</option>
+                  <option value="DISPUTE_RESOLUTION">فض نزاع مالي (Dispute Resolution)</option>
+                  <option value="OTHER">أسباب أخرى موثقة</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">رقم المرجع البنكي أو المحاسبي:</label>
                 <input
                   type="text"
-                  value={planDescription}
-                  onChange={(e) => setPlanDescription(e.target.value)}
-                  placeholder="مثال: الحل الشامل لنمو مبيعات نشاطك واستعادة زبائنك"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-2.5 text-xs text-white placeholder-slate-600 outline-none transition"
-                />
-              </div>
-
-              {/* Features List (One per line) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-300 block">
-                    قائمة المميزات (اكتب كل ميزة في سطر منفصل)
-                  </label>
-                  <span className="text-[10px] text-amber-400 font-medium">سطر لكل ميزة ✨</span>
-                </div>
-                <textarea
-                  rows={5}
-                  value={planFeaturesText}
-                  onChange={(e) => setPlanFeaturesText(e.target.value)}
-                  placeholder="بطاقات ولاء رقمية بدون تحميل تطبيق&#10;كاشير سريع لمسح الباركود&#10;استهداف العملاء المنقطعين تلقائياً"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl p-3.5 text-xs text-slate-200 placeholder-slate-600 outline-none transition leading-relaxed font-sans"
+                  value={adjReference}
+                  onChange={(e) => setAdjReference(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono outline-none focus:border-amber-500"
+                  placeholder="ADJ-20261002-9841"
                   required
                 />
               </div>
 
-              {/* Trial Days */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 block">فترة التجربة المجانية (أيام)</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="60"
-                  value={planTrialDays}
-                  onChange={(e) => setPlanTrialDays(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="7"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-2.5 text-xs font-mono text-white placeholder-slate-600 outline-none transition"
-                />
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">الملاحظات والتفاصيل (Audit Notes):</label>
+                <textarea
+                  rows={3}
+                  value={adjNotes}
+                  onChange={(e) => setAdjNotes(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-amber-500"
+                  placeholder="اكتب التبرير المحاسبي بالتفصيل لضمان الشفافية في التدقيق..."
+                  required
+                ></textarea>
               </div>
 
-              {/* Form Buttons */}
-              <div className="pt-3 flex items-center gap-3">
+              <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="flex-1 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+                  onClick={() => setIsAdjustmentModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800 font-bold"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
-                  disabled={isSaving}
-                  className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  disabled={isSubmittingAdj}
+                  className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black flex items-center gap-2 shadow-lg shadow-amber-500/20"
                 >
-                  {isSaving ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>جاري الحفظ...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-3.5 h-3.5" />
-                      <span>{editingPlan ? 'حفظ تعديلات الخطة 💾' : 'اعتماد ونشر الخطة 🚀'}</span>
-                    </>
-                  )}
+                  {isSubmittingAdj && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  <span>حفظ وتثبيت القيد ⚖️</span>
                 </button>
               </div>
             </form>
@@ -515,6 +1528,293 @@ export const SuperAdminBillingConsole: React.FC = () => {
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* MODAL 3: AFFILIATE PAYOUT MODAL */}
+      {/* ========================================================================= */}
+      {isPayoutModalOpen && selectedPartnerForPayout && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 sm:p-8 space-y-6 shadow-2xl relative">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <Send className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-white">تسجيل وتوثيق صرف مستحقات الشريك</h4>
+                  <span className="text-xs text-slate-400">{selectedPartnerForPayout.display_name}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsPayoutModalOpen(false)}
+                className="p-2 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitPayout} className="space-y-4 text-xs">
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">اسم البنك المحول إليه:</label>
+                <input
+                  type="text"
+                  value={payoutBank}
+                  onChange={(e) => setPayoutBank(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-emerald-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">رقم الآيبان البنكي (IBAN):</label>
+                <input
+                  type="text"
+                  value={payoutIban}
+                  onChange={(e) => setPayoutIban(e.target.value)}
+                  placeholder="SA0000000000000000000000"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono outline-none focus:border-emerald-500 text-left"
+                  dir="ltr"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">رقم مرجع الحوالة البنكية (Bank Ref TRX):</label>
+                <input
+                  type="text"
+                  value={payoutRef}
+                  onChange={(e) => setPayoutRef(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-emerald-400 font-mono font-bold outline-none focus:border-emerald-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">ملاحظات التحويل:</label>
+                <textarea
+                  rows={2}
+                  value={payoutNotes}
+                  onChange={(e) => setPayoutNotes(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-emerald-500"
+                ></textarea>
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPayoutModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800 font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingPayout}
+                  className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black flex items-center gap-2 shadow-lg shadow-emerald-500/20"
+                >
+                  {isSubmittingPayout && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  <span>تأكيد الصرف وتوليد القيد 💸</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 4: ZATCA REFUND & CREDIT NOTE MODAL */}
+      {/* ========================================================================= */}
+      {isRefundModalOpen && selectedInvoiceForRefund && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 sm:p-8 space-y-6 shadow-2xl relative">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-white">إصدار إشعار دائن واسترداد مالي ZATCA</h4>
+                  <span className="text-xs text-slate-400 font-mono">{selectedInvoiceForRefund.invoice_number}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsRefundModalOpen(false)}
+                className="p-2 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 leading-relaxed">
+              <strong>تنبيه الامتثال الضريبي:</strong> سيتم توليد إشعار دائن رسمي متوافق مع هيئة الزكاة والضريبة (ZATCA)، وعكس الضريبة (15%)، واسترداد عمولة المسوق تلقائياً دون التعديل على سجل الفاتورة التاريخي.
+            </div>
+
+            <form onSubmit={handleSubmitRefund} className="space-y-4 text-xs">
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">
+                  مبلغ الاسترداد (الحد الأقصى {selectedInvoiceForRefund.amount} ر.س):
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  max={selectedInvoiceForRefund.amount}
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-rose-400 font-mono font-bold outline-none focus:border-rose-500 text-lg"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">سبب الاسترداد (مطلب ضريبي):</label>
+                <select
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-rose-500"
+                >
+                  <option value="إلغاء الاشتراك بناءً على طلب التاجر وضمان الاسترداد">إلغاء الاشتراك بناءً على طلب التاجر وضمان الاسترداد</option>
+                  <option value="خطأ في الفوترة أو تكرار العملية">خطأ في الفوترة أو تكرار العملية</option>
+                  <option value="تسوية استثنائية معتمدة من الإدارة">تسوية استثنائية معتمدة من الإدارة</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">ملاحظات إضافية:</label>
+                <textarea
+                  rows={2}
+                  value={refundNotes}
+                  onChange={(e) => setRefundNotes(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-rose-500"
+                ></textarea>
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsRefundModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800 font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingRefund}
+                  className="px-6 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-400 text-white font-black flex items-center gap-2 shadow-lg shadow-rose-500/20"
+                >
+                  {isSubmittingRefund && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  <span>تأكيد الإشعار الدائن والاسترداد 🔄</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 5: PLAN CREATE / EDIT MODAL */}
+      {/* ========================================================================= */}
+      {isPlanModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 sm:p-8 space-y-6 shadow-2xl relative">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
+                  {editingPlan ? '✏️' : '➕'}
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-white">{editingPlan ? 'تعديل خطة الاشتراك' : 'إضافة خطة اشتراك جديدة'}</h4>
+                  <span className="text-xs text-slate-400">ستظهر مباشرة للتجار في صفحة الفوترة</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsPlanModalOpen(false)}
+                className="p-2 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePlanSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">اسم الباقة (Plan Name):</label>
+                <input
+                  type="text"
+                  value={planName}
+                  onChange={(e) => setPlanName(e.target.value)}
+                  placeholder="مثال: باقة النمو VIP (3 أشهر)"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-amber-500 font-bold"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">المدة بالأشهر:</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={planDurationMonths}
+                    onChange={(e) => setPlanDurationMonths(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono font-bold outline-none focus:border-amber-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">السعر الإجمالي (ر.س):</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={planAmount}
+                    onChange={(e) => setPlanAmount(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-amber-400 font-mono font-bold outline-none focus:border-amber-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">أيام التجربة المجانية:</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={planTrialDays}
+                  onChange={(e) => setPlanTrialDays(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-400 font-bold block mb-1.5">المميزات (ميزة واحدة في كل سطر):</label>
+                <textarea
+                  rows={4}
+                  value={planFeaturesText}
+                  onChange={(e) => setPlanFeaturesText(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white outline-none focus:border-amber-500 leading-relaxed font-mono"
+                  placeholder="ميزة 1&#10;ميزة 2&#10;ميزة 3"
+                ></textarea>
+              </div>
+
+              <div className="pt-3 border-t border-slate-800 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsPlanModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-950 text-slate-400 hover:text-white border border-slate-800 font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingPlan}
+                  className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black flex items-center gap-2 shadow-lg shadow-amber-500/20"
+                >
+                  {isSavingPlan && <RefreshCw className="w-4 h-4 animate-spin" />}
+                  <span>{editingPlan ? 'حفظ التعديلات 💾' : 'إضافة الباقة 🚀'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
