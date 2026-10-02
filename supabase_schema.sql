@@ -20,14 +20,14 @@ CREATE TABLE IF NOT EXISTS public.stores (
     secondary_color TEXT DEFAULT '#F59E0B',
     points_per_riyal NUMERIC NOT NULL DEFAULT 1.0 CHECK (points_per_riyal > 0),
     subscription_active BOOLEAN NOT NULL DEFAULT true,
-    status TEXT NOT NULL DEFAULT 'active',
-    subscription_status TEXT NOT NULL DEFAULT 'active',
-    subscription_plan TEXT NOT NULL DEFAULT 'pro',
+    status TEXT NOT NULL DEFAULT 'trial',
+    subscription_status TEXT NOT NULL DEFAULT 'trial',
+    subscription_plan TEXT NOT NULL DEFAULT 'trial',
     trial_start_date TIMESTAMPTZ NOT NULL DEFAULT now(),
     trial_end_date TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '7 days'),
     subscription_start_date TIMESTAMPTZ DEFAULT now(),
-    subscription_end_date TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days'),
-    setup_fee_paid BOOLEAN NOT NULL DEFAULT true,
+    subscription_end_date TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '7 days'),
+    setup_fee_paid BOOLEAN NOT NULL DEFAULT false,
     renewal_amount NUMERIC NOT NULL DEFAULT 195.00,
     payment_gateway TEXT NOT NULL DEFAULT 'moyasar',
     gateway_customer_id TEXT,
@@ -52,8 +52,8 @@ ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS slider_images JSONB DEFAULT '
 ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS manager_name TEXT;
 ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS manager_contact TEXT;
 ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS subscription_active BOOLEAN DEFAULT true;
-ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'active';
-ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS setup_fee_paid BOOLEAN DEFAULT true;
+ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'trial';
+ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS setup_fee_paid BOOLEAN DEFAULT false;
 
 -- [2] Store Staff Table
 CREATE TABLE IF NOT EXISTS public.store_staff (
@@ -248,11 +248,152 @@ CREATE POLICY "Public access to store_wallets" ON public.store_wallets FOR ALL U
 DROP POLICY IF EXISTS "Public access to store_invoices" ON public.store_invoices;
 CREATE POLICY "Public access to store_invoices" ON public.store_invoices FOR ALL USING (true) WITH CHECK (true);
 
+-- [10] Partners Table
+CREATE TABLE IF NOT EXISTS public.partners (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    affiliate_id UUID,
+    display_name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    referral_code TEXT UNIQUE NOT NULL,
+    phone TEXT,
+    pin_code TEXT DEFAULT '1234',
+    commission_rate NUMERIC NOT NULL DEFAULT 0.20,
+    acquisition_commission_rate NUMERIC NOT NULL DEFAULT 0.20,
+    recurring_commission_rate NUMERIC NOT NULL DEFAULT 0.10,
+    target_value INTEGER NOT NULL DEFAULT 20,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- [11] Merchant Leads Table
+CREATE TABLE IF NOT EXISTS public.merchant_leads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    partner_id UUID REFERENCES public.partners(id) ON DELETE SET NULL,
+    affiliate_id UUID,
+    referral_code TEXT,
+    store_name TEXT NOT NULL,
+    manager_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    city TEXT,
+    business_type TEXT,
+    attribution_source TEXT NOT NULL DEFAULT 'DIRECT',
+    status TEXT NOT NULL DEFAULT 'NEW',
+    lifecycle_stage TEXT DEFAULT 'طلب جديد',
+    converted_store_id UUID REFERENCES public.stores(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- [12] Partner Commissions Table
+CREATE TABLE IF NOT EXISTS public.partner_commissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    partner_account_id UUID REFERENCES public.partners(id) ON DELETE CASCADE,
+    merchant_lead_id UUID REFERENCES public.merchant_leads(id) ON DELETE SET NULL,
+    store_id UUID REFERENCES public.stores(id) ON DELETE SET NULL,
+    commission_type TEXT NOT NULL DEFAULT 'STORE_CONVERSION',
+    basis_amount NUMERIC NOT NULL DEFAULT 0,
+    commission_rate NUMERIC NOT NULL DEFAULT 0.20,
+    commission_amount NUMERIC NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'EARNED', 'AVAILABLE', 'PAID', 'CANCELLED', 'VOID', 'REVERSED')),
+    qualifying_event TEXT,
+    idempotency_key TEXT UNIQUE,
+    invoice_id TEXT,
+    invoice_number TEXT,
+    merchant_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- [13] Partner Bonuses Table
+CREATE TABLE IF NOT EXISTS public.partner_bonuses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    partner_id UUID REFERENCES public.partners(id) ON DELETE CASCADE,
+    milestone INTEGER NOT NULL,
+    bonus_amount NUMERIC NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'LOCKED' CHECK (status IN ('LOCKED', 'IN_PROGRESS', 'ACHIEVED', 'AWARDED')),
+    current_progress INTEGER NOT NULL DEFAULT 0,
+    required_merchants INTEGER NOT NULL DEFAULT 10,
+    awarded_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ==============================================================================
+-- 3. Indexes
+-- ==============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_stores_slug ON public.stores(slug);
+CREATE INDEX IF NOT EXISTS idx_store_staff_lookup ON public.store_staff(store_id, phone);
+CREATE INDEX IF NOT EXISTS idx_store_customers_lookup ON public.store_customers(store_id, phone);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_lookup ON public.audit_logs(store_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_coupons_lookup ON public.customer_coupons(store_id, customer_phone);
+CREATE INDEX IF NOT EXISTS idx_merchant_leads_phone ON public.merchant_leads(phone);
+CREATE INDEX IF NOT EXISTS idx_partner_commissions_partner ON public.partner_commissions(partner_account_id);
+
+-- ==============================================================================
+-- 4. Open Row Level Security Policies (Allow Public SaaS Access)
+-- ==============================================================================
+
+ALTER TABLE public.stores ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.store_staff ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.store_customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tiers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.privileges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.customer_coupons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.store_wallets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.store_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.partners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.merchant_leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.partner_commissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.partner_bonuses ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public access to stores" ON public.stores;
+CREATE POLICY "Public access to stores" ON public.stores FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to store_staff" ON public.store_staff;
+CREATE POLICY "Public access to store_staff" ON public.store_staff FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to store_customers" ON public.store_customers;
+CREATE POLICY "Public access to store_customers" ON public.store_customers FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to tiers" ON public.tiers;
+CREATE POLICY "Public access to tiers" ON public.tiers FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to privileges" ON public.privileges;
+CREATE POLICY "Public access to privileges" ON public.privileges FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to customer_coupons" ON public.customer_coupons;
+CREATE POLICY "Public access to customer_coupons" ON public.customer_coupons FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to audit_logs" ON public.audit_logs;
+CREATE POLICY "Public access to audit_logs" ON public.audit_logs FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to store_wallets" ON public.store_wallets;
+CREATE POLICY "Public access to store_wallets" ON public.store_wallets FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to store_invoices" ON public.store_invoices;
+CREATE POLICY "Public access to store_invoices" ON public.store_invoices FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to partners" ON public.partners;
+CREATE POLICY "Public access to partners" ON public.partners FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to merchant_leads" ON public.merchant_leads;
+CREATE POLICY "Public access to merchant_leads" ON public.merchant_leads FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to partner_commissions" ON public.partner_commissions;
+CREATE POLICY "Public access to partner_commissions" ON public.partner_commissions FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Public access to partner_bonuses" ON public.partner_bonuses;
+CREATE POLICY "Public access to partner_bonuses" ON public.partner_bonuses FOR ALL USING (true) WITH CHECK (true);
+
 -- ==============================================================================
 -- 5. RPC Functions (Server-Side Logic)
 -- ==============================================================================
 
--- [A] Store Onboarding Function
+-- [A] Store Onboarding Function (Strict 7-Day Free Trial Default)
 CREATE OR REPLACE FUNCTION public.create_store_concierge_onboarding(
     p_name TEXT,
     p_slug TEXT,
@@ -285,6 +426,11 @@ BEGIN
         subscription_active,
         status,
         subscription_status,
+        subscription_plan,
+        trial_start_date,
+        trial_end_date,
+        subscription_start_date,
+        subscription_end_date,
         setup_fee_paid
     )
     VALUES (
@@ -297,9 +443,14 @@ BEGIN
         p_manager_name,
         p_manager_contact,
         true,
-        'active',
-        'active',
-        true
+        'trial',
+        'trial',
+        'trial',
+        now(),
+        (now() + interval '7 days'),
+        now(),
+        (now() + interval '7 days'),
+        false
     )
     ON CONFLICT (slug) DO UPDATE SET
         name = EXCLUDED.name,

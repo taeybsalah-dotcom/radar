@@ -74,6 +74,9 @@ export function resolveUnifiedStage(
         subscription_active?: boolean;
         id?: string;
         slug?: string;
+        has_paid_invoice?: boolean;
+        latest_paid_invoice?: any;
+        [key: string]: any;
       }
     | null
     | undefined
@@ -88,14 +91,13 @@ export function resolveUnifiedStage(
     };
   }
 
-  const isExplicitTrial = item.status === 'trial' || item.subscription_status === 'trial' || item.setup_fee_paid === false;
+  const it = item as any;
+  const isExplicitTrial = it.status === 'trial' || it.subscription_status === 'trial' || it.setup_fee_paid === false;
 
   // 1. مشترك مدفوع (Paid Subscriber) - أولوية مطلقة وحتمية بشرط سداد الرسوم الفعلي وعدم كونه في الفترة التجريبية
   const isPaid = !isExplicitTrial && Boolean(
-    item.setup_fee_paid ||
-      item.status === 'مشترك مدفوع' ||
-      item.status === 'PAID_ACTIVE' ||
-      item.lifecycle_stage === 'مشترك مدفوع'
+    (it.has_paid_invoice === true || it.latest_paid_invoice) ||
+      (it.setup_fee_paid === true && (it.lifecycle_stage === 'مشترك مدفوع' || it.status === 'مشترك مدفوع' || it.status === 'PAID_ACTIVE'))
   );
 
   if (isPaid) {

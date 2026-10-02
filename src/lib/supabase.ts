@@ -325,9 +325,7 @@ export function normalizeStore(s: any): Store {
   const isExplicitTrial = s.status === 'trial' || s.subscription_status === 'trial' || s.setup_fee_paid === false;
   const isPaid = !isExplicitTrial && Boolean(
     hasPaidInvoice ||
-      s.setup_fee_paid === true ||
-      s.status === 'مشترك مدفوع' ||
-      (s.lifecycle_stage === 'مشترك مدفوع' && s.setup_fee_paid === true)
+      (s.setup_fee_paid === true && (s.lifecycle_stage === 'مشترك مدفوع' || s.status === 'مشترك مدفوع' || s.status === 'PAID_ACTIVE'))
   );
 
   // حساب باقة الاشتراك وتواريخ النهاية بذكاء
@@ -376,7 +374,7 @@ export function normalizeStore(s: any): Store {
     status: isPaid ? (s.status === 'suspended' ? 'suspended' : 'active') : (s.status === 'suspended' ? 'suspended' : 'trial'),
     subscription_status: isPaid ? (s.subscription_status === 'suspended' ? 'suspended' : 'active') : (s.subscription_status === 'suspended' ? 'suspended' : 'trial'),
     lifecycle_stage: finalStage,
-    subscription_plan: isPaid ? (computedPlanName || 'الباقة الأساسية') : (s.subscription_plan && s.subscription_plan !== 'trial' && s.subscription_plan !== 'الباقة الأساسية' ? s.subscription_plan : 'فترة تجربة مجانية (7 أيام)'),
+    subscription_plan: isPaid ? (computedPlanName || 'الباقة الأساسية') : (s.subscription_plan && s.subscription_plan !== 'trial' && s.subscription_plan !== 'الباقة الأساسية' && s.subscription_plan !== 'pro' ? s.subscription_plan : 'فترة تجربة مجانية (7 أيام)'),
     subscription_plan_id: computedPlanId || (isPaid ? 'plan-3m' : undefined),
     plan_code: computedPlanCode || (isPaid ? 'PLAN_3M' : undefined),
     subscription_start_date: isPaid ? computedStartDate : trialStart,
@@ -501,7 +499,7 @@ export const LoyaltyService = {
         if (!error && Array.isArray(data)) {
           const validStores = data.filter((s: any) => Boolean(s && s.id)).map((dbStore: any) => {
             const localMatch = currentLocal.find((l) => l.id === dbStore.id || l.slug === dbStore.slug);
-            return normalizeStore({
+            const normalized = normalizeStore({
               ...(localMatch || {}),
               ...dbStore,
               subscription_plan: localMatch?.subscription_plan || dbStore.subscription_plan,
@@ -511,6 +509,30 @@ export const LoyaltyService = {
               subscription_start_date: localMatch?.subscription_start_date || dbStore.subscription_start_date,
               setup_fee_paid: localMatch?.setup_fee_paid ?? dbStore.setup_fee_paid,
             });
+
+            // 🛡️ Auto-repair legacy DB store rows that mistakenly have active/paid status or setup_fee_paid=true without paid invoice
+            if (
+              supabase &&
+              isUUID(dbStore.id) &&
+              !normalized.setup_fee_paid &&
+              (dbStore.status === 'active' || dbStore.setup_fee_paid === true || dbStore.subscription_plan === 'pro')
+            ) {
+              Promise.resolve(
+                supabase
+                  .from('stores')
+                  .update({
+                    status: 'trial',
+                    subscription_status: 'trial',
+                    setup_fee_paid: false,
+                    subscription_plan: 'trial',
+                    subscription_end_date: normalized.subscription_end_date,
+                    trial_end_date: normalized.trial_end_date,
+                  })
+                  .eq('id', dbStore.id)
+              ).catch(() => {});
+            }
+
+            return normalized;
           }) as Store[];
           saveLocalData(STORAGE_KEYS.LOCAL_STORES, validStores);
           storesListCache = { data: validStores, timestamp: Date.now() };
@@ -675,6 +697,29 @@ export const LoyaltyService = {
 
         if (!error && data && data.id) {
           const resolved = normalizeStore(data) as Store;
+
+          // 🛡️ Auto-repair legacy DB store rows that mistakenly have active/paid status or setup_fee_paid=true without paid invoice
+          if (
+            supabase &&
+            isUUID(data.id) &&
+            !resolved.setup_fee_paid &&
+            (data.status === 'active' || data.setup_fee_paid === true || data.subscription_plan === 'pro')
+          ) {
+            Promise.resolve(
+              supabase
+                .from('stores')
+                .update({
+                  status: 'trial',
+                  subscription_status: 'trial',
+                  setup_fee_paid: false,
+                  subscription_plan: 'trial',
+                  subscription_end_date: resolved.subscription_end_date,
+                  trial_end_date: resolved.trial_end_date,
+                })
+                .eq('id', data.id)
+            ).catch(() => {});
+          }
+
           storeResolutionCache.set(cleanLower, { store: resolved, timestamp: Date.now() });
           storeResolutionCache.set(resolved.id.toLowerCase(), { store: resolved, timestamp: Date.now() });
           if (resolved.slug) storeResolutionCache.set(resolved.slug.toLowerCase(), { store: resolved, timestamp: Date.now() });
@@ -6895,6 +6940,24 @@ export const LoyaltyService = {
 
   async getPartnerCommissions(partnerId: string): Promise<any[]> {
     const supabase = getSupabaseClient();
+    const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
+
+    const reconcileComm = (c: any) => {
+      const store = localStores.find(
+        (s) =>
+          s.id === c.store_id ||
+          (c.merchant_name && s.name && s.name.trim().toLowerCase() === c.merchant_name.trim().toLowerCase())
+      );
+      const isStorePaid = store && store.setup_fee_paid === true && store.status !== 'trial';
+      const effectiveStatus = c.status === 'PAID' ? 'PAID' : isStorePaid ? (c.status === 'PENDING' ? 'EARNED' : c.status) : 'PENDING';
+
+      return {
+        ...c,
+        merchant_name: c.merchant_leads?.store_name || c.merchant_name || 'متجر محول',
+        status: effectiveStatus,
+      };
+    };
+
     if (supabase) {
       try {
         const { data, error } = await supabase
@@ -6904,10 +6967,7 @@ export const LoyaltyService = {
           .order('created_at', { ascending: false });
 
         if (!error && Array.isArray(data)) {
-          return data.map((c) => ({
-            ...c,
-            merchant_name: c.merchant_leads?.store_name || 'متجر محول',
-          }));
+          return data.map(reconcileComm);
         }
       } catch (e) {
         console.warn('Supabase getPartnerCommissions failed:', e);
@@ -6915,7 +6975,7 @@ export const LoyaltyService = {
     }
 
     const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    return local.filter((c) => c.partner_account_id === partnerId);
+    return local.filter((c) => c.partner_account_id === partnerId).map(reconcileComm);
   },
 
   async getPartnerBonuses(partnerId: string, affiliateId?: string): Promise<{ milestones: any[]; paidCount: number }> {

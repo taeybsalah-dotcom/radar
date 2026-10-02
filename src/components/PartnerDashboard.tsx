@@ -1716,7 +1716,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
                 <span className="text-slate-500 block text-[11px]">الحالة الراهنة</span>
                 <span className="text-amber-400 font-bold mt-1 block">
-                  {getLeadStatusArabic(selectedLead.status).label}
+                  {getLeadStatusArabic(selectedLead.status, selectedLead).label}
                 </span>
               </div>
               <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">

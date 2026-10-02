@@ -1302,12 +1302,17 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                               </span>
                             ) : null}
 
-                            {s.subscription_plan && s.subscription_plan !== 'trial' ? (
+                            {stageInfo.isPaidActive ? (
                               <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1">
                                 <Sparkles className="w-3 h-3 text-purple-400" />
-                                <span>{s.subscription_plan}</span>
+                                <span>{s.subscription_plan || 'الباقة الأساسية'}</span>
                               </span>
-                            ) : null}
+                            ) : (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-teal-500/15 text-teal-300 border border-teal-500/30 flex items-center gap-1">
+                                <Clock className="w-3 h-3 text-teal-400" />
+                                <span>فترة تجربة مجانية (7 أيام)</span>
+                              </span>
+                            )}
                             {s.in_grace_period && (
                               <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-orange-500/15 text-orange-400 border border-orange-500/30 flex items-center gap-1 animate-pulse">
                                 <Clock className="w-3 h-3 text-orange-400" />
@@ -1475,12 +1480,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-bold text-white">
-                              {s.subscription_plan && s.subscription_plan !== 'trial' ? s.subscription_plan : 'باقة التجربة والتأسيس'}
+                              {stageInfo.isPaidActive ? (s.subscription_plan || 'الباقة الأساسية') : 'فترة تجربة مجانية (7 أيام)'}
                             </span>
                             <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
-                              s.setup_fee_paid ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              stageInfo.isPaidActive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
                             }`}>
-                              {s.setup_fee_paid ? 'مدفوع ومثبت' : 'قيد التجربة (غير مدفوع)'}
+                              {stageInfo.isPaidActive ? 'مدفوع ومثبت 👑' : 'فترة تجربة مجانية 🚀'}
                             </span>
                           </div>
                           <span className="text-[11px] text-slate-400 block font-mono mt-0.5">
