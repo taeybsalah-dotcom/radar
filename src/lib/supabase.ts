@@ -4186,18 +4186,12 @@ export const LoyaltyService = {
       try {
         if (isUUID(payload.storeId)) {
           const nextEndIso = new Date(Date.now() + durationMs).toISOString();
-          const validPlanId = targetPlan?.id && isUUID(targetPlan.id)
-            ? targetPlan.id
-            : (isUUID(currentStore.subscription_plan_id) ? currentStore.subscription_plan_id : null);
-
           const updatePayload: Record<string, any> = {
             setup_fee_paid: true,
             status: 'active',
             subscription_status: 'active',
             subscription_active: true,
-            subscription_plan_id: validPlanId,
-            plan_code: targetPlan?.code || currentStore.plan_code || null,
-            subscription_plan: targetPlan?.name || currentStore.subscription_plan || null,
+            subscription_plan: targetPlan?.name || currentStore.subscription_plan || 'الباقة الأساسية',
             renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
             subscription_start_date: now.toISOString(),
             subscription_end_date: nextEndIso,
