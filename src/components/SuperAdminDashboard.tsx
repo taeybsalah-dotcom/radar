@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Store, StoreOnboardingPayload, MerchantLead } from '../types';
+import { Store, StoreOnboardingPayload, MerchantLead, StoreInvoice } from '../types';
 import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
 import { generateSafeSlug, resolveUniqueStoreSlug } from '../lib/slugUtils';
 import {
@@ -35,6 +36,7 @@ import {
   Trash2,
   AlertTriangle,
   CreditCard,
+  Receipt,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
@@ -268,18 +270,40 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     }
   };
 
+  // Financial Log & Invoices State
+  const [allInvoices, setAllInvoices] = useState<Record<string, StoreInvoice[]>>({});
+  const [selectedStoreForFinancials, setSelectedStoreForFinancials] = useState<Store | null>(null);
+
   useEffect(() => {
-    if (isAuthenticated) {
-      loadStores();
-    }
+    if (!isAuthenticated) return;
+    loadStores();
+
+    const unsubscribe = LoyaltyEvents.listen((event: LoyaltyEventPayload) => {
+      if (
+        event.type === 'STORE_UPDATED' ||
+        event.type === 'PAYMENT_COMPLETED' ||
+        event.type === 'SUBSCRIPTION_UPDATED' ||
+        event.type === 'LEAD_UPDATED'
+      ) {
+        loadStores();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [isAuthenticated]);
 
   const loadStores = async () => {
     setLoading(true);
     try {
-      const { stores: validStores, analytics } = await LoyaltyService.getSuperAdminStoresSummary();
+      const [{ stores: validStores, analytics }, invs] = await Promise.all([
+        LoyaltyService.getSuperAdminStoresSummary(),
+        LoyaltyService.getAllInvoices(),
+      ]);
       setStores(validStores);
       setStoresAnalytics(analytics);
+      setAllInvoices(invs || {});
     } catch (e) {
       console.error(e);
     } finally {
@@ -951,6 +975,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   totalPoints: 0,
                   staffCount: 1,
                 };
+                const storeInvs = (s.id && allInvoices[s.id]) || [];
+                const totalPaid = storeInvs.filter((i) => i.status === 'paid').reduce((sum, i) => sum + i.amount, 0);
 
                 return (
                   <div
@@ -990,20 +1016,26 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                               /{s.slug}
                             </span>
                             <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                              className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
                                 s.subscription_status === 'suspended' || !s.subscription_active
-                                  ? 'bg-red-500/15 text-red-400 border-red-500/30'
+                                  ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                                   : s.setup_fee_paid
-                                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                                  : 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm'
+                                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                               }`}
                             >
                               {s.subscription_status === 'suspended' || !s.subscription_active
                                 ? 'معلق 🔴'
                                 : s.setup_fee_paid
-                                ? 'نشط معتمد 🟢'
-                                : 'تجربة (7 أيام) 🎁'}
+                                ? 'مشترك مدفوع / نشط ✅'
+                                : 'فترة تجريبية (7 أيام) 🎁'}
                             </span>
+                            {s.subscription_plan && s.subscription_plan !== 'trial' ? (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-purple-400" />
+                                <span>{s.subscription_plan}</span>
+                              </span>
+                            ) : null}
                             {s.custom_domain && (
                               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/30 flex items-center gap-1 font-bold">
                                 <Globe className="w-3 h-3 text-blue-400" />
@@ -1124,6 +1156,39 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         </div>
                         <Users className="w-4 h-4 text-purple-400" />
                       </div>
+                    </div>
+
+                    {/* 💳 Dedicated Financial Log Quick Summary & Action Bar */}
+                    <div className="p-3 rounded-2xl bg-slate-950/90 border border-amber-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
+                        <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                          <Receipt className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-white">
+                              {s.subscription_plan && s.subscription_plan !== 'trial' ? s.subscription_plan : 'باقة التجربة والتأسيس'}
+                            </span>
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                              s.setup_fee_paid ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            }`}>
+                              {s.setup_fee_paid ? 'مدفوع ومثبت' : 'قيد التجربة (غير مدفوع)'}
+                            </span>
+                          </div>
+                          <span className="text-[11px] text-slate-400 block font-mono mt-0.5">
+                            المحصل: <strong className="text-emerald-400 font-bold">{totalPaid.toLocaleString()} ر.س</strong> ({storeInvs.length} فواتير مسجلة)
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStoreForFinancials(s)}
+                        className="px-3.5 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border border-amber-500/30 transition text-xs font-bold flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-sm shrink-0"
+                      >
+                        <CreditCard className="w-3.5 h-3.5" />
+                        <span>كشف الحساب والمدفوعات ({storeInvs.length})</span>
+                      </button>
                     </div>
 
                     {/* Portal Quick Access Buttons */}
@@ -1699,6 +1764,171 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 className="px-5 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs sm:text-sm transition disabled:opacity-50"
               >
                 إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 💳 Modal: Super Admin Store Financial Log & Invoices Breakdown */}
+      {selectedStoreForFinancials && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in overflow-y-auto">
+          <div className="glass-card max-w-3xl w-full rounded-3xl p-6 sm:p-8 border-2 border-amber-500/50 shadow-2xl relative space-y-6 my-8">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                  <Receipt className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white">
+                    السجل المالي والمدفوعات لمتجر: {selectedStoreForFinancials.name}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    كشف حساب تفصيلي بالباقات، المبالغ المحصلة، بوابات الدفع، وأرقام الفواتير
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedStoreForFinancials(null)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Financial Overview Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                <span className="text-slate-500 text-[11px] block">الباقة الحالية</span>
+                <span className="text-sm font-black text-amber-400 block truncate">
+                  {selectedStoreForFinancials.subscription_plan && selectedStoreForFinancials.subscription_plan !== 'trial'
+                    ? selectedStoreForFinancials.subscription_plan
+                    : 'فترة تجريبية (بدون باقة)'}
+                </span>
+                <span className="text-[10px] text-slate-400 font-mono">
+                  {selectedStoreForFinancials.setup_fee_paid ? '🟢 اشتراك نشط' : '🎁 قيد التجربة'}
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                <span className="text-slate-500 text-[11px] block">إجمالي المبالغ المحصلة</span>
+                <span className="text-lg font-black text-emerald-400 font-mono block">
+                  {(allInvoices[selectedStoreForFinancials.id] || [])
+                    .filter((i) => i.status === 'paid')
+                    .reduce((sum, i) => sum + i.amount, 0)}{' '}
+                  ر.س
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  عدد الفواتير: {(allInvoices[selectedStoreForFinancials.id] || []).length}
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                <span className="text-slate-500 text-[11px] block">تاريخ التجديد / الانتهاء</span>
+                <span className="text-sm font-black text-white font-mono block">
+                  {selectedStoreForFinancials.subscription_end_date
+                    ? new Date(selectedStoreForFinancials.subscription_end_date).toLocaleDateString('ar-SA')
+                    : '—'}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  رسوم التجديد: {selectedStoreForFinancials.renewal_amount || 195} ر.س
+                </span>
+              </div>
+            </div>
+
+            {/* Invoices Breakdown Table */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <CreditCard className="w-4 h-4 text-amber-400" />
+                <span>سجل العمليات والفواتير الضريبية:</span>
+              </h4>
+
+              {(!allInvoices[selectedStoreForFinancials.id] || allInvoices[selectedStoreForFinancials.id].length === 0) ? (
+                <div className="p-8 rounded-2xl bg-slate-950/50 border border-dashed border-slate-800 text-center text-xs text-slate-500 space-y-2">
+                  <CreditCard className="w-8 h-8 text-slate-600 mx-auto" />
+                  <p>لا توجد مدفوعات أو فواتير مسجلة لهذا المتجر حتى الآن.</p>
+                  <p className="text-[11px]">المتجر قيد التجربة أو بانتظار سداد رسوم التأسيس والاشتراك.</p>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-800 overflow-hidden bg-slate-950/60 shadow-inner">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-right border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-800 bg-slate-900/80 text-[11px] font-bold text-slate-400">
+                          <th className="py-3 px-3.5">رقم الفاتورة</th>
+                          <th className="py-3 px-3.5">الباقة / البيان</th>
+                          <th className="py-3 px-3.5">المبلغ</th>
+                          <th className="py-3 px-3.5">طريقة الدفع</th>
+                          <th className="py-3 px-3.5">معرف المعاملة</th>
+                          <th className="py-3 px-3.5">التاريخ والوقت</th>
+                          <th className="py-3 px-3.5 text-center">الحالة</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {allInvoices[selectedStoreForFinancials.id].map((inv) => (
+                          <tr key={inv.id} className="hover:bg-slate-800/30 transition">
+                            <td className="py-3 px-3.5 font-mono text-amber-400 font-bold">
+                              {inv.invoice_number}
+                            </td>
+                            <td className="py-3 px-3.5 text-white font-medium">
+                              {inv.plan_name ||
+                                (inv.invoice_type === 'setup'
+                                  ? 'رسوم تأسيس المتجر'
+                                  : inv.invoice_type === 'upgrade'
+                                  ? 'ترقية باقة'
+                                  : inv.invoice_type === 'extra_cashier'
+                                  ? 'كاشير إضافي'
+                                  : 'تجديد اشتراك')}
+                            </td>
+                            <td className="py-3 px-3.5 font-mono text-emerald-400 font-black text-sm">
+                              {inv.amount.toLocaleString()} {inv.currency || 'SAR'}
+                            </td>
+                            <td className="py-3 px-3.5">
+                              <span className="px-2 py-0.5 rounded-lg bg-slate-900 border border-slate-700 text-[11px] font-mono font-bold text-slate-300 inline-flex items-center gap-1">
+                                {inv.payment_method === 'mada'
+                                  ? '💳 مدى Mada'
+                                  : inv.payment_method === 'visa' || inv.payment_method === 'mastercard' || inv.payment_method === 'credit_card'
+                                  ? '💳 فيزا/ماستر'
+                                  : inv.payment_method === 'apple_pay'
+                                  ? '🍏 Apple Pay'
+                                  : inv.gateway === 'sandbox'
+                                  ? '🧪 Sandbox'
+                                  : inv.payment_method || '💳 بطاقة'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3.5 font-mono text-slate-500 text-[10px] max-w-[120px] truncate" title={inv.gateway_payment_id}>
+                              {inv.gateway_payment_id || '—'}
+                            </td>
+                            <td className="py-3 px-3.5 font-mono text-slate-400 text-[11px]">
+                              {new Date(inv.paid_at || inv.created_at || Date.now()).toLocaleString('ar-SA', {
+                                year: 'numeric',
+                                month: 'numeric',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </td>
+                            <td className="py-3 px-3.5 text-center">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                مكتمل ✅
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedStoreForFinancials(null)}
+                className="px-5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition"
+              >
+                إغلاق الكشف ✕
               </button>
             </div>
           </div>

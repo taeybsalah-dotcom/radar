@@ -1982,7 +1982,45 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       store.status === 'trial' ||
       subscriptionInfo?.status === 'trial' ||
       subscriptionInfo?.requiresSetup === true);
-  const trialDaysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? 7));
+  // ⏱️ Live Precision Countdown Hook for Trial Banner (Days, Hours, Minutes, Seconds)
+  const [trialCountdown, setTrialCountdown] = useState<{
+    days: number;
+    hours: number;
+    minutes: number;
+    seconds: number;
+    isExpired: boolean;
+  }>({ days: 7, hours: 0, minutes: 0, seconds: 0, isExpired: false });
+
+  useEffect(() => {
+    if (!isTrial) return;
+
+    const calculateTimeLeft = () => {
+      const now = Date.now();
+      const targetDate = store.trial_end_date
+        ? new Date(store.trial_end_date).getTime()
+        : subscriptionInfo?.trialEndDate
+        ? new Date(subscriptionInfo.trialEndDate).getTime()
+        : (store.trial_start_date ? new Date(store.trial_start_date).getTime() : now) + 7 * 86400000;
+
+      const diffMs = targetDate - now;
+      if (diffMs <= 0) {
+        setTrialCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, isExpired: true });
+        return;
+      }
+
+      const totalSeconds = Math.floor(diffMs / 1000);
+      const days = Math.floor(totalSeconds / 86400);
+      const hours = Math.floor((totalSeconds % 86400) / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+
+      setTrialCountdown({ days, hours, minutes, seconds, isExpired: false });
+    };
+
+    calculateTimeLeft();
+    const interval = setInterval(calculateTimeLeft, 1000);
+    return () => clearInterval(interval);
+  }, [isTrial, store.trial_end_date, store.trial_start_date, subscriptionInfo?.trialEndDate]);
 
   const baseDomain = store.custom_domain
     ? `https://${store.custom_domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}`
@@ -2042,7 +2080,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   return (
     <div className="max-w-7xl mx-auto space-y-6 animate-fade-in text-slate-200">
       
-      {/* 🚀 Global Sticky Trial Banner (Visible across all merchant dashboard screens only during TRIAL) */}
+      {/* 🚀 Global Sticky Trial Banner with Precision Countdown (Days, Hours, Minutes) */}
       {isTrial && (
         <div className="sticky top-2 z-40 animate-fade-in">
           <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-500/25 via-slate-900/95 to-amber-500/15 border border-amber-500/50 shadow-2xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
@@ -2055,9 +2093,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   <h4 className="text-xs sm:text-sm font-black text-white">
                     فترة التجربة المجانية نشطة
                   </h4>
-                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-black font-mono">
-                    متبقي {trialDaysLeft} {trialDaysLeft === 1 ? 'يوم' : trialDaysLeft === 2 ? 'يومان' : trialDaysLeft <= 10 ? 'أيام' : 'يوماً'} على انتهاء الفترة التجريبية
-                  </span>
+                  <div className="flex items-center gap-1.5 bg-slate-950/80 border border-amber-500/40 px-3 py-1 rounded-full text-amber-300 text-[11px] font-mono font-black shadow-inner">
+                    <Clock className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
+                    <span>
+                      متبقي {trialCountdown.days} {trialCountdown.days === 1 ? 'يوم' : trialCountdown.days === 2 ? 'يومان' : trialCountdown.days <= 10 ? 'أيام' : 'يوماً'} و {String(trialCountdown.hours).padStart(2, '0')} ساعة و {String(trialCountdown.minutes).padStart(2, '0')} دقيقة
+                    </span>
+                  </div>
                 </div>
                 <p className="text-[11px] sm:text-xs text-slate-300 truncate mt-0.5">
                   استمتع بكافة ميزات المنصة المفتوحة. اشترك في باقة متجرك لتثبيت الحساب والاستمرار دون انقطاع.
@@ -5934,14 +5975,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         key={plan.id || plan.code}
                         className={`rounded-3xl p-6 sm:p-7 space-y-6 flex flex-col justify-between transition-all duration-300 relative ${
                           isCurrent
-                            ? 'bg-slate-950 border-2 border-amber-500 shadow-xl shadow-amber-500/10'
+                            ? 'bg-slate-950 border-2 border-emerald-500 shadow-xl shadow-emerald-500/15 ring-1 ring-emerald-500/30'
                             : 'bg-slate-950/80 border border-slate-800 hover:border-amber-500/40 hover:shadow-lg'
                         }`}
                       >
                         {isCurrent && (
-                          <div className="absolute -top-3.5 right-6 px-3.5 py-1 rounded-full bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 text-[11px] font-black shadow-md flex items-center gap-1.5">
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span>باقتك الحالية</span>
+                          <div className="absolute -top-3.5 right-6 px-3.5 py-1 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 text-[11px] font-black shadow-md flex items-center gap-1.5 animate-fade-in">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>باقتك الحالية النشطة ✅</span>
                           </div>
                         )}
 

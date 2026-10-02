@@ -3822,10 +3822,17 @@ export const LoyaltyService = {
   // 17. إدارة الفواتير ودورة الاشتراك وبوابات الدفع (SaaS Billing & Subscriptions)
   // ==============================================================================
 
+  // جلب كافة الفواتير لجميع المتاجر (Super Admin Financial Log)
+  async getAllInvoices(): Promise<Record<string, StoreInvoice[]>> {
+    const localInvoices = getLocalData<Record<string, StoreInvoice[]>>(
+      STORAGE_KEYS.LOCAL_INVOICES,
+      INITIAL_INVOICES
+    );
+    return localInvoices || {};
+  },
+
   // جلب فواتير المتجر
   async getStoreInvoices(storeId: string): Promise<StoreInvoice[]> {
-    // 🛑 Stage 12B: 'store_invoices' is not part of the currently deployed live schema.
-    // Return local invoices cache directly without firing unnecessary failing network requests.
     const localInvoices = getLocalData<Record<string, StoreInvoice[]>>(
       STORAGE_KEYS.LOCAL_INVOICES,
       INITIAL_INVOICES
@@ -3851,38 +3858,11 @@ export const LoyaltyService = {
     const gateway = payload.gateway || 'moyasar';
     const gatewayPaymentId = payload.gatewayPaymentId || `pay_${gateway}_${Date.now()}`;
 
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.rpc('process_subscription_payment', {
-          p_store_id: payload.storeId,
-          p_invoice_type: payload.invoiceType === 'upgrade' ? 'renewal' : payload.invoiceType,
-          p_amount: payload.amount,
-          p_payment_method: paymentMethod,
-          p_gateway: gateway,
-          p_gateway_payment_id: gatewayPaymentId,
-        });
-
-        if (!error && data && data.success) {
-          // جلب المتجر المحدث من Supabase
-          const { data: sData } = await supabase
-            .from('stores')
-            .select('*')
-            .eq('id', payload.storeId)
-            .single();
-
-          if (sData) updatedStore = sData as Store;
-        }
-      } catch (e) {
-        console.warn('Supabase process_subscription_payment RPC failed, applying local fallback', e);
-      }
-    }
-
-    // المعالجة المحلية وضمان المزامنة الفورية
+    // استخراج الخطة لمعرفة مدة الاشتراك بالأشهر (duration_months)
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const storeIdx = stores.findIndex((s) => s.id === payload.storeId);
     let currentStore = storeIdx !== -1 ? stores[storeIdx] : INITIAL_STORE;
 
-    // استخراج الخطة لمعرفة مدة الاشتراك بالأشهر (duration_months)
     const allBillingPlans = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, []);
     const targetPlan =
       (payload.planId ? allBillingPlans.find((p) => p.id === payload.planId || p.code === payload.planId) : null) ||
@@ -3897,6 +3877,54 @@ export const LoyaltyService = {
     const invoiceNum = `INV-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
       now.getDate()
     ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    let computedPlanName = targetPlan?.name || currentStore.subscription_plan || (payload.invoiceType === 'setup' ? 'باقة تأسيس المتجر' : 'تجديد الاشتراك');
+
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('process_subscription_payment', {
+          p_store_id: payload.storeId,
+          p_invoice_type: payload.invoiceType === 'upgrade' ? 'renewal' : payload.invoiceType,
+          p_amount: payload.amount,
+          p_payment_method: paymentMethod,
+          p_gateway: gateway,
+          p_gateway_payment_id: gatewayPaymentId,
+        });
+
+        if (!error && data && data.success) {
+          const { data: sData } = await supabase
+            .from('stores')
+            .select('*')
+            .eq('id', payload.storeId)
+            .single();
+
+          if (sData) updatedStore = sData as Store;
+        }
+
+        // Direct DB store update to guarantee active sync in Supabase
+        if (isUUID(payload.storeId)) {
+          const nextEndIso = new Date(Date.now() + durationMs).toISOString();
+          await supabase
+            .from('stores')
+            .update({
+              setup_fee_paid: true,
+              status: 'active',
+              subscription_status: 'active',
+              subscription_active: true,
+              subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id || null,
+              plan_code: targetPlan?.code || currentStore.plan_code || null,
+              subscription_plan: targetPlan?.name || currentStore.subscription_plan || null,
+              renewal_amount: targetPlan?.amount || payload.amount,
+              subscription_start_date: now.toISOString(),
+              subscription_end_date: nextEndIso,
+              updated_at: now.toISOString(),
+            })
+            .eq('id', payload.storeId);
+        }
+      } catch (e) {
+        console.warn('Supabase process_subscription_payment RPC failed, applying local fallback', e);
+      }
+    }
 
     if (payload.invoiceType === 'setup') {
       // 1. دورة التأسيس: 500 ريال لمرة واحدة + تفعيل فترة الاشتراك الأولى ديناميكياً
@@ -3959,6 +3987,8 @@ export const LoyaltyService = {
       payment_method: paymentMethod,
       gateway: gateway,
       gateway_payment_id: gatewayPaymentId,
+      plan_id: targetPlan?.id || currentStore.subscription_plan_id,
+      plan_name: computedPlanName,
       paid_at: now.toISOString(),
       created_at: now.toISOString(),
     };

@@ -36,6 +36,8 @@ export interface StoreInvoice {
   payment_method?: string; // 'mada' | 'credit_card' | 'apple_pay' | 'stc_pay' | 'sandbox'
   gateway: 'moyasar' | 'tap' | 'sandbox';
   gateway_payment_id?: string;
+  plan_id?: string;
+  plan_name?: string;
   paid_at?: string;
   created_at?: string;
 }

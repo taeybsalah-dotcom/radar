@@ -42,9 +42,51 @@ import {
   KeyRound,
 } from 'lucide-react';
 
-interface PartnerDashboardProps {
-  onBackToApp?: () => void;
+export function getLeadStatusArabic(status?: string): { label: string; colorClass: string } {
+  switch (status) {
+    case 'NEW':
+      return { label: 'طلب جديد 🆕', colorClass: 'bg-blue-500/20 text-blue-300 border-blue-500/40' };
+    case 'CONTACTED':
+      return { label: 'تم التواصل 📞', colorClass: 'bg-purple-500/20 text-purple-300 border-purple-500/40' };
+    case 'PENDING':
+      return { label: 'قيد المراجعة ⏳', colorClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
+    case 'APPROVED':
+      return { label: 'معتمد ومؤهل ✅', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
+    case 'CONVERTING':
+      return { label: 'جاري التأسيس ⚙️', colorClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
+    case 'CONVERTED':
+      return { label: 'مشترك مدفوع 👑', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
+    case 'REJECTED':
+      return { label: 'مرفوض / غير مهتم ✕', colorClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40' };
+    default:
+      return { label: status || 'معلق', colorClass: 'bg-slate-800 text-slate-300 border-slate-700' };
+  }
 }
+
+export function getCommissionStatusArabic(status?: string): { label: string; colorClass: string } {
+  switch (status) {
+    case 'PENDING':
+      return { label: 'معلق (فترة التجربة) ⏳', colorClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
+    case 'EARNED':
+      return { label: 'مستحقة وجاهزة للصرف 💰', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
+    case 'PAID':
+      return { label: 'تم الصرف والتحويل ✅', colorClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40' };
+    case 'CANCELLED':
+      return { label: 'ملغاة ✕', colorClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40' };
+    default:
+      return { label: status || 'معلق', colorClass: 'bg-slate-800 text-slate-300 border-slate-700' };
+  }
+}
+
+const PARTNER_STATUS_FILTER_TABS = [
+  { id: 'ALL', label: 'الكل' },
+  { id: 'NEW', label: 'طلبات جديدة' },
+  { id: 'CONTACTED', label: 'تم التواصل' },
+  { id: 'PENDING', label: 'قيد المراجعة' },
+  { id: 'APPROVED', label: 'معتمد' },
+  { id: 'CONVERTING', label: 'جاري التأسيس' },
+  { id: 'CONVERTED', label: 'مشترك مدفوع' },
+];
 
 const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): SalesKitMessage[] => {
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.sa';
@@ -131,6 +173,10 @@ const defaultBonusMilestones: PartnerBonusMilestone[] = [
   { id: 'b-20', milestone: 20, bonus_amount: 3500, status: 'LOCKED', current_progress: 0, required_merchants: 20 },
   { id: 'b-50', milestone: 50, bonus_amount: 10000, status: 'LOCKED', current_progress: 0, required_merchants: 50 },
 ];
+
+export interface PartnerDashboardProps {
+  onBackToApp?: () => void;
+}
 
 export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp }) => {
   // 1. Auth State
@@ -982,17 +1028,20 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               </div>
             ) : (
               <div className="divide-y divide-slate-800/60">
-                {leads.slice(0, 5).map((l) => (
-                  <div key={l.id} className="py-3 flex items-center justify-between text-xs">
-                    <div>
-                      <strong className="text-white block">{l.store_name}</strong>
-                      <span className="text-[11px] text-slate-400">{l.manager_name} • {l.city || 'الرياض'}</span>
+                {leads.slice(0, 5).map((l) => {
+                  const statusInfo = getLeadStatusArabic(l.status);
+                  return (
+                    <div key={l.id} className="py-3 flex items-center justify-between text-xs">
+                      <div>
+                        <strong className="text-white block">{l.store_name}</strong>
+                        <span className="text-[11px] text-slate-400">{l.manager_name} • {l.city || 'الرياض'}</span>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${statusInfo.colorClass}`}>
+                        {statusInfo.label}
+                      </span>
                     </div>
-                    <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                      {l.status}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1038,17 +1087,17 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
             {/* Status Tabs */}
             <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
-              {['ALL', 'NEW', 'CONTACTED', 'PENDING', 'APPROVED', 'CONVERTING', 'CONVERTED'].map((st) => (
+              {PARTNER_STATUS_FILTER_TABS.map((tab) => (
                 <button
-                  key={st}
-                  onClick={() => setLeadsStatusFilter(st)}
+                  key={tab.id}
+                  onClick={() => setLeadsStatusFilter(tab.id)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap ${
-                    leadsStatusFilter === st
-                      ? 'bg-amber-500 text-slate-950'
+                    leadsStatusFilter === tab.id
+                      ? 'bg-amber-500 text-slate-950 font-black shadow-md'
                       : 'bg-slate-950 hover:bg-slate-800 text-slate-400 border border-slate-800'
                   }`}
                 >
-                  {st === 'ALL' ? 'الكل' : st}
+                  {tab.label}
                 </button>
               ))}
             </div>
@@ -1080,37 +1129,40 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
-                    {leads.map((l) => (
-                      <tr key={l.id} className="hover:bg-slate-800/40 transition">
-                        <td className="py-4 px-4">
-                          <strong className="text-white block">{l.store_name}</strong>
-                          <span className="text-[11px] text-slate-400">{l.manager_name}</span>
-                        </td>
-                        <td className="py-4 px-4 font-mono text-slate-300" dir="ltr">
-                          {l.phone}
-                        </td>
-                        <td className="py-4 px-4 text-slate-300">
-                          {l.city || '—'} {l.business_type ? `(${l.business_type})` : ''}
-                        </td>
-                        <td className="py-4 px-4">
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                            {l.status}
-                          </span>
-                        </td>
-                        <td className="py-4 px-4 text-slate-400 font-mono text-[11px]">
-                          {new Date(l.created_at).toLocaleDateString('ar-SA')}
-                        </td>
-                        <td className="py-4 px-4 text-center">
-                          <button
-                            onClick={() => setSelectedLead(l)}
-                            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition inline-flex items-center gap-1"
-                          >
-                            <Eye className="w-3.5 h-3.5 text-amber-400" />
-                            <span>متابعة وتواصل</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {leads.map((l) => {
+                      const statusInfo = getLeadStatusArabic(l.status);
+                      return (
+                        <tr key={l.id} className="hover:bg-slate-800/40 transition">
+                          <td className="py-4 px-4">
+                            <strong className="text-white block">{l.store_name}</strong>
+                            <span className="text-[11px] text-slate-400">{l.manager_name}</span>
+                          </td>
+                          <td className="py-4 px-4 font-mono text-slate-300" dir="ltr">
+                            {l.phone}
+                          </td>
+                          <td className="py-4 px-4 text-slate-300">
+                            {l.city || '—'} {l.business_type ? `(${l.business_type})` : ''}
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${statusInfo.colorClass}`}>
+                              {statusInfo.label}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4 text-slate-400 font-mono text-[11px]">
+                            {new Date(l.created_at).toLocaleDateString('ar-SA')}
+                          </td>
+                          <td className="py-4 px-4 text-center">
+                            <button
+                              onClick={() => setSelectedLead(l)}
+                              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition inline-flex items-center gap-1"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-amber-400" />
+                              <span>متابعة وتواصل</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1510,17 +1562,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                           {c.commission_amount} ريال
                         </td>
                         <td className="py-4 px-4">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              c.status === 'EARNED'
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                                : c.status === 'PAID'
-                                ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                            }`}
-                          >
-                            {c.status}
-                          </span>
+                          {(() => {
+                            const commStatus = getCommissionStatusArabic(c.status);
+                            return (
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${commStatus.colorClass}`}>
+                                {commStatus.label}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td className="py-4 px-4 font-mono text-[11px] text-slate-400">
                           {new Date(c.created_at).toLocaleDateString('ar-SA')}
@@ -1567,7 +1616,9 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               </div>
               <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
                 <span className="text-slate-500 block text-[11px]">الحالة الراهنة</span>
-                <span className="text-amber-400 font-bold mt-1 block">{selectedLead.status}</span>
+                <span className="text-amber-400 font-bold mt-1 block">
+                  {getLeadStatusArabic(selectedLead.status).label}
+                </span>
               </div>
               <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800">
                 <span className="text-slate-500 block text-[11px]">المدينة</span>
