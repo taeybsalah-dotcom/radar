@@ -88,15 +88,17 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 1. مشترك مدفوع (Paid Subscriber) - أولوية مطلقة وحتمية بشرط سداد الرسوم
-  const isPaid = Boolean(
-    Boolean(item.setup_fee_paid) ||
+  const isExplicitTrial = item.status === 'trial' || item.subscription_status === 'trial' || item.setup_fee_paid === false;
+
+  // 1. مشترك مدفوع (Paid Subscriber) - أولوية مطلقة وحتمية بشرط سداد الرسوم الفعلي وعدم كونه في الفترة التجريبية
+  const isPaid = !isExplicitTrial && Boolean(
+    item.setup_fee_paid ||
       item.status === 'مشترك مدفوع' ||
       item.status === 'PAID_ACTIVE' ||
       item.lifecycle_stage === 'مشترك مدفوع'
   );
 
-  if (isPaid && item.status !== 'trial' && item.subscription_status !== 'trial') {
+  if (isPaid) {
     return {
       key: 'PAID_ACTIVE',
       label: 'مشترك مدفوع',
@@ -106,11 +108,11 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 2. تحت المراجعة (Under Review)
+  // 2. تحت المراجعة (Under Review / Suspended)
   if (
     item.status === 'تحت المراجعة' ||
     item.status === 'UNDER_REVIEW' ||
-    item.status === 'PENDING' ||
+    item.status === 'suspended' ||
     item.status === 'CONTACTED' ||
     item.lifecycle_stage === 'تحت المراجعة'
   ) {
@@ -123,7 +125,7 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 3. جاري التأسيس (In Setup)
+  // 3. جاري التأسيس (In Setup / Converting)
   if (
     item.status === 'جاري التأسيس' ||
     item.status === 'IN_SETUP' ||
@@ -139,13 +141,14 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 4. تم التأسيس (Setup Complete / Trial)
+  // 4. تم التأسيس (Setup Complete / Trial / Converted to Store)
   if (
     item.status === 'تم التأسيس' ||
     item.status === 'SETUP_COMPLETE' ||
+    item.status === 'CONVERTED' ||
+    item.status === 'APPROVED' ||
     item.status === 'trial' ||
     item.subscription_status === 'trial' ||
-    item.status === 'APPROVED' ||
     item.lifecycle_stage === 'تم التأسيس' ||
     Boolean(item.id && item.slug)
   ) {

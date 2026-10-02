@@ -321,12 +321,13 @@ export function normalizeStore(s: any): Store {
   const hasPaidInvoice = Boolean(latestPaidInvoice);
 
   // 2. التحقق الحتمي من حالة الاشتراك المدفوع (Paid Active)
-  const isPaid = Boolean(
+  // لا يمكن للمتجر أن يكون مشتركاً مدفوعاً إلا إذا سدد رسوم التأسيس أو اشترك فعلياً في باقة
+  const isExplicitTrial = s.status === 'trial' || s.subscription_status === 'trial' || s.setup_fee_paid === false;
+  const isPaid = !isExplicitTrial && Boolean(
     hasPaidInvoice ||
       s.setup_fee_paid === true ||
       s.status === 'مشترك مدفوع' ||
-      s.lifecycle_stage === 'مشترك مدفوع' ||
-      (s.subscription_status === 'active' && s.setup_fee_paid === true)
+      (s.lifecycle_stage === 'مشترك مدفوع' && s.setup_fee_paid === true)
   );
 
   // حساب باقة الاشتراك وتواريخ النهاية بذكاء
@@ -365,6 +366,8 @@ export function normalizeStore(s: any): Store {
     ? 'مشترك مدفوع'
     : s.status === 'suspended' || s.subscription_status === 'suspended'
     ? 'تحت المراجعة'
+    : s.lifecycle_stage === 'جاري التأسيس'
+    ? 'جاري التأسيس'
     : 'تم التأسيس';
 
   return {
@@ -373,7 +376,7 @@ export function normalizeStore(s: any): Store {
     status: isPaid ? (s.status === 'suspended' ? 'suspended' : 'active') : (s.status === 'suspended' ? 'suspended' : 'trial'),
     subscription_status: isPaid ? (s.subscription_status === 'suspended' ? 'suspended' : 'active') : (s.subscription_status === 'suspended' ? 'suspended' : 'trial'),
     lifecycle_stage: finalStage,
-    subscription_plan: computedPlanName || (isPaid ? 'الباقة الأساسية' : 'تجربة مجانية (7 أيام)'),
+    subscription_plan: isPaid ? (computedPlanName || 'الباقة الأساسية') : (s.subscription_plan && s.subscription_plan !== 'trial' && s.subscription_plan !== 'الباقة الأساسية' ? s.subscription_plan : 'فترة تجربة مجانية (7 أيام)'),
     subscription_plan_id: computedPlanId || (isPaid ? 'plan-3m' : undefined),
     plan_code: computedPlanCode || (isPaid ? 'PLAN_3M' : undefined),
     subscription_start_date: isPaid ? computedStartDate : trialStart,
@@ -400,7 +403,19 @@ export function normalizeLead(l: any): MerchantLead {
     };
   }
 
-  const stageInfo = resolveUnifiedStage(l);
+  let effectiveStatus = (l.status as LeadStatus) || 'NEW';
+  let effectiveStage = l.lifecycle_stage;
+
+  if (l.converted_store_id || l.status === 'CONVERTED' || l.status === 'APPROVED' || l.status === 'SETUP_COMPLETE' || l.status === 'تم التأسيس') {
+    effectiveStatus = 'CONVERTED';
+    effectiveStage = 'تم التأسيس';
+  }
+
+  const stageInfo = resolveUnifiedStage({
+    ...l,
+    status: effectiveStatus,
+    lifecycle_stage: effectiveStage,
+  });
 
   return {
     id: String(l.id || `lead-${Date.now()}`),
@@ -411,7 +426,7 @@ export function normalizeLead(l: any): MerchantLead {
     business_type: l.business_type || l.businessType || null,
     attribution_source: l.attribution_source === 'REFERRAL' ? 'REFERRAL' : 'DIRECT',
     referral_code: l.referral_code || l.referralCode || null,
-    status: (l.status as LeadStatus) || 'NEW',
+    status: effectiveStatus,
     lifecycle_stage: stageInfo.label,
     conversion_started_at: l.conversion_started_at || null,
     conversion_error: l.conversion_error || null,
@@ -1064,6 +1079,48 @@ export const LoyaltyService = {
     );
     saveLocalData(STORAGE_KEYS.LOCAL_TIERS, tiers);
 
+    // 🎯 Auto-link with matching lead in merchant_leads if exists by phone or store name
+    try {
+      const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+      const targetPhone = normalizePhone(payload.manager_contact);
+      const matchingLead = allLeads.find(
+        (l) =>
+          (l.phone && normalizePhone(l.phone) === targetPhone) ||
+          (l.store_name && l.store_name.trim().toLowerCase() === payload.name.trim().toLowerCase())
+      );
+      if (matchingLead) {
+        matchingLead.status = 'CONVERTED';
+        matchingLead.converted_store_id = newStore.id;
+        matchingLead.lifecycle_stage = 'تم التأسيس';
+        matchingLead.updated_at = new Date().toISOString();
+        saveLocalData(STORAGE_KEYS.LOCAL_LEADS, allLeads);
+
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          Promise.resolve(
+            supabase
+              .from('merchant_leads')
+              .update({
+                status: 'CONVERTED',
+                converted_store_id: newStore.id,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', matchingLead.id)
+          ).catch(() => {});
+        }
+
+        // Record pending affiliate commission for partner
+        LoyaltyService.recordLeadConversionCommission(matchingLead.id, newStore.id).catch(() => {});
+        invalidateLeadsCache();
+        invalidatePartnersCache();
+        LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: newStore.id });
+        LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+      }
+    } catch (linkErr) {
+      console.warn('[createStoreConcierge] Auto lead linking warning:', linkErr);
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: newStore.id });
     return {
       success: true,
       store: newStore,
@@ -6289,6 +6346,28 @@ export const LoyaltyService = {
     }
 
     const supabase = getSupabaseClient();
+    const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
+    const reconcileLead = (lead: any): MerchantLead => {
+      const norm = normalizeLead(lead);
+      const leadPhone = normalizePhone(norm.phone);
+      const matchingStore = localStores.find(
+        (s) =>
+          (s.id && norm.converted_store_id === s.id) ||
+          (s.manager_contact && normalizePhone(s.manager_contact) === leadPhone) ||
+          (s.name && s.name.trim().toLowerCase() === norm.store_name.trim().toLowerCase())
+      );
+      if (matchingStore) {
+        const isPaidStore = matchingStore.setup_fee_paid === true && matchingStore.status !== 'trial';
+        return {
+          ...norm,
+          converted_store_id: matchingStore.id,
+          status: 'CONVERTED',
+          lifecycle_stage: isPaidStore ? 'مشترك مدفوع' : 'تم التأسيس',
+        };
+      }
+      return norm;
+    };
+
     if (supabase) {
       try {
         const { data, error } = await supabase
@@ -6296,7 +6375,7 @@ export const LoyaltyService = {
           .select('*')
           .order('created_at', { ascending: false });
         if (!error && Array.isArray(data)) {
-          const validLeads = data.map(normalizeLead);
+          const validLeads = data.map(reconcileLead);
           saveLocalData(STORAGE_KEYS.LOCAL_LEADS, validLeads);
           leadsListCache = { data: validLeads, timestamp: Date.now() };
           return validLeads;
@@ -6306,7 +6385,7 @@ export const LoyaltyService = {
       }
     }
     const local = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-    const validLocal = local.map(normalizeLead);
+    const validLocal = local.map(reconcileLead);
     leadsListCache = { data: validLocal, timestamp: Date.now() };
     return validLocal;
   },

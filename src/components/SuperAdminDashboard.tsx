@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Store, StoreOnboardingPayload, MerchantLead, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage, getStoreUnifiedStage } from '../types';
-import { LoyaltyService } from '../lib/supabase';
+import { Store, StoreOnboardingPayload, MerchantLead, LeadStatus, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage, getStoreUnifiedStage } from '../types';
+import { LoyaltyService, normalizePhone } from '../lib/supabase';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
@@ -436,12 +436,32 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const handleUpdateStoreStage = async (targetStore: Store, newStage: UnifiedLifecycleStage) => {
     try {
       const isPaid = newStage === 'مشترك مدفوع';
+      const isSuspended = newStage === 'تحت المراجعة';
+      const isTrial = !isPaid && !isSuspended;
+
       await LoyaltyService.updateStoreSettings(targetStore.id, {
-        status: isPaid ? 'active' : (newStage as any),
-        subscription_status: isPaid ? 'active' : (targetStore.subscription_status || 'trial'),
-        setup_fee_paid: isPaid ? true : targetStore.setup_fee_paid,
+        status: isPaid ? 'active' : isSuspended ? 'suspended' : 'trial',
+        subscription_status: isPaid ? 'active' : isSuspended ? 'suspended' : 'trial',
+        setup_fee_paid: isPaid,
         lifecycle_stage: newStage,
       });
+
+      // Also sync matching lead status in real-time
+      try {
+        const allLeads = await LoyaltyService.getAllLeads();
+        const targetPhone = normalizePhone(targetStore.manager_contact);
+        const matchingLead = allLeads.find(
+          (l) =>
+            l.converted_store_id === targetStore.id ||
+            (l.phone && normalizePhone(l.phone) === targetPhone) ||
+            (l.store_name && l.store_name.trim().toLowerCase() === targetStore.name.trim().toLowerCase())
+        );
+        if (matchingLead) {
+          const leadStatus: LeadStatus = isPaid ? 'CONVERTED' : isSuspended ? 'PENDING' : 'CONVERTED';
+          await LoyaltyService.updateLeadStatus(matchingLead.id, leadStatus);
+        }
+      } catch {}
+
       await loadStores();
     } catch (e) {
       console.error('Failed to update store stage', e);

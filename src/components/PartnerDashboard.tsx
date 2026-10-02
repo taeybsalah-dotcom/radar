@@ -10,7 +10,7 @@ import {
   resolveUnifiedStage,
   getStoreUnifiedStage,
 } from '../types';
-import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
+import { LoyaltyService, getSupabaseClient, normalizeLead, normalizePhone } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
@@ -48,8 +48,8 @@ import {
   KeyRound,
 } from 'lucide-react';
 
-export function getLeadStatusArabic(status?: string): { label: string; colorClass: string } {
-  const stage = resolveUnifiedStage({ status });
+export function getLeadStatusArabic(status?: string, lead?: any): { label: string; colorClass: string } {
+  const stage = resolveUnifiedStage(lead || { status });
   return {
     label: `${stage.label} ${stage.icon}`,
     colorClass: stage.badgeClass,
@@ -443,7 +443,12 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           const { data, count, error } = await query.range(from, to).order('created_at', { ascending: false });
 
           if (!error && data && data.length > 0) {
-            setLeads(data as MerchantLead[]);
+            const allLocalLeads = await LoyaltyService.getAllLeads();
+            const normalized = (data as any[]).map((d) => {
+              const localMatch = allLocalLeads.find((l) => l.id === d.id || (l.phone && d.phone && normalizePhone(l.phone) === normalizePhone(d.phone)));
+              return normalizeLead(localMatch || d);
+            });
+            setLeads(normalized);
             setTotalLeads(count || data.length);
             setLeadsPage(pageToLoad);
             setLoadingLeads(false);
@@ -1073,7 +1078,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             ) : (
               <div className="divide-y divide-slate-800/60">
                 {leads.slice(0, 5).map((l) => {
-                  const statusInfo = getLeadStatusArabic(l.status);
+                  const statusInfo = getLeadStatusArabic(l.status, l);
                   return (
                     <div key={l.id} className="py-3 flex items-center justify-between text-xs">
                       <div>
@@ -1174,7 +1179,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
                     {leads.map((l) => {
-                      const statusInfo = getLeadStatusArabic(l.status);
+                      const statusInfo = getLeadStatusArabic(l.status, l);
                       return (
                         <tr key={l.id} className="hover:bg-slate-800/40 transition">
                           <td className="py-4 px-4">
