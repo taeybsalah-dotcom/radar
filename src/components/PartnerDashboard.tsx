@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   PartnerAccount,
   PartnerCommission,
@@ -8,9 +8,12 @@ import {
   UnifiedLifecycleStage,
   UnifiedStageInfo,
   resolveUnifiedStage,
+  getStoreUnifiedStage,
 } from '../types';
 import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
+import { debounce } from '../lib/debounce';
+import { useAuth } from '../context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ShieldCheck,
@@ -171,12 +174,21 @@ export interface PartnerDashboardProps {
 }
 
 export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp }) => {
+  const { user, login: authLogin, logout: authLogout } = useAuth();
+
   // 1. Auth State
   const [partner, setPartner] = useState<any | null>(() => {
+    if (user?.role === 'partner' && user.metadata) return user.metadata;
     return LoyaltyService.getPartnerSession();
   });
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user?.role === 'partner' && user.metadata && !partner) {
+      setPartner(user.metadata);
+    }
+  }, [user, partner]);
 
   // Login Form State (Phone + PIN)
   const [phoneInput, setPhoneInput] = useState('');
@@ -251,6 +263,11 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
   const openWhatsApp = (text: string) => {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
+
+  // Dynamic Page Document Title Isolation
+  useEffect(() => {
+    document.title = 'بوابة الشريك | Radar Partner';
+  }, []);
 
   // Fetch Stats, Assets, Commissions, Bonuses when authenticated
   useEffect(() => {
@@ -467,18 +484,12 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
     }
   }, [partner, activeTab, leadsStatusFilter, fetchLeads]);
 
-  // 🔄 Real-time synchronization when Super Admin updates lead status or creates store
-  useEffect(() => {
-    if (!partner) return;
-    const unsubscribe = LoyaltyEvents.listen((event) => {
-      if (
-        event.type === 'LEAD_UPDATED' ||
-        event.type === 'PARTNER_UPDATED' ||
-        event.type === 'PAYMENT_COMPLETED' ||
-        event.type === 'STORE_UPDATED'
-      ) {
-        fetchLeads(leadsPage);
-        LoyaltyService.getPartnerFinancialSummary(partner.id).then((fin) => {
+  // 🔄 Debounced real-time synchronization when Super Admin updates lead status or creates store (300ms)
+  const debouncedSyncPartnerData = useMemo(
+    () =>
+      debounce((pId: string, page: number) => {
+        fetchLeads(page);
+        LoyaltyService.getPartnerFinancialSummary(pId).then((fin) => {
           setStats((prev: any) => ({
             ...prev,
             financials: {
@@ -488,13 +499,30 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             },
           }));
         });
-        LoyaltyService.getPartnerCommissions(partner.id).then((comms) => {
+        LoyaltyService.getPartnerCommissions(pId).then((comms) => {
           setCommissions(comms);
         });
+      }, 300),
+    [fetchLeads]
+  );
+
+  useEffect(() => {
+    if (!partner) return;
+    const unsubscribe = LoyaltyEvents.listen((event) => {
+      if (
+        event.type === 'LEAD_UPDATED' ||
+        event.type === 'PARTNER_UPDATED' ||
+        event.type === 'PAYMENT_COMPLETED' ||
+        event.type === 'STORE_UPDATED'
+      ) {
+        debouncedSyncPartnerData(partner.id, leadsPage);
       }
     });
-    return () => unsubscribe();
-  }, [partner, leadsPage, fetchLeads]);
+    return () => {
+      unsubscribe();
+      debouncedSyncPartnerData.cancel();
+    };
+  }, [partner, leadsPage, debouncedSyncPartnerData]);
 
   // Handle Login via Phone + PIN
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -519,6 +547,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       }
 
       setPartner(res.partner);
+      authLogin('partner', {
+        id: res.partner.id,
+        partnerId: res.partner.id,
+        partnerSlug: res.partner.slug || res.partner.referral_code,
+        name: res.partner.display_name || res.partner.name,
+        phone: res.partner.affiliates?.phone || res.partner.phone,
+        metadata: res.partner,
+      });
       setPhoneInput('');
       setPinInput('');
     } catch (err: any) {
@@ -529,6 +565,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
   };
 
   const handleLogout = () => {
+    authLogout('partner');
     LoyaltyService.clearPartnerSession();
     sessionStorage.removeItem('RADAR_PARTNER_AUTH_TOKEN');
     setPartner(null);

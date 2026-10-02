@@ -1,3 +1,26 @@
+// 🛡️ Strict 5-Tier Role-Based Access Control (RBAC)
+export type UserRole = 'super_admin' | 'partner' | 'merchant' | 'cashier' | 'customer';
+
+export interface AuthUser {
+  id: string;
+  role: UserRole;
+  phone?: string;
+  name?: string;
+  storeId?: string;
+  storeSlug?: string;
+  partnerId?: string;
+  partnerSlug?: string;
+  token?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface AuthSessionState {
+  user: AuthUser | null;
+  role: UserRole | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+}
+
 export interface StoreBanner {
   id: string;
   image_url: string;
@@ -146,6 +169,27 @@ export function resolveUnifiedStage(
     icon: '🆕',
     isPaidActive: false,
   };
+}
+
+/**
+ * 🏛️ Strict Single Source of Truth Helper for 5-Stage Pipeline
+ * Always returns ONLY one of: 'طلب جديد' | 'جاري التأسيس' | 'تم التأسيس' | 'تحت المراجعة' | 'مشترك مدفوع'
+ */
+export function getStoreUnifiedStage(
+  store:
+    | {
+        setup_fee_paid?: boolean;
+        subscription_status?: string;
+        status?: string;
+        lifecycle_stage?: string;
+        subscription_active?: boolean;
+        id?: string;
+        slug?: string;
+      }
+    | null
+    | undefined
+): UnifiedLifecycleStage {
+  return resolveUnifiedStage(store).label;
 }
 
 export interface StoreInvoice {

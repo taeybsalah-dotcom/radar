@@ -100,7 +100,19 @@ export default async function handler(req: any, res: any) {
     }
 
     let portalTitle = storeName;
-    if (portal === 'cashier') {
+    if (portal === 'super-admin') {
+      portalTitle = 'بوابة المالك | Radar Platform Owner';
+      storeName = 'Radar Platform Owner';
+    } else if (portal === 'partner') {
+      portalTitle = 'بوابة الشريك | Radar Partner';
+      storeName = 'Radar Partner';
+    } else if (portal === 'join') {
+      portalTitle = 'انضمام التجار | Radar Merchant Registration';
+      storeName = 'Radar Merchant Registration';
+    } else if (portal === 'onboarding') {
+      portalTitle = 'معالج إعداد المتجر | Merchant Onboarding';
+      storeName = 'Merchant Onboarding';
+    } else if (portal === 'cashier') {
       portalTitle = `${storeName} - الكاشير`;
     } else if (portal === 'admin') {
       portalTitle = `${storeName} - لوحة التاجر`;

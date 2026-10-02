@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Store, StoreOnboardingPayload, MerchantLead, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage } from '../types';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Store, StoreOnboardingPayload, MerchantLead, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage, getStoreUnifiedStage } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
+import { debounce } from '../lib/debounce';
+import { useAuth } from '../context/AuthContext';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
 import { generateSafeSlug, resolveUniqueStoreSlug } from '../lib/slugUtils';
 import {
@@ -207,19 +209,35 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  const { role, login: authLogin, logout: authLogout } = useAuth();
+
   // Master Security Gate State (🔒 حماية بوابة المالك برمز رئيسي)
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true';
+    return role === 'super_admin' || sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true';
   });
   const [masterPinInput, setMasterPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
+
+  useEffect(() => {
+    document.title = 'بوابة المالك | Radar Platform Owner';
+  }, []);
+
+  useEffect(() => {
+    if (role === 'super_admin' && !isAuthenticated) {
+      setIsAuthenticated(true);
+    }
+  }, [role, isAuthenticated]);
 
   const handleMasterLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const correctPin = '2026';
     if (masterPinInput.trim() === correctPin) {
       sessionStorage.setItem('RADAR_SUPER_ADMIN_AUTH', 'true');
+      authLogin('super_admin', {
+        id: 'super_admin_1',
+        name: 'مالك المنصة (Super Admin)',
+      });
       setIsAuthenticated(true);
       setPinError(null);
     } else {
@@ -228,6 +246,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   };
 
   const handleMasterLogout = () => {
+    authLogout('super_admin');
     sessionStorage.removeItem('RADAR_SUPER_ADMIN_AUTH');
     setIsAuthenticated(false);
     setMasterPinInput('');
@@ -370,26 +389,6 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     }
   };
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    loadStores();
-
-    const unsubscribe = LoyaltyEvents.listen((event: LoyaltyEventPayload) => {
-      if (
-        event.type === 'STORE_UPDATED' ||
-        event.type === 'PAYMENT_COMPLETED' ||
-        event.type === 'SUBSCRIPTION_UPDATED' ||
-        event.type === 'LEAD_UPDATED'
-      ) {
-        loadStores();
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, [isAuthenticated]);
-
   const loadStores = async () => {
     setLoading(true);
     try {
@@ -406,6 +405,35 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       setLoading(false);
     }
   };
+
+  const debouncedLoadStores = useMemo(
+    () =>
+      debounce(() => {
+        loadStores();
+      }, 300),
+    []
+  );
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    loadStores();
+
+    const unsubscribe = LoyaltyEvents.listen((event: LoyaltyEventPayload) => {
+      if (
+        event.type === 'STORE_UPDATED' ||
+        event.type === 'PAYMENT_COMPLETED' ||
+        event.type === 'SUBSCRIPTION_UPDATED' ||
+        event.type === 'LEAD_UPDATED'
+      ) {
+        debouncedLoadStores();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      debouncedLoadStores.cancel();
+    };
+  }, [isAuthenticated, debouncedLoadStores]);
 
   const handleNameChange = async (val: string) => {
     setName(val);
@@ -1074,7 +1102,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 {(['ALL', 'مشترك مدفوع', 'تم التأسيس', 'جاري التأسيس', 'تحت المراجعة', 'طلب جديد'] as const).map((stage) => {
                   const count = stage === 'ALL'
                     ? stores.length
-                    : stores.filter((s) => s && resolveUnifiedStage(s).label === stage).length;
+                    : stores.filter((s) => s && getStoreUnifiedStage(s) === stage).length;
                   return (
                     <button
                       key={stage}
@@ -1108,7 +1136,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 stores
                   .filter((s): s is Store => {
                     if (!s || !s.id) return false;
-                    const stage = resolveUnifiedStage(s).label;
+                    const stage = getStoreUnifiedStage(s);
                     const matchesFilter = storeStageFilter === 'ALL' || stage === storeStageFilter;
                     const q = storeSearchQuery.trim().toLowerCase();
                     const matchesSearch =
@@ -1223,7 +1251,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                       <div className="flex items-center space-x-2 rtl:space-x-reverse self-start sm:self-auto flex-wrap gap-y-1.5">
                         {/* 🏛️ Quick 5-Stage Status Selector */}
                         <select
-                          value={stageInfo.label}
+                          value={getStoreUnifiedStage(s)}
                           onChange={(e) => handleUpdateStoreStage(s, e.target.value as UnifiedLifecycleStage)}
                           className="bg-slate-950 border border-slate-700 hover:border-amber-500/60 text-[11px] font-bold text-amber-300 rounded-xl px-2.5 py-1.5 outline-none cursor-pointer transition shadow-inner"
                           title="تغيير مرحلة المتجر في خط الأنابيب (يتم التحديث فورياً)"

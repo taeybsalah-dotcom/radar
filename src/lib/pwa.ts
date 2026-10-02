@@ -14,59 +14,123 @@ function generateStoreSvgIcon(name: string, primaryColor: string, secondaryColor
 
 /**
  * Updates dynamic PWA manifest, Apple touch icon, meta tags, and title based on current store & portal.
+ * Strictly separates titles and headers across all 5 tiers.
  */
 export function updateDynamicPWA(store: Store | null, portal: string = 'customer') {
   if (typeof window === 'undefined') return;
 
-  const isPlatformPortal =
+  let pageTitle = 'رادار | RADAR';
+  let manifestName = 'رادار | RADAR للولاء الذكي';
+  let manifestShortName = 'RADAR';
+  let primaryColor = '#0B0F17';
+  let secondaryColor = '#F59E0B';
+
+  const effectiveStore =
     portal === 'super-admin' ||
-    portal === 'join' ||
     portal === 'partner' ||
-    portal === 'partner-landing';
+    portal === 'join' ||
+    portal === 'partner-landing'
+      ? null
+      : store;
 
-  const effectiveStore = isPlatformPortal ? null : store;
+  switch (portal) {
+    case 'super-admin':
+      pageTitle = 'بوابة المالك | Radar Platform Owner';
+      manifestName = 'لوحة تحكم مالك المنصة | Radar Platform Owner';
+      manifestShortName = 'Radar Admin';
+      primaryColor = '#0B0F17';
+      secondaryColor = '#F59E0B';
+      break;
 
-  const exactStoreName = isPlatformPortal
-    ? 'Radar Platform Owner'
-    : effectiveStore?.name || (effectiveStore?.slug ? effectiveStore.slug.toUpperCase() : 'Radar');
+    case 'partner':
+      pageTitle = 'بوابة الشريك | Radar Partner';
+      manifestName = 'بوابة شركاء المبيعات | Radar Partner';
+      manifestShortName = 'Radar Partner';
+      primaryColor = '#0B0F17';
+      secondaryColor = '#10B981';
+      break;
 
-  const slug = effectiveStore?.slug || '';
-  const startUrl = isPlatformPortal
-    ? '/?portal=super-admin'
-    : slug
-    ? `/?store=${encodeURIComponent(slug)}&portal=${encodeURIComponent(portal)}`
-    : `/?portal=${encodeURIComponent(portal)}`;
+    case 'admin':
+      pageTitle = effectiveStore?.name
+        ? `لوحة التاجر | Merchant Dashboard - ${effectiveStore.name}`
+        : 'لوحة التاجر | Merchant Dashboard';
+      manifestName = effectiveStore?.name
+        ? `${effectiveStore.name} - لوحة الإدارة`
+        : 'لوحة تحكم التاجر';
+      manifestShortName = effectiveStore?.name ? effectiveStore.name.slice(0, 12) : 'إدارة المتجر';
+      primaryColor = effectiveStore?.primary_color || '#0F172A';
+      secondaryColor = effectiveStore?.secondary_color || '#F59E0B';
+      break;
 
-  const primaryColor = isPlatformPortal ? '#0B0F17' : effectiveStore?.primary_color || '#0B0F17';
-  const secondaryColor = isPlatformPortal ? '#F59E0B' : effectiveStore?.secondary_color || '#F59E0B';
+    case 'cashier':
+      pageTitle = effectiveStore?.name
+        ? `نظام الكاشير | POS - ${effectiveStore.name}`
+        : 'نظام الكاشير | Cashier POS';
+      manifestName = effectiveStore?.name
+        ? `${effectiveStore.name} - كاشير الولاء`
+        : 'كاشير رادار';
+      manifestShortName = effectiveStore?.name
+        ? `${effectiveStore.name.slice(0, 8)} POS`
+        : 'الكاشير';
+      primaryColor = effectiveStore?.primary_color || '#0F172A';
+      secondaryColor = effectiveStore?.secondary_color || '#F59E0B';
+      break;
+
+    case 'customer':
+      pageTitle = effectiveStore?.name
+        ? `${effectiveStore.name} | بطاقة الولاء الرقمية`
+        : 'بطاقة الولاء الرقمية | RADAR';
+      manifestName = effectiveStore?.name
+        ? `${effectiveStore.name} - بطاقة الولاء`
+        : 'محفظة الولاء';
+      manifestShortName = effectiveStore?.name ? effectiveStore.name.slice(0, 12) : 'بطاقتي';
+      primaryColor = effectiveStore?.primary_color || '#0F172A';
+      secondaryColor = effectiveStore?.secondary_color || '#F59E0B';
+      break;
+
+    case 'join':
+      pageTitle = 'انضمام التجار | Radar Merchant Registration';
+      manifestName = 'تسجيل متجر جديد | Radar';
+      manifestShortName = 'انضمام التجار';
+      primaryColor = '#0B0F17';
+      secondaryColor = '#F59E0B';
+      break;
+
+    case 'partner-landing':
+      pageTitle = 'بوابة الشريك | Radar Partner';
+      manifestName = 'بوابة الشريك المعتمد';
+      manifestShortName = 'شريك رادار';
+      primaryColor = '#0B0F17';
+      secondaryColor = '#10B981';
+      break;
+
+    case 'onboarding':
+      pageTitle = 'معالج إعداد المتجر | Merchant Onboarding';
+      manifestName = 'تأسيس المتجر | Radar';
+      manifestShortName = 'تأسيس متجر';
+      primaryColor = '#0B0F17';
+      secondaryColor = '#F59E0B';
+      break;
+
+    default:
+      pageTitle = 'رادار | RADAR';
+      manifestName = 'رادار | RADAR';
+      manifestShortName = 'RADAR';
+  }
 
   // Determine active icon: Store custom logo -> Store SVG icon -> Platform icon
   let storeIconUrl = '/icon-192.svg';
-  if (!isPlatformPortal && effectiveStore) {
+  if (effectiveStore) {
     if (effectiveStore.logo_url && effectiveStore.logo_url.trim()) {
       storeIconUrl = effectiveStore.logo_url;
     } else {
-      storeIconUrl = generateStoreSvgIcon(exactStoreName, primaryColor, secondaryColor);
+      storeIconUrl = generateStoreSvgIcon(effectiveStore.name || 'ST', primaryColor, secondaryColor);
     }
   }
 
   // 1. Build Dynamic Manifest Object
-  const manifestIcons = isPlatformPortal || !effectiveStore
+  const manifestIcons = effectiveStore
     ? [
-        {
-          src: '/icon-192.svg',
-          sizes: '192x192',
-          type: 'image/svg+xml',
-          purpose: 'any',
-        },
-        {
-          src: '/icon-512.svg',
-          sizes: '512x512',
-          type: 'image/svg+xml',
-          purpose: 'any',
-        },
-      ]
-    : [
         {
           src: storeIconUrl,
           sizes: '192x192 512x512',
@@ -83,14 +147,38 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
           type: 'image/svg+xml',
           purpose: 'any',
         },
+      ]
+    : [
+        {
+          src: '/icon-192.svg',
+          sizes: '192x192',
+          type: 'image/svg+xml',
+          purpose: 'any',
+        },
+        {
+          src: '/icon-512.svg',
+          sizes: '512x512',
+          type: 'image/svg+xml',
+          purpose: 'any',
+        },
       ];
 
+  const slug = effectiveStore?.slug || '';
+  const startUrl =
+    portal === 'super-admin'
+      ? '/super-admin'
+      : portal === 'partner'
+      ? '/partner'
+      : portal === 'join'
+      ? '/join'
+      : slug
+      ? `/?store=${encodeURIComponent(slug)}&portal=${encodeURIComponent(portal)}`
+      : `/?portal=${encodeURIComponent(portal)}`;
+
   const manifestObject = {
-    name: exactStoreName,
-    short_name: exactStoreName,
-    description: isPlatformPortal
-      ? 'Radar Loyalty Platform - Super Admin'
-      : `نظام الولاء والمكافآت الذكي - ${exactStoreName}`,
+    name: manifestName,
+    short_name: manifestShortName,
+    description: `منصة رادار للولاء والمكافآت الذكية - ${manifestName}`,
     start_url: startUrl,
     scope: '/',
     display: 'standalone',
@@ -146,7 +234,7 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
     appleTitleMeta.name = 'apple-mobile-web-app-title';
     document.head.appendChild(appleTitleMeta);
   }
-  appleTitleMeta.content = exactStoreName;
+  appleTitleMeta.content = manifestShortName;
 
   // 6. Theme Color Meta
   let themeColorMeta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement;
@@ -157,15 +245,15 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
   }
   themeColorMeta.content = secondaryColor;
 
-  // 7. Page Document Title
-  document.title = exactStoreName;
+  // 7. Page Document Title - Strictly Role & Portal Isolated
+  document.title = pageTitle;
 
   // 8. Persist last active store & portal in localStorage ONLY if inside a specific store portal
-  if (slug && !isPlatformPortal) {
+  if (slug && portal !== 'super-admin' && portal !== 'partner') {
     try {
       localStorage.setItem('radar_last_store_slug', slug);
       localStorage.setItem('radar_last_portal', portal);
-      localStorage.setItem('radar_last_store_name', exactStoreName);
+      localStorage.setItem('radar_last_store_name', pageTitle);
     } catch (e) {
       // ignore
     }

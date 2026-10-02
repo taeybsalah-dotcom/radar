@@ -1,9 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { Store } from './types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Store, UserRole } from './types';
 import { LoyaltyService } from './lib/supabase';
 import { LoyaltyEvents } from './lib/events';
+import { debounce } from './lib/debounce';
 import { INITIAL_STORE } from './lib/demoData';
 import { updateDynamicPWA } from './lib/pwa';
+import { useAuth } from './context/AuthContext';
+import { ProtectedRoute } from './components/auth/ProtectedRoute';
+
 const SuperAdminDashboard = React.lazy(() =>
   import('./components/SuperAdminDashboard').then((m) => ({ default: m.SuperAdminDashboard }))
 );
@@ -29,24 +33,49 @@ const MerchantOnboardingConsole = React.lazy(() =>
   import('./components/MerchantOnboardingConsole').then((m) => ({ default: m.MerchantOnboardingConsole }))
 );
 
+type PortalTab =
+  | 'super-admin'
+  | 'cashier'
+  | 'customer'
+  | 'admin'
+  | 'join'
+  | 'partner'
+  | 'partner-landing'
+  | 'onboarding';
+
 function parseRouteParams() {
   if (typeof window === 'undefined') {
     return {
-      portal: 'super-admin' as 'super-admin' | 'cashier' | 'customer' | 'admin' | 'join' | 'partner' | 'partner-landing' | 'onboarding',
+      portal: 'super-admin' as PortalTab,
       isPreview: false,
       storeSlug: null as string | null,
       partnerSlug: null as string | null,
     };
   }
   const urlParams = new URLSearchParams(window.location.search);
-  let portalParam = urlParams.get('portal') as 'super-admin' | 'cashier' | 'customer' | 'admin' | 'join' | 'partner' | 'partner-landing' | 'onboarding' | null;
-  let slugParam = urlParams.get('store');
+  const portalParam = urlParams.get('portal') as PortalTab | null;
+  const slugParam = urlParams.get('store');
   const previewParam = urlParams.get('preview') === 'true';
 
-  // 👑 Stage 1: Super Admin / Platform Owner Route (/super-admin, /superadmin, /owner, portal=super-admin, #super-admin)
   const pathname = (window.location.pathname || '').toLowerCase();
   const rawHash = window.location.hash ? window.location.hash.replace(/^#\/?/, '').trim() : '';
 
+  // 1. Check Partner Portal (/partner, /partner/, portal=partner, #partner)
+  const isPartnerPortal =
+    pathname === '/partner' ||
+    pathname === '/partner/' ||
+    portalParam === 'partner' ||
+    rawHash === 'partner';
+  if (isPartnerPortal) {
+    return {
+      portal: 'partner' as const,
+      isPreview: false,
+      storeSlug: null,
+      partnerSlug: null,
+    };
+  }
+
+  // 2. Check Super Admin Route (/super-admin, /superadmin, /owner, portal=super-admin, #super-admin)
   const isSuperAdmin =
     pathname === '/super-admin' ||
     pathname === '/super-admin/' ||
@@ -66,7 +95,7 @@ function parseRouteParams() {
     };
   }
 
-  // 🚪 Stage 4: Merchant Join Route (/join, /join?ref=RADAR-XXXX, /?ref=..., or portal=join)
+  // 3. Check Merchant Join Route (/join, /join?ref=..., /?ref=..., portal=join, #join)
   const isRefParam = urlParams.has('ref') || urlParams.has('r');
   const isJoin =
     pathname === '/join' ||
@@ -83,22 +112,7 @@ function parseRouteParams() {
     };
   }
 
-  // 🤝 Stage 6: Partner Portal Route (/partner or portal=partner or #partner)
-  const isPartnerPortal =
-    pathname === '/partner' ||
-    pathname === '/partner/' ||
-    portalParam === 'partner' ||
-    rawHash === 'partner';
-  if (isPartnerPortal) {
-    return {
-      portal: 'partner' as const,
-      isPreview: false,
-      storeSlug: null,
-      partnerSlug: null,
-    };
-  }
-
-  // 🏪 Stage 8: Merchant Onboarding Route (/merchant/onboarding or /onboarding or portal=onboarding or #onboarding)
+  // 4. Check Merchant Onboarding Route (/merchant/onboarding, /onboarding, portal=onboarding, #onboarding)
   const isOnboarding =
     pathname === '/merchant/onboarding' ||
     pathname === '/merchant/onboarding/' ||
@@ -115,7 +129,45 @@ function parseRouteParams() {
     };
   }
 
-  // 🤝 Stage 6: Public Partner Landing Page (/<partner-slug>)
+  // 5. Check Merchant Admin Route (/admin, /merchant, portal=admin, #admin)
+  const isAdminPath =
+    pathname === '/admin' ||
+    pathname === '/admin/' ||
+    pathname === '/merchant' ||
+    pathname === '/merchant/' ||
+    portalParam === 'admin' ||
+    rawHash === 'admin' ||
+    rawHash.endsWith('-admin');
+  if (isAdminPath) {
+    return {
+      portal: 'admin' as const,
+      isPreview: previewParam,
+      storeSlug: slugParam || (rawHash.endsWith('-admin') ? rawHash.replace(/-admin$/, '') : null),
+      partnerSlug: null,
+    };
+  }
+
+  // 6. Check Cashier POS Route (/cashier, /pos, portal=cashier, portal=pos, #cashier, #pos)
+  const isCashierPath =
+    pathname === '/cashier' ||
+    pathname === '/cashier/' ||
+    pathname === '/pos' ||
+    pathname === '/pos/' ||
+    portalParam === 'cashier' ||
+    urlParams.get('portal') === 'pos' ||
+    rawHash === 'cashier' ||
+    rawHash === 'pos' ||
+    rawHash.endsWith('-pos');
+  if (isCashierPath) {
+    return {
+      portal: 'cashier' as const,
+      isPreview: previewParam,
+      storeSlug: slugParam || (rawHash.endsWith('-pos') ? rawHash.replace(/-pos$/, '') : null),
+      partnerSlug: null,
+    };
+  }
+
+  // 7. Check Public Partner Landing Page (/<partner-slug>)
   const RESERVED_SLUGS = new Set([
     '',
     'join',
@@ -134,6 +186,7 @@ function parseRouteParams() {
     'pos',
     'track',
     'onboarding',
+    'owner',
   ]);
 
   const pathSegments = pathname.split('/').filter(Boolean);
@@ -147,86 +200,37 @@ function parseRouteParams() {
       partnerSlug: potentialPartnerSlug,
     };
   }
-  if (rawHash) {
-    if (rawHash === 'super-admin' || rawHash === 'superadmin') {
-      portalParam = 'super-admin';
-    } else if (rawHash.endsWith('-pos') || rawHash.endsWith('/pos')) {
-      portalParam = 'cashier';
-      slugParam = slugParam || rawHash.replace(/-pos$/, '').replace(/\/pos$/, '');
-    } else if (rawHash.endsWith('-admin') || rawHash.endsWith('/admin')) {
-      portalParam = 'admin';
-      slugParam = slugParam || rawHash.replace(/-admin$/, '').replace(/\/admin$/, '');
-    } else if (rawHash === 'cashier' || rawHash === 'pos') {
-      portalParam = 'cashier';
-    } else if (rawHash === 'admin') {
-      portalParam = 'admin';
-    } else if (rawHash !== '') {
-      // Direct store slug e.g. #demo-hub
-      slugParam = slugParam || rawHash;
-      if (!portalParam) portalParam = 'customer';
+
+  // 8. Session-Aware Fallback on Root "/"
+  let resolvedRolePortal: PortalTab = 'join';
+  let hasSession = false;
+  try {
+    const rawAuth = localStorage.getItem('radar_unified_auth_user');
+    if (rawAuth) {
+      const parsed = JSON.parse(rawAuth);
+      if (parsed.role === 'partner') { resolvedRolePortal = 'partner'; hasSession = true; }
+      else if (parsed.role === 'super_admin') { resolvedRolePortal = 'super-admin'; hasSession = true; }
+      else if (parsed.role === 'merchant') { resolvedRolePortal = 'admin'; hasSession = true; }
+      else if (parsed.role === 'cashier') { resolvedRolePortal = 'cashier'; hasSession = true; }
+      else if (parsed.role === 'customer') { resolvedRolePortal = 'customer'; hasSession = true; }
+    } else if (localStorage.getItem('radar_partner_session')) {
+      resolvedRolePortal = 'partner';
+      hasSession = true;
+    } else if (sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true') {
+      resolvedRolePortal = 'super-admin';
+      hasSession = true;
     }
-  }
+  } catch {}
 
-  // 🏢 Stage 12B: Merchant Admin Route (/admin or /admin/ or /merchant or /merchant/)
-  const isAdminPath =
-    pathname === '/admin' ||
-    pathname === '/admin/' ||
-    pathname === '/merchant' ||
-    pathname === '/merchant/';
-  if (isAdminPath) {
-    portalParam = 'admin';
-  }
-
-  // ⚡ Stage 12B: Cashier POS Route (/cashier or /cashier/ or /pos or /pos/)
-  const isCashierPath =
-    pathname === '/cashier' ||
-    pathname === '/cashier/' ||
-    pathname === '/pos' ||
-    pathname === '/pos/' ||
-    urlParams.get('portal') === 'pos';
-  if (isCashierPath) {
-    portalParam = 'cashier';
-  }
-
-  const hostname = window.location.hostname.toLowerCase();
-  const isPlatformHost =
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname.endsWith('.vercel.app') ||
-    hostname.endsWith('.pages.dev') ||
-    hostname.endsWith('.workers.dev') ||
-    hostname.endsWith('.web.app');
-
-  let portal: 'super-admin' | 'cashier' | 'customer' | 'admin' | 'join' | 'partner' | 'partner-landing' | 'onboarding' = 'super-admin';
-  let storeSlug = slugParam;
-
-  // 🌐 Custom Merchant Domain Support (e.g. loyalty.store.com)
-  if (!storeSlug && !isPlatformHost && hostname) {
-    storeSlug = hostname;
-    if (!portalParam) portalParam = 'customer';
-  }
-
-  // 🔄 LocalStorage context recovery (Both standard browser and PWA standalone)
-  // Security Invariant: LocalStorage only resolves preferred store/portal context.
-  // It NEVER grants authorization — StaffLoginGate and server auth strictly protect all portals.
   const savedSlug = localStorage.getItem('radar_last_store_slug');
-  const savedPortal = localStorage.getItem('radar_last_portal') as any;
-  if (!storeSlug && savedSlug) {
-    storeSlug = savedSlug;
-  }
+  const storeSlug = slugParam || savedSlug || null;
 
-  if (portalParam && ['cashier', 'customer', 'admin', 'super-admin', 'join', 'partner', 'partner-landing', 'onboarding'].includes(portalParam)) {
-    portal = portalParam;
-  } else if (storeSlug && savedPortal && ['cashier', 'customer', 'admin', 'onboarding'].includes(savedPortal)) {
-    portal = savedPortal;
-  } else if (storeSlug) {
-    portal = 'customer';
-  } else if (savedPortal && ['cashier', 'customer', 'admin', 'onboarding'].includes(savedPortal)) {
-    portal = savedPortal;
+  if (!portalParam && !hasSession && storeSlug) {
+    resolvedRolePortal = 'customer';
   }
 
   return {
-    portal,
+    portal: portalParam || resolvedRolePortal,
     isPreview: previewParam,
     storeSlug,
     partnerSlug: null as string | null,
@@ -237,12 +241,12 @@ export function App() {
   const initialConfig = parseRouteParams();
   const [store, setStore] = useState<Store | null>(null);
   const [partnerSlug, setPartnerSlug] = useState<string | null>(initialConfig.partnerSlug || null);
-  const [activeTab, setActiveTab] = useState<'super-admin' | 'cashier' | 'customer' | 'admin' | 'join' | 'partner' | 'partner-landing' | 'onboarding'>(
-    initialConfig.portal
-  );
+  const [activeTab, setActiveTab] = useState<PortalTab>(initialConfig.portal);
   const [loading, setLoading] = useState(true);
 
   const [isSuperAdminPreview, setIsSuperAdminPreview] = useState(initialConfig.isPreview);
+
+  const { role, isAuthenticated, isLoading: authLoading } = useAuth();
 
   useEffect(() => {
     loadInitialStore();
@@ -274,11 +278,11 @@ export function App() {
     }
   }, [store, activeTab]);
 
-  useEffect(() => {
-    const unsubscribe = LoyaltyEvents.listen((event) => {
-      if (event.type === 'STORE_UPDATED') {
+  const debouncedSyncAppStore = useMemo(
+    () =>
+      debounce((currentStoreId?: string, currentSlug?: string) => {
         LoyaltyService.getAllStores().then((all) => {
-          const updated = all.find((s) => s.id === store?.id || s.slug === store?.slug);
+          const updated = all.find((s) => s.id === currentStoreId || s.slug === currentSlug);
           if (updated) {
             setStore(updated);
             updateDynamicPWA(updated, activeTab);
@@ -287,36 +291,56 @@ export function App() {
             updateDynamicPWA(null, 'super-admin');
           }
         });
+      }, 300),
+    [activeTab]
+  );
+
+  useEffect(() => {
+    const unsubscribe = LoyaltyEvents.listen((event) => {
+      if (event.type === 'STORE_UPDATED') {
+        debouncedSyncAppStore(store?.id, store?.slug);
       }
     });
 
     return () => {
       unsubscribe();
+      debouncedSyncAppStore.cancel();
     };
-  }, [store?.id, store?.slug, activeTab]);
+  }, [store?.id, store?.slug, debouncedSyncAppStore]);
 
   const loadInitialStore = async () => {
     try {
       const config = parseRouteParams();
       setIsSuperAdminPreview(config.isPreview);
 
-      // 🚪 Stage 4: If portal is join -> Render Merchant Join Flow
-      if (config.portal === 'join') {
-        setActiveTab('join');
-        setStore(null);
-        setLoading(false);
-        return;
-      }
-
-      // 🤝 Stage 6: If portal is partner -> Render Partner Dashboard
+      // 1. If portal is partner -> Strictly Render Partner Dashboard
       if (config.portal === 'partner') {
         setActiveTab('partner');
         setStore(null);
+        updateDynamicPWA(null, 'partner');
         setLoading(false);
         return;
       }
 
-      // 🤝 Stage 6: Direct Affiliate Slug Resolution -> Straight to Final Landing Page (Bypasses intermediate landing)
+      // 2. If portal is super-admin -> Strictly Render Super Admin Dashboard
+      if (config.portal === 'super-admin') {
+        setActiveTab('super-admin');
+        setStore(null);
+        updateDynamicPWA(null, 'super-admin');
+        setLoading(false);
+        return;
+      }
+
+      // 3. If portal is join -> Render Merchant Join Flow
+      if (config.portal === 'join') {
+        setActiveTab('join');
+        setStore(null);
+        updateDynamicPWA(null, 'join');
+        setLoading(false);
+        return;
+      }
+
+      // 4. Direct Affiliate Slug Resolution -> Straight to Final Landing Page
       if (config.portal === 'partner-landing' && config.partnerSlug) {
         const cleanSlug = config.partnerSlug.trim().toLowerCase();
         try {
@@ -331,7 +355,6 @@ export function App() {
           const refCode = found?.affiliates?.referral_code || found?.referral_code || cleanSlug;
           sessionStorage.setItem('radar_captured_ref', refCode);
 
-          // Quietly notify tracking endpoint in background
           fetch(`/api/track?ref=${encodeURIComponent(refCode)}`, {
             method: 'GET',
             credentials: 'include',
@@ -340,13 +363,15 @@ export function App() {
           sessionStorage.setItem('radar_captured_ref', cleanSlug);
         }
 
-        setActiveTab('join');
+        setPartnerSlug(cleanSlug);
+        setActiveTab('partner-landing');
         setStore(null);
+        updateDynamicPWA(null, 'partner-landing');
         setLoading(false);
         return;
       }
 
-      // 🏪 Stage 8: If portal is onboarding -> Render Merchant Onboarding Console
+      // 5. Merchant Onboarding Route
       if (config.portal === 'onboarding') {
         let targetStore: Store | null = null;
         if (config.storeSlug) {
@@ -361,36 +386,30 @@ export function App() {
         }
         setStore(targetStore);
         setActiveTab('onboarding');
+        updateDynamicPWA(targetStore, 'onboarding');
         setLoading(false);
         return;
       }
 
-      // 1. If portal is explicitly super-admin and no store slug -> Pure Super Admin (لوحة المالك)
-      if (config.portal === 'super-admin' && !config.storeSlug) {
-        setActiveTab('super-admin');
-        setStore(null);
-        updateDynamicPWA(null, 'super-admin');
-        return;
-      }
-
-      // 2. If store slug is provided -> Load specific store (e.g., demo-hub)
+      // 6. Store-based Portals (admin, cashier, customer)
       if (config.storeSlug) {
         const found = await LoyaltyService.resolveStore(config.storeSlug);
         if (found) {
           setStore(found);
           const targetPortal =
-            config.portal && ['cashier', 'customer', 'admin', 'super-admin'].includes(config.portal)
+            config.portal && ['cashier', 'customer', 'admin'].includes(config.portal)
               ? config.portal
               : 'customer';
           setActiveTab(targetPortal);
           updateDynamicPWA(found, targetPortal);
           localStorage.setItem('radar_last_store_slug', found.slug || found.id);
           localStorage.setItem('radar_last_portal', targetPortal);
+          setLoading(false);
           return;
         }
       }
 
-      // 3. If portal is cashier, admin, or customer without slug, resolve active/default store
+      // 7. Resolving default store if portal is cashier, admin, or customer without slug
       if (config.portal && ['cashier', 'customer', 'admin'].includes(config.portal)) {
         const defaultStore = await LoyaltyService.getStore();
         if (defaultStore) {
@@ -399,19 +418,16 @@ export function App() {
           updateDynamicPWA(defaultStore, config.portal);
           localStorage.setItem('radar_last_store_slug', defaultStore.slug || defaultStore.id);
           localStorage.setItem('radar_last_portal', config.portal);
+          setLoading(false);
           return;
         }
       }
 
-      // 4. Fallback
-      if (config.portal && ['cashier', 'customer', 'admin', 'super-admin'].includes(config.portal)) {
-        setActiveTab(config.portal);
-      } else {
-        setActiveTab('super-admin');
-      }
-
+      // 8. Explicit fallback
+      const fallbackPortal = config.portal || 'join';
+      setActiveTab(fallbackPortal);
       setStore(null);
-      updateDynamicPWA(null, 'super-admin');
+      updateDynamicPWA(null, fallbackPortal);
     } catch (e) {
       console.error('loadInitialStore failed:', e);
     } finally {
@@ -445,7 +461,7 @@ export function App() {
     window.history.pushState({}, '', url.toString());
   };
 
-  if (loading) {
+  if (loading || authLoading) {
     return (
       <div className="min-h-screen bg-[#080B11] flex flex-col items-center justify-center text-slate-100 selection:bg-amber-500 selection:text-black">
         <div className="flex flex-col items-center gap-4 text-center px-4">
@@ -458,7 +474,7 @@ export function App() {
           </div>
           <div className="flex items-center gap-2 text-slate-400 font-mono text-xs mt-2 bg-slate-900/80 px-4 py-2 rounded-full border border-slate-800 shadow-lg">
             <div className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
-            <span>جاري تهيئة البوابة...</span>
+            <span>جاري التحقق من الصلاحيات وتهيئة البوابة...</span>
           </div>
         </div>
       </div>
@@ -467,7 +483,6 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-[#080B11] text-slate-100 flex flex-col selection:bg-amber-500 selection:text-black">
-      
       {/* 👁️ Super Admin Preview Banner (Visible ONLY to platform owner during preview) */}
       {isSuperAdminPreview && activeTab !== 'super-admin' && store && (
         <div className="sticky top-0 z-50 bg-amber-500/20 backdrop-blur-md border-b border-amber-500/40 px-4 py-2.5 text-xs flex items-center justify-between text-amber-300 shadow-xl">
@@ -508,34 +523,77 @@ export function App() {
         >
           {activeTab === 'join' && <MerchantJoinLanding />}
 
-          {activeTab === 'partner' && (
-            <PartnerDashboard onBackToApp={() => setActiveTab('super-admin')} />
-          )}
-
           {activeTab === 'partner-landing' && partnerSlug && (
             <PartnerPublicLanding slug={partnerSlug} />
           )}
 
+          {activeTab === 'partner' && (
+            <ProtectedRoute
+              allowedRoles={['partner']}
+              portalName="بوابة شركاء المبيعات (Partner Portal)"
+            >
+              <PartnerDashboard
+                onBackToApp={() => {
+                  const url = new URL(window.location.origin + '/partner');
+                  url.searchParams.set('portal', 'partner');
+                  window.location.href = url.toString();
+                }}
+              />
+            </ProtectedRoute>
+          )}
+
           {activeTab === 'super-admin' && (
-            <SuperAdminDashboard onSelectStore={handleSelectStoreFromSuperAdmin} />
+            <ProtectedRoute
+              allowedRoles={['super_admin']}
+              portalName="لوحة تحكم مالك المنصة (Super Admin)"
+            >
+              <SuperAdminDashboard onSelectStore={handleSelectStoreFromSuperAdmin} />
+            </ProtectedRoute>
           )}
 
           {activeTab === 'onboarding' && (
-            <MerchantOnboardingConsole
-              store={store || INITIAL_STORE}
-              onComplete={() => {
-                setActiveTab('admin');
-                const url = new URL(window.location.href);
-                url.searchParams.set('portal', 'admin');
-                window.history.pushState({}, '', url.toString());
-              }}
-              onExit={() => {
-                setActiveTab('admin');
-                const url = new URL(window.location.href);
-                url.searchParams.set('portal', 'admin');
-                window.history.pushState({}, '', url.toString());
-              }}
-            />
+            <ProtectedRoute
+              allowedRoles={['merchant', 'super_admin']}
+              portalName="معالج إعداد المتجر"
+            >
+              <MerchantOnboardingConsole
+                store={store || INITIAL_STORE}
+                onComplete={() => {
+                  setActiveTab('admin');
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('portal', 'admin');
+                  window.history.pushState({}, '', url.toString());
+                }}
+                onExit={() => {
+                  setActiveTab('admin');
+                  const url = new URL(window.location.href);
+                  url.searchParams.set('portal', 'admin');
+                  window.history.pushState({}, '', url.toString());
+                }}
+              />
+            </ProtectedRoute>
+          )}
+
+          {activeTab === 'cashier' && store && (
+            <ProtectedRoute
+              allowedRoles={['cashier', 'merchant', 'super_admin']}
+              portalName="نظام الكاشير (Cashier POS)"
+            >
+              <CashierPOS store={store} />
+            </ProtectedRoute>
+          )}
+
+          {activeTab === 'admin' && store && (
+            <ProtectedRoute
+              allowedRoles={['merchant', 'super_admin']}
+              portalName="لوحة إدارة المتجر (Merchant Admin)"
+            >
+              <StoreAdmin store={store} />
+            </ProtectedRoute>
+          )}
+
+          {activeTab === 'customer' && store && (
+            <CustomerWallet store={store} />
           )}
 
           {activeTab !== 'super-admin' &&
@@ -543,41 +601,33 @@ export function App() {
             activeTab !== 'partner' &&
             activeTab !== 'partner-landing' &&
             activeTab !== 'onboarding' &&
-            (!store || !store.id) ? (
-            <div className="min-h-[60vh] flex items-center justify-center p-4">
-              <div className="max-w-md w-full p-8 rounded-3xl bg-slate-900/95 border border-slate-800 text-center space-y-5 shadow-2xl">
-                <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto text-2xl font-bold">
-                  🏪
+            (!store || !store.id) && (
+              <div className="min-h-[60vh] flex items-center justify-center p-4">
+                <div className="max-w-md w-full p-8 rounded-3xl bg-slate-900/95 border border-slate-800 text-center space-y-5 shadow-2xl">
+                  <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto text-2xl font-bold">
+                    🏪
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-xl font-black text-white">لا يوجد متجر مسجل حالياً</h2>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      تم تفريغ كافة المتاجر بنجاح لتجربة نظيفة. يرجى التوجه إلى لوحة المالك وتأسيس أول متجر.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setActiveTab('super-admin');
+                      const url = new URL(window.location.href);
+                      url.searchParams.delete('store');
+                      url.searchParams.set('portal', 'super-admin');
+                      window.history.pushState({}, '', url.toString());
+                    }}
+                    className="w-full py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-sm transition"
+                  >
+                    فتح بوابة المالك (Super Admin) 👑
+                  </button>
                 </div>
-                <div className="space-y-2">
-                  <h2 className="text-xl font-black text-white">لا يوجد متجر مسجل حالياً</h2>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    تم تفريغ كافة المتاجر بنجاح لتجربة نظيفة. يرجى التوجه إلى لوحة المالك وتأسيس أول متجر.
-                  </p>
-                </div>
-                <button
-                  onClick={() => {
-                    setActiveTab('super-admin');
-                    const url = new URL(window.location.href);
-                    url.searchParams.delete('store');
-                    url.searchParams.set('portal', 'super-admin');
-                    window.history.pushState({}, '', url.toString());
-                  }}
-                  className="w-full py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-sm transition"
-                >
-                  فتح بوابة المالك (Super Admin) 👑
-                </button>
               </div>
-            </div>
-          ) : (
-            store && (
-              <>
-                {activeTab === 'cashier' && <CashierPOS store={store} />}
-                {activeTab === 'customer' && <CustomerWallet store={store} />}
-                {activeTab === 'admin' && <StoreAdmin store={store} />}
-              </>
-            )
-          )}
+            )}
         </React.Suspense>
       </main>
 
@@ -600,7 +650,6 @@ export function App() {
           </div>
         </footer>
       )}
-
     </div>
   );
 }

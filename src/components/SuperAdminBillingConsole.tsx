@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { debounce } from '../lib/debounce';
 import {
   CreditCard,
   Plus,
@@ -189,6 +190,14 @@ export const SuperAdminBillingConsole: React.FC = () => {
     setTimeout(() => setActionSuccess(null), 3500);
   };
 
+  const debouncedLoadAllFinancialData = useMemo(
+    () =>
+      debounce(() => {
+        loadAllFinancialData();
+      }, 300),
+    []
+  );
+
   useEffect(() => {
     loadAllFinancialData();
 
@@ -199,14 +208,15 @@ export const SuperAdminBillingConsole: React.FC = () => {
         event.type === 'SUBSCRIPTION_UPDATED' ||
         event.type === 'PARTNER_UPDATED'
       ) {
-        loadAllFinancialData();
+        debouncedLoadAllFinancialData();
       }
     });
 
     return () => {
       unsubscribe();
+      debouncedLoadAllFinancialData.cancel();
     };
-  }, []);
+  }, [debouncedLoadAllFinancialData]);
 
   // --- Handlers: Subscription Plans ---
   const handleOpenAddPlan = () => {

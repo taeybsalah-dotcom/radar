@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Store, StoreStaff } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
+import { useAuth } from '../context/AuthContext';
 import {
   ShieldCheck,
   Lock,
@@ -31,6 +32,8 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
   requiredRole,
   onAuthenticated,
 }) => {
+  const { login: authLogin } = useAuth();
+
   // Mode: 'LOGIN' | 'FORGOT_PIN' | 'RESET_PIN'
   const [mode, setMode] = useState<'LOGIN' | 'FORGOT_PIN' | 'RESET_PIN'>('LOGIN');
 
@@ -113,6 +116,13 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
 
       // تسجيل دخول ناجح
       LoyaltyService.saveStaffSession(targetStoreId, staff, targetStoreSlug);
+      authLogin(staff.role === 'admin' ? 'merchant' : 'cashier', {
+        id: staff.id,
+        storeId: targetStoreId,
+        storeSlug: targetStoreSlug,
+        name: staff.name,
+        phone: staff.phone,
+      });
 
       if (matchedStore && matchedStore.id !== store.id) {
         const url = new URL(window.location.href);

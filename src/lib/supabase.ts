@@ -38,6 +38,7 @@ import {
   UnifiedLifecycleStage,
   UnifiedStageInfo,
   resolveUnifiedStage,
+  getStoreUnifiedStage,
 } from '../types';
 import {
   INITIAL_STORES,

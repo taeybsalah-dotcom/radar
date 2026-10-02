@@ -17,6 +17,10 @@ export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    document.title = partner?.display_name ? `${partner.display_name} | Radar Partner` : 'بوابة الشريك | Radar Partner';
+  }, [partner?.display_name]);
+
+  useEffect(() => {
     const resolvePartner = async () => {
       setLoading(true);
       setError(null);

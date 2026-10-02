@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Store,
   Customer,
@@ -22,9 +22,12 @@ import {
   BillingPlan,
   getPlanDurationLabel,
   getPlanPriceSuffix,
+  resolveUnifiedStage,
+  getStoreUnifiedStage,
 } from '../types';
 import { LoyaltyService, normalizeStore } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
+import { debounce } from '../lib/debounce';
 import { INITIAL_STORE } from '../lib/demoData';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
 import { StaffLoginGate } from './StaffLoginGate';
@@ -392,39 +395,66 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     setTimeout(() => setCopiedLinkKey(null), 2500);
   };
 
+  // 🎯 Debounced targeted fetch handlers for real-time events (300ms delay)
+  const debouncedSyncStoreAndSubscription = useMemo(
+    () =>
+      debounce((storeId: string) => {
+        LoyaltyService.resolveStore(storeId).then((s) => {
+          if (s) setStore(s);
+        });
+        LoyaltyService.checkAndUpdateStoreSubscription(storeId).then(setSubscriptionInfo);
+      }, 300),
+    []
+  );
+
+  const debouncedSyncCoupons = useMemo(
+    () =>
+      debounce((storeId: string) => {
+        LoyaltyService.getAllStoreCoupons(storeId).then(setCoupons);
+        LoyaltyService.getAuditLogs(storeId).then(setAuditLogs);
+      }, 300),
+    []
+  );
+
+  const debouncedSyncPointsAndCustomers = useMemo(
+    () =>
+      debounce((storeId: string) => {
+        LoyaltyService.getAuditLogs(storeId).then(setAuditLogs);
+        LoyaltyService.getAllCustomers(storeId).then(setCustomers);
+        LoyaltyService.getStoreWallet(storeId).then(setStoreWallet);
+      }, 300),
+    []
+  );
+
+  // Dynamic Page Document Title Isolation
+  useEffect(() => {
+    document.title = store?.name ? `لوحة التاجر | Merchant Dashboard - ${store.name}` : 'لوحة التاجر | Merchant Dashboard';
+  }, [store?.name]);
+
   useEffect(() => {
     if (!currentStore?.id || !authenticatedAdmin) return;
     loadAdminData();
 
     const unsubscribe = LoyaltyEvents.listen((event) => {
       if (event.storeId === currentStore.id || event.storeId === currentStore.slug) {
-        // تحديث دقيق ومستهدف فقط للبيانات التي تغيرت دون إغراق قاعدة البيانات بـ 9 استعلامات
+        // 🎯 Targeted refetching only:
+        if (event.type === 'SUBSCRIPTION_UPDATED' || event.type === 'PAYMENT_COMPLETED' || event.type === 'STORE_UPDATED') {
+          debouncedSyncStoreAndSubscription(currentStore.id);
+          return;
+        }
+
         if (event.type === 'COUPON_PURCHASED' || event.type === 'COUPON_REDEEMED') {
-          LoyaltyService.getAllStoreCoupons(currentStore.id).then(setCoupons);
-          LoyaltyService.getAuditLogs(currentStore.id).then(setAuditLogs);
+          debouncedSyncCoupons(currentStore.id);
           return;
         }
 
         if (event.type === 'POINTS_ADDED' || event.type === 'REWARD_REDEEMED' || event.type === 'WALLET_UPDATED') {
-          LoyaltyService.getAuditLogs(currentStore.id).then(setAuditLogs);
-          LoyaltyService.getAllCustomers(currentStore.id).then(setCustomers);
-          LoyaltyService.getStoreWallet(currentStore.id).then(setStoreWallet);
+          debouncedSyncPointsAndCustomers(currentStore.id);
           return;
         }
 
         if (event.type === 'PRIVILEGES_UPDATED') {
           LoyaltyService.getPrivileges(currentStore.id).then(setPrivileges);
-          return;
-        }
-
-        if (event.type === 'SUBSCRIPTION_UPDATED' || event.type === 'PAYMENT_COMPLETED' || event.type === 'STORE_UPDATED') {
-          LoyaltyService.resolveStore(currentStore.id).then((s) => { if (s) setStore(s); });
-          LoyaltyService.checkAndUpdateStoreSubscription(currentStore.id).then(setSubscriptionInfo);
-          LoyaltyService.getStoreInvoices(currentStore.id).then(setInvoices);
-          LoyaltyService.getAllSubscriptionPlans().then(setAllPlans);
-          if (event.type === 'STORE_UPDATED') {
-            LoyaltyService.getStoreStaff(currentStore.id).then(setStaffList);
-          }
           return;
         }
 
@@ -437,15 +467,16 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           LoyaltyService.getStoreStaff(currentStore.id).then(setStaffList);
           return;
         }
-      } else if (event.type === 'STORE_UPDATED') {
-        LoyaltyService.getAllSubscriptionPlans().then(setAllPlans);
       }
     });
 
     return () => {
       unsubscribe();
+      debouncedSyncStoreAndSubscription.cancel();
+      debouncedSyncCoupons.cancel();
+      debouncedSyncPointsAndCustomers.cancel();
     };
-  }, [currentStore?.id]);
+  }, [currentStore?.id, debouncedSyncStoreAndSubscription, debouncedSyncCoupons, debouncedSyncPointsAndCustomers]);
 
   const loadAdminData = async () => {
     if (!currentStore?.id) return;
@@ -547,11 +578,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   const handleUpgradePlan = (plan: BillingPlan) => {
     const isPaidActive = Boolean(
-      store.setup_fee_paid === true ||
+      resolveUnifiedStage(store).isPaidActive ||
+        getStoreUnifiedStage(store) === 'مشترك مدفوع' ||
+        store.setup_fee_paid === true ||
         store.subscription_status === 'active' ||
         store.status === 'active' ||
-        (store as any).status === 'مشترك مدفوع' ||
-        (store as any).lifecycle_stage === 'مشترك مدفوع' ||
         subscriptionInfo?.status === 'active'
     );
 
@@ -1999,12 +2030,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     );
   }
 
+  const unifiedStage = getStoreUnifiedStage(store);
+  const stageInfo = resolveUnifiedStage(store);
   const isPaidActive = Boolean(
-    store.setup_fee_paid === true ||
+    stageInfo.isPaidActive ||
+      unifiedStage === 'مشترك مدفوع' ||
+      store.setup_fee_paid === true ||
       store.subscription_status === 'active' ||
       store.status === 'active' ||
-      (store as any).status === 'مشترك مدفوع' ||
-      (store as any).lifecycle_stage === 'مشترك مدفوع' ||
       subscriptionInfo?.status === 'active'
   );
 

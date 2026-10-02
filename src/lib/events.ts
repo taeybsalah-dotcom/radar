@@ -19,6 +19,7 @@ export type LoyaltyEventType =
 export interface LoyaltyEventPayload {
   type: LoyaltyEventType;
   storeId: string;
+  senderId?: string;
   phone?: string;
   points?: number;
   newBalance?: number;
@@ -31,6 +32,11 @@ export interface LoyaltyEventPayload {
   error?: string;
 }
 
+const CLIENT_INSTANCE_ID =
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `client_${Math.random().toString(36).substring(2)}_${Date.now().toString(36)}`;
+
 const channelName = 'radar_loyalty_realtime_channel';
 let channel: BroadcastChannel | null = null;
 const listeners = new Set<(payload: LoyaltyEventPayload) => void>();
@@ -41,6 +47,10 @@ try {
     channel = new BroadcastChannel(channelName);
     channel.addEventListener('message', (event: MessageEvent<LoyaltyEventPayload>) => {
       if (event.data) {
+        // Prevent echo if sender is current client
+        if (event.data.senderId && event.data.senderId === CLIENT_INSTANCE_ID) {
+          return;
+        }
         listeners.forEach((fn) => {
           try { fn(event.data); } catch (err) { console.warn('Listener error:', err); }
         });
@@ -56,13 +66,18 @@ export const LoyaltyEvents = {
   initRealtime(supabaseClient: any) {
     if (!supabaseClient || supabaseBroadcastChannel) return;
     try {
+      // 🛡️ Prevent echo chamber: self = false
       supabaseBroadcastChannel = supabaseClient.channel('radar_realtime_broadcast', {
-        config: { broadcast: { self: true } },
+        config: { broadcast: { self: false } },
       });
 
       supabaseBroadcastChannel
         .on('broadcast', { event: 'LOYALTY_EVENT' }, (msg: any) => {
           if (msg && msg.payload) {
+            // Strictly filter out self-emitted events
+            if (msg.payload.senderId && msg.payload.senderId === CLIENT_INSTANCE_ID) {
+              return;
+            }
             listeners.forEach((fn) => {
               try { fn(msg.payload); } catch (err) { console.warn('Realtime listener error:', err); }
             });
@@ -70,7 +85,8 @@ export const LoyaltyEvents = {
         })
         .subscribe();
 
-      // 🔄 Realtime Postgres Table Subscriptions for Instant Cross-Dashboard Synchronization
+      // 🔄 Realtime Postgres Table Subscriptions for Cross-Dashboard Sync
+      // Rule: Exactly 1 consolidated event per database table change
       supabaseClient
         .channel('radar_postgres_sync')
         .on(
@@ -78,14 +94,9 @@ export const LoyaltyEvents = {
           { event: '*', schema: 'public', table: 'stores' },
           (payload: any) => {
             const sId = payload.new?.id || payload.old?.id || '';
-            const isPaid = payload.new?.setup_fee_paid === true || payload.new?.subscription_status === 'active';
             listeners.forEach((fn) => {
               try {
-                fn({ type: 'STORE_UPDATED', storeId: sId });
-                if (isPaid) {
-                  fn({ type: 'SUBSCRIPTION_UPDATED', storeId: sId });
-                  fn({ type: 'PAYMENT_COMPLETED', storeId: sId });
-                }
+                fn({ type: 'STORE_UPDATED', storeId: sId, senderId: 'POSTGRES_CDC' });
               } catch (err) {
                 console.warn('Postgres changes store listener error:', err);
               }
@@ -99,8 +110,7 @@ export const LoyaltyEvents = {
             const sId = payload.new?.converted_store_id || payload.old?.converted_store_id || '';
             listeners.forEach((fn) => {
               try {
-                fn({ type: 'LEAD_UPDATED', storeId: sId });
-                fn({ type: 'PARTNER_UPDATED', storeId: sId });
+                fn({ type: 'LEAD_UPDATED', storeId: sId, senderId: 'POSTGRES_CDC' });
               } catch (err) {
                 console.warn('Postgres changes lead listener error:', err);
               }
@@ -114,9 +124,7 @@ export const LoyaltyEvents = {
             const sId = payload.new?.store_id || payload.old?.store_id || '';
             listeners.forEach((fn) => {
               try {
-                fn({ type: 'PAYMENT_COMPLETED', storeId: sId });
-                fn({ type: 'STORE_UPDATED', storeId: sId });
-                fn({ type: 'SUBSCRIPTION_UPDATED', storeId: sId });
+                fn({ type: 'PAYMENT_COMPLETED', storeId: sId, senderId: 'POSTGRES_CDC' });
               } catch (err) {
                 console.warn('Postgres changes invoice listener error:', err);
               }
@@ -130,27 +138,32 @@ export const LoyaltyEvents = {
   },
 
   emit(payload: LoyaltyEventPayload) {
-    // 1. Notify local browser listeners
+    const eventWithSender: LoyaltyEventPayload = {
+      ...payload,
+      senderId: payload.senderId || CLIENT_INSTANCE_ID,
+    };
+
+    // 1. Notify local browser listeners once
     listeners.forEach((fn) => {
-      try { fn(payload); } catch {}
+      try { fn(eventWithSender); } catch {}
     });
 
     // 2. Broadcast to other tabs on same device
     if (channel) {
       try {
-        channel.postMessage(payload);
+        channel.postMessage(eventWithSender);
       } catch (e) {
         console.error('Failed to broadcast event locally:', e);
       }
     }
 
-    // 3. Broadcast to all mobile devices & screens via Supabase Realtime
+    // 3. Broadcast to other devices via Supabase Realtime (self is false)
     if (supabaseBroadcastChannel) {
       try {
         supabaseBroadcastChannel.send({
           type: 'broadcast',
           event: 'LOYALTY_EVENT',
-          payload,
+          payload: eventWithSender,
         });
       } catch (e) {
         console.warn('Supabase realtime broadcast send warning:', e);

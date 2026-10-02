@@ -52,6 +52,7 @@ export const MerchantJoinLanding: React.FC = () => {
 
   // Capture referral code quietly in background without showing it
   useEffect(() => {
+    document.title = 'انضمام التجار | Radar Merchant Registration';
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const ref = urlParams.get('ref') || urlParams.get('r') || '';

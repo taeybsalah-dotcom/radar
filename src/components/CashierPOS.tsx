@@ -112,6 +112,10 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    document.title = store?.name ? `نظام الكاشير | POS - ${store.name}` : 'نظام الكاشير | Cashier POS';
+  }, [store?.name]);
+
+  useEffect(() => {
     if (!store?.id || !authenticatedCashier) return;
     loadStoreMetadata();
 

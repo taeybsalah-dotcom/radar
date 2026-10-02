@@ -110,14 +110,32 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    let storeName = 'Radar';
+    let storeName = 'رادار | RADAR للولاء الذكي';
     let logoUrl = '/icon-192.svg';
     let primaryColor = '#0B0F17';
     let secondaryColor = '#F59E0B';
     let foundSlug = storeSlug;
 
-    if (portal === 'super-admin' || !storeSlug) {
-      storeName = 'Radar Platform Owner';
+    if (portal === 'super-admin') {
+      storeName = 'بوابة المالك | Radar Platform Owner';
+      foundSlug = '';
+    } else if (portal === 'partner') {
+      storeName = 'بوابة الشريك | Radar Partner';
+      foundSlug = '';
+    } else if (portal === 'join') {
+      storeName = 'انضمام التجار | Radar Merchant Registration';
+      foundSlug = '';
+    } else if (portal === 'onboarding') {
+      storeName = 'معالج إعداد المتجر | Merchant Onboarding';
+      foundSlug = '';
+    } else if (portal === 'admin' && !storeSlug) {
+      storeName = 'لوحة التاجر | Merchant Dashboard';
+      foundSlug = '';
+    } else if (portal === 'cashier' && !storeSlug) {
+      storeName = 'نظام الكاشير | POS';
+      foundSlug = '';
+    } else if (!storeSlug) {
+      storeName = 'انضمام التجار | Radar Merchant Registration';
       foundSlug = '';
     } else if (storeSlug) {
       const cacheKey = storeSlug.toLowerCase().trim();
