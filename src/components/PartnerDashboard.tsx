@@ -365,7 +365,9 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           const matchedLeads = allLeads.filter(
             (l) => (l.referral_code || '').toLowerCase().trim() === partnerRef
           );
-          const convertedCount = matchedLeads.filter((l) => l.status === 'CONVERTED').length;
+          const paidMerchants = matchedLeads.filter((l) => resolveUnifiedStage(l).isPaidActive);
+          const paidCount = bonusData?.paidCount ?? paidMerchants.length;
+          const convertedCount = matchedLeads.filter((l) => l.status === 'CONVERTED' || l.converted_store_id).length;
           const targetVal = partner.target_value || 20;
 
           setStats({
@@ -375,8 +377,8 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             },
             target: {
               target_value: targetVal,
-              achieved_count: convertedCount,
-              status_note: convertedCount > 0 ? `تم تحقيق ${convertedCount} من إجمالي هدف ${targetVal} متجر` : 'بانتظار تحويل أول متجر عبر رابطك',
+              achieved_count: paidCount,
+              status_note: paidCount > 0 ? `تم تحقيق ${paidCount} من إجمالي هدف ${targetVal} متجر مدفوع` : 'بانتظار سداد أول متجر لاحتسابه ضمن الهدف',
             },
             financials: {
               pending_commissions: summary.pending_commissions,
@@ -409,11 +411,13 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
     loadDashboardData();
   }, [partner]);
 
-  // Fetch Leads with search & pagination
+  // Fetch Leads with search & pagination (without triggering re-render flicker)
   const fetchLeads = useCallback(
-    async (pageToLoad = leadsPage) => {
+    async (pageToLoad: number = 1) => {
       if (!partner) return;
-      setLoadingLeads(true);
+      if (leads.length === 0) {
+        setLoadingLeads(true);
+      }
 
       try {
         const client = getSupabaseClient();
@@ -431,9 +435,6 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             query = query.eq('partner_id', partner.id);
           }
 
-          if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
-            query = query.eq('status', leadsStatusFilter);
-          }
           if (leadsSearch.trim()) {
             query = query.or(`store_name.ilike.%${leadsSearch.trim()}%,manager_name.ilike.%${leadsSearch.trim()}%,phone.ilike.%${leadsSearch.trim()}%`);
           }
@@ -444,10 +445,23 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
           if (!error && data && data.length > 0) {
             const allLocalLeads = await LoyaltyService.getAllLeads();
-            const normalized = (data as any[]).map((d) => {
+            let normalized = (data as any[]).map((d) => {
               const localMatch = allLocalLeads.find((l) => l.id === d.id || (l.phone && d.phone && normalizePhone(l.phone) === normalizePhone(d.phone)));
               return normalizeLead(localMatch || d);
             });
+
+            if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
+              normalized = normalized.filter((l) => {
+                const stage = resolveUnifiedStage(l);
+                return (
+                  stage.key === leadsStatusFilter ||
+                  stage.label === leadsStatusFilter ||
+                  l.status === leadsStatusFilter ||
+                  l.lifecycle_stage === leadsStatusFilter
+                );
+              });
+            }
+
             setLeads(normalized);
             setTotalLeads(count || data.length);
             setLeadsPage(pageToLoad);
@@ -481,13 +495,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
         }
         setLeads(matched);
         setTotalLeads(matched.length);
+        setLeadsPage(pageToLoad);
       } catch (err) {
         console.warn('Error fetching partner leads:', err);
       } finally {
         setLoadingLeads(false);
       }
     },
-    [partner, leadsStatusFilter, leadsSearch, leadsPage]
+    [partner, leadsStatusFilter, leadsSearch]
   );
 
   useEffect(() => {
@@ -496,26 +511,53 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
     }
   }, [partner, activeTab, leadsStatusFilter, fetchLeads]);
 
-  // 🔄 Debounced real-time synchronization when Super Admin updates lead status or creates store (300ms)
+  // 🔄 Debounced real-time synchronization when Super Admin updates lead status or creates store
   const debouncedSyncPartnerData = useMemo(
     () =>
-      debounce((pId: string, page: number) => {
-        fetchLeads(page);
-        LoyaltyService.getPartnerFinancialSummary(pId).then((fin) => {
-          setStats((prev: any) => ({
-            ...prev,
-            financials: {
-              earned_commissions: fin.earned_commissions,
-              bonuses_earned: fin.bonuses_earned,
-              pending_commissions: fin.pending_commissions,
-            },
-          }));
+      debounce(async (pId: string) => {
+        fetchLeads(1);
+        const [fin, comms, allLeads, bonusData] = await Promise.all([
+          LoyaltyService.getPartnerFinancialSummary(pId, partner?.affiliate_id),
+          LoyaltyService.getPartnerCommissions(pId),
+          LoyaltyService.getAllLeads(),
+          LoyaltyService.getPartnerBonuses(pId, partner?.affiliate_id),
+        ]);
+
+        const partnerRef = (partner?.affiliates?.referral_code || partner?.referral_code || '').toLowerCase().trim();
+        const matched = allLeads.filter((l) => (l.referral_code || '').toLowerCase().trim() === partnerRef);
+        const paidMerchants = matched.filter((l) => resolveUnifiedStage(l).isPaidActive);
+        const paidCount = bonusData?.paidCount ?? paidMerchants.length;
+        const targetVal = partner?.target_value || 20;
+
+        setStats((prev: any) => ({
+          ...prev,
+          pipeline: {
+            total_leads: matched.length,
+            converted: matched.filter((l) => l.status === 'CONVERTED' || l.converted_store_id).length,
+          },
+          target: {
+            target_value: targetVal,
+            achieved_count: paidCount,
+            status_note: paidCount > 0 ? `تم تحقيق ${paidCount} من إجمالي هدف ${targetVal} متجر مدفوع` : 'بانتظار سداد أول متجر لاحتسابه ضمن الهدف',
+          },
+          financials: {
+            earned_commissions: fin.earned_commissions,
+            bonuses_earned: fin.bonuses_earned,
+            pending_commissions: fin.pending_commissions,
+            paid_commissions: fin.paid_commissions,
+            commission_rate: partner?.commission_rate || 0.20,
+            currency: 'SAR',
+          },
+        }));
+
+        setCommissions(comms || []);
+        setCommissionsSummary({
+          total_pending: fin.pending_commissions,
+          total_earned: fin.earned_commissions,
+          total_paid: fin.paid_commissions,
         });
-        LoyaltyService.getPartnerCommissions(pId).then((comms) => {
-          setCommissions(comms);
-        });
-      }, 300),
-    [fetchLeads]
+      }, 400),
+    [partner, fetchLeads]
   );
 
   useEffect(() => {
@@ -527,14 +569,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
         event.type === 'PAYMENT_COMPLETED' ||
         event.type === 'STORE_UPDATED'
       ) {
-        debouncedSyncPartnerData(partner.id, leadsPage);
+        debouncedSyncPartnerData(partner.id);
       }
     });
     return () => {
       unsubscribe();
       debouncedSyncPartnerData.cancel();
     };
-  }, [partner, leadsPage, debouncedSyncPartnerData]);
+  }, [partner, debouncedSyncPartnerData]);
 
   // Handle Login via Phone + PIN
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -1154,7 +1196,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
           {/* Leads Table */}
           <div className="bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-            {loadingLeads ? (
+            {loadingLeads && leads.length === 0 ? (
               <div className="py-16 text-center space-y-3">
                 <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto" />
                 <p className="text-xs text-slate-400">جاري تحميل قائمة عملائك...</p>
