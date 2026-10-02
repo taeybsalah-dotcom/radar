@@ -541,7 +541,7 @@ export function App() {
 
           {activeTab === 'partner' && (
             <ProtectedRoute
-              allowedRoles={['partner']}
+              allowedRoles={['partner', 'super_admin']}
               portalName="بوابة شركاء المبيعات (Partner Portal)"
             >
               <PartnerDashboard
