@@ -4149,32 +4149,35 @@ export const LoyaltyService = {
     // 2. البحث عن الشريك/المسوق وحساب العمولة المزدوجة (Acquisition vs. Recurring)
     let partnerAccountId: string | null = null;
     let partnerName: string | null = null;
-    let commissionRate = 0.20;
+    let commissionRate = 0;
     const isFirstAcquisition = payload.invoiceType === 'setup' || !currentStore.setup_fee_paid;
-    let commissionType: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE' =
-      isFirstAcquisition
-        ? 'STORE_ACQUISITION'
-        : payload.invoiceType === 'upgrade'
-        ? 'SUBSCRIPTION_UPGRADE'
-        : 'SUBSCRIPTION_RENEWAL';
+    let commissionType: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE' | undefined = undefined;
 
     const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
     const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
     const matchingLead = allLeads.find((l) => l.converted_store_id === payload.storeId || l.store_name === currentStore.name);
     if (matchingLead && matchingLead.referral_code) {
-      const partner = allPartners.find((p) => p.referral_code === matchingLead.referral_code);
-      if (partner) {
+      const partner = allPartners.find(
+        (p) =>
+          (p.referral_code || '').toLowerCase() === matchingLead.referral_code?.toLowerCase() ||
+          (p.slug || '').toLowerCase() === matchingLead.referral_code?.toLowerCase()
+      );
+
+      // 🛡️ فحص حتمي: إذا كان الشريك نشطاً (active !== false) تُحسب عمولته، وإذا كان موقوفاً لا تُصرف أي عمولة إطلاقاً (0%)
+      if (partner && partner.active !== false) {
         partnerAccountId = partner.id;
         partnerName = partner.display_name;
 
-        // تطبيق النسبة بحسب نوع العملية (استحواذ لأول مرة vs تجديد متكرر)
+        // تطبيق النسبة بحسب نوع العملية (اشتراك جديد لأول مرة vs تجديد متكرر)
         if (isFirstAcquisition) {
           commissionRate = partner.acquisition_commission_rate ?? partner.commission_rate ?? 0.20;
           commissionType = 'STORE_ACQUISITION';
         } else {
-          commissionRate = partner.recurring_commission_rate ?? (partner.commission_rate ? partner.commission_rate / 2 : 0.10);
+          commissionRate = partner.recurring_commission_rate ?? 0.10;
           commissionType = payload.invoiceType === 'upgrade' ? 'SUBSCRIPTION_UPGRADE' : 'SUBSCRIPTION_RENEWAL';
         }
+      } else if (partner) {
+        console.warn(`[Commission] Partner ${partner.display_name} is suspended/inactive. No commission awarded.`);
       }
     }
 
@@ -5865,6 +5868,7 @@ export const LoyaltyService = {
       const parsedPinFromNotes = notes.match(/PIN:\s*(\S+)/)?.[1];
       const pinCode = p.pin_code || parsedPinFromNotes || '1234';
       const commRate = typeof p.commission_rate === 'number' ? p.commission_rate : (typeof p.affiliates?.commission_rate === 'number' ? p.affiliates.commission_rate : 0.20);
+      const recurringRate = typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : (typeof p.affiliates?.recurring_commission_rate === 'number' ? p.affiliates.recurring_commission_rate : 0.10);
 
       return {
         ...p,
@@ -5872,8 +5876,12 @@ export const LoyaltyService = {
         slug,
         referral_code: code,
         commission_rate: commRate,
+        acquisition_commission_rate: commRate,
+        recurring_commission_rate: recurringRate,
         target_value: p.target_value || 20,
-        affiliates: p.affiliates ? { ...p.affiliates, referral_code: code, commission_rate: commRate } : { referral_code: code, commission_rate: commRate },
+        affiliates: p.affiliates
+          ? { ...p.affiliates, referral_code: code, commission_rate: commRate, acquisition_commission_rate: commRate, recurring_commission_rate: recurringRate }
+          : { referral_code: code, commission_rate: commRate, acquisition_commission_rate: commRate, recurring_commission_rate: recurringRate },
       };
     };
 
@@ -5882,7 +5890,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('partner_accounts')
-          .select('id, affiliate_id, display_name, slug, region, target_value, commission_rate, active, created_at, affiliates(id, name, phone, referral_code, status, notes, commission_rate)')
+          .select('id, affiliate_id, display_name, slug, region, target_value, commission_rate, recurring_commission_rate, active, created_at, affiliates(id, name, phone, referral_code, status, notes, commission_rate, recurring_commission_rate)')
           .order('created_at', { ascending: false });
         if (!error && data && data.length > 0) {
           const sanitized = data.map(sanitizePartner);
@@ -5907,10 +5915,12 @@ export const LoyaltyService = {
     region?: string;
     target_value?: number;
     commission_rate?: number;
+    recurring_commission_rate?: number;
   }): Promise<any> {
     const cleanName = payload.name.trim();
     const cleanPhone = payload.phone.trim();
     const commRate = typeof payload.commission_rate === 'number' ? Math.max(0.01, Math.min(1.0, payload.commission_rate)) : 0.20;
+    const recurringRate = typeof payload.recurring_commission_rate === 'number' ? Math.max(0.01, Math.min(1.0, payload.recurring_commission_rate)) : 0.10;
     
     // Normalization: r + digits
     let cleanCode = (payload.referral_code || '').trim().toLowerCase();
@@ -5939,6 +5949,8 @@ export const LoyaltyService = {
       region: payload.region || '',
       target_value: payload.target_value || 20,
       commission_rate: commRate,
+      acquisition_commission_rate: commRate,
+      recurring_commission_rate: recurringRate,
       pin_code: pinCode,
       active: true,
       created_at: new Date().toISOString(),
@@ -5948,6 +5960,8 @@ export const LoyaltyService = {
         phone: cleanPhone,
         referral_code: cleanCode,
         commission_rate: commRate,
+        acquisition_commission_rate: commRate,
+        recurring_commission_rate: recurringRate,
         status: 'ACTIVE',
         notes: `PIN: ${pinCode}`,
       },
@@ -5964,7 +5978,15 @@ export const LoyaltyService = {
       try {
         const { data: affData } = await supabase
           .from('affiliates')
-          .upsert([{ name: cleanName, phone: cleanPhone, referral_code: cleanCode, status: 'ACTIVE', commission_rate: commRate, notes: `PIN: ${pinCode}` }], { onConflict: 'phone' })
+          .upsert([{
+            name: cleanName,
+            phone: cleanPhone,
+            referral_code: cleanCode,
+            status: 'ACTIVE',
+            commission_rate: commRate,
+            recurring_commission_rate: recurringRate,
+            notes: `PIN: ${pinCode}`
+          }], { onConflict: 'phone' })
           .select('id')
           .single();
 
@@ -5979,6 +6001,7 @@ export const LoyaltyService = {
             region: payload.region || null,
             target_value: payload.target_value || 20,
             commission_rate: commRate,
+            recurring_commission_rate: recurringRate,
             pin_code: pinCode,
             active: true
           }]);
@@ -6436,11 +6459,13 @@ export const LoyaltyService = {
       return pRef === leadRef || pSlug === leadRef;
     });
 
-    if (!partner) {
+    if (!partner || partner.active === false) {
       return { success: true };
     }
 
-    const rate = typeof partner.commission_rate === 'number' ? partner.commission_rate : (typeof partner.affiliates?.commission_rate === 'number' ? partner.affiliates.commission_rate : 0.20);
+    const rate = typeof partner.acquisition_commission_rate === 'number'
+      ? partner.acquisition_commission_rate
+      : (typeof partner.commission_rate === 'number' ? partner.commission_rate : 0.20);
     const commAmount = Math.round(basisAmount * rate * 100) / 100;
     const commId = `comm-${leadId}`;
     const idempotencyKey = `conv_comm_${leadId}`;
@@ -6507,12 +6532,19 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     const partnerIdsToEvaluate = new Set<string>();
 
+    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
     const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
     let unlockedCount = 0;
     let foundPending = false;
 
     const updatedComms = localComms.map((c) => {
       if ((c.store_id === storeId || c.merchant_lead_id === storeId) && c.status === 'PENDING') {
+        const partner = allPartners.find((p) => p.id === c.partner_account_id);
+        // 🛡️ إذا كان الشريك موقوفاً لا يتم تحرير أو تفعيل أي عمولة
+        if (partner && partner.active === false) {
+          return c;
+        }
+
         unlockedCount++;
         foundPending = true;
         if (c.partner_account_id) partnerIdsToEvaluate.add(c.partner_account_id);
@@ -6539,10 +6571,10 @@ export const LoyaltyService = {
       const store = stores.find((s) => s.id === storeId);
       const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
       const lead = allLeads.find((l) => l.converted_store_id === storeId || l.store_name === store?.name);
-      const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
       const partner = allPartners.find((p) => p.referral_code === lead?.referral_code || p.id === lead?.affiliate_id);
 
-      if (partner) {
+      // 🛡️ التحقق من أن الشريك نشط وليس موقوفاً
+      if (partner && partner.active !== false) {
         partnerIdsToEvaluate.add(partner.id);
         const recRate = partner.recurring_commission_rate ?? 0.10;
         const basis = paidAmount;
@@ -6844,18 +6876,40 @@ export const LoyaltyService = {
     return { success: true, total_amount: settledAmt };
   },
 
-  async updatePartnerCommissionRate(partnerId: string, newRate: number): Promise<{ success: boolean; partner?: any; error?: string }> {
+  async updatePartnerCommissionRate(
+    partnerId: string,
+    newRate: number,
+    newRecurringRate?: number
+  ): Promise<{ success: boolean; partner?: any; error?: string }> {
     const cleanRate = Math.max(0.01, Math.min(1.0, Number(newRate) || 0.20));
+    const cleanRecurringRate = typeof newRecurringRate === 'number' ? Math.max(0.01, Math.min(1.0, newRecurringRate)) : undefined;
+
     const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
     const idx = local.findIndex((p) => p.id === partnerId || p.affiliate_id === partnerId);
     if (idx === -1) {
       return { success: false, error: 'حساب الشريك غير موجود' };
     }
 
+    const currentPartner = local[idx];
+    const recRate = cleanRecurringRate !== undefined ? cleanRecurringRate : (currentPartner.recurring_commission_rate ?? 0.10);
+
     const updated = {
-      ...local[idx],
+      ...currentPartner,
       commission_rate: cleanRate,
-      affiliates: local[idx].affiliates ? { ...local[idx].affiliates, commission_rate: cleanRate } : { commission_rate: cleanRate },
+      acquisition_commission_rate: cleanRate,
+      recurring_commission_rate: recRate,
+      affiliates: currentPartner.affiliates
+        ? {
+            ...currentPartner.affiliates,
+            commission_rate: cleanRate,
+            acquisition_commission_rate: cleanRate,
+            recurring_commission_rate: recRate,
+          }
+        : {
+            commission_rate: cleanRate,
+            acquisition_commission_rate: cleanRate,
+            recurring_commission_rate: recRate,
+          },
     };
     local[idx] = updated;
     saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, local);
@@ -6863,7 +6917,13 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await supabase.from('partner_accounts').update({ commission_rate: cleanRate }).eq('id', partnerId);
+        const updateObj: Record<string, any> = {
+          commission_rate: cleanRate,
+        };
+        if (cleanRecurringRate !== undefined) {
+          updateObj.recurring_commission_rate = cleanRecurringRate;
+        }
+        await supabase.from('partner_accounts').update(updateObj).eq('id', partnerId);
         if (updated.affiliate_id) {
           await supabase.from('affiliates').update({ commission_rate: cleanRate }).eq('id', updated.affiliate_id);
         }
@@ -6873,6 +6933,7 @@ export const LoyaltyService = {
     }
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     return { success: true, partner: updated };
   },
 

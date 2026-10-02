@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Store, MerchantLead, LeadStatus } from '../types';
+import { Store, MerchantLead, LeadStatus, resolveUnifiedStage, UnifiedLifecycleStage } from '../types';
 import { getSupabaseClient, LoyaltyService } from '../lib/supabase';
 import {
   ShieldCheck,
@@ -181,7 +181,15 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
         const allLeads = await LoyaltyService.getAllLeads();
         let filtered = allLeads;
         if (statusFilter && statusFilter !== 'ALL') {
-          filtered = filtered.filter((l) => l.status === statusFilter);
+          filtered = filtered.filter((l) => {
+            const stage = resolveUnifiedStage(l);
+            return (
+              stage.key === statusFilter ||
+              stage.label === statusFilter ||
+              l.status === statusFilter ||
+              l.lifecycle_stage === statusFilter
+            );
+          });
         }
         if (debouncedSearch) {
           const q = debouncedSearch.toLowerCase();
@@ -620,84 +628,40 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
     }
   };
 
-  // Helper status color classes
-  const getStatusBadge = (status: LeadStatus) => {
-    switch (status) {
-      case 'NEW':
-        return {
-          bg: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-          dot: 'bg-amber-400',
-          label: 'جديد',
-        };
-      case 'CONTACTED':
-        return {
-          bg: 'bg-sky-500/10 text-sky-400 border-sky-500/30',
-          dot: 'bg-sky-400',
-          label: 'تم التواصل',
-        };
-      case 'PENDING':
-        return {
-          bg: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
-          dot: 'bg-purple-400',
-          label: 'قيد المراجعة',
-        };
-      case 'APPROVED':
-        return {
-          bg: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-          dot: 'bg-emerald-400',
-          label: 'معتمد',
-        };
-      case 'CONVERTING':
-        return {
-          bg: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/50 animate-pulse',
-          dot: 'bg-yellow-400',
-          label: 'قيد التأسيس',
-        };
-      case 'CONVERTED':
-        return {
-          bg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
-          dot: 'bg-emerald-400',
-          label: 'تم التأسيس بنجاح',
-        };
-      case 'REJECTED':
-        return {
-          bg: 'bg-rose-500/10 text-rose-400 border-rose-500/30',
-          dot: 'bg-rose-400',
-          label: 'مرفوض',
-        };
-      case 'CANCELLED':
-        return {
-          bg: 'bg-slate-700/40 text-slate-400 border-slate-700',
-          dot: 'bg-slate-500',
-          label: 'ملغي',
-        };
-      default:
-        return {
-          bg: 'bg-slate-800 text-slate-300 border-slate-700',
-          dot: 'bg-slate-400',
-          label: status,
-        };
-    }
+  // Helper status badge using Unified 5-Stage Standard Pipeline
+  const getStatusBadge = (itemOrStatus: any) => {
+    const item = typeof itemOrStatus === 'object' && itemOrStatus !== null ? itemOrStatus : { status: itemOrStatus };
+    const stage = resolveUnifiedStage(item);
+    return {
+      bg: stage.badgeClass,
+      dot: stage.isPaidActive ? 'bg-emerald-400' : 'bg-amber-400',
+      label: `${stage.label} ${stage.icon}`,
+      stageKey: stage.key,
+      stageLabel: stage.label,
+    };
   };
 
-  const getStatusLabel = (status: LeadStatus) => {
-    return getStatusBadge(status).label;
+  const getStatusLabel = (itemOrStatus: any) => {
+    return getStatusBadge(itemOrStatus).label;
   };
 
-  // Summary Metrics
+  // Summary Metrics (Unified 5-Stage Standard Pipeline)
   const summaryMetrics = useMemo(() => {
     const counts = {
       total: totalLeads,
       new: 0,
-      approved: 0,
-      converting: 0,
-      converted: 0,
+      in_setup: 0,
+      setup_complete: 0,
+      under_review: 0,
+      paid_active: 0,
     };
     leads.forEach((l) => {
-      if (l.status === 'NEW') counts.new++;
-      if (l.status === 'APPROVED') counts.approved++;
-      if (l.status === 'CONVERTING') counts.converting++;
-      if (l.status === 'CONVERTED') counts.converted++;
+      const stage = resolveUnifiedStage(l);
+      if (stage.key === 'NEW') counts.new++;
+      else if (stage.key === 'IN_SETUP') counts.in_setup++;
+      else if (stage.key === 'SETUP_COMPLETE') counts.setup_complete++;
+      else if (stage.key === 'UNDER_REVIEW') counts.under_review++;
+      else if (stage.key === 'PAID_ACTIVE') counts.paid_active++;
     });
     return counts;
   }, [leads, totalLeads]);
@@ -759,23 +723,27 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
         </div>
       </div>
 
-      {/* 2. Metrics Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4">
-          <span className="text-xs text-slate-400 block font-medium">إجمالي الطلبات</span>
-          <span className="text-2xl font-black text-white font-mono mt-1 block">{totalLeads}</span>
+      {/* 2. Metrics Bar (Unified 5-Stage Pipeline) */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="bg-slate-900/60 border border-blue-500/20 rounded-2xl p-3.5">
+          <span className="text-[11px] text-blue-400 block font-medium">طلب جديد 🆕</span>
+          <span className="text-xl font-black text-blue-400 font-mono mt-1 block">{summaryMetrics.new}</span>
         </div>
-        <div className="bg-slate-900/60 border border-amber-500/20 rounded-2xl p-4">
-          <span className="text-xs text-amber-400 block font-medium">طلبات جديدة</span>
-          <span className="text-2xl font-black text-amber-400 font-mono mt-1 block">{summaryMetrics.new}</span>
+        <div className="bg-slate-900/60 border border-amber-500/20 rounded-2xl p-3.5">
+          <span className="text-[11px] text-amber-400 block font-medium">جاري التأسيس ⚙️</span>
+          <span className="text-xl font-black text-amber-300 font-mono mt-1 block">{summaryMetrics.in_setup}</span>
         </div>
-        <div className="bg-slate-900/60 border border-emerald-500/20 rounded-2xl p-4">
-          <span className="text-xs text-emerald-400 block font-medium">معتمدة للتأسيس</span>
-          <span className="text-2xl font-black text-emerald-400 font-mono mt-1 block">{summaryMetrics.approved}</span>
+        <div className="bg-slate-900/60 border border-teal-500/20 rounded-2xl p-3.5">
+          <span className="text-[11px] text-teal-400 block font-medium">تم التأسيس 🚀</span>
+          <span className="text-xl font-black text-teal-300 font-mono mt-1 block">{summaryMetrics.setup_complete}</span>
         </div>
-        <div className="bg-slate-900/60 border border-yellow-500/20 rounded-2xl p-4">
-          <span className="text-xs text-yellow-300 block font-medium">متاجر قيد التأسيس</span>
-          <span className="text-2xl font-black text-yellow-300 font-mono mt-1 block">{summaryMetrics.converting}</span>
+        <div className="bg-slate-900/60 border border-purple-500/20 rounded-2xl p-3.5">
+          <span className="text-[11px] text-purple-400 block font-medium">تحت المراجعة ⏳</span>
+          <span className="text-xl font-black text-purple-300 font-mono mt-1 block">{summaryMetrics.under_review}</span>
+        </div>
+        <div className="bg-slate-900/60 border border-emerald-500/20 rounded-2xl p-3.5">
+          <span className="text-[11px] text-emerald-400 block font-medium">مشترك مدفوع 👑</span>
+          <span className="text-xl font-black text-emerald-300 font-mono mt-1 block">{summaryMetrics.paid_active}</span>
         </div>
       </div>
 
@@ -808,18 +776,15 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
           </div>
         </div>
 
-        {/* Status Filter Tabs */}
+        {/* Status Filter Tabs (Unified 5-Stage Standard Pipeline) */}
         <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-slate-800">
           {[
             { id: 'ALL', label: 'الكل' },
-            { id: 'NEW', label: 'جديد' },
-            { id: 'CONTACTED', label: 'تم التواصل' },
-            { id: 'PENDING', label: 'قيد المراجعة' },
-            { id: 'APPROVED', label: 'معتمد' },
-            { id: 'CONVERTING', label: 'قيد التأسيس' },
-            { id: 'CONVERTED', label: 'تم التأسيس' },
-            { id: 'REJECTED', label: 'مرفوض' },
-            { id: 'CANCELLED', label: 'ملغي' },
+            { id: 'NEW', label: 'طلب جديد 🆕' },
+            { id: 'IN_SETUP', label: 'جاري التأسيس ⚙️' },
+            { id: 'SETUP_COMPLETE', label: 'تم التأسيس 🚀' },
+            { id: 'UNDER_REVIEW', label: 'تحت المراجعة ⏳' },
+            { id: 'PAID_ACTIVE', label: 'مشترك مدفوع 👑' },
           ].map((tab) => {
             const isActive = statusFilter === tab.id;
             return (
@@ -877,7 +842,7 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-800/60 text-xs">
                 {leads.map((lead) => {
-                  const badge = getStatusBadge(lead.status);
+                  const badge = getStatusBadge(lead);
                   const isConvertingWithLease = lead.status === 'CONVERTING' && Boolean(activeLeases[lead.id]);
 
                   return (

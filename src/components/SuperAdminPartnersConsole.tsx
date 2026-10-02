@@ -50,11 +50,13 @@ export const SuperAdminPartnersConsole: React.FC = () => {
   const [region, setRegion] = useState('');
   const [monthlyTarget, setMonthlyTarget] = useState<number | ''>('');
   const [commissionRate, setCommissionRate] = useState<number>(20);
+  const [recurringCommissionRate, setRecurringCommissionRate] = useState<number>(10);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Commission Rate Edit Modal
   const [rateModalPartner, setRateModalPartner] = useState<any | null>(null);
   const [editingRate, setEditingRate] = useState<number>(20);
+  const [editingRecurringRate, setEditingRecurringRate] = useState<number>(10);
   const [isUpdatingRate, setIsUpdatingRate] = useState(false);
 
   // Settlement Modal State
@@ -101,13 +103,16 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     setRegion('');
     setMonthlyTarget('');
     setCommissionRate(20);
+    setRecurringCommissionRate(10);
     setIsModalOpen(true);
   };
 
   // Open Rate Edit Modal
   const openRateModal = (p: any) => {
     const rateVal = Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100);
+    const recVal = Math.round((typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : 0.10) * 100);
     setEditingRate(rateVal);
+    setEditingRecurringRate(recVal);
     setRateModalPartner(p);
   };
 
@@ -118,8 +123,9 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     setError(null);
     try {
       const decimalRate = (Number(editingRate) || 20) / 100;
-      await LoyaltyService.updatePartnerCommissionRate(rateModalPartner.id, decimalRate);
-      setSuccess(`تم بنجاح تحديث نسبة عمولة [${rateModalPartner.display_name}] إلى ${editingRate}% 🎉`);
+      const decimalRecurring = (Number(editingRecurringRate) || 10) / 100;
+      await LoyaltyService.updatePartnerCommissionRate(rateModalPartner.id, decimalRate, decimalRecurring);
+      setSuccess(`تم بنجاح تحديث نسب عمولة [${rateModalPartner.display_name}] (اشتراك جديد: ${editingRate}%، تجديد: ${editingRecurringRate}%) 🎉`);
       setRateModalPartner(null);
       await fetchPartners();
     } catch (err: any) {
@@ -229,6 +235,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
 
     try {
       const decimalRate = (Number(commissionRate) || 20) / 100;
+      const decimalRecurring = (Number(recurringCommissionRate) || 10) / 100;
       await LoyaltyService.addPartner({
         name: cleanName,
         phone: cleanPhone,
@@ -238,9 +245,10 @@ export const SuperAdminPartnersConsole: React.FC = () => {
         region: region.trim(),
         target_value: typeof monthlyTarget === 'number' ? monthlyTarget : 20,
         commission_rate: decimalRate,
+        recurring_commission_rate: decimalRecurring,
       });
 
-      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بنسبة عمولة ${commissionRate}% وكود: ${cleanCode} والرمز السري (PIN): ${pinCode.trim() || '1234'} 🎉`);
+      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بنسبة عمولة أول اشتراك: ${commissionRate}%، وتجديد: ${recurringCommissionRate}%، وكود: ${cleanCode} والرمز السري (PIN): ${pinCode.trim() || '1234'} 🎉`);
       setIsModalOpen(false);
       setPartnerName('');
       setPartnerPhone('');
@@ -249,6 +257,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
       setRegion('');
       setMonthlyTarget('');
       setCommissionRate(20);
+      setRecurringCommissionRate(10);
       setModalError(null);
 
       try { confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } }); } catch {}
@@ -463,6 +472,7 @@ ${origin}/join?ref=${refCode}`;
                   const phone = p.affiliates?.phone || '—';
                   const partnerPin = p.pin_code || '1234';
                   const commRatePct = Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100);
+                  const recurringRatePct = Math.round((typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : 0.10) * 100);
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/40 transition">
@@ -479,18 +489,29 @@ ${origin}/join?ref=${refCode}`;
                         </span>
                       </td>
 
-                      {/* 💰 Custom Commission % with Quick Edit */}
+                      {/* 💰 Custom Commission % (Acquisition & Renewal) with Quick Edit */}
                       <td className="py-4 px-4">
-                        <div className="flex items-center gap-1.5">
-                          <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-black text-xs">
-                            {commRatePct}%
-                          </span>
+                        <div className="flex items-center gap-2">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] text-slate-400">جديد:</span>
+                              <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-black text-xs">
+                                {commRatePct}%
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] text-slate-400">تجديد:</span>
+                              <span className="px-2 py-0.5 rounded-lg bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-mono font-black text-xs">
+                                {recurringRatePct}%
+                              </span>
+                            </div>
+                          </div>
                           <button
                             onClick={() => openRateModal(p)}
-                            className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
-                            title="تعديل نسبة العمولة المخصصة"
+                            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 transition shadow-inner"
+                            title="تعديل نسب العمولة (جديد وتجديد)"
                           >
-                            <Sliders className="w-3.5 h-3.5 text-amber-400" />
+                            <Sliders className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -733,37 +754,58 @@ ${origin}/join?ref=${refCode}`;
                 <p className="text-[10px] text-slate-500">يستخدمه المسوق للدخول إلى لوحة أرباحه عبر /partner</p>
               </div>
 
-              {/* Field 3: Referral Code & Custom Commission Rate */}
+              {/* Field 3: Dual Commission Rates */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
-                    <Tag className="w-3.5 h-3.5 text-amber-400" />
-                    <span>كود الإحالة</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={referralCode}
-                    onChange={(e) => setReferralCode(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                    placeholder="r4819"
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-3 py-2.5 text-xs font-mono text-amber-400 font-bold outline-none transition"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
                     <Percent className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>نسبة العمولة (%)</span>
+                    <span>عمولة اشتراك جديد (%) *</span>
                   </label>
                   <input
                     type="number"
                     min={1}
                     max={100}
+                    required
                     value={commissionRate}
                     onChange={(e) => setCommissionRate(Number(e.target.value))}
                     placeholder="20"
                     className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-2xl px-3 py-2.5 text-xs font-mono text-emerald-400 font-bold outline-none transition"
                   />
+                  <p className="text-[10px] text-slate-500">لأول اشتراك/تأسيس للمتجر</p>
                 </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
+                    <Percent className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>عمولة التجديد الدوري (%) *</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    required
+                    value={recurringCommissionRate}
+                    onChange={(e) => setRecurringCommissionRate(Number(e.target.value))}
+                    placeholder="10"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-500 rounded-2xl px-3 py-2.5 text-xs font-mono text-cyan-400 font-bold outline-none transition"
+                  />
+                  <p className="text-[10px] text-slate-500">عند تجديد الاشتراك كل دورة</p>
+                </div>
+              </div>
+
+              {/* Field 4: Referral Code */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
+                  <Tag className="w-3.5 h-3.5 text-amber-400" />
+                  <span>كود الإحالة</span>
+                </label>
+                <input
+                  type="text"
+                  value={referralCode}
+                  onChange={(e) => setReferralCode(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                  placeholder="r4819"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-2.5 text-xs font-mono text-amber-400 font-bold outline-none transition"
+                />
               </div>
 
               {/* Field 4: PIN Code (Default 1234) */}
@@ -867,7 +909,7 @@ ${origin}/join?ref=${refCode}`;
             <form onSubmit={handleUpdateRateSubmit} className="space-y-4">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
-                  <span>نسبة العمولة الجديدة (%)</span>
+                  <span>عمولة أول اشتراك/تأسيس (%)</span>
                   <span className="font-mono text-emerald-400 font-black">{editingRate}%</span>
                 </label>
                 <input
@@ -881,9 +923,31 @@ ${origin}/join?ref=${refCode}`;
                 />
                 <div className="flex justify-between text-[10px] text-slate-500 font-mono">
                   <span>5%</span>
-                  <span>20% (افتراضي)</span>
+                  <span>20%</span>
                   <span>35%</span>
                   <span>50%</span>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
+                  <span>عمولة التجديد الدوري (%)</span>
+                  <span className="font-mono text-cyan-400 font-black">{editingRecurringRate}%</span>
+                </label>
+                <input
+                  type="range"
+                  min="5"
+                  max="40"
+                  step="5"
+                  value={editingRecurringRate}
+                  onChange={(e) => setEditingRecurringRate(Number(e.target.value))}
+                  className="w-full accent-cyan-500 cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                  <span>5%</span>
+                  <span>10% (افتراضي)</span>
+                  <span>25%</span>
+                  <span>40%</span>
                 </div>
               </div>
 
@@ -893,7 +957,7 @@ ${origin}/join?ref=${refCode}`;
                   disabled={isUpdatingRate}
                   className="flex-1 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {isUpdatingRate ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>حفظ النسبة الجديدة 💾</span>}
+                  {isUpdatingRate ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>حفظ النسب الجديدة 💾</span>}
                 </button>
                 <button
                   type="button"

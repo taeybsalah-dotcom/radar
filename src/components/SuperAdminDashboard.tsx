@@ -1099,21 +1099,28 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               </div>
 
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                {(['ALL', 'مشترك مدفوع', 'تم التأسيس', 'جاري التأسيس', 'تحت المراجعة', 'طلب جديد'] as const).map((stage) => {
-                  const count = stage === 'ALL'
+                {[
+                  { id: 'ALL', label: 'الكل' },
+                  { id: 'طلب جديد', label: 'طلب جديد 🆕' },
+                  { id: 'جاري التأسيس', label: 'جاري التأسيس ⚙️' },
+                  { id: 'تم التأسيس', label: 'تم التأسيس 🚀' },
+                  { id: 'تحت المراجعة', label: 'تحت المراجعة ⏳' },
+                  { id: 'مشترك مدفوع', label: 'مشترك مدفوع 👑' },
+                ].map((tab) => {
+                  const count = tab.id === 'ALL'
                     ? stores.length
-                    : stores.filter((s) => s && getStoreUnifiedStage(s) === stage).length;
+                    : stores.filter((s) => s && getStoreUnifiedStage(s) === tab.id).length;
                   return (
                     <button
-                      key={stage}
-                      onClick={() => setStoreStageFilter(stage)}
+                      key={tab.id}
+                      onClick={() => setStoreStageFilter(tab.id as any)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
-                        storeStageFilter === stage
+                        storeStageFilter === tab.id
                           ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
                           : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                       }`}
                     >
-                      <span>{stage === 'ALL' ? 'الكل' : stage}</span>
+                      <span>{tab.label}</span>
                       <span className="text-[10px] opacity-75 font-mono">({count})</span>
                     </button>
                   );
