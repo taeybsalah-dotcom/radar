@@ -346,6 +346,20 @@ export function normalizeLead(l: any): MerchantLead {
 const storeResolutionCache = new Map<string, { store: Store | null; timestamp: number }>();
 const scanDebounceCache = new Map<string, { timestamp: number; promise: Promise<any> }>();
 
+// ⚡ كاش ذاكرة فائق السرعة لملخص المتاجر في لوحة المالك (Super Admin Summary Cache)
+let adminStoresSummaryCache: {
+  data: {
+    stores: Store[];
+    analytics: Record<string, { customerCount: number; totalSales: number; totalPoints: number; staffCount: number }>;
+  };
+  timestamp: number;
+} | null = null;
+const ADMIN_STORES_SUMMARY_TTL = 3500; // 3.5 seconds TTL
+
+export const invalidateAdminStoresCache = () => {
+  adminStoresSummaryCache = null;
+};
+
 export const LoyaltyService = {
   // 1. جلب جميع المتاجر (من Supabase مباشرة مع كاش محلي سريع)
   async getAllStores(): Promise<Store[]> {
@@ -388,58 +402,23 @@ export const LoyaltyService = {
     return [];
   },
 
-  // 1.1 جلب ملخص المتاجر المجمّع للـ Super Admin في طلب خادم واحد (Single Request Aggregation)
-  async getSuperAdminStoresSummary(): Promise<{
+  // 1.1 جلب ملخص المتاجر المجمّع للـ Super Admin في طلب خادم فائق السرعة وبدون بطء
+  async getSuperAdminStoresSummary(forceFresh: boolean = false): Promise<{
     stores: Store[];
     analytics: Record<string, { customerCount: number; totalSales: number; totalPoints: number; staffCount: number }>;
   }> {
+    // 1. التحقق من كاش الذاكرة اللحظي للوحة المالك (0ms Response)
+    if (!forceFresh && adminStoresSummaryCache && (Date.now() - adminStoresSummaryCache.timestamp < ADMIN_STORES_SUMMARY_TTL)) {
+      return adminStoresSummaryCache.data;
+    }
+
     const supabase = getSupabaseClient();
 
     if (supabase) {
-      // 1. محاولة استخدام الـ RPC المجمّع على مستوى الخادم أولاً (Server-Side Postgres RPC)
-      try {
-        const { data, error } = await supabase.rpc('get_super_admin_stores_summary');
-        if (!error && data && data.success && Array.isArray(data.stores)) {
-          const validStores = (data.stores as any[])
-            .filter((s) => Boolean(s && s.id))
-            .map(normalizeStore) as Store[];
-          saveLocalData(STORAGE_KEYS.LOCAL_STORES, validStores);
-
-          const rpcAnalytics: Record<string, { customerCount: number; totalSales: number; totalPoints: number; staffCount: number }> =
-            data.analytics || {};
-
-          const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, INITIAL_CUSTOMERS);
-          const localLogs = getLocalData<AuditLog[]>(STORAGE_KEYS.LOCAL_LOGS, INITIAL_AUDIT_LOGS);
-          const localStaff = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, INITIAL_STAFF);
-
-          const finalAnalytics: Record<string, { customerCount: number; totalSales: number; totalPoints: number; staffCount: number }> = {};
-          for (const s of validStores) {
-            const rpcStats = rpcAnalytics[s.id] || { customerCount: 0, totalSales: 0, totalPoints: 0, staffCount: 0 };
-            const sLocalCust = localCustomers.filter((c) => c.store_id === s.id).length;
-            const sLocalStaff = localStaff.filter((st) => st.store_id === s.id).length;
-            const sLocalLogs = localLogs.filter((l) => l.store_id === s.id);
-            const sLocalSales = sLocalLogs.reduce((sum, l) => sum + (Number(l.purchase_amount) || 0), 0);
-            const sLocalPoints = sLocalLogs.reduce((sum, l) => sum + (l.points_changed > 0 ? l.points_changed : 0), 0);
-
-            finalAnalytics[s.id] = {
-              customerCount: Math.max(Number(rpcStats.customerCount) || 0, sLocalCust),
-              totalSales: Math.max(Number(rpcStats.totalSales) || 0, sLocalSales),
-              totalPoints: Math.max(Number(rpcStats.totalPoints) || 0, sLocalPoints),
-              staffCount: Math.max(Number(rpcStats.staffCount) || 0, sLocalStaff),
-            };
-          }
-
-          return { stores: validStores, analytics: finalAnalytics };
-        }
-      } catch (_rpcErr) {
-        // Fall through to single consolidated PostgREST embedded query
-      }
-
-      // 2. استعلام PostgREST مدمج ومجمّع في طلب شبكي واحد دون تكرار (Single HTTP Request - Zero N+1)
       try {
         const { data, error } = await supabase
           .from('stores')
-          .select('*, store_customers(count), store_staff(count), audit_logs(purchase_amount, points_changed)')
+          .select('*, store_customers(count), store_staff(count)')
           .order('created_at', { ascending: false });
 
         if (!error && Array.isArray(data)) {
@@ -457,11 +436,6 @@ export const LoyaltyService = {
             const storeId = item.id;
             const dbCustCount = Number(item.store_customers?.[0]?.count) || 0;
             const dbStaffCount = Number(item.store_staff?.[0]?.count) || 0;
-            const dbSales = (item.audit_logs || []).reduce((sum: number, l: any) => sum + (Number(l.purchase_amount) || 0), 0);
-            const dbPoints = (item.audit_logs || []).reduce(
-              (sum: number, l: any) => sum + (Number(l.points_changed) > 0 ? Number(l.points_changed) : 0),
-              0
-            );
 
             const sLocalCust = localCustomers.filter((c) => c.store_id === storeId).length;
             const sLocalStaff = localStaff.filter((st) => st.store_id === storeId).length;
@@ -471,20 +445,22 @@ export const LoyaltyService = {
 
             analytics[storeId] = {
               customerCount: Math.max(dbCustCount, sLocalCust),
-              totalSales: Math.max(dbSales, sLocalSales),
-              totalPoints: Math.max(dbPoints, sLocalPoints),
+              totalSales: sLocalSales,
+              totalPoints: sLocalPoints,
               staffCount: Math.max(dbStaffCount, sLocalStaff),
             };
           }
 
-          return { stores: validStores, analytics };
+          const result = { stores: validStores, analytics };
+          adminStoresSummaryCache = { data: result, timestamp: Date.now() };
+          return result;
         }
       } catch (fallbackErr) {
         console.warn('Single consolidated stores query failed, using local fallback', fallbackErr);
       }
     }
 
-    // 3. التخزين المحلي السريع في حالة انقطاع الاتصال (Instant Local Fallback)
+    // 2. التخزين المحلي السريع في حالة انقطاع الاتصال (Instant Local Fallback)
     const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
     const validStores = (localStores && Array.isArray(localStores) ? localStores : []).map(normalizeStore);
     const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, INITIAL_CUSTOMERS);
@@ -504,7 +480,9 @@ export const LoyaltyService = {
       };
     }
 
-    return { stores: validStores, analytics };
+    const result = { stores: validStores, analytics };
+    adminStoresSummaryCache = { data: result, timestamp: Date.now() };
+    return result;
   },
 
   // 2. البحث والتحقق من المتجر (سواء برقم الـ UUID أو الاسم اللطيف Slug) مع كاش ذاكرة وتخزين فائق السرعة (0ms)
@@ -718,6 +696,7 @@ export const LoyaltyService = {
     delete wallets[targetSlug];
     saveLocalData(STORAGE_KEYS.LOCAL_WALLETS, wallets);
 
+    invalidateAdminStoresCache();
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
     return true;
   },
@@ -755,6 +734,7 @@ export const LoyaltyService = {
     saveLocalData(STORAGE_KEYS.LOCAL_WALLETS, {});
     saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, []);
 
+    invalidateAdminStoresCache();
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'all' });
     return true;
   },
@@ -858,28 +838,14 @@ export const LoyaltyService = {
             trial_end_date: createdStore.trial_end_date || trialEndIso,
             subscription_end_date: createdStore.trial_end_date || trialEndIso,
           };
-
-          if (isUUID(createdStore.id)) {
-            try {
-              await supabase
-                .from('stores')
-                .update({
-                  subscription_status: 'trial',
-                  status: 'trial',
-                  setup_fee_paid: false,
-                  subscription_active: true,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', createdStore.id);
-            } catch (syncErr) {
-              console.warn('Sync store trial status update warning:', syncErr);
-            }
-          }
         }
       } catch (e) {
         console.warn('Supabase createStoreConcierge exception', e);
       }
     }
+
+    // Invalidate Super Admin stores summary cache
+    invalidateAdminStoresCache();
 
     // Always ensure stored in local cache so it never gets lost!
     const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
@@ -1130,6 +1096,7 @@ export const LoyaltyService = {
       }
     }
 
+    invalidateAdminStoresCache();
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: merged.id });
     return merged;
   },

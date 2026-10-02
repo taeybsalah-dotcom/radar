@@ -263,25 +263,27 @@ export async function resolveUniqueStoreSlug(
       .filter(Boolean)
   );
 
-  // 2. Also check with Supabase database if available
-  const supabase = getSupabaseClient();
-  if (supabase) {
-    try {
-      const { data: dbStores } = await supabase
-        .from('stores')
-        .select('id, slug')
-        .or(`slug.eq.${initialSlug},slug.like.${initialSlug}-%`)
-        .limit(50);
+  // 2. Only query Supabase if existingStores was NOT provided
+  if (!existingStores) {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data: dbStores } = await supabase
+          .from('stores')
+          .select('id, slug')
+          .or(`slug.eq.${initialSlug},slug.like.${initialSlug}-%`)
+          .limit(50);
 
-      if (dbStores) {
-        dbStores.forEach((st: { id: string; slug: string }) => {
-          if (!excludeStoreId || st.id !== excludeStoreId) {
-            if (st.slug) occupiedSlugs.add(st.slug.toLowerCase().trim());
-          }
-        });
+        if (dbStores) {
+          dbStores.forEach((st: { id: string; slug: string }) => {
+            if (!excludeStoreId || st.id !== excludeStoreId) {
+              if (st.slug) occupiedSlugs.add(st.slug.toLowerCase().trim());
+            }
+          });
+        }
+      } catch {
+        // Non-blocking fallback to memory occupiedSlugs
       }
-    } catch {
-      // Non-blocking fallback to memory occupiedSlugs
     }
   }
 
