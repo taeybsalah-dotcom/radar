@@ -6917,7 +6917,7 @@ export const LoyaltyService = {
   // ==============================================================================
   // 💳 إدارة خطط الاشتراك الديناميكية (Dynamic Subscription Plans)
   // ==============================================================================
-  async getAllSubscriptionPlans(): Promise<BillingPlan[]> {
+  getAllSubscriptionPlansSync(): BillingPlan[] {
     const DEFAULT_PLANS: BillingPlan[] = [
       {
         id: 'plan-basic',
@@ -6974,16 +6974,24 @@ export const LoyaltyService = {
         active: true,
       },
     ];
+    const local = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_PLANS);
+    return local && local.length > 0 ? local : DEFAULT_PLANS;
+  },
 
-    let currentLocal = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_PLANS);
-    if (!currentLocal || currentLocal.length === 0) {
-      currentLocal = DEFAULT_PLANS;
-      saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, currentLocal);
-    }
+  async getAllSubscriptionPlans(): Promise<BillingPlan[]> {
+    const currentLocal = this.getAllSubscriptionPlansSync();
 
-    // 1. استعلام نقطة النهاية السحابية (Cloud API Handler with ServiceRole)
+    // 1. استعلام نقطة النهاية السحابية مع مهلة سريعة (Fast 2.5s Timeout) لمنع أي تأخير للواجهة
     try {
-      const res = await fetch('/api/billing/plans', { method: 'GET' });
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), 2500) : null;
+
+      const res = await fetch('/api/billing/plans', {
+        method: 'GET',
+        signal: controller?.signal,
+      });
+      if (timeoutId) clearTimeout(timeoutId);
+
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.plans) && json.plans.length > 0) {
@@ -7018,7 +7026,7 @@ export const LoyaltyService = {
         }
       }
     } catch (apiErr) {
-      // ignore API failure and proceed to Supabase / Local
+      // ignore API failure and proceed
     }
 
     // 2. استعلام Supabase المباشر كاحتياطي إضافي

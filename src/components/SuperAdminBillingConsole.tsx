@@ -67,7 +67,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
   const [ledgerEntries, setLedgerEntries] = useState<FinancialLedgerEntry[]>([]);
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
   const [payouts, setPayouts] = useState<AffiliatePayoutRecord[]>([]);
-  const [plans, setPlans] = useState<BillingPlan[]>([]);
+  const [plans, setPlans] = useState<BillingPlan[]>(() => LoyaltyService.getAllSubscriptionPlansSync());
   const [stores, setStores] = useState<Store[]>([]);
   const [partners, setPartners] = useState<PartnerAccount[]>([]);
   const [allInvoices, setAllInvoices] = useState<Record<string, StoreInvoice[]>>({});
@@ -139,34 +139,28 @@ export const SuperAdminBillingConsole: React.FC = () => {
       const cfg = LoyaltyService.getFinancialConfig();
       setFinancialConfig(cfg);
 
-      const [
-        metricsData,
-        ledgerData,
-        creditNotesData,
-        payoutsData,
-        plansData,
-        storesSummary,
-        partnersData,
-        invoicesData,
-      ] = await Promise.all([
+      // Fetch plans immediately and independently so they appear on frame 0
+      LoyaltyService.getAllSubscriptionPlans().then((freshPlans) => {
+        if (freshPlans && freshPlans.length > 0) setPlans(freshPlans);
+      }).catch((e) => console.warn('Plans fetch error:', e));
+
+      const results = await Promise.allSettled([
         LoyaltyService.getMasterFinancialMetrics(),
         LoyaltyService.getFinancialLedger(),
         LoyaltyService.getAllCreditNotes(),
         LoyaltyService.getAllAffiliatePayouts(),
-        LoyaltyService.getAllSubscriptionPlans(),
         LoyaltyService.getSuperAdminStoresSummary(),
         LoyaltyService.getAllPartners(),
         LoyaltyService.getAllInvoices(),
       ]);
 
-      setMetrics(metricsData);
-      setLedgerEntries(ledgerData);
-      setCreditNotes(creditNotesData);
-      setPayouts(payoutsData);
-      setPlans(plansData);
-      setStores(storesSummary.stores || []);
-      setPartners(partnersData || []);
-      setAllInvoices(invoicesData || {});
+      if (results[0].status === 'fulfilled') setMetrics(results[0].value);
+      if (results[1].status === 'fulfilled') setLedgerEntries(results[1].value);
+      if (results[2].status === 'fulfilled') setCreditNotes(results[2].value);
+      if (results[3].status === 'fulfilled') setPayouts(results[3].value);
+      if (results[4].status === 'fulfilled') setStores(results[4].value.stores || []);
+      if (results[5].status === 'fulfilled') setPartners(results[5].value || []);
+      if (results[6].status === 'fulfilled') setAllInvoices(results[6].value || {});
     } catch (err) {
       console.error('[SuperAdminBillingConsole] Load error:', err);
     } finally {

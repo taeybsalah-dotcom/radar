@@ -280,7 +280,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   const [updatingSettings, setUpdatingSettings] = useState(false);
   const [settingsSavedMessage, setSettingsSavedMessage] = useState<string | null>(null);
-  const [allPlans, setAllPlans] = useState<BillingPlan[]>([]);
+  const [allPlans, setAllPlans] = useState<BillingPlan[]>(() => LoyaltyService.getAllSubscriptionPlansSync());
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -558,8 +558,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const loadAdminData = async () => {
     if (!currentStore?.id) return;
     setLoading(true);
+    LoyaltyService.getAllSubscriptionPlans().then((freshPlans) => {
+      if (freshPlans && freshPlans.length > 0) setAllPlans(freshPlans);
+    }).catch(() => {});
+
     try {
-      const [s, c, a, t, staff, p, cpn, wallet, invs, subInfo, cat, specs, cats, mods, bks, plansList] = await Promise.all([
+      const [s, c, a, t, staff, p, cpn, wallet, invs, subInfo, cat, specs, cats, mods, bks] = await Promise.all([
         LoyaltyService.resolveStore(currentStore.id),
         LoyaltyService.getAllCustomers(currentStore.id),
         LoyaltyService.getAuditLogs(currentStore.id),
@@ -575,11 +579,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         LoyaltyService.getGlobalCategories(currentStore.id),
         LoyaltyService.getGlobalModifierGroups(currentStore.id),
         LoyaltyService.getStoreBookings(currentStore.id),
-        LoyaltyService.getAllSubscriptionPlans(),
       ]);
       const activeStore = normalizeStore(s || currentStore);
       setStore(activeStore);
-      setAllPlans(plansList || []);
       setSpecialists(specs || []);
       setGlobalCategories(cats || []);
       setGlobalModifierGroups(mods || []);
