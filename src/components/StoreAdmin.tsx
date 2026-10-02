@@ -2564,27 +2564,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-white font-bold">Visa / MC</span>
               </div>
 
-              {subscriptionInfo?.requiresSetup || !store.setup_fee_paid ? (
-                <button
-                  type="button"
-                  disabled={isPayingSetup}
-                  onClick={() => handlePaySetupFee('mada')}
-                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-black font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center space-x-2 rtl:space-x-reverse disabled:opacity-50"
-                >
-                  <CreditCard className="w-5 h-5" />
-                  <span>{isPayingSetup ? 'جاري معالجة الدفع والتفعيل...' : 'سداد 500 ر.س وتفعيل المتجر فوراً (Sandbox / مدى) 💳'}</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={isPayingRenewal}
-                  onClick={() => handlePayRenewal('mada')}
-                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-black font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center space-x-2 rtl:space-x-reverse disabled:opacity-50"
-                >
-                  <CreditCard className="w-5 h-5" />
-                  <span>{isPayingRenewal ? 'جاري معالجة التجديد...' : 'سداد 195 ر.س وتجديد الاشتراك فوراً (Sandbox / مدى) 💳'}</span>
-                </button>
-              )}
+              <button
+                type="button"
+                disabled={isPayingRenewal || isPayingSetup}
+                onClick={() => handlePayRenewal('mada')}
+                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-black font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center space-x-2 rtl:space-x-reverse disabled:opacity-50"
+              >
+                <CreditCard className="w-5 h-5" />
+                <span>{isPayingRenewal || isPayingSetup ? 'جاري معالجة الاشتراك...' : `سداد الاشتراك وتفعيل المتجر (${store.renewal_amount || 195} ر.س) 💳`}</span>
+              </button>
             </div>
           </div>
 
@@ -6011,18 +5999,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         </div>
                       </div>
 
-                      {/* Quick Action */}
-                      {!store.setup_fee_paid && (
-                        <button
-                          type="button"
-                          disabled={isPayingSetup}
-                          onClick={() => handlePaySetupFee('mada')}
-                          className="px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs transition flex items-center space-x-2 rtl:space-x-reverse shadow-lg shadow-emerald-500/20 disabled:opacity-50 shrink-0"
-                        >
-                          <Zap className="w-4 h-4" />
-                          <span>{isPayingSetup ? 'جاري السداد...' : 'سداد التأسيس (500 ر.س) وتثبيت المتجر 🎁'}</span>
-                        </button>
-                      )}
                     </div>
                   </div>
 
