@@ -357,6 +357,7 @@ let adminStoresSummaryCache: {
 let storesListCache: { data: Store[]; timestamp: number } | null = null;
 let partnersListCache: { data: any[]; timestamp: number } | null = null;
 let leadsListCache: { data: MerchantLead[]; timestamp: number } | null = null;
+let ledgerListCache: { data: FinancialLedgerEntry[]; timestamp: number } | null = null;
 const SERVICE_CACHE_TTL = 3500; // 3.5 seconds TTL
 
 export const invalidateAdminStoresCache = () => {
@@ -372,11 +373,16 @@ export const invalidateLeadsCache = () => {
   leadsListCache = null;
 };
 
+export const invalidateLedgerCache = () => {
+  ledgerListCache = null;
+};
+
 export const invalidateAllServiceCaches = () => {
   adminStoresSummaryCache = null;
   storesListCache = null;
   partnersListCache = null;
   leadsListCache = null;
+  ledgerListCache = null;
 };
 
 export const LoyaltyService = {
@@ -4000,12 +4006,17 @@ export const LoyaltyService = {
     };
   },
 
-  // جلب السجل المالي العام غير القابل للتعديل (Master Financial Ledger)
+  // جلب السجل المالي العام غير القابل للتعديل (Master Financial Ledger مع كاش فائق السرعة)
   async getFinancialLedger(filters?: {
     type?: string;
     storeId?: string;
     affiliateId?: string;
-  }): Promise<FinancialLedgerEntry[]> {
+  }, forceFresh: boolean = false): Promise<FinancialLedgerEntry[]> {
+    const isDefaultQuery = !filters || (!filters.type || filters.type === 'ALL') && !filters.storeId && !filters.affiliateId;
+    if (!forceFresh && isDefaultQuery && ledgerListCache && (Date.now() - ledgerListCache.timestamp < SERVICE_CACHE_TTL)) {
+      return ledgerListCache.data;
+    }
+
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -4048,6 +4059,9 @@ export const LoyaltyService = {
             metadata: d.metadata || {},
           }));
           saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, formatted);
+          if (isDefaultQuery) {
+            ledgerListCache = { data: formatted, timestamp: Date.now() };
+          }
           return formatted;
         }
       } catch (e) {
@@ -4060,6 +4074,9 @@ export const LoyaltyService = {
       INITIAL_FINANCIAL_LEDGER
     );
     let filtered = [...localLedger];
+    if (isDefaultQuery) {
+      ledgerListCache = { data: filtered, timestamp: Date.now() };
+    }
     if (filters?.type && filters.type !== 'ALL') {
       filtered = filtered.filter((l) => l.transaction_type === filters.type);
     }

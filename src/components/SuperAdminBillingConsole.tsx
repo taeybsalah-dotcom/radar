@@ -63,14 +63,103 @@ export const SuperAdminBillingConsole: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payouts' | 'refunds' | 'plans'>('overview');
 
   // Data States
-  const [metrics, setMetrics] = useState<MasterFinancialMetrics | null>(null);
-  const [ledgerEntries, setLedgerEntries] = useState<FinancialLedgerEntry[]>([]);
-  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
-  const [payouts, setPayouts] = useState<AffiliatePayoutRecord[]>([]);
+  const [metrics, setMetrics] = useState<MasterFinancialMetrics | null>(() => {
+    try {
+      const rawLedger = localStorage.getItem('radar_local_financial_ledger');
+      const ledger: FinancialLedgerEntry[] = rawLedger ? JSON.parse(rawLedger) : [];
+      const comms = JSON.parse(localStorage.getItem('radar_local_commissions') || '[]');
+      let totalGrossVolume = 0;
+      let totalVatPayable = 0;
+      let totalGatewayFees = 0;
+      let totalNetPlatformRevenue = 0;
+      let totalRefundsVolume = 0;
+      for (const entry of ledger) {
+        if (entry.status !== 'SETTLED') continue;
+        if (entry.transaction_type === 'PAYMENT' || entry.transaction_type === 'ADJUSTMENT') {
+          totalGrossVolume += Number(entry.gross_amount) || 0;
+          totalVatPayable += Number(entry.vat_amount) || 0;
+          totalGatewayFees += Number(entry.gateway_fee) || 0;
+          totalNetPlatformRevenue += Number(entry.net_platform_amount) || 0;
+        } else if (entry.transaction_type === 'REFUND') {
+          totalRefundsVolume += Math.abs(Number(entry.gross_amount) || 0);
+          totalGrossVolume += Number(entry.gross_amount) || 0;
+          totalVatPayable += Number(entry.vat_amount) || 0;
+          totalNetPlatformRevenue += Number(entry.net_platform_amount) || 0;
+        }
+      }
+      let totalAffiliatePayable = 0;
+      let totalAffiliatePaid = 0;
+      let totalAffiliatePending = 0;
+      let totalAffiliateReversed = 0;
+      for (const comm of comms) {
+        const amt = Number(comm.commission_amount) || 0;
+        if (comm.status === 'AVAILABLE' || comm.status === 'EARNED') totalAffiliatePayable += amt;
+        else if (comm.status === 'PAID') totalAffiliatePaid += amt;
+        else if (comm.status === 'PENDING') totalAffiliatePending += amt;
+        else if (comm.status === 'CANCELLED' || comm.status === 'REVERSED') totalAffiliateReversed += amt;
+      }
+      return {
+        totalGrossVolume: Math.round(totalGrossVolume * 100) / 100,
+        totalVatPayable: Math.round(totalVatPayable * 100) / 100,
+        totalGatewayFees: Math.round(totalGatewayFees * 100) / 100,
+        totalAffiliatePayable: Math.round(totalAffiliatePayable * 100) / 100,
+        totalAffiliatePaid: Math.round(totalAffiliatePaid * 100) / 100,
+        totalAffiliatePending: Math.round(totalAffiliatePending * 100) / 100,
+        totalAffiliateReversed: Math.round(totalAffiliateReversed * 100) / 100,
+        totalNetPlatformRevenue: Math.round(totalNetPlatformRevenue * 100) / 100,
+        totalRefundsVolume: Math.round(totalRefundsVolume * 100) / 100,
+        totalCreditNotesCount: JSON.parse(localStorage.getItem('radar_local_credit_notes') || '[]').length,
+        totalTransactionsCount: ledger.length,
+      };
+    } catch {
+      return null;
+    }
+  });
+
+  const [ledgerEntries, setLedgerEntries] = useState<FinancialLedgerEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem('radar_local_financial_ledger');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+
+  const [creditNotes, setCreditNotes] = useState<CreditNote[]>(() => {
+    try {
+      const raw = localStorage.getItem('radar_local_credit_notes');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+
+  const [payouts, setPayouts] = useState<AffiliatePayoutRecord[]>(() => {
+    try {
+      const raw = localStorage.getItem('radar_local_affiliate_payouts');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+
   const [plans, setPlans] = useState<BillingPlan[]>(() => LoyaltyService.getAllSubscriptionPlansSync());
-  const [stores, setStores] = useState<Store[]>([]);
-  const [partners, setPartners] = useState<PartnerAccount[]>([]);
-  const [allInvoices, setAllInvoices] = useState<Record<string, StoreInvoice[]>>({});
+
+  const [stores, setStores] = useState<Store[]>(() => {
+    try {
+      const raw = localStorage.getItem('radar_local_stores');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+
+  const [partners, setPartners] = useState<PartnerAccount[]>(() => {
+    try {
+      const raw = localStorage.getItem('radar_local_partners');
+      return raw ? JSON.parse(raw) : [];
+    } catch { return []; }
+  });
+
+  const [allInvoices, setAllInvoices] = useState<Record<string, StoreInvoice[]>>(() => {
+    try {
+      const raw = localStorage.getItem('radar_local_invoices');
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+
   const [loading, setLoading] = useState(false);
 
   // Filter States
@@ -134,7 +223,9 @@ export const SuperAdminBillingConsole: React.FC = () => {
 
   // Load all data
   const loadAllFinancialData = async () => {
-    setLoading(true);
+    if (ledgerEntries.length === 0 && !metrics) {
+      setLoading(true);
+    }
     try {
       const cfg = LoyaltyService.getFinancialConfig();
       setFinancialConfig(cfg);

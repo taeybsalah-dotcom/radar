@@ -305,42 +305,48 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
         const headers = tok ? { Authorization: `Bearer ${tok}` } : undefined;
         let apiLoaded = false;
 
-        // 1. Try API if token available
+        // 1. Try API if token available (with fast 800ms timeout)
         if (headers) {
           try {
-            const [statsRes, assetsRes, commRes, bonusRes] = await Promise.all([
-              fetch('/api/partner/stats', { headers }),
-              fetch('/api/partner/assets', { headers }),
-              fetch('/api/partner/commissions', { headers }),
-              fetch('/api/partner/bonuses', { headers }),
-            ]);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 800);
 
-            if (statsRes.ok) {
-              const statsData = await statsRes.json();
-              if (statsData.success && statsData.stats) setStats(statsData.stats);
+            const [statsRes, assetsRes, commRes, bonusRes] = await Promise.all([
+              fetch('/api/partner/stats', { headers, signal: controller.signal }).catch(() => null),
+              fetch('/api/partner/assets', { headers, signal: controller.signal }).catch(() => null),
+              fetch('/api/partner/commissions', { headers, signal: controller.signal }).catch(() => null),
+              fetch('/api/partner/bonuses', { headers, signal: controller.signal }).catch(() => null),
+            ]);
+            clearTimeout(timeoutId);
+
+            if (statsRes && statsRes.ok) {
+              const statsData = await statsRes.json().catch(() => null);
+              if (statsData && statsData.success && statsData.stats) setStats(statsData.stats);
             }
-            if (assetsRes.ok) {
-              const assetsData = await assetsRes.json();
-              if (assetsData.success) {
+            if (assetsRes && assetsRes.ok) {
+              const assetsData = await assetsRes.json().catch(() => null);
+              if (assetsData && assetsData.success) {
                 if (assetsData.sales_kit) setSalesKit(assetsData.sales_kit);
                 if (assetsData.status_templates) setStatusTemplates(assetsData.status_templates);
                 if (assetsData.logo_pitch) setLogoPitch(assetsData.logo_pitch);
               }
             }
-            if (commRes.ok) {
-              const commData = await commRes.json();
-              if (commData.success) {
+            if (commRes && commRes.ok) {
+              const commData = await commRes.json().catch(() => null);
+              if (commData && commData.success) {
                 setCommissions(commData.commissions || []);
                 if (commData.summary) setCommissionsSummary(commData.summary);
               }
             }
-            if (bonusRes.ok) {
-              const bonusData = await bonusRes.json();
-              if (bonusData.success && bonusData.milestones) {
+            if (bonusRes && bonusRes.ok) {
+              const bonusData = await bonusRes.json().catch(() => null);
+              if (bonusData && bonusData.success && bonusData.milestones) {
                 setBonusMilestones(bonusData.milestones);
               }
             }
-            apiLoaded = true;
+            if (statsRes && statsRes.ok) {
+              apiLoaded = true;
+            }
           } catch (e) {
             console.warn('Partner API fetch warning:', e);
           }
