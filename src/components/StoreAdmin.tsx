@@ -498,7 +498,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   // Dynamic Page Document Title Isolation
   useEffect(() => {
-    document.title = store?.name ? `لوحة التاجر | Merchant Dashboard - ${store.name}` : 'لوحة التاجر | Merchant Dashboard';
+    document.title = store?.name || 'لوحة التاجر';
   }, [store?.name]);
 
   useEffect(() => {

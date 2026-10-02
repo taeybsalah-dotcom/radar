@@ -220,7 +220,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [pinError, setPinError] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = 'بوابة المالك | Radar Platform Owner';
+    document.title = 'RADAR';
   }, []);
 
   useEffect(() => {

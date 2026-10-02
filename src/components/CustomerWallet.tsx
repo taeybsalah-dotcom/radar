@@ -276,7 +276,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   // Dynamic Page Document Title Isolation
   useEffect(() => {
-    document.title = store?.name ? `${store.name} | بطاقة الولاء الرقمية` : 'بطاقة الولاء الرقمية | RADAR';
+    document.title = store?.name || 'بطاقة الولاء';
   }, [store?.name]);
 
   // 1. Initial Data Loading & Event Sync

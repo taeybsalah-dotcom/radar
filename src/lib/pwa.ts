@@ -35,25 +35,23 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
 
   switch (portal) {
     case 'super-admin':
-      pageTitle = 'بوابة المالك | Radar Platform Owner';
-      manifestName = 'لوحة تحكم مالك المنصة | Radar Platform Owner';
-      manifestShortName = 'Radar Admin';
+      pageTitle = 'RADAR';
+      manifestName = 'منصة رادار | RADAR';
+      manifestShortName = 'RADAR';
       primaryColor = '#0B0F17';
       secondaryColor = '#F59E0B';
       break;
 
     case 'partner':
-      pageTitle = 'بوابة الشريك | Radar Partner';
-      manifestName = 'بوابة شركاء المبيعات | Radar Partner';
-      manifestShortName = 'Radar Partner';
+      pageTitle = 'بوابة الشريك | RADAR';
+      manifestName = 'بوابة شركاء المبيعات | RADAR';
+      manifestShortName = 'شريك رادار';
       primaryColor = '#0B0F17';
       secondaryColor = '#10B981';
       break;
 
     case 'admin':
-      pageTitle = effectiveStore?.name
-        ? `لوحة التاجر | Merchant Dashboard - ${effectiveStore.name}`
-        : 'لوحة التاجر | Merchant Dashboard';
+      pageTitle = effectiveStore?.name || 'لوحة التاجر';
       manifestName = effectiveStore?.name
         ? `${effectiveStore.name} - لوحة الإدارة`
         : 'لوحة تحكم التاجر';
@@ -64,8 +62,8 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
 
     case 'cashier':
       pageTitle = effectiveStore?.name
-        ? `نظام الكاشير | POS - ${effectiveStore.name}`
-        : 'نظام الكاشير | Cashier POS';
+        ? `${effectiveStore.name} - الكاشير`
+        : 'نظام الكاشير';
       manifestName = effectiveStore?.name
         ? `${effectiveStore.name} - كاشير الولاء`
         : 'كاشير رادار';
@@ -78,8 +76,8 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
 
     case 'customer':
       pageTitle = effectiveStore?.name
-        ? `${effectiveStore.name} | بطاقة الولاء الرقمية`
-        : 'بطاقة الولاء الرقمية | RADAR';
+        ? effectiveStore.name
+        : 'بطاقة الولاء';
       manifestName = effectiveStore?.name
         ? `${effectiveStore.name} - بطاقة الولاء`
         : 'محفظة الولاء';
@@ -89,15 +87,15 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
       break;
 
     case 'join':
-      pageTitle = 'انضمام التجار | Radar Merchant Registration';
-      manifestName = 'تسجيل متجر جديد | Radar';
-      manifestShortName = 'انضمام التجار';
+      pageTitle = 'بوابة التسجيل | RADAR';
+      manifestName = 'تسجيل متجر جديد | RADAR';
+      manifestShortName = 'بوابة التسجيل';
       primaryColor = '#0B0F17';
       secondaryColor = '#F59E0B';
       break;
 
     case 'partner-landing':
-      pageTitle = 'بوابة الشريك | Radar Partner';
+      pageTitle = 'بوابة الشريك | RADAR';
       manifestName = 'بوابة الشريك المعتمد';
       manifestShortName = 'شريك رادار';
       primaryColor = '#0B0F17';
@@ -105,15 +103,15 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
       break;
 
     case 'onboarding':
-      pageTitle = 'معالج إعداد المتجر | Merchant Onboarding';
-      manifestName = 'تأسيس المتجر | Radar';
+      pageTitle = effectiveStore?.name ? `${effectiveStore.name} - إعداد المتجر` : 'بوابة إعداد المتجر | RADAR';
+      manifestName = 'تأسيس المتجر | RADAR';
       manifestShortName = 'تأسيس متجر';
       primaryColor = '#0B0F17';
       secondaryColor = '#F59E0B';
       break;
 
     default:
-      pageTitle = 'رادار | RADAR';
+      pageTitle = 'RADAR';
       manifestName = 'رادار | RADAR';
       manifestShortName = 'RADAR';
   }

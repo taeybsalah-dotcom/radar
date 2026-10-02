@@ -266,8 +266,9 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
   // Dynamic Page Document Title Isolation
   useEffect(() => {
-    document.title = 'بوابة الشريك | Radar Partner';
-  }, []);
+    const pName = partner?.display_name || partner?.name;
+    document.title = pName ? `${pName} | شريك رادار` : 'بوابة الشريك | RADAR';
+  }, [partner?.display_name, partner?.name]);
 
   // Fetch Stats, Assets, Commissions, Bonuses when authenticated
   useEffect(() => {

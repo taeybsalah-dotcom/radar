@@ -117,25 +117,25 @@ export default async function handler(req: any, res: any) {
     let foundSlug = storeSlug;
 
     if (portal === 'super-admin') {
-      storeName = 'بوابة المالك | Radar Platform Owner';
+      storeName = 'RADAR';
       foundSlug = '';
     } else if (portal === 'partner') {
-      storeName = 'بوابة الشريك | Radar Partner';
+      storeName = 'بوابة الشريك | RADAR';
       foundSlug = '';
     } else if (portal === 'join') {
-      storeName = 'انضمام التجار | Radar Merchant Registration';
+      storeName = 'بوابة التسجيل | RADAR';
       foundSlug = '';
     } else if (portal === 'onboarding') {
-      storeName = 'معالج إعداد المتجر | Merchant Onboarding';
+      storeName = 'بوابة إعداد المتجر | RADAR';
       foundSlug = '';
     } else if (portal === 'admin' && !storeSlug) {
-      storeName = 'لوحة التاجر | Merchant Dashboard';
+      storeName = 'لوحة التاجر';
       foundSlug = '';
     } else if (portal === 'cashier' && !storeSlug) {
-      storeName = 'نظام الكاشير | POS';
+      storeName = 'نظام الكاشير';
       foundSlug = '';
     } else if (!storeSlug) {
-      storeName = 'انضمام التجار | Radar Merchant Registration';
+      storeName = 'بوابة التسجيل | RADAR';
       foundSlug = '';
     } else if (storeSlug) {
       const cacheKey = storeSlug.toLowerCase().trim();

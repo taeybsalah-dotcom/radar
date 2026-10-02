@@ -185,8 +185,8 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
   };
 
   useEffect(() => {
-    document.title = 'معالج إعداد المتجر | Merchant Onboarding';
-  }, []);
+    document.title = initialStore?.name ? `${initialStore.name} - إعداد المتجر` : 'بوابة إعداد المتجر | RADAR';
+  }, [initialStore?.name]);
 
   useEffect(() => {
     fetchOnboardingState();

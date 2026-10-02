@@ -112,7 +112,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = store?.name ? `نظام الكاشير | POS - ${store.name}` : 'نظام الكاشير | Cashier POS';
+    document.title = store?.name ? `${store.name} - الكاشير` : 'نظام الكاشير';
   }, [store?.name]);
 
   useEffect(() => {

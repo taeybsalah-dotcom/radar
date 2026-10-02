@@ -101,23 +101,23 @@ export default async function handler(req: any, res: any) {
 
     let portalTitle = storeName;
     if (portal === 'super-admin') {
-      portalTitle = 'بوابة المالك | Radar Platform Owner';
-      storeName = 'Radar Platform Owner';
+      portalTitle = 'RADAR';
+      storeName = 'RADAR';
     } else if (portal === 'partner') {
-      portalTitle = 'بوابة الشريك | Radar Partner';
-      storeName = 'Radar Partner';
+      portalTitle = 'بوابة الشريك | RADAR';
+      storeName = 'بوابة الشريك | RADAR';
     } else if (portal === 'join') {
-      portalTitle = 'انضمام التجار | Radar Merchant Registration';
-      storeName = 'Radar Merchant Registration';
+      portalTitle = 'بوابة التسجيل | RADAR';
+      storeName = 'بوابة التسجيل | RADAR';
     } else if (portal === 'onboarding') {
-      portalTitle = 'معالج إعداد المتجر | Merchant Onboarding';
-      storeName = 'Merchant Onboarding';
+      portalTitle = 'بوابة إعداد المتجر | RADAR';
+      storeName = 'بوابة إعداد المتجر';
     } else if (portal === 'cashier') {
       portalTitle = `${storeName} - الكاشير`;
     } else if (portal === 'admin') {
-      portalTitle = `${storeName} - لوحة التاجر`;
+      portalTitle = storeName;
     } else if (portal === 'customer') {
-      portalTitle = `${storeName} - بطاقة الولاء`;
+      portalTitle = storeName;
     }
 
     const startUrl = foundSlug
