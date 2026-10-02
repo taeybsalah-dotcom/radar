@@ -52,7 +52,7 @@ function getInitialStoreSync(targetSlug?: string | null): Store | null {
       if (Array.isArray(stores) && stores.length > 0) {
         if (targetSlug) {
           const found = stores.find((s) => s.slug === targetSlug || s.id === targetSlug);
-          if (found) return found;
+          return found || null;
         }
         return stores[0];
       }
@@ -231,7 +231,27 @@ function parseRouteParams() {
     };
   }
 
-  // 8. Session-Aware Fallback on Root "/"
+  // 8. If URL contains store slug explicitly (?store=xyz)
+  if (slugParam) {
+    let defaultStorePortal: PortalTab = 'customer';
+    try {
+      if (localStorage.getItem(`radar_session_${slugParam}_admin`)) {
+        defaultStorePortal = 'admin';
+      } else if (localStorage.getItem(`radar_session_${slugParam}_cashier`)) {
+        defaultStorePortal = 'cashier';
+      }
+    } catch {}
+
+    const targetPortal = (portalParam as PortalTab) || defaultStorePortal;
+    return {
+      portal: targetPortal,
+      isPreview: previewParam,
+      storeSlug: slugParam,
+      partnerSlug: null,
+    };
+  }
+
+  // 9. Session-Aware Fallback on Root "/"
   let resolvedRolePortal: PortalTab = 'join';
   let hasSession = false;
   try {

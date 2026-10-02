@@ -110,26 +110,15 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
         return;
       }
 
-      const matchedStore = (staff as any).matchedStore as Store | undefined;
-      const targetStoreId = matchedStore ? matchedStore.id : store.id;
-      const targetStoreSlug = matchedStore ? matchedStore.slug : store.slug;
-
-      // تسجيل دخول ناجح
-      LoyaltyService.saveStaffSession(targetStoreId, staff, targetStoreSlug);
+      // تسجيل دخول ناجح للمتجر الحالي حصراً
+      LoyaltyService.saveStaffSession(store.id, staff, store.slug);
       authLogin(staff.role === 'admin' ? 'merchant' : 'cashier', {
         id: staff.id,
-        storeId: targetStoreId,
-        storeSlug: targetStoreSlug,
+        storeId: store.id,
+        storeSlug: store.slug,
         name: staff.name,
         phone: staff.phone,
       });
-
-      if (matchedStore && matchedStore.id !== store.id) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('store', matchedStore.slug);
-        window.history.pushState({}, '', url.toString());
-        LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: matchedStore.id });
-      }
 
       confetti({
         particleCount: 80,

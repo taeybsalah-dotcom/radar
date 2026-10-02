@@ -226,10 +226,7 @@ export function normalizeStore(s: any): Store {
     }
   }
 
-  let manager_contact = s.manager_contact;
-  if (!manager_contact || manager_contact === '0500000000' || s.slug === 'demo-hub' || s.slug === 'main-store') {
-    manager_contact = manager_contact && manager_contact !== '0500000000' ? manager_contact : '0577371780';
-  }
+  let manager_contact = s.manager_contact || null;
 
   const stageInfo = resolveUnifiedStage(s);
   const isPaid = stageInfo.isPaidActive;
@@ -1337,7 +1334,7 @@ export const LoyaltyService = {
     return true;
   },
 
-  // 7.1 البحث عن موظف أو مدير برقم الجوال للتحقق الآمن والدخول
+  // 7.1 البحث عن موظف أو مدير برقم الجوال للتحقق الآمن والدخول (Strictly Scoped to Store)
   async findStaffByPhone(
     storeId: string,
     phone: string,
@@ -1347,28 +1344,14 @@ export const LoyaltyService = {
     const normInput = normalizePhone(phone);
     if (!normInput || normInput.length < 5) return null;
 
-    // 0. التحقق الأولي الفوري من المتجر الحالي والكادر النموذجي
+    // 0. التحقق من وجود المتجر المستهدف
     const currentStore = await this.resolveStore(storeId || storeSlug);
     const resolvedStoreId = currentStore?.id || storeId;
     const resolvedStoreSlug = currentStore?.slug || storeSlug;
 
-    // 0.1 مطابقة رقم هاتف المستخدم (0577371780) كمدير عام معتمد
-    if (normInput === normalizePhone('0577371780') && (!requiredRole || requiredRole === 'admin')) {
-      const activeStore = currentStore || INITIAL_STORES[0];
-      return {
-        id: 'manager-' + activeStore.id,
-        store_id: activeStore.id,
-        name: activeStore.manager_name || 'المدير العام',
-        phone: '0577371780',
-        role: 'admin',
-        pin_code: '9999',
-        is_active: true,
-        can_manual_input_phone: true,
-        matchedStore: activeStore,
-      };
-    }
+    if (!resolvedStoreId && !resolvedStoreSlug) return null;
 
-    // 0.2 مطابقة رقم جوال مدير المتجر الحالي مباشرة
+    // 0.1 مطابقة رقم جوال مدير المتجر الحالي مباشرة
     if (currentStore && currentStore.manager_contact) {
       const storeMgrNorm = normalizePhone(currentStore.manager_contact);
       if (storeMgrNorm === normInput && (!requiredRole || requiredRole === 'admin')) {
@@ -1378,7 +1361,7 @@ export const LoyaltyService = {
           name: currentStore.manager_name || 'مدير المتجر',
           phone: currentStore.manager_contact,
           role: 'admin',
-          pin_code: '9999',
+          pin_code: currentStore.admin_pin || '9999',
           is_active: true,
           can_manual_input_phone: true,
           matchedStore: currentStore,
@@ -1386,16 +1369,16 @@ export const LoyaltyService = {
       }
     }
 
-    // 0.3 فحص INITIAL_STAFF المباشر
+    // 0.2 فحص INITIAL_STAFF المباشر للمتجر المستهدف فقط
     const matchedInitial = INITIAL_STAFF.find((s) => {
       if (!s.is_active) return false;
       const matchesStore =
         s.store_id === resolvedStoreId ||
         s.store_id === resolvedStoreSlug ||
-        (resolvedStoreSlug && (s.store_id.includes('demo') || resolvedStoreSlug.includes('demo')));
+        (resolvedStoreSlug && (s.store_id.includes('demo') && resolvedStoreSlug.includes('demo')));
       const matchesPhone = normalizePhone(s.phone) === normInput;
       const matchesRole = !requiredRole || requiredRole === 'cashier' || s.role === 'admin';
-      return matchesPhone && matchesRole;
+      return matchesStore && matchesPhone && matchesRole;
     });
     if (matchedInitial) {
       return {
@@ -1404,9 +1387,9 @@ export const LoyaltyService = {
       };
     }
 
-    // 0.4 فحص INITIAL_STORES المباشر
+    // 0.3 فحص INITIAL_STORES للمتجر المستهدف فقط
     const matchedInitialStore = INITIAL_STORES.find(
-      (s) => normalizePhone(s.manager_contact) === normInput
+      (s) => (s.id === resolvedStoreId || s.slug === resolvedStoreSlug) && normalizePhone(s.manager_contact) === normInput
     );
     if (matchedInitialStore && (!requiredRole || requiredRole === 'admin')) {
       return {
@@ -1415,7 +1398,7 @@ export const LoyaltyService = {
         name: matchedInitialStore.manager_name || 'المدير العام',
         phone: matchedInitialStore.manager_contact || phone,
         role: 'admin',
-        pin_code: '9999',
+        pin_code: matchedInitialStore.admin_pin || '9999',
         is_active: true,
         can_manual_input_phone: true,
         matchedStore: matchedInitialStore,
@@ -1424,39 +1407,30 @@ export const LoyaltyService = {
 
     const supabase = getSupabaseClient();
 
-    // 1. فحص جدول الموظفين في Supabase
+    // 1. فحص جدول الموظفين في Supabase للمتجر المستهدف حصراً
     if (supabase) {
       try {
-        const { data: staffList, error: staffErr } = await supabase
+        let staffQuery = supabase
           .from('store_staff')
           .select('*')
           .eq('is_active', true);
 
-        if (!staffErr && staffList && staffList.length > 0) {
-          // 1.1 أولاً: فحص موظفي المتجر الحالي
-          const matchedCurrent = staffList.find((s: any) => {
-            const matchesStore = s.store_id === storeId || (storeSlug && s.store_id === storeSlug);
-            const matchesPhone = normalizePhone(s.phone) === normInput;
-            const matchesRole = !requiredRole || requiredRole === 'cashier' || s.role === 'admin';
-            return matchesStore && matchesPhone && matchesRole;
-          });
-          if (matchedCurrent) return matchedCurrent as StoreStaff;
+        if (resolvedStoreId) {
+          staffQuery = staffQuery.eq('store_id', resolvedStoreId);
+        }
 
-          // 1.2 ثانياً: إذا لم يكن في المتجر الحالي، البحث في جميع موظفي المتاجر الأخرى (Cross-Store)
-          const matchedAny = staffList.find((s: any) => {
+        const { data: staffList, error: staffErr } = await staffQuery;
+
+        if (!staffErr && staffList && staffList.length > 0) {
+          const matchedStaff = staffList.find((s: any) => {
             const matchesPhone = normalizePhone(s.phone) === normInput;
             const matchesRole = !requiredRole || requiredRole === 'cashier' || s.role === 'admin';
             return matchesPhone && matchesRole;
           });
-          if (matchedAny) {
-            const { data: matchedStoreData } = await supabase
-              .from('stores')
-              .select('*')
-              .eq('id', matchedAny.store_id)
-              .maybeSingle();
+          if (matchedStaff) {
             return {
-              ...matchedAny,
-              matchedStore: matchedStoreData as Store | undefined,
+              ...matchedStaff,
+              matchedStore: currentStore || undefined,
             } as StoreStaff & { matchedStore?: Store };
           }
         }
@@ -1464,114 +1438,73 @@ export const LoyaltyService = {
         console.warn('Supabase findStaffByPhone staff query failed', e);
       }
 
-      // 2. فحص جدول المتاجر في Supabase (رقم جوال المدير المسجل عند تأسيس المتجر)
+      // 2. فحص مدير المتجر في جدول المتاجر في Supabase للمتجر الحالي حصراً
       try {
-        const { data: storeRows, error: storeErr } = await supabase
-          .from('stores')
-          .select('*');
+        let storeQuery = supabase.from('stores').select('*');
+        if (resolvedStoreId && isUUID(resolvedStoreId)) {
+          storeQuery = storeQuery.eq('id', resolvedStoreId);
+        } else if (resolvedStoreSlug) {
+          storeQuery = storeQuery.eq('slug', resolvedStoreSlug.toLowerCase());
+        }
 
-        if (!storeErr && storeRows && storeRows.length > 0) {
-          // 2.1 فحص مدير المتجر الحالي
-          const matchedStore = storeRows.find((s: any) => {
-            const matchesStore = s.id === storeId || s.slug === storeId || (storeSlug && s.slug === storeSlug);
-            const matchesPhone = normalizePhone(s.manager_contact) === normInput;
-            return matchesStore && matchesPhone;
-          });
+        const { data: storeRow, error: storeErr } = await storeQuery.maybeSingle();
 
-          if (matchedStore) {
+        if (!storeErr && storeRow && storeRow.manager_contact) {
+          if (normalizePhone(storeRow.manager_contact) === normInput && (!requiredRole || requiredRole === 'admin')) {
+            const normStore = normalizeStore(storeRow);
             return {
-              id: 'manager-' + matchedStore.id,
-              store_id: matchedStore.id,
-              name: matchedStore.manager_name || 'المدير العام',
-              phone: matchedStore.manager_contact || phone,
+              id: 'manager-' + normStore.id,
+              store_id: normStore.id,
+              name: normStore.manager_name || 'المدير العام',
+              phone: normStore.manager_contact || phone,
               role: 'admin',
-              pin_code: '9999',
+              pin_code: normStore.admin_pin || '9999',
               is_active: true,
               can_manual_input_phone: true,
-              matchedStore: matchedStore as Store,
-            };
-          }
-
-          // 2.2 فحص مدير أي متجر آخر مسجل برقم الجوال
-          const matchedAnyStore = storeRows.find((s: any) => {
-            return normalizePhone(s.manager_contact) === normInput;
-          });
-
-          if (matchedAnyStore) {
-            return {
-              id: 'manager-' + matchedAnyStore.id,
-              store_id: matchedAnyStore.id,
-              name: matchedAnyStore.manager_name || 'المدير العام',
-              phone: matchedAnyStore.manager_contact || phone,
-              role: 'admin',
-              pin_code: '9999',
-              is_active: true,
-              can_manual_input_phone: true,
-              matchedStore: matchedAnyStore as Store,
+              matchedStore: normStore,
             };
           }
         }
       } catch (e) {
-        console.warn('Supabase findStaffByPhone store fallback query failed', e);
+        console.warn('Supabase findStaffByPhone store query failed', e);
       }
     }
 
-    // 3. فحص التخزين المحلي للموظفين
+    // 3. فحص التخزين المحلي للموظفين للمتجر المستهدف حصراً
     const localStaff = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, INITIAL_STAFF);
     const matchedLocalStaff = localStaff.find((s) => {
       if (!s.is_active) return false;
-      const matchesStore = s.store_id === storeId || (storeSlug && s.store_id === storeSlug);
+      const matchesStore = s.store_id === resolvedStoreId || (resolvedStoreSlug && s.store_id === resolvedStoreSlug);
       const matchesPhone = normalizePhone(s.phone) === normInput;
       const matchesRole = !requiredRole || requiredRole === 'cashier' || s.role === 'admin';
       return matchesStore && matchesPhone && matchesRole;
     });
-    if (matchedLocalStaff) return matchedLocalStaff;
+    if (matchedLocalStaff) {
+      return {
+        ...matchedLocalStaff,
+        matchedStore: currentStore || undefined,
+      };
+    }
 
-    const matchedAnyLocalStaff = localStaff.find((s) => {
-      if (!s.is_active) return false;
-      const matchesPhone = normalizePhone(s.phone) === normInput;
-      const matchesRole = !requiredRole || requiredRole === 'cashier' || s.role === 'admin';
-      return matchesPhone && matchesRole;
-    });
-    if (matchedAnyLocalStaff) return matchedAnyLocalStaff;
-
-    // 4. فحص التخزين المحلي للمتاجر
+    // 4. فحص التخزين المحلي لمدير المتجر المستهدف حصراً
     const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const matchedLocalStore = localStores.find((s) => {
-      const matchesStore = s.id === storeId || s.slug === storeId || (storeSlug && s.slug === storeSlug);
+      const matchesStore = s.id === resolvedStoreId || (resolvedStoreSlug && s.slug === resolvedStoreSlug);
       const matchesPhone = normalizePhone(s.manager_contact) === normInput;
       return matchesStore && matchesPhone;
     });
 
-    if (matchedLocalStore) {
+    if (matchedLocalStore && (!requiredRole || requiredRole === 'admin')) {
       return {
         id: 'manager-' + matchedLocalStore.id,
         store_id: matchedLocalStore.id,
         name: matchedLocalStore.manager_name || 'المدير العام',
         phone: matchedLocalStore.manager_contact || phone,
         role: 'admin',
-        pin_code: '9999',
+        pin_code: matchedLocalStore.admin_pin || '9999',
         is_active: true,
         can_manual_input_phone: true,
         matchedStore: matchedLocalStore,
-      };
-    }
-
-    const matchedAnyLocalStore = localStores.find((s) => {
-      return normalizePhone(s.manager_contact) === normInput;
-    });
-
-    if (matchedAnyLocalStore) {
-      return {
-        id: 'manager-' + matchedAnyLocalStore.id,
-        store_id: matchedAnyLocalStore.id,
-        name: matchedAnyLocalStore.manager_name || 'المدير العام',
-        phone: matchedAnyLocalStore.manager_contact || phone,
-        role: 'admin',
-        pin_code: '9999',
-        is_active: true,
-        can_manual_input_phone: true,
-        matchedStore: matchedAnyLocalStore,
       };
     }
 

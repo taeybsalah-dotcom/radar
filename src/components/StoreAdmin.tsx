@@ -502,6 +502,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   }, [store?.name]);
 
   useEffect(() => {
+    if (currentStore?.id) {
+      const session = LoyaltyService.getStaffSession(currentStore.id, 'admin', currentStore.slug);
+      setAuthenticatedAdmin(session);
+    }
+  }, [currentStore?.id, currentStore?.slug]);
+
+  useEffect(() => {
     if (!currentStore?.id || !authenticatedAdmin) return;
     loadAdminData();
 

@@ -116,6 +116,16 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   }, [store?.name]);
 
   useEffect(() => {
+    if (store?.id) {
+      const session =
+        LoyaltyService.getStaffSession(store.id, 'cashier', store.slug) ||
+        LoyaltyService.getStaffSession(store.id, 'admin', store.slug);
+      setAuthenticatedCashier(session);
+      setActiveStaff(session);
+    }
+  }, [store?.id, store?.slug]);
+
+  useEffect(() => {
     if (!store?.id || !authenticatedCashier) return;
     loadStoreMetadata();
 
