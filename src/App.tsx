@@ -53,7 +53,7 @@ function parseRouteParams() {
     };
   }
   const urlParams = new URLSearchParams(window.location.search);
-  const portalParam = urlParams.get('portal') as PortalTab | null;
+  const portalParam = (urlParams.get('portal') || '').toLowerCase().trim();
   const slugParam = urlParams.get('store');
   const previewParam = urlParams.get('preview') === 'true';
 
@@ -75,8 +75,9 @@ function parseRouteParams() {
     };
   }
 
-  // 2. Check Super Admin Route (/super-admin, /superadmin, /owner, portal=super-admin, #super-admin)
+  // 2. Check Super Admin Route (/admin, /super-admin, /superadmin, /owner, portal=super-admin, #super-admin, #owner)
   const isSuperAdmin =
+    ((pathname === '/admin' || pathname === '/admin/') && !slugParam && portalParam !== 'admin') ||
     pathname === '/super-admin' ||
     pathname === '/super-admin/' ||
     pathname === '/superadmin' ||
@@ -84,8 +85,11 @@ function parseRouteParams() {
     pathname === '/owner' ||
     pathname === '/owner/' ||
     portalParam === 'super-admin' ||
+    portalParam === 'superadmin' ||
+    portalParam === 'owner' ||
     rawHash === 'super-admin' ||
-    rawHash === 'superadmin';
+    rawHash === 'superadmin' ||
+    rawHash === 'owner';
   if (isSuperAdmin) {
     return {
       portal: 'super-admin' as const,
@@ -129,16 +133,22 @@ function parseRouteParams() {
     };
   }
 
-  // 5. Check Merchant Admin Route (/admin, /merchant, portal=admin, #admin)
-  const isAdminPath =
-    pathname === '/admin' ||
-    pathname === '/admin/' ||
+  // 5. Check Merchant Admin Route (/store, /store-admin, /merchant, portal=store, portal=merchant, portal=admin with store)
+  const isMerchantAdminPath =
+    pathname === '/store' ||
+    pathname === '/store/' ||
+    pathname === '/store-admin' ||
+    pathname === '/store-admin/' ||
     pathname === '/merchant' ||
     pathname === '/merchant/' ||
+    (pathname === '/admin' && (Boolean(slugParam) || portalParam === 'admin')) ||
+    portalParam === 'store' ||
+    portalParam === 'merchant' ||
     portalParam === 'admin' ||
-    rawHash === 'admin' ||
+    rawHash === 'store' ||
+    rawHash === 'merchant' ||
     rawHash.endsWith('-admin');
-  if (isAdminPath) {
+  if (isMerchantAdminPath) {
     return {
       portal: 'admin' as const,
       isPreview: previewParam,
@@ -187,6 +197,8 @@ function parseRouteParams() {
     'track',
     'onboarding',
     'owner',
+    'store',
+    'store-admin',
   ]);
 
   const pathSegments = pathname.split('/').filter(Boolean);
@@ -230,7 +242,7 @@ function parseRouteParams() {
   }
 
   return {
-    portal: portalParam || resolvedRolePortal,
+    portal: (portalParam as PortalTab) || resolvedRolePortal,
     isPreview: previewParam,
     storeSlug,
     partnerSlug: null as string | null,
