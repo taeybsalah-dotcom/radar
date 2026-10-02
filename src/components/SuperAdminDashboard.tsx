@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Store, StoreOnboardingPayload, MerchantLead, StoreInvoice } from '../types';
+import { Store, StoreOnboardingPayload, MerchantLead, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
@@ -40,6 +40,7 @@ import {
   CalendarPlus,
   Gift,
   Clock,
+  Search,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
@@ -349,6 +350,25 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   // Financial Log & Invoices State
   const [allInvoices, setAllInvoices] = useState<Record<string, StoreInvoice[]>>({});
   const [selectedStoreForFinancials, setSelectedStoreForFinancials] = useState<Store | null>(null);
+
+  // 🏛️ 5-Stage Status Filter & Search State
+  const [storeStageFilter, setStoreStageFilter] = useState<'ALL' | UnifiedLifecycleStage>('ALL');
+  const [storeSearchQuery, setStoreSearchQuery] = useState('');
+
+  const handleUpdateStoreStage = async (targetStore: Store, newStage: UnifiedLifecycleStage) => {
+    try {
+      const isPaid = newStage === 'مشترك مدفوع';
+      await LoyaltyService.updateStoreSettings(targetStore.id, {
+        status: isPaid ? 'active' : (newStage as any),
+        subscription_status: isPaid ? 'active' : (targetStore.subscription_status || 'trial'),
+        setup_fee_paid: isPaid ? true : targetStore.setup_fee_paid,
+        lifecycle_stage: newStage,
+      });
+      await loadStores();
+    } catch (e) {
+      console.error('Failed to update store stage', e);
+    }
+  };
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1025,10 +1045,51 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         {/* 🏪 Right Section: Live Stores Directory */}
         <div className="lg:col-span-7 space-y-6">
           <div className="glass-card rounded-3xl p-6 sm:p-8 border-slate-800 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
                 <StoreIcon className="w-6 h-6 text-amber-400" />
                 <h3 className="text-lg font-bold text-white">دليل المتاجر في منصة Radar ({stores.length})</h3>
+              </div>
+            </div>
+
+            {/* 🔍 Search & 5-Stage Filter Bar */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 bg-slate-950/80 p-2 rounded-2xl border border-slate-800">
+                <Search className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
+                <input
+                  type="text"
+                  value={storeSearchQuery}
+                  onChange={(e) => setStoreSearchQuery(e.target.value)}
+                  placeholder="ابحث بالاسم، الرابط الفريد، أو جوال المدير..."
+                  className="bg-transparent text-xs text-white placeholder-slate-500 outline-none w-full"
+                />
+                {storeSearchQuery && (
+                  <button onClick={() => setStoreSearchQuery('')} className="text-slate-500 hover:text-white p-1">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                {(['ALL', 'مشترك مدفوع', 'تم التأسيس', 'جاري التأسيس', 'تحت المراجعة', 'طلب جديد'] as const).map((stage) => {
+                  const count = stage === 'ALL'
+                    ? stores.length
+                    : stores.filter((s) => s && resolveUnifiedStage(s).label === stage).length;
+                  return (
+                    <button
+                      key={stage}
+                      onClick={() => setStoreStageFilter(stage)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
+                        storeStageFilter === stage
+                          ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
+                          : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      <span>{stage === 'ALL' ? 'الكل' : stage}</span>
+                      <span className="text-[10px] opacity-75 font-mono">({count})</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -1044,7 +1105,21 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   </p>
                 </div>
               ) : (
-                stores.filter((s): s is Store => Boolean(s && s.id)).map((s) => {
+                stores
+                  .filter((s): s is Store => {
+                    if (!s || !s.id) return false;
+                    const stage = resolveUnifiedStage(s).label;
+                    const matchesFilter = storeStageFilter === 'ALL' || stage === storeStageFilter;
+                    const q = storeSearchQuery.trim().toLowerCase();
+                    const matchesSearch =
+                      !q ||
+                      s.name.toLowerCase().includes(q) ||
+                      (s.slug || '').toLowerCase().includes(q) ||
+                      (s.manager_contact || '').includes(q) ||
+                      (s.manager_name || '').toLowerCase().includes(q);
+                    return matchesFilter && matchesSearch;
+                  })
+                  .map((s) => {
                 const stats = (s.id && storesAnalytics[s.id]) || {
                   customerCount: 0,
                   totalSales: 0,
@@ -1053,6 +1128,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 };
                 const storeInvs = (s.id && allInvoices[s.id]) || [];
                 const totalPaid = storeInvs.filter((i) => i.status === 'paid').reduce((sum, i) => sum + i.amount, 0);
+                const stageInfo = resolveUnifiedStage(s);
 
                 return (
                   <div
@@ -1091,21 +1167,19 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                             <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-slate-700">
                               /{s.slug}
                             </span>
-                            <span
-                              className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                                s.subscription_status === 'suspended' || !s.subscription_active
-                                  ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
-                                  : s.setup_fee_paid
-                                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm'
-                                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                              }`}
-                            >
-                              {s.subscription_status === 'suspended' || !s.subscription_active
-                                ? 'معلق 🔴'
-                                : s.setup_fee_paid
-                                ? 'مشترك مدفوع / نشط ✅'
-                                : 'فترة تجريبية (7 أيام) 🎁'}
+                            
+                            {/* 🏷️ Unified 5-Stage Status Badge */}
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${stageInfo.badgeClass}`}>
+                              <span>{stageInfo.icon}</span>
+                              <span>{stageInfo.label}</span>
                             </span>
+
+                            {s.subscription_status === 'suspended' || !s.subscription_active ? (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                                معلق 🔴
+                              </span>
+                            ) : null}
+
                             {s.subscription_plan && s.subscription_plan !== 'trial' ? (
                               <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1">
                                 <Sparkles className="w-3 h-3 text-purple-400" />
@@ -1146,7 +1220,21 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-2 rtl:space-x-reverse self-start sm:self-auto">
+                      <div className="flex items-center space-x-2 rtl:space-x-reverse self-start sm:self-auto flex-wrap gap-y-1.5">
+                        {/* 🏛️ Quick 5-Stage Status Selector */}
+                        <select
+                          value={stageInfo.label}
+                          onChange={(e) => handleUpdateStoreStage(s, e.target.value as UnifiedLifecycleStage)}
+                          className="bg-slate-950 border border-slate-700 hover:border-amber-500/60 text-[11px] font-bold text-amber-300 rounded-xl px-2.5 py-1.5 outline-none cursor-pointer transition shadow-inner"
+                          title="تغيير مرحلة المتجر في خط الأنابيب (يتم التحديث فورياً)"
+                        >
+                          <option value="طلب جديد" className="bg-slate-900 text-white">طلب جديد 🆕</option>
+                          <option value="جاري التأسيس" className="bg-slate-900 text-white">جاري التأسيس ⚙️</option>
+                          <option value="تم التأسيس" className="bg-slate-900 text-white">تم التأسيس 🚀</option>
+                          <option value="تحت المراجعة" className="bg-slate-900 text-white">تحت المراجعة ⏳</option>
+                          <option value="مشترك مدفوع" className="bg-slate-900 text-white">مشترك مدفوع 👑</option>
+                        </select>
+
                         {/* 🎁 Manual Extension / Complimentary Days Button */}
                         <button
                           onClick={() => handleOpenOverrideModal(s)}

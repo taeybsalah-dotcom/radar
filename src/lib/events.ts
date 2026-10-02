@@ -52,7 +52,7 @@ try {
 }
 
 export const LoyaltyEvents = {
-  // Connect to Supabase Realtime Channel for Cross-Device Web Broadcast
+  // Connect to Supabase Realtime Channel for Cross-Device Web Broadcast and DB Changes
   initRealtime(supabaseClient: any) {
     if (!supabaseClient || supabaseBroadcastChannel) return;
     try {
@@ -68,6 +68,61 @@ export const LoyaltyEvents = {
             });
           }
         })
+        .subscribe();
+
+      // 🔄 Realtime Postgres Table Subscriptions for Instant Cross-Dashboard Synchronization
+      supabaseClient
+        .channel('radar_postgres_sync')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'stores' },
+          (payload: any) => {
+            const sId = payload.new?.id || payload.old?.id || '';
+            const isPaid = payload.new?.setup_fee_paid === true || payload.new?.subscription_status === 'active';
+            listeners.forEach((fn) => {
+              try {
+                fn({ type: 'STORE_UPDATED', storeId: sId });
+                if (isPaid) {
+                  fn({ type: 'SUBSCRIPTION_UPDATED', storeId: sId });
+                  fn({ type: 'PAYMENT_COMPLETED', storeId: sId });
+                }
+              } catch (err) {
+                console.warn('Postgres changes store listener error:', err);
+              }
+            });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'merchant_leads' },
+          (payload: any) => {
+            const sId = payload.new?.converted_store_id || payload.old?.converted_store_id || '';
+            listeners.forEach((fn) => {
+              try {
+                fn({ type: 'LEAD_UPDATED', storeId: sId });
+                fn({ type: 'PARTNER_UPDATED', storeId: sId });
+              } catch (err) {
+                console.warn('Postgres changes lead listener error:', err);
+              }
+            });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'store_invoices' },
+          (payload: any) => {
+            const sId = payload.new?.store_id || payload.old?.store_id || '';
+            listeners.forEach((fn) => {
+              try {
+                fn({ type: 'PAYMENT_COMPLETED', storeId: sId });
+                fn({ type: 'STORE_UPDATED', storeId: sId });
+                fn({ type: 'SUBSCRIPTION_UPDATED', storeId: sId });
+              } catch (err) {
+                console.warn('Postgres changes invoice listener error:', err);
+              }
+            });
+          }
+        )
         .subscribe();
     } catch (e) {
       console.warn('Supabase realtime broadcast init warning:', e);

@@ -5,6 +5,9 @@ import {
   PartnerBonusMilestone,
   SalesKitMessage,
   MerchantLead,
+  UnifiedLifecycleStage,
+  UnifiedStageInfo,
+  resolveUnifiedStage,
 } from '../types';
 import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
@@ -43,24 +46,11 @@ import {
 } from 'lucide-react';
 
 export function getLeadStatusArabic(status?: string): { label: string; colorClass: string } {
-  switch (status) {
-    case 'NEW':
-      return { label: 'طلب جديد 🆕', colorClass: 'bg-blue-500/20 text-blue-300 border-blue-500/40' };
-    case 'CONTACTED':
-      return { label: 'تم التواصل 📞', colorClass: 'bg-purple-500/20 text-purple-300 border-purple-500/40' };
-    case 'PENDING':
-      return { label: 'قيد المراجعة ⏳', colorClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
-    case 'APPROVED':
-      return { label: 'معتمد ومؤهل ✅', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
-    case 'CONVERTING':
-      return { label: 'جاري التأسيس ⚙️', colorClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
-    case 'CONVERTED':
-      return { label: 'مشترك مدفوع 👑', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
-    case 'REJECTED':
-      return { label: 'مرفوض / غير مهتم ✕', colorClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40' };
-    default:
-      return { label: status || 'معلق', colorClass: 'bg-slate-800 text-slate-300 border-slate-700' };
-  }
+  const stage = resolveUnifiedStage({ status });
+  return {
+    label: `${stage.label} ${stage.icon}`,
+    colorClass: stage.badgeClass,
+  };
 }
 
 export function getCommissionStatusArabic(status?: string): { label: string; colorClass: string } {
@@ -68,10 +58,13 @@ export function getCommissionStatusArabic(status?: string): { label: string; col
     case 'PENDING':
       return { label: 'معلق (فترة التجربة) ⏳', colorClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
     case 'EARNED':
+    case 'AVAILABLE':
       return { label: 'مستحقة وجاهزة للصرف 💰', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
     case 'PAID':
       return { label: 'تم الصرف والتحويل ✅', colorClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40' };
     case 'CANCELLED':
+    case 'VOID':
+    case 'REVERSED':
       return { label: 'ملغاة ✕', colorClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40' };
     default:
       return { label: status || 'معلق', colorClass: 'bg-slate-800 text-slate-300 border-slate-700' };
@@ -80,12 +73,11 @@ export function getCommissionStatusArabic(status?: string): { label: string; col
 
 const PARTNER_STATUS_FILTER_TABS = [
   { id: 'ALL', label: 'الكل' },
-  { id: 'NEW', label: 'طلبات جديدة' },
-  { id: 'CONTACTED', label: 'تم التواصل' },
-  { id: 'PENDING', label: 'قيد المراجعة' },
-  { id: 'APPROVED', label: 'معتمد' },
-  { id: 'CONVERTING', label: 'جاري التأسيس' },
-  { id: 'CONVERTED', label: 'مشترك مدفوع' },
+  { id: 'NEW', label: 'طلب جديد 🆕' },
+  { id: 'IN_SETUP', label: 'جاري التأسيس ⚙️' },
+  { id: 'SETUP_COMPLETE', label: 'تم التأسيس 🚀' },
+  { id: 'UNDER_REVIEW', label: 'تحت المراجعة ⏳' },
+  { id: 'PAID_ACTIVE', label: 'مشترك مدفوع 👑' },
 ];
 
 const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): SalesKitMessage[] => {
@@ -442,7 +434,15 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           (l) => (l.referral_code || '').toLowerCase().trim() === partnerRef
         );
         if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
-          matched = matched.filter((l) => l.status === leadsStatusFilter);
+          matched = matched.filter((l) => {
+            const stage = resolveUnifiedStage(l);
+            return (
+              stage.key === leadsStatusFilter ||
+              stage.label === leadsStatusFilter ||
+              l.status === leadsStatusFilter ||
+              l.lifecycle_stage === leadsStatusFilter
+            );
+          });
         }
         if (leadsSearch.trim()) {
           const s = leadsSearch.toLowerCase().trim();

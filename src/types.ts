@@ -25,6 +25,129 @@ export interface StoreWallet {
 
 export type StoreSubscriptionStatus = 'trial' | 'active' | 'past_due' | 'suspended' | 'cancelled';
 
+// 🏛️ Unified 5-Stage Status Pipeline (Standardized across all dashboards & database)
+export type UnifiedLifecycleStage =
+  | 'طلب جديد'
+  | 'جاري التأسيس'
+  | 'تم التأسيس'
+  | 'تحت المراجعة'
+  | 'مشترك مدفوع';
+
+export interface UnifiedStageInfo {
+  key: 'NEW' | 'IN_SETUP' | 'SETUP_COMPLETE' | 'UNDER_REVIEW' | 'PAID_ACTIVE';
+  label: UnifiedLifecycleStage;
+  badgeClass: string;
+  icon: string;
+  isPaidActive: boolean;
+}
+
+export function resolveUnifiedStage(
+  item:
+    | {
+        setup_fee_paid?: boolean;
+        subscription_status?: string;
+        status?: string;
+        lifecycle_stage?: string;
+        subscription_active?: boolean;
+        id?: string;
+        slug?: string;
+      }
+    | null
+    | undefined
+): UnifiedStageInfo {
+  if (!item) {
+    return {
+      key: 'NEW',
+      label: 'طلب جديد',
+      badgeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+      icon: '🆕',
+      isPaidActive: false,
+    };
+  }
+
+  // 1. مشترك مدفوع (Paid Subscriber) - أولوية مطلقة وحتمية
+  const isPaid = Boolean(
+    item.setup_fee_paid === true ||
+      item.subscription_status === 'active' ||
+      item.status === 'active' ||
+      item.status === 'مشترك مدفوع' ||
+      item.status === 'PAID_ACTIVE' ||
+      item.status === 'CONVERTED' ||
+      item.lifecycle_stage === 'مشترك مدفوع'
+  );
+
+  if (isPaid) {
+    return {
+      key: 'PAID_ACTIVE',
+      label: 'مشترك مدفوع',
+      badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm',
+      icon: '👑',
+      isPaidActive: true,
+    };
+  }
+
+  // 2. تحت المراجعة (Under Review)
+  if (
+    item.status === 'تحت المراجعة' ||
+    item.status === 'UNDER_REVIEW' ||
+    item.status === 'PENDING' ||
+    item.status === 'CONTACTED' ||
+    item.lifecycle_stage === 'تحت المراجعة'
+  ) {
+    return {
+      key: 'UNDER_REVIEW',
+      label: 'تحت المراجعة',
+      badgeClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+      icon: '⏳',
+      isPaidActive: false,
+    };
+  }
+
+  // 3. جاري التأسيس (In Setup)
+  if (
+    item.status === 'جاري التأسيس' ||
+    item.status === 'IN_SETUP' ||
+    item.status === 'CONVERTING' ||
+    item.lifecycle_stage === 'جاري التأسيس'
+  ) {
+    return {
+      key: 'IN_SETUP',
+      label: 'جاري التأسيس',
+      badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+      icon: '⚙️',
+      isPaidActive: false,
+    };
+  }
+
+  // 4. تم التأسيس (Setup Complete / Trial)
+  if (
+    item.status === 'تم التأسيس' ||
+    item.status === 'SETUP_COMPLETE' ||
+    item.status === 'trial' ||
+    item.subscription_status === 'trial' ||
+    item.status === 'APPROVED' ||
+    item.lifecycle_stage === 'تم التأسيس' ||
+    Boolean(item.id && item.slug)
+  ) {
+    return {
+      key: 'SETUP_COMPLETE',
+      label: 'تم التأسيس',
+      badgeClass: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
+      icon: '🚀',
+      isPaidActive: false,
+    };
+  }
+
+  // 5. طلب جديد (New Request)
+  return {
+    key: 'NEW',
+    label: 'طلب جديد',
+    badgeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+    icon: '🆕',
+    isPaidActive: false,
+  };
+}
+
 export interface StoreInvoice {
   id: string;
   store_id: string;
@@ -51,8 +174,9 @@ export interface Store {
   secondary_color: string;
   points_per_riyal: number;
   subscription_active: boolean;
-  status?: StoreSubscriptionStatus; // حالة المتجر العامة
+  status?: StoreSubscriptionStatus | UnifiedLifecycleStage | string; // حالة المتجر العامة
   subscription_status?: StoreSubscriptionStatus; // 'trial' | 'active' | 'past_due' | 'suspended'
+  lifecycle_stage?: UnifiedLifecycleStage; // خط الأنابيب الموحد خماسي المراحل
   subscription_plan?: string; // 'trial' | 'pro' | 'enterprise'
   subscription_plan_id?: string; // معرف باقة الاشتراك المختارة
   plan_code?: string; // كود الباقة المختارة
@@ -388,6 +512,7 @@ export interface MerchantLead {
   referral_code?: string | null;
   affiliate_id?: string | null;
   status: LeadStatus;
+  lifecycle_stage?: UnifiedLifecycleStage;
   conversion_started_at?: string | null;
   conversion_error?: string | null;
   converted_store_id?: string | null;

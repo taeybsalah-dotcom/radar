@@ -417,10 +417,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           return;
         }
 
-        if (event.type === 'SUBSCRIPTION_UPDATED' || event.type === 'PAYMENT_COMPLETED') {
+        if (event.type === 'SUBSCRIPTION_UPDATED' || event.type === 'PAYMENT_COMPLETED' || event.type === 'STORE_UPDATED') {
+          LoyaltyService.resolveStore(currentStore.id).then((s) => { if (s) setStore(s); });
           LoyaltyService.checkAndUpdateStoreSubscription(currentStore.id).then(setSubscriptionInfo);
           LoyaltyService.getStoreInvoices(currentStore.id).then(setInvoices);
           LoyaltyService.getAllSubscriptionPlans().then(setAllPlans);
+          if (event.type === 'STORE_UPDATED') {
+            LoyaltyService.getStoreStaff(currentStore.id).then(setStaffList);
+          }
           return;
         }
 
@@ -429,10 +433,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           return;
         }
 
-        if (event.type === 'STORE_UPDATED' || event.type === 'STAFF_UPDATED') {
+        if (event.type === 'STAFF_UPDATED') {
           LoyaltyService.getStoreStaff(currentStore.id).then(setStaffList);
-          LoyaltyService.resolveStore(currentStore.id).then((s) => { if (s) setStore(s); });
-          LoyaltyService.getAllSubscriptionPlans().then(setAllPlans);
           return;
         }
       } else if (event.type === 'STORE_UPDATED') {
@@ -544,14 +546,16 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   };
 
   const handleUpgradePlan = (plan: BillingPlan) => {
-    const isTrialStore =
-      !isStoreSuspended &&
-      (store.setup_fee_paid !== true ||
-        !store.setup_fee_paid ||
-        store.subscription_status === 'trial' ||
-        store.status === 'trial');
+    const isPaidActive = Boolean(
+      store.setup_fee_paid === true ||
+        store.subscription_status === 'active' ||
+        store.status === 'active' ||
+        (store as any).status === 'مشترك مدفوع' ||
+        (store as any).lifecycle_stage === 'مشترك مدفوع' ||
+        subscriptionInfo?.status === 'active'
+    );
 
-    const currentPlan = !isTrialStore && Boolean(store.setup_fee_paid)
+    const currentPlan = isPaidActive
       ? allPlans.find(
           (p) =>
             (p.id && p.id === (store as any).subscription_plan_id) ||
@@ -1995,6 +1999,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     );
   }
 
+  const isPaidActive = Boolean(
+    store.setup_fee_paid === true ||
+      store.subscription_status === 'active' ||
+      store.status === 'active' ||
+      (store as any).status === 'مشترك مدفوع' ||
+      (store as any).lifecycle_stage === 'مشترك مدفوع' ||
+      subscriptionInfo?.status === 'active'
+  );
+
   const isStoreSuspended =
     store.subscription_active === false ||
     store.subscription_status === 'suspended' ||
@@ -2002,14 +2015,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     subscriptionInfo?.isSuspended === true;
 
   // 🛡️ Strict Trial Detection: Any unpaid store (setup_fee_paid === false) is in trial unless explicitly suspended
-  const isTrial =
-    !isStoreSuspended &&
-    (store.setup_fee_paid !== true ||
-      !store.setup_fee_paid ||
-      store.subscription_status === 'trial' ||
-      store.status === 'trial' ||
-      subscriptionInfo?.status === 'trial' ||
-      subscriptionInfo?.requiresSetup === true);
+  // When isPaidActive is true, isTrial is GUARANTEED to be FALSE!
+  const isTrial = !isPaidActive && !isStoreSuspended;
   // ⏱️ Live Precision Countdown Hook for Trial Banner (Days, Hours, Minutes, Seconds)
   const [trialCountdown, setTrialCountdown] = useState<{
     days: number;
@@ -5833,18 +5840,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
           {/* Sub-Section 2: Billing */}
           {settingsSection === 'billing' && (() => {
-        const isTrial =
-          !isStoreSuspended &&
-          (store.setup_fee_paid !== true ||
-            !store.setup_fee_paid ||
-            store.subscription_status === 'trial' ||
-            store.status === 'trial' ||
-            subscriptionInfo?.status === 'trial' ||
-            subscriptionInfo?.requiresSetup === true);
-
         // 🛡️ During trial (setup_fee_paid === false), no paid plan is active (currentPaidPlan is null)
         const currentPaidPlan: BillingPlan | null =
-          !isTrial && Boolean(store.setup_fee_paid)
+          isPaidActive
             ? allPlans.find(
                 (p) =>
                   (p.id && p.id === (store as any).subscription_plan_id) ||

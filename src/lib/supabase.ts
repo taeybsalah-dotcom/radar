@@ -35,6 +35,9 @@ import {
   MasterFinancialMetrics,
   ProratedUpgradeCalculation,
   FinancialPlatformConfig,
+  UnifiedLifecycleStage,
+  UnifiedStageInfo,
+  resolveUnifiedStage,
 } from '../types';
 import {
   INITIAL_STORES,
@@ -227,8 +230,15 @@ export function normalizeStore(s: any): Store {
     manager_contact = manager_contact && manager_contact !== '0500000000' ? manager_contact : '0577371780';
   }
 
+  const stageInfo = resolveUnifiedStage(s);
+  const isPaid = stageInfo.isPaidActive;
+
   return {
     ...s,
+    setup_fee_paid: isPaid ? true : Boolean(s.setup_fee_paid),
+    status: isPaid ? (s.status === 'suspended' ? 'suspended' : 'active') : (s.status || stageInfo.label),
+    subscription_status: isPaid ? (s.subscription_status === 'suspended' ? 'suspended' : 'active') : (s.subscription_status || 'trial'),
+    lifecycle_stage: stageInfo.label,
     manager_contact,
     slider_images: slider_images.filter((img) => img && typeof img === 'object' && Boolean(img.image_url)),
   };
@@ -243,10 +253,13 @@ export function normalizeLead(l: any): MerchantLead {
       phone: '',
       attribution_source: 'DIRECT',
       status: 'NEW',
+      lifecycle_stage: 'طلب جديد',
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
   }
+
+  const stageInfo = resolveUnifiedStage(l);
 
   return {
     id: String(l.id || `lead-${Date.now()}`),
@@ -258,6 +271,7 @@ export function normalizeLead(l: any): MerchantLead {
     attribution_source: l.attribution_source === 'REFERRAL' ? 'REFERRAL' : 'DIRECT',
     referral_code: l.referral_code || l.referralCode || null,
     status: (l.status as LeadStatus) || 'NEW',
+    lifecycle_stage: stageInfo.label,
     conversion_started_at: l.conversion_started_at || null,
     conversion_error: l.conversion_error || null,
     converted_store_id: l.converted_store_id || null,
@@ -4260,6 +4274,7 @@ export const LoyaltyService = {
               status: 'active',
               subscription_status: 'active',
               subscription_active: true,
+              lifecycle_stage: 'مشترك مدفوع',
               subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id || null,
               plan_code: targetPlan?.code || currentStore.plan_code || null,
               subscription_plan: targetPlan?.name || currentStore.subscription_plan || null,
@@ -4283,6 +4298,7 @@ export const LoyaltyService = {
         subscription_status: 'active',
         subscription_active: true,
         setup_fee_paid: true,
+        lifecycle_stage: 'مشترك مدفوع',
         subscription_start_date: now.toISOString(),
         subscription_end_date: nextEnd,
         renewal_amount: targetPlan?.amount || currentStore.renewal_amount || 195,
@@ -4303,6 +4319,8 @@ export const LoyaltyService = {
         status: 'active',
         subscription_status: 'active',
         subscription_active: true,
+        setup_fee_paid: true,
+        lifecycle_stage: 'مشترك مدفوع',
         subscription_end_date: nextEnd,
         renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
         subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id,
@@ -4320,6 +4338,12 @@ export const LoyaltyService = {
       stores.unshift(currentStore);
     }
     saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
+
+    // تحديث فوري لكاش الذاكرة
+    storeResolutionCache.set(currentStore.id.toLowerCase(), { store: currentStore, timestamp: Date.now() });
+    if (currentStore.slug) {
+      storeResolutionCache.set(currentStore.slug.toLowerCase(), { store: currentStore, timestamp: Date.now() });
+    }
 
     // 5. حفظ الفاتورة
     createdInvoice = {
@@ -4402,8 +4426,12 @@ export const LoyaltyService = {
       console.warn('Non-blocking commission unlock on payment error:', commUnlockErr);
     }
 
-    // إطلاق الأحداث اللحظية
+    // إطلاق الأحداث اللحظية لمزامنة كافة الشاشات واللوحات فوراً
+    LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: payload.storeId });
+    LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: payload.storeId });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
@@ -4848,6 +4876,14 @@ export const LoyaltyService = {
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const store = stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
 
+    const isPaidActive = Boolean(
+      store.setup_fee_paid === true ||
+        store.subscription_status === 'active' ||
+        store.status === 'active' ||
+        (store as any).status === 'مشترك مدفوع' ||
+        (store as any).lifecycle_stage === 'مشترك مدفوع'
+    );
+
     const supabase = getSupabaseClient();
     if (supabase && isUUID(store.id)) {
       try {
@@ -4864,9 +4900,9 @@ export const LoyaltyService = {
 
           const statusFinal: StoreSubscriptionStatus = isSuspendedFinal
             ? 'suspended'
-            : !store.setup_fee_paid || data.status === 'trial' || data.status === 'trialing'
-            ? 'trial'
-            : (data.status as StoreSubscriptionStatus);
+            : isPaidActive || data.status === 'active'
+            ? 'active'
+            : 'trial';
 
           return {
             status: statusFinal,
@@ -4874,7 +4910,7 @@ export const LoyaltyService = {
             subscriptionEndDate: data.subscription_end_date,
             trialEndDate: data.trial_end_date,
             isSuspended: isSuspendedFinal,
-            requiresSetup: Boolean(data.requires_setup || !store.setup_fee_paid),
+            requiresSetup: !isPaidActive,
             requiresRenewal: Boolean(data.requires_renewal),
             renewalAmount: Number(data.renewal_amount || 195),
             inGracePeriod: false,
@@ -4894,12 +4930,12 @@ export const LoyaltyService = {
       ? new Date(store.subscription_end_date).getTime()
       : trialEndMs;
 
-    const targetEndMs = store.setup_fee_paid ? subEndMs : trialEndMs;
+    const targetEndMs = isPaidActive ? subEndMs : trialEndMs;
     const daysLeft = Math.round(((targetEndMs - now) / 86400000) * 10) / 10;
 
-    let status: StoreSubscriptionStatus = store.setup_fee_paid ? (store.subscription_status || 'active') : 'trial';
+    let status: StoreSubscriptionStatus = isPaidActive ? 'active' : 'trial';
     let isSuspended = false;
-    let requiresSetup = !store.setup_fee_paid;
+    let requiresSetup = !isPaidActive;
     let requiresRenewal = false;
     let inGracePeriod = false;
     let graceDaysLeft = 0;
@@ -4917,14 +4953,14 @@ export const LoyaltyService = {
       status = 'suspended';
       isSuspended = true;
     }
-    // 1. انتهاء التجربة المجانية دون سداد رسوم التأسيس 500 ريال
-    else if (!store.setup_fee_paid && now > trialEndMs) {
+    // 1. انتهاء التجربة المجانية دون سداد رسوم التأسيس 500 ريال (فقط للمتاجر غير المدفوعة)
+    else if (!isPaidActive && now > trialEndMs) {
       status = 'suspended';
       isSuspended = true;
       requiresSetup = true;
     }
-    // 2. انتهاء الاشتراك وفترة السماح التقنية (Grace Period)
-    else if (store.setup_fee_paid && now > subEndMs) {
+    // 2. انتهاء الاشتراك وفترة السماح التقنية (Grace Period) (للمشترك المدفوع)
+    else if (isPaidActive && now > subEndMs) {
       if (now <= graceEndMs) {
         // في فترة السماح (3 إلى 5 أيام): المتجر والخدمات تظل نشطة مع التنبيه الإلزامي
         status = 'active';
@@ -4941,12 +4977,12 @@ export const LoyaltyService = {
       }
     }
     // 3. تنبيه تجديد قبل 3 أيام
-    else if (store.setup_fee_paid && daysLeft <= 3 && daysLeft >= 0) {
+    else if (isPaidActive && daysLeft <= 3 && daysLeft >= 0) {
       requiresRenewal = true;
       status = 'active';
       isSuspended = false;
     } else {
-      status = store.setup_fee_paid ? 'active' : 'trial';
+      status = isPaidActive ? 'active' : 'trial';
       isSuspended = false;
     }
 
@@ -4954,13 +4990,17 @@ export const LoyaltyService = {
     if (
       store.subscription_status !== status ||
       store.subscription_active !== !isSuspended ||
-      store.in_grace_period !== inGracePeriod
+      store.in_grace_period !== inGracePeriod ||
+      (isPaidActive && !store.setup_fee_paid)
     ) {
       store.subscription_status = status;
       store.status = status;
       store.subscription_active = !isSuspended;
       store.in_grace_period = inGracePeriod;
       store.grace_period_ends_at = graceEndsAtIso;
+      if (isPaidActive) {
+        store.setup_fee_paid = true;
+      }
       saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
       LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: store.id });
     }
