@@ -739,7 +739,6 @@ export const LoyaltyService = {
                 trial_end_date: trialEndIso,
                 subscription_start_date: nowIso,
                 subscription_end_date: trialEndIso,
-                renewal_amount: 195,
               },
             ])
             .select()
@@ -4195,18 +4194,38 @@ export const LoyaltyService = {
             subscription_status: 'active',
             subscription_active: true,
             subscription_plan: targetPlan?.name || currentStore.subscription_plan || 'الباقة الأساسية',
-            renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
             subscription_start_date: now.toISOString(),
             subscription_end_date: nextEndIso,
             updated_at: now.toISOString(),
           };
 
-          const { data: updatedData, error: updateError } = await supabase
+          let { data: updatedData, error: updateError } = await supabase
             .from('stores')
             .update(updatePayload)
             .eq('id', payload.storeId)
             .select()
             .single();
+
+          // 🛡️ Fallback Retry with Minimal Core Verified Columns if Schema Cache lacks custom fields
+          if (updateError && (updateError.message.includes('column') || updateError.message.includes('schema cache'))) {
+            console.warn('[processSubscriptionPayment] Retrying with minimal verified core columns:', updateError.message);
+            const minimalPayload: Record<string, any> = {
+              setup_fee_paid: true,
+              status: 'active',
+              subscription_status: 'active',
+              subscription_active: true,
+              subscription_end_date: nextEndIso,
+              updated_at: now.toISOString(),
+            };
+            const retryRes = await supabase
+              .from('stores')
+              .update(minimalPayload)
+              .eq('id', payload.storeId)
+              .select()
+              .single();
+            updatedData = retryRes.data;
+            updateError = retryRes.error;
+          }
 
           if (updateError) {
             console.error('[processSubscriptionPayment] DB commit failed:', updateError);
