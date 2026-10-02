@@ -43,10 +43,28 @@ type PortalTab =
   | 'partner-landing'
   | 'onboarding';
 
+function getInitialStoreSync(targetSlug?: string | null): Store | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const rawList = localStorage.getItem('radar_local_stores');
+    if (rawList) {
+      const stores: Store[] = JSON.parse(rawList);
+      if (Array.isArray(stores) && stores.length > 0) {
+        if (targetSlug) {
+          const found = stores.find((s) => s.slug === targetSlug || s.id === targetSlug);
+          if (found) return found;
+        }
+        return stores[0];
+      }
+    }
+  } catch {}
+  return null;
+}
+
 function parseRouteParams() {
   if (typeof window === 'undefined') {
     return {
-      portal: 'super-admin' as PortalTab,
+      portal: 'join' as PortalTab,
       isPreview: false,
       storeSlug: null as string | null,
       partnerSlug: null as string | null,
@@ -251,7 +269,17 @@ function parseRouteParams() {
 
 export function App() {
   const initialConfig = parseRouteParams();
-  const [store, setStore] = useState<Store | null>(null);
+  const [store, setStore] = useState<Store | null>(() => {
+    if (
+      initialConfig.portal === 'super-admin' ||
+      initialConfig.portal === 'partner' ||
+      initialConfig.portal === 'join' ||
+      initialConfig.portal === 'partner-landing'
+    ) {
+      return null;
+    }
+    return getInitialStoreSync(initialConfig.storeSlug);
+  });
   const [partnerSlug, setPartnerSlug] = useState<string | null>(initialConfig.partnerSlug || null);
   const [activeTab, setActiveTab] = useState<PortalTab>(initialConfig.portal);
   const [loading, setLoading] = useState(true);
