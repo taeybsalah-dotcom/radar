@@ -77,6 +77,12 @@ export interface Store {
   catalog_enabled?: boolean; // تفعيل قائمة المنيو والخدمات
   fulfillment_settings?: StoreFulfillmentSettings; // إعدادات طرق الاستلام والتوصيل والحجز
   wallet?: StoreWallet; // محفظة باقات المتجر وحدود العمليات
+  grace_period_days?: number; // فترة السماح بالأيام (افتراضي 3 إلى 5 أيام)
+  grace_period_ends_at?: string; // تاريخ انتهاء فترة السماح
+  in_grace_period?: boolean; // هل المتجر حالياً في فترة السماح؟
+  complimentary_days_granted?: number; // إجمالي الأيام الإضافية الممنوحة يدوياً من الإدارة
+  last_override_at?: string; // تاريخ آخر تمديد يدوي
+  last_override_reason?: string; // سبب التمديد اليدوي الأخير
   created_at?: string;
   updated_at?: string;
 }
@@ -380,6 +386,7 @@ export interface MerchantLead {
   business_type?: string | null;
   attribution_source: 'DIRECT' | 'REFERRAL';
   referral_code?: string | null;
+  affiliate_id?: string | null;
   status: LeadStatus;
   conversion_started_at?: string | null;
   conversion_error?: string | null;
@@ -402,7 +409,9 @@ export interface PartnerAccount {
   region?: string | null;
   active: boolean;
   referral_code: string;
-  commission_rate?: number; // e.g. 0.20 = 20%
+  commission_rate?: number; // General / default rate (e.g. 0.20 = 20%)
+  acquisition_commission_rate?: number; // عمولة أول اشتراك/تأسيس (مثال: 20%)
+  recurring_commission_rate?: number; // عمولة التجديدات المتكررة (مثال: 10%)
   target_value?: number;
   pin_code?: string;
   created_at?: string;
@@ -414,6 +423,8 @@ export interface PartnerAccount {
     referral_code?: string;
     status?: string;
     commission_rate?: number;
+    acquisition_commission_rate?: number;
+    recurring_commission_rate?: number;
     notes?: string;
   };
 }
@@ -421,13 +432,27 @@ export interface PartnerAccount {
 export interface PartnerCommission {
   id: string;
   merchant_name: string;
-  commission_type: string;
+  commission_type: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE' | string;
   basis_amount: number;
   commission_rate: number;
   commission_amount: number;
-  status: 'PENDING' | 'EARNED' | 'PAID' | 'VOID';
+  status: 'PENDING' | 'EARNED' | 'AVAILABLE' | 'PAID' | 'REVERSED' | 'VOID';
   qualifying_event: string;
+  invoice_id?: string;
+  invoice_number?: string;
+  ledger_id?: string;
   created_at: string;
+}
+
+export interface ProratedUpgradeCalculation {
+  currentPlan: BillingPlan | null;
+  newPlan: BillingPlan;
+  remainingDays: number;
+  dailyRateCurrent: number;
+  unusedCredit: number; // الرصيد المتبقي المسترد من الباقة الحالية
+  newPlanAmount: number; // سعر الباقة الجديدة
+  netUpgradeAmount: number; // المبلغ الصافي المستحق للسداد
+  hasProrationDiscount: boolean;
 }
 
 export interface PartnerBonusMilestone {

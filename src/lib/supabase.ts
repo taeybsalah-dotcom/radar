@@ -33,6 +33,7 @@ import {
   ManualAdjustmentPayload,
   FinancialBreakdown,
   MasterFinancialMetrics,
+  ProratedUpgradeCalculation,
 } from '../types';
 import {
   INITIAL_STORES,
@@ -3897,6 +3898,43 @@ export const LoyaltyService = {
     };
   },
 
+  // 🧮 حساب الترقية التناسبية للباقات (Prorated Mid-Term Upgrade Engine)
+  calculateProratedUpgrade(
+    store: Store,
+    currentPlan: BillingPlan | null,
+    newPlan: BillingPlan
+  ): ProratedUpgradeCalculation {
+    const now = Date.now();
+    const currentEndMs = store.subscription_end_date ? new Date(store.subscription_end_date).getTime() : 0;
+    const remainingMs = Math.max(0, currentEndMs - now);
+    const remainingDays = Math.ceil(remainingMs / 86400000);
+
+    let unusedCredit = 0;
+    let dailyRateCurrent = 0;
+
+    if (store.setup_fee_paid && currentPlan && remainingDays > 0) {
+      const planMonths = currentPlan.duration_months ?? (currentPlan.billing_interval === 'YEARLY' ? 12 : 1);
+      const totalDays = Math.max(1, planMonths * 30);
+      dailyRateCurrent = currentPlan.amount / totalDays;
+      unusedCredit = Math.round(remainingDays * dailyRateCurrent * 100) / 100;
+      unusedCredit = Math.min(unusedCredit, currentPlan.amount, newPlan.amount);
+    }
+
+    const newPlanAmount = newPlan.amount;
+    const netUpgradeAmount = Math.max(0, Math.round((newPlanAmount - unusedCredit) * 100) / 100);
+
+    return {
+      currentPlan,
+      newPlan,
+      remainingDays,
+      dailyRateCurrent: Math.round(dailyRateCurrent * 100) / 100,
+      unusedCredit,
+      newPlanAmount,
+      netUpgradeAmount,
+      hasProrationDiscount: unusedCredit > 0,
+    };
+  },
+
   // جلب السجل المالي العام غير القابل للتعديل (Master Financial Ledger)
   async getFinancialLedger(filters?: {
     type?: string;
@@ -4103,10 +4141,17 @@ export const LoyaltyService = {
 
     let computedPlanName = targetPlan?.name || currentStore.subscription_plan || (payload.invoiceType === 'setup' ? 'باقة تأسيس المتجر' : 'تجديد الاشتراك');
 
-    // 2. البحث عن الشريك/المسوق المرتبط لحساب عمولته بدقة
+    // 2. البحث عن الشريك/المسوق وحساب العمولة المزدوجة (Acquisition vs. Recurring)
     let partnerAccountId: string | null = null;
     let partnerName: string | null = null;
     let commissionRate = 0.20;
+    const isFirstAcquisition = payload.invoiceType === 'setup' || !currentStore.setup_fee_paid;
+    let commissionType: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE' =
+      isFirstAcquisition
+        ? 'STORE_ACQUISITION'
+        : payload.invoiceType === 'upgrade'
+        ? 'SUBSCRIPTION_UPGRADE'
+        : 'SUBSCRIPTION_RENEWAL';
 
     const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
     const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
@@ -4116,7 +4161,15 @@ export const LoyaltyService = {
       if (partner) {
         partnerAccountId = partner.id;
         partnerName = partner.display_name;
-        commissionRate = partner.commission_rate ?? 0.20;
+
+        // تطبيق النسبة بحسب نوع العملية (استحواذ لأول مرة vs تجديد متكرر)
+        if (isFirstAcquisition) {
+          commissionRate = partner.acquisition_commission_rate ?? partner.commission_rate ?? 0.20;
+          commissionType = 'STORE_ACQUISITION';
+        } else {
+          commissionRate = partner.recurring_commission_rate ?? (partner.commission_rate ? partner.commission_rate / 2 : 0.10);
+          commissionType = payload.invoiceType === 'upgrade' ? 'SUBSCRIPTION_UPGRADE' : 'SUBSCRIPTION_RENEWAL';
+        }
       }
     }
 
@@ -4268,7 +4321,8 @@ export const LoyaltyService = {
         tax_rate: 0.15,
         base_amount: breakdown.netBeforeVat,
         invoice_number: invoiceNum,
-        notes: `عملية دفع ناجحة عبر ${paymentMethod} لـ ${computedPlanName}`,
+        commission_type: commissionType,
+        notes: `عملية دفع ناجحة عبر ${paymentMethod} لـ ${computedPlanName} (${commissionType})`,
       },
     });
 
@@ -4283,7 +4337,13 @@ export const LoyaltyService = {
 
     try {
       if (payload.invoiceType === 'setup' || payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') {
-        await this.unlockPaidStoreCommission(payload.storeId, payload.amount);
+        await this.unlockPaidStoreCommission(
+          payload.storeId,
+          breakdown.netBeforeVat,
+          commissionType,
+          createdInvoice.id,
+          invoiceNum
+        );
       }
     } catch (commUnlockErr) {
       console.warn('Non-blocking commission unlock on payment error:', commUnlockErr);
@@ -4718,7 +4778,7 @@ export const LoyaltyService = {
     };
   },
 
-  // فحص وتحديث دورة الاشتراك وحالات الإيقاف التلقائي
+  // فحص وتحديث دورة الاشتراك وحالات فترة السماح والإيقاف التلقائي
   async checkAndUpdateStoreSubscription(storeId: string): Promise<{
     status: StoreSubscriptionStatus;
     daysLeft: number;
@@ -4728,6 +4788,9 @@ export const LoyaltyService = {
     requiresSetup: boolean;
     requiresRenewal: boolean;
     renewalAmount: number;
+    inGracePeriod: boolean;
+    graceDaysLeft: number;
+    graceEndsAt?: string;
   }> {
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const store = stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
@@ -4761,6 +4824,8 @@ export const LoyaltyService = {
             requiresSetup: Boolean(data.requires_setup || !store.setup_fee_paid),
             requiresRenewal: Boolean(data.requires_renewal),
             renewalAmount: Number(data.renewal_amount || 195),
+            inGracePeriod: false,
+            graceDaysLeft: 0,
           };
         }
       } catch (e) {
@@ -4783,6 +4848,12 @@ export const LoyaltyService = {
     let isSuspended = false;
     let requiresSetup = !store.setup_fee_paid;
     let requiresRenewal = false;
+    let inGracePeriod = false;
+    let graceDaysLeft = 0;
+
+    const graceDays = store.grace_period_days ?? 3;
+    const graceEndMs = subEndMs + (graceDays * 86400000);
+    const graceEndsAtIso = new Date(graceEndMs).toISOString();
 
     // 0. متجر معطل يدوياً من قبل إدارة المنصة (Kill Switch)
     if (
@@ -4799,11 +4870,22 @@ export const LoyaltyService = {
       isSuspended = true;
       requiresSetup = true;
     }
-    // 2. انتهاء الاشتراك الشهري دون تجديد 195 ريال
+    // 2. انتهاء الاشتراك وفترة السماح التقنية (Grace Period)
     else if (store.setup_fee_paid && now > subEndMs) {
-      status = 'suspended';
-      isSuspended = true;
-      requiresRenewal = true;
+      if (now <= graceEndMs) {
+        // في فترة السماح (3 إلى 5 أيام): المتجر والخدمات تظل نشطة مع التنبيه الإلزامي
+        status = 'active';
+        isSuspended = false;
+        inGracePeriod = true;
+        requiresRenewal = true;
+        graceDaysLeft = Math.max(0, Math.round(((graceEndMs - now) / 86400000) * 10) / 10);
+      } else {
+        // انقضت فترة السماح بالكامل دون سداد
+        status = 'suspended';
+        isSuspended = true;
+        inGracePeriod = false;
+        requiresRenewal = true;
+      }
     }
     // 3. تنبيه تجديد قبل 3 أيام
     else if (store.setup_fee_paid && daysLeft <= 3 && daysLeft >= 0) {
@@ -4816,10 +4898,16 @@ export const LoyaltyService = {
     }
 
     // تحديث التخزين المحلي إن تغيرت الحالة
-    if (store.subscription_status !== status || store.subscription_active !== !isSuspended) {
+    if (
+      store.subscription_status !== status ||
+      store.subscription_active !== !isSuspended ||
+      store.in_grace_period !== inGracePeriod
+    ) {
       store.subscription_status = status;
       store.status = status;
       store.subscription_active = !isSuspended;
+      store.in_grace_period = inGracePeriod;
+      store.grace_period_ends_at = graceEndsAtIso;
       saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
       LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: store.id });
     }
@@ -4833,6 +4921,101 @@ export const LoyaltyService = {
       requiresSetup,
       requiresRenewal,
       renewalAmount: store.renewal_amount || 195,
+      inGracePeriod,
+      graceDaysLeft,
+      graceEndsAt: graceEndsAtIso,
+    };
+  },
+
+  // 👑 منح أيام إضافية وتمديد يدوي للاشتراك من المشرف العام (Super Admin Manual Override)
+  async grantStoreComplimentaryDays(
+    storeId: string,
+    daysToAdd: number,
+    reason: string,
+    adminUser: string = 'SUPER_ADMIN',
+    notes?: string
+  ): Promise<{ success: boolean; store?: Store; ledgerEntry?: FinancialLedgerEntry; error?: string }> {
+    if (daysToAdd <= 0) {
+      return { success: false, error: 'عدد الأيام المضافة يجب أن يكون أكبر من صفر' };
+    }
+
+    const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
+    const storeIdx = stores.findIndex((s) => s.id === storeId);
+    if (storeIdx === -1) {
+      return { success: false, error: 'المتجر غير موجود' };
+    }
+
+    const store = stores[storeIdx];
+    const now = Date.now();
+    const currentEndMs = store.subscription_end_date ? new Date(store.subscription_end_date).getTime() : now;
+    const baseMs = Math.max(now, currentEndMs);
+    const newEndMs = baseMs + (daysToAdd * 86400000);
+    const newEndIso = new Date(newEndMs).toISOString();
+
+    const updatedStore: Store = {
+      ...store,
+      subscription_end_date: newEndIso,
+      subscription_active: true,
+      subscription_status: 'active',
+      status: 'active',
+      in_grace_period: false,
+      complimentary_days_granted: (store.complimentary_days_granted || 0) + daysToAdd,
+      last_override_at: new Date().toISOString(),
+      last_override_reason: reason,
+      updated_at: new Date().toISOString(),
+    };
+
+    stores[storeIdx] = updatedStore;
+    saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
+
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(storeId)) {
+      try {
+        await supabase.from('stores').update({
+          subscription_end_date: newEndIso,
+          subscription_active: true,
+          subscription_status: 'active',
+          status: 'active',
+          complimentary_days_granted: updatedStore.complimentary_days_granted,
+          last_override_at: updatedStore.last_override_at,
+          last_override_reason: reason,
+          updated_at: new Date().toISOString(),
+        }).eq('id', storeId);
+      } catch (e) {
+        console.warn('Supabase grantStoreComplimentaryDays error:', e);
+      }
+    }
+
+    // تسجيل قيد تسوية إدارية في السجل المالي لتوثيق التدخل
+    const ledgerEntry = await this.recordFinancialLedgerEntry({
+      transaction_id: `tx_override_${Date.now()}`,
+      store_id: storeId,
+      store_name: store.name,
+      transaction_type: 'ADJUSTMENT',
+      gross_amount: 0.00,
+      vat_amount: 0.00,
+      gateway_fee: 0.00,
+      affiliate_commission: 0.00,
+      net_platform_amount: 0.00,
+      status: 'SETTLED',
+      created_by: adminUser,
+      metadata: {
+        override_type: 'COMPLIMENTARY_DAYS',
+        days_granted: daysToAdd,
+        reason,
+        previous_end_date: store.subscription_end_date,
+        new_end_date: newEndIso,
+        admin_notes: notes || '',
+      },
+    });
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
+    LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId });
+
+    return {
+      success: true,
+      store: updatedStore,
+      ledgerEntry,
     };
   },
 
@@ -6287,60 +6470,101 @@ export const LoyaltyService = {
     };
   },
 
-  // 💰 تفعيل وتحرير العمولة المكتسبة عند سداد الاشتراك فعلياً (Unlock Commission on Payment)
+  // 💰 تفعيل وتحرير العمولة المكتسبة عند سداد الاشتراك أو التجديد (Dual Commission Engine)
   async unlockPaidStoreCommission(
     storeId: string,
-    paidAmount: number = 195.00
+    paidAmount: number = 195.00,
+    commissionType?: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE',
+    invoiceId?: string,
+    invoiceNumber?: string
   ): Promise<{ success: boolean; unlockedCommissionsCount: number }> {
     const now = new Date().toISOString();
     const supabase = getSupabaseClient();
     const partnerIdsToEvaluate = new Set<string>();
 
-    // 1. Supabase sync if connected
-    if (supabase) {
-      try {
-        const { data: updatedRows, error } = await supabase
-          .from('partner_commissions')
-          .update({
-            status: 'EARNED',
-            qualifying_event: 'تم سداد الاشتراك وتثبيت المتجر بنجاح',
-            updated_at: now,
-          })
-          .eq('store_id', storeId)
-          .eq('status', 'PENDING')
-          .select('partner_account_id');
-
-        if (!error && Array.isArray(updatedRows)) {
-          updatedRows.forEach((r) => {
-            if (r.partner_account_id) partnerIdsToEvaluate.add(r.partner_account_id);
-          });
-        }
-      } catch (dbErr) {
-        console.warn('Supabase unlockPaidStoreCommission warning:', dbErr);
-      }
-    }
-
-    // 2. Local commissions update
     const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
     let unlockedCount = 0;
+    let foundPending = false;
+
     const updatedComms = localComms.map((c) => {
       if ((c.store_id === storeId || c.merchant_lead_id === storeId) && c.status === 'PENDING') {
         unlockedCount++;
+        foundPending = true;
         if (c.partner_account_id) partnerIdsToEvaluate.add(c.partner_account_id);
         const rate = c.commission_rate || 0.20;
         const basis = paidAmount || c.basis_amount || 195.00;
         return {
           ...c,
-          status: 'EARNED',
-          qualifying_event: 'تم سداد الاشتراك وتثبيت المتجر بنجاح',
+          status: 'AVAILABLE',
+          commission_type: commissionType || c.commission_type || 'STORE_ACQUISITION',
+          qualifying_event: commissionType === 'SUBSCRIPTION_RENEWAL' ? 'تجديد اشتراك المتجر بنجاح' : 'تأسيس وتفعيل المتجر بنجاح',
           basis_amount: basis,
           commission_amount: Math.round(basis * rate * 100) / 100,
+          invoice_id: invoiceId || c.invoice_id,
+          invoice_number: invoiceNumber || c.invoice_number,
           updated_at: now,
         };
       }
       return c;
     });
+
+    // إذا كانت العملية تجديد دوري ولم يكن هناك عمولة معلقة سابقة (Renewal Commission)
+    if (!foundPending && (commissionType === 'SUBSCRIPTION_RENEWAL' || commissionType === 'SUBSCRIPTION_UPGRADE')) {
+      const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
+      const store = stores.find((s) => s.id === storeId);
+      const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+      const lead = allLeads.find((l) => l.converted_store_id === storeId || l.store_name === store?.name);
+      const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+      const partner = allPartners.find((p) => p.referral_code === lead?.referral_code || p.id === lead?.affiliate_id);
+
+      if (partner) {
+        partnerIdsToEvaluate.add(partner.id);
+        const recRate = partner.recurring_commission_rate ?? 0.10;
+        const basis = paidAmount;
+        const commAmt = Math.round(basis * recRate * 100) / 100;
+        const newComm = {
+          id: 'comm-rec-' + Date.now(),
+          partner_account_id: partner.id,
+          merchant_lead_id: lead?.id || null,
+          store_id: storeId,
+          commission_type: commissionType,
+          basis_amount: basis,
+          commission_rate: recRate,
+          commission_amount: commAmt,
+          status: 'AVAILABLE',
+          qualifying_event: commissionType === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد اشتراك المتجر الدوري',
+          idempotency_key: `rec_comm_${invoiceNumber || Date.now()}`,
+          merchant_name: store?.name || lead?.store_name || 'متجر معتمد',
+          invoice_id: invoiceId,
+          invoice_number: invoiceNumber,
+          created_at: now,
+          updated_at: now,
+        };
+        updatedComms.unshift(newComm);
+        unlockedCount++;
+      }
+    }
+
     saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
+
+    if (supabase) {
+      try {
+        await supabase
+          .from('partner_commissions')
+          .update({
+            status: 'AVAILABLE',
+            commission_type: commissionType || 'STORE_ACQUISITION',
+            qualifying_event: 'تم سداد الاشتراك وتثبيت المتجر بنجاح',
+            invoice_id: invoiceId,
+            invoice_number: invoiceNumber,
+            updated_at: now,
+          })
+          .eq('store_id', storeId)
+          .eq('status', 'PENDING');
+      } catch (dbErr) {
+        console.warn('Supabase unlockPaidStoreCommission warning:', dbErr);
+      }
+    }
 
     // 3. Evaluate milestone bonuses for affected partners based strictly on PAID stores
     for (const partnerId of Array.from(partnerIdsToEvaluate)) {
@@ -6826,20 +7050,34 @@ export const LoyaltyService = {
     return true;
   },
 
-  // ترقية باقة المتجر واختيار خطة جديدة
+  // ترقية باقة المتجر واختيار خطة جديدة مع الحساب التناسبي (Prorated Upgrade)
   async upgradeStoreSubscription(
     storeId: string,
     plan: BillingPlan,
     paymentMethod: string = 'mada'
-  ): Promise<{ success: boolean; store: Store; invoice: StoreInvoice }> {
-    return this.processSubscriptionPayment({
+  ): Promise<{ success: boolean; store: Store; invoice: StoreInvoice; prorated: ProratedUpgradeCalculation }> {
+    const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
+    const store = stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
+    const allPlans = await this.getAllSubscriptionPlans();
+    const currentPlan = allPlans.find((p) => p.id === store.subscription_plan_id || p.code === store.plan_code) || null;
+
+    const prorated = this.calculateProratedUpgrade(store, currentPlan, plan);
+
+    const paymentResult = await this.processSubscriptionPayment({
       storeId,
       invoiceType: 'upgrade',
-      amount: plan.amount,
+      amount: prorated.netUpgradeAmount,
       paymentMethod,
       gateway: 'sandbox',
       planId: plan.id || plan.code,
     });
+
+    return {
+      success: paymentResult.success,
+      store: paymentResult.store,
+      invoice: paymentResult.invoice,
+      prorated,
+    };
   },
 };
 

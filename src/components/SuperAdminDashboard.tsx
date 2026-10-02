@@ -37,6 +37,9 @@ import {
   AlertTriangle,
   CreditCard,
   Receipt,
+  CalendarPlus,
+  Gift,
+  Clock,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
@@ -126,6 +129,79 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     managerPin: string;
     portalUrl: string;
   } | null>(null);
+
+  // 👑 Super Admin Manual Extension & Override Modal State
+  const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
+  const [overrideStore, setOverrideStore] = useState<Store | null>(null);
+  const [overrideDays, setOverrideDays] = useState<number>(7);
+  const [overrideReasonCategory, setOverrideReasonCategory] = useState<
+    'SUPPORT_ISSUE' | 'SALES_PROMOTION' | 'PAYMENT_GRACE' | 'VIP_COURTESY' | 'OTHER'
+  >('SUPPORT_ISSUE');
+  const [overrideNotes, setOverrideNotes] = useState('');
+  const [isSubmittingOverride, setIsSubmittingOverride] = useState(false);
+  const [overrideSuccessMessage, setOverrideSuccessMessage] = useState<string | null>(null);
+  const [overrideErrorMessage, setOverrideErrorMessage] = useState<string | null>(null);
+
+  const handleOpenOverrideModal = (storeToOverride: Store) => {
+    setOverrideStore(storeToOverride);
+    setOverrideDays(7);
+    setOverrideReasonCategory('SUPPORT_ISSUE');
+    setOverrideNotes('');
+    setOverrideErrorMessage(null);
+    setOverrideSuccessMessage(null);
+    setIsOverrideModalOpen(true);
+  };
+
+  const handleSubmitOverride = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!overrideStore) return;
+    if (overrideDays <= 0) {
+      setOverrideErrorMessage('يرجى تحديد عدد أيام أكبر من صفر');
+      return;
+    }
+
+    setIsSubmittingOverride(true);
+    setOverrideErrorMessage(null);
+    setOverrideSuccessMessage(null);
+
+    const categoryLabels: Record<string, string> = {
+      SUPPORT_ISSUE: 'تعويض عن مشكلة تقنية أو دعم فني',
+      SALES_PROMOTION: 'مكافأة / عرض ترويجي واستقطاب',
+      PAYMENT_GRACE: 'مهلة سداد استثنائية مؤقتة',
+      VIP_COURTESY: 'مجاملة عميل استراتيجي VIP',
+      OTHER: 'أخرى',
+    };
+
+    const formattedReason = `[${categoryLabels[overrideReasonCategory] || overrideReasonCategory}] ${
+      overrideNotes.trim() ? overrideNotes.trim() : 'تمديد يدوي من الإدارة'
+    }`;
+
+    try {
+      const res = await LoyaltyService.grantStoreComplimentaryDays(
+        overrideStore.id,
+        overrideDays,
+        formattedReason,
+        'SUPER_ADMIN',
+        overrideNotes
+      );
+
+      if (!res.success || !res.store) {
+        setOverrideErrorMessage(res.error || 'فشل تمديد الاشتراك');
+        return;
+      }
+
+      setStores((prev) => prev.map((s) => (s.id === overrideStore.id ? res.store! : s)));
+      setOverrideSuccessMessage(`تم بنجاح منح +${overrideDays} يوماً للمتجر وتوثيق العملية في السجل المالي العام! 🚀`);
+      setTimeout(() => {
+        setIsOverrideModalOpen(false);
+        setOverrideSuccessMessage(null);
+      }, 1500);
+    } catch (err: any) {
+      setOverrideErrorMessage(err.message || 'حدث خطأ أثناء تمديد المتجر');
+    } finally {
+      setIsSubmittingOverride(false);
+    }
+  };
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -1036,6 +1112,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                                 <span>{s.subscription_plan}</span>
                               </span>
                             ) : null}
+                            {s.in_grace_period && (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-orange-500/15 text-orange-400 border border-orange-500/30 flex items-center gap-1 animate-pulse">
+                                <Clock className="w-3 h-3 text-orange-400" />
+                                <span>فترة سماح ({s.grace_period_days ?? 3} أيام)</span>
+                              </span>
+                            )}
+                            {s.complimentary_days_granted && s.complimentary_days_granted > 0 ? (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+                                <Gift className="w-3 h-3 text-indigo-400" />
+                                <span>+{s.complimentary_days_granted} أيام ممنوحة</span>
+                              </span>
+                            ) : null}
                             {s.custom_domain && (
                               <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/30 flex items-center gap-1 font-bold">
                                 <Globe className="w-3 h-3 text-blue-400" />
@@ -1059,6 +1147,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                       </div>
 
                       <div className="flex items-center space-x-2 rtl:space-x-reverse self-start sm:self-auto">
+                        {/* 🎁 Manual Extension / Complimentary Days Button */}
+                        <button
+                          onClick={() => handleOpenOverrideModal(s)}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500 text-indigo-300 hover:text-white border border-indigo-500/30 transition text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse shadow-sm"
+                          title="منح أيام إضافية وتمديد يدوي مع توثيق السجل المالي"
+                        >
+                          <CalendarPlus className="w-3.5 h-3.5" />
+                          <span>تمديد 🎁</span>
+                        </button>
+
                         {/* ✏️ Edit Store Details & Branding */}
                         <button
                           onClick={() => handleOpenEditStore(s)}
@@ -1931,6 +2029,171 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 إغلاق الكشف ✕
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🎁 Modal: Super Admin Manual Override & Subscription Extension */}
+      {isOverrideModalOpen && overrideStore && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in overflow-y-auto">
+          <div className="glass-card max-w-lg w-full rounded-3xl p-6 sm:p-8 border-2 border-indigo-500/50 shadow-2xl relative space-y-5 my-8">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+                  <CalendarPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">منح أيام إضافية وتمديد يدوي</h3>
+                  <p className="text-xs text-slate-400">Super Admin Manual Extension & Override</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsOverrideModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Target Store Header Summary */}
+            <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+              <div>
+                <span className="text-[11px] text-slate-400 block font-sans">المتجر المستهدف:</span>
+                <span className="text-base font-black text-white">{overrideStore.name}</span>
+                <span className="text-xs text-amber-400 font-mono block mt-0.5">/{overrideStore.slug}</span>
+              </div>
+              <div className="text-left">
+                <span className="text-[11px] text-slate-400 block">نهاية الاشتراك الحالية:</span>
+                <span className="text-xs font-mono font-bold text-slate-200">
+                  {overrideStore.subscription_end_date
+                    ? new Date(overrideStore.subscription_end_date).toLocaleDateString('ar-SA')
+                    : 'فترة تجربة'}
+                </span>
+                {overrideStore.complimentary_days_granted && overrideStore.complimentary_days_granted > 0 ? (
+                  <span className="text-[10px] text-indigo-400 font-mono block mt-0.5">
+                    (سابقاً: +{overrideStore.complimentary_days_granted} أيام)
+                  </span>
+                ) : null}
+              </div>
+            </div>
+
+            {overrideSuccessMessage && (
+              <div className="p-3.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-fade-in">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{overrideSuccessMessage}</span>
+              </div>
+            )}
+
+            {overrideErrorMessage && (
+              <div className="p-3.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center gap-2 animate-fade-in">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{overrideErrorMessage}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmitOverride} className="space-y-4">
+              {/* Days Selector Presets */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-2">
+                  عدد الأيام المراد إضافتها وتمديدها:
+                </label>
+                <div className="grid grid-cols-4 gap-2 mb-3">
+                  {[3, 7, 14, 30].map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setOverrideDays(d)}
+                      className={`py-2 px-3 rounded-xl text-xs font-mono font-bold transition border ${
+                        overrideDays === d
+                          ? 'bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-600/30'
+                          : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      +{d} {d === 3 ? 'أيام' : 'يوماً'}
+                    </button>
+                  ))}
+                </div>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    max="365"
+                    value={overrideDays}
+                    onChange={(e) => setOverrideDays(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white font-mono focus:border-indigo-500 outline-none"
+                    placeholder="أو أدخل عدد الأيام يدوياً..."
+                    required
+                  />
+                  <span className="absolute left-3 top-2.5 text-xs text-slate-500 font-mono">أيام</span>
+                </div>
+              </div>
+
+              {/* Reason Category */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                  تصنيف وسبب التمديد:
+                </label>
+                <select
+                  value={overrideReasonCategory}
+                  onChange={(e) => setOverrideReasonCategory(e.target.value as any)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-slate-200 focus:border-indigo-500 outline-none"
+                >
+                  <option value="SUPPORT_ISSUE">تعويض عن مشكلة تقنية أو دعم فني (SUPPORT_ISSUE)</option>
+                  <option value="SALES_PROMOTION">مكافأة / عرض ترويجي واستقطاب (SALES_PROMOTION)</option>
+                  <option value="PAYMENT_GRACE">مهلة سداد استثنائية مؤقتة (PAYMENT_GRACE)</option>
+                  <option value="VIP_COURTESY">مجاملة عميل استراتيجي VIP (VIP_COURTESY)</option>
+                  <option value="OTHER">أخرى (OTHER)</option>
+                </select>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                  ملاحظات وتفاصيل القرار الإداري:
+                </label>
+                <textarea
+                  rows={2}
+                  value={overrideNotes}
+                  onChange={(e) => setOverrideNotes(e.target.value)}
+                  placeholder="مثال: تم تمديد 7 أيام إضافية كتعويض عن بطء استجابة بوابة الدفع..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white focus:border-indigo-500 outline-none resize-none"
+                />
+              </div>
+
+              {/* Audit Trail Immutable Ledger Notice */}
+              <div className="p-3.5 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 text-[11px] text-indigo-200 leading-relaxed flex items-start gap-2.5">
+                <ShieldCheck className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+                <span>
+                  <strong>سجل مالي رقابي غير قابل للتعديل:</strong> سيتم تدوين قيد تسوية إدارية <code className="font-mono text-amber-300">ADJUSTMENT</code> بقيمة <strong>0.00 ر.س</strong> تلقائياً في السجل المالي لتوثيق هذا القرار مع اسم المشرف والتاريخ.
+                </span>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end space-x-3 rtl:space-x-reverse pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsOverrideModalOpen(false)}
+                  disabled={isSubmittingOverride}
+                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingOverride}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-400 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/25 transition flex items-center space-x-2 rtl:space-x-reverse disabled:opacity-50"
+                >
+                  {isSubmittingOverride ? (
+                    <span>جاري التمديد وتدوين القيد...</span>
+                  ) : (
+                    <>
+                      <CalendarPlus className="w-4 h-4" />
+                      <span>تأكيد ومنح الأيام الإضافية ⚡</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -360,6 +360,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     requiresSetup: boolean;
     requiresRenewal: boolean;
     renewalAmount: number;
+    inGracePeriod?: boolean;
+    graceDaysLeft?: number;
+    graceEndsAt?: string;
   } | null>(null);
   const [isPayingSetup, setIsPayingSetup] = useState(false);
   const [isPayingRenewal, setIsPayingRenewal] = useState(false);
@@ -541,11 +544,36 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   };
 
   const handleUpgradePlan = (plan: BillingPlan) => {
+    const isTrialStore =
+      !isStoreSuspended &&
+      (store.setup_fee_paid !== true ||
+        !store.setup_fee_paid ||
+        store.subscription_status === 'trial' ||
+        store.status === 'trial');
+
+    const currentPlan = !isTrialStore && Boolean(store.setup_fee_paid)
+      ? allPlans.find(
+          (p) =>
+            (p.id && p.id === (store as any).subscription_plan_id) ||
+            (p.code && p.code === (store as any).plan_code) ||
+            (p.name && p.name === (store as any).subscription_plan)
+        ) || null
+      : null;
+
+    const proration = currentPlan
+      ? LoyaltyService.calculateProratedUpgrade(store, currentPlan, plan)
+      : null;
+
+    const finalAmount = proration && proration.hasProrationDiscount ? proration.netUpgradeAmount : plan.amount;
+    const desc = proration && proration.hasProrationDiscount
+      ? `ترقية إلى "${plan.name}" مع خصم رصيد الأيام المتبقية (-${proration.unusedCredit} ر.س عن ${proration.remainingDays} يوماً)`
+      : `تفعيل باقة "${plan.name}" ومميزاتها المتقدمة`;
+
     setSandboxPaymentConfig({
       isOpen: true,
       title: `ترقية باقة المتجر إلى ${plan.name}`,
-      itemDescription: `تفعيل باقة "${plan.name}" ومميزاتها المتقدمة`,
-      amount: plan.amount,
+      itemDescription: desc,
+      amount: finalAmount,
       invoiceType: 'upgrade',
       planId: plan.id || plan.code,
     });
@@ -2113,6 +2141,44 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             >
               <Zap className="w-4 h-4 fill-current" />
               <span>اشترك الآن 🚀</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ⚠️ Grace Period Sticky Warning Banner (Non-disruptive early warning) */}
+      {!isTrial && (subscriptionInfo?.inGracePeriod || store.in_grace_period) && !isStoreSuspended && (
+        <div className="sticky top-2 z-40 animate-fade-in">
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-orange-600/30 via-slate-900/95 to-amber-600/20 border border-orange-500/60 shadow-2xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3.5">
+            <div className="flex items-center space-x-3.5 rtl:space-x-reverse min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-orange-500 to-amber-500 text-slate-950 flex items-center justify-center font-black shadow-lg shadow-orange-500/25 shrink-0">
+                <AlertTriangle className="w-5 h-5 text-slate-950" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-xs sm:text-sm font-black text-orange-400">
+                    تنبيه: أنت الآن في فترة السماح المؤقتة (Grace Period)
+                  </h4>
+                  <div className="flex items-center gap-1.5 bg-slate-950/80 border border-orange-500/40 px-3 py-1 rounded-full text-orange-300 text-[11px] font-mono font-black shadow-inner">
+                    <Clock className="w-3.5 h-3.5 text-orange-400 animate-pulse shrink-0" />
+                    <span>
+                      متبقي {subscriptionInfo?.graceDaysLeft ?? store.grace_period_days ?? 3} {((subscriptionInfo?.graceDaysLeft ?? store.grace_period_days ?? 3) === 1 ? 'يوم' : (subscriptionInfo?.graceDaysLeft ?? store.grace_period_days ?? 3) === 2 ? 'يومان' : 'أيام')} قبل الإيقاف التلقائي
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[11px] sm:text-xs text-slate-300 truncate mt-0.5">
+                  انتهت دورة اشتراكك الحالي. تم تفعيل مهلة سماح إضافية للحفاظ على استمرارية نقاط البيع والخدمات. يرجى التجديد لتجنب تعليق المتجر.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleNavigateToBilling}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-slate-950 font-black text-xs sm:text-sm transition-all duration-200 flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-lg shadow-orange-500/25 shrink-0 hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>تجديد الاشتراك الآن ⚡</span>
             </button>
           </div>
         </div>
@@ -5970,6 +6036,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     const planKey = plan.id || plan.code || plan.name;
                     const isUpgradingThis = isUpgradingPlanId === planKey;
 
+                    const proration =
+                      !isTrial && Boolean(store.setup_fee_paid) && currentPaidPlan && !isCurrent
+                        ? LoyaltyService.calculateProratedUpgrade(store, currentPaidPlan, plan)
+                        : null;
+
                     return (
                       <div
                         key={plan.id || plan.code}
@@ -6010,20 +6081,49 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             )}
                           </div>
 
-                          {/* Price Tag */}
-                          <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 flex items-baseline justify-between">
-                            <div>
-                              <span className="text-3xl font-black text-amber-400 font-mono">
-                                {plan.amount.toLocaleString()}
-                              </span>
-                              <span className="text-xs text-slate-400 font-bold mr-1.5">
-                                {plan.currency || 'ر.س'}
+                          {/* Price Tag with Smart Proration Breakdown */}
+                          {proration && proration.hasProrationDiscount ? (
+                            <div className="p-4 rounded-2xl bg-slate-900/90 border border-emerald-500/30 space-y-2.5">
+                              <div className="flex items-baseline justify-between">
+                                <div>
+                                  <span className="text-3xl font-black text-emerald-400 font-mono">
+                                    {proration.netUpgradeAmount.toLocaleString()}
+                                  </span>
+                                  <span className="text-xs text-slate-400 font-bold mr-1.5">
+                                    {plan.currency || 'ر.س'}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-emerald-400 font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                                  ترقية تناسبية ذكية ⚡
+                                </span>
+                              </div>
+
+                              <div className="pt-2 border-t border-slate-800/80 space-y-1 text-[11px]">
+                                <div className="flex items-center justify-between text-slate-400">
+                                  <span>السعر الأساسي للباقة:</span>
+                                  <span className="font-mono">{plan.amount.toLocaleString()} ر.س</span>
+                                </div>
+                                <div className="flex items-center justify-between text-emerald-400 font-bold">
+                                  <span>💡 خصم الرصيد المتبقي ({proration.remainingDays} يوماً):</span>
+                                  <span className="font-mono">-{proration.unusedCredit} ر.س</span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 flex items-baseline justify-between">
+                              <div>
+                                <span className="text-3xl font-black text-amber-400 font-mono">
+                                  {plan.amount.toLocaleString()}
+                                </span>
+                                <span className="text-xs text-slate-400 font-bold mr-1.5">
+                                  {plan.currency || 'ر.س'}
+                                </span>
+                              </div>
+                              <span className="text-xs text-slate-400 font-medium">
+                                / {getPlanPriceSuffix(plan)}
                               </span>
                             </div>
-                            <span className="text-xs text-slate-400 font-medium">
-                              / {getPlanPriceSuffix(plan)}
-                            </span>
-                          </div>
+                          )}
 
                           {/* Features List */}
                           <div className="space-y-2 pt-2 border-t border-slate-800/60">
@@ -6062,6 +6162,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                 <>
                                   <Zap className="w-4 h-4" />
                                   <span>الاشتراك وتفعيل هذه الباقة 🚀</span>
+                                </>
+                              ) : proration && proration.hasProrationDiscount ? (
+                                <>
+                                  <Zap className="w-4 h-4" />
+                                  <span>ترقية مع خصم الرصيد ({proration.netUpgradeAmount.toLocaleString()} ر.س) 🚀</span>
                                 </>
                               ) : (
                                 <>
