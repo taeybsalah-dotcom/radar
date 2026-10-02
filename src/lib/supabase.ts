@@ -435,33 +435,36 @@ export const LoyaltyService = {
   },
 
   // 2. البحث والتحقق من المتجر (سواء برقم الـ UUID أو الاسم اللطيف Slug) مع كاش ذاكرة وتخزين فائق السرعة (0ms)
-  async resolveStore(storeIdOrSlug?: string | null): Promise<Store | null> {
+  async resolveStore(storeIdOrSlug?: string | null, forceFresh: boolean = false): Promise<Store | null> {
     if (!storeIdOrSlug) return await this.getStore();
     const clean = String(storeIdOrSlug).trim();
     const cleanLower = clean.toLowerCase();
 
-    // 1. فحص كاش الذاكرة اللحظي (In-Memory Cache - 0ms)
-    const cached = storeResolutionCache.get(cleanLower);
-    if (cached && Date.now() - cached.timestamp < 300000 && cached.store) {
-      return cached.store;
-    }
-
-    // 2. فحص كاش التخزين المحلي فورياً (LocalStorage Cache - 0ms)
     const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
-    const localMatch = localStores.find(
-      (s) =>
-        s &&
-        (s.id === clean ||
-          s.slug?.toLowerCase() === cleanLower ||
-          s.custom_domain?.toLowerCase() === cleanLower ||
-          s.slug?.toLowerCase().replace(/[-_]/g, '') === cleanLower.replace(/[-_]/g, ''))
-    );
-    if (localMatch) {
-      const normalizedLocal = normalizeStore(localMatch);
-      storeResolutionCache.set(cleanLower, { store: normalizedLocal, timestamp: Date.now() });
-      if (normalizedLocal.slug) storeResolutionCache.set(normalizedLocal.slug.toLowerCase(), { store: normalizedLocal, timestamp: Date.now() });
-      if (normalizedLocal.id) storeResolutionCache.set(normalizedLocal.id.toLowerCase(), { store: normalizedLocal, timestamp: Date.now() });
-      return normalizedLocal;
+
+    // 1. فحص كاش الذاكرة اللحظي (إذا لم يكن هناك إجبار لتخطي الكاش)
+    if (!forceFresh) {
+      const cached = storeResolutionCache.get(cleanLower);
+      if (cached && Date.now() - cached.timestamp < 300000 && cached.store) {
+        return cached.store;
+      }
+
+      // 2. فحص كاش التخزين المحلي فورياً
+      const localMatch = localStores.find(
+        (s) =>
+          s &&
+          (s.id === clean ||
+            s.slug?.toLowerCase() === cleanLower ||
+            s.custom_domain?.toLowerCase() === cleanLower ||
+            s.slug?.toLowerCase().replace(/[-_]/g, '') === cleanLower.replace(/[-_]/g, ''))
+      );
+      if (localMatch) {
+        const normalizedLocal = normalizeStore(localMatch);
+        storeResolutionCache.set(cleanLower, { store: normalizedLocal, timestamp: Date.now() });
+        if (normalizedLocal.slug) storeResolutionCache.set(normalizedLocal.slug.toLowerCase(), { store: normalizedLocal, timestamp: Date.now() });
+        if (normalizedLocal.id) storeResolutionCache.set(normalizedLocal.id.toLowerCase(), { store: normalizedLocal, timestamp: Date.now() });
+        return normalizedLocal;
+      }
     }
 
     // 3. استعلام Supabase مباشر ومفهرس سريع (Fast Indexed Query)
@@ -4244,54 +4247,51 @@ export const LoyaltyService = {
     // 3. حساب التفكيك المالي الدقيق والضريبة
     const breakdown = this.calculateBreakdown(payload.amount, paymentMethod, commissionRate);
 
-    // 4. تحديث المتجر في قاعدة البيانات
+    // 4. تحديث المتجر في قاعدة البيانات والتأكد من نجاح الـ Commit
     if (supabase) {
       try {
-        const { data, error } = await supabase.rpc('process_subscription_payment', {
-          p_store_id: payload.storeId,
-          p_invoice_type: payload.invoiceType === 'upgrade' ? 'renewal' : payload.invoiceType,
-          p_amount: payload.amount,
-          p_payment_method: paymentMethod,
-          p_gateway: gateway,
-          p_gateway_payment_id: gatewayPaymentId,
-        });
-
-        if (!error && data && data.success) {
-          const { data: sData } = await supabase
-            .from('stores')
-            .select('*')
-            .eq('id', payload.storeId)
-            .single();
-
-          if (sData) updatedStore = sData as Store;
-        }
-
         if (isUUID(payload.storeId)) {
           const nextEndIso = new Date(Date.now() + durationMs).toISOString();
-          await supabase
+          const updatePayload: Record<string, any> = {
+            setup_fee_paid: true,
+            status: 'active',
+            subscription_status: 'active',
+            subscription_active: true,
+            lifecycle_stage: 'مشترك مدفوع',
+            subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id || null,
+            plan_code: targetPlan?.code || currentStore.plan_code || null,
+            subscription_plan: targetPlan?.name || currentStore.subscription_plan || null,
+            renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
+            subscription_start_date: now.toISOString(),
+            subscription_end_date: nextEndIso,
+            updated_at: now.toISOString(),
+          };
+
+          const { data: updatedData, error: updateError } = await supabase
             .from('stores')
-            .update({
-              setup_fee_paid: true,
-              status: 'active',
-              subscription_status: 'active',
-              subscription_active: true,
-              lifecycle_stage: 'مشترك مدفوع',
-              subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id || null,
-              plan_code: targetPlan?.code || currentStore.plan_code || null,
-              subscription_plan: targetPlan?.name || currentStore.subscription_plan || null,
-              renewal_amount: targetPlan?.amount || payload.amount,
-              subscription_start_date: now.toISOString(),
-              subscription_end_date: nextEndIso,
-              updated_at: now.toISOString(),
-            })
-            .eq('id', payload.storeId);
+            .update(updatePayload)
+            .eq('id', payload.storeId)
+            .select()
+            .single();
+
+          if (updateError) {
+            console.error('[processSubscriptionPayment] DB commit failed:', updateError);
+            throw new Error(`فشل تحديث حالة المتجر في قاعدة البيانات: ${updateError.message}`);
+          }
+
+          if (updatedData) {
+            updatedStore = normalizeStore(updatedData) as Store;
+          }
         }
-      } catch (e) {
-        console.warn('Supabase process_subscription_payment RPC failed, applying local fallback', e);
+      } catch (e: any) {
+        console.error('Supabase processSubscriptionPayment DB commit failed', e);
+        throw e;
       }
     }
 
-    if (payload.invoiceType === 'setup') {
+    if (updatedStore) {
+      currentStore = updatedStore;
+    } else if (payload.invoiceType === 'setup') {
       const nextEnd = new Date(Date.now() + durationMs).toISOString();
       currentStore = {
         ...currentStore,
@@ -4340,7 +4340,7 @@ export const LoyaltyService = {
     }
     saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
 
-    // تحديث فوري لكاش الذاكرة
+    // تحديث فوري لكاش الذاكرة والتخزين المؤقت بالسجل المؤكد
     storeResolutionCache.set(currentStore.id.toLowerCase(), { store: currentStore, timestamp: Date.now() });
     if (currentStore.slug) {
       storeResolutionCache.set(currentStore.slug.toLowerCase(), { store: currentStore, timestamp: Date.now() });
@@ -4861,7 +4861,7 @@ export const LoyaltyService = {
   },
 
   // فحص وتحديث دورة الاشتراك وحالات فترة السماح والإيقاف التلقائي
-  async checkAndUpdateStoreSubscription(storeId: string): Promise<{
+  async checkAndUpdateStoreSubscription(storeId: string, storeOverride?: Store): Promise<{
     status: StoreSubscriptionStatus;
     daysLeft: number;
     subscriptionEndDate: string;
@@ -4875,7 +4875,7 @@ export const LoyaltyService = {
     graceEndsAt?: string;
   }> {
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
-    const store = stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
+    const store = storeOverride || stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
 
     const isPaidActive = Boolean(
       store.setup_fee_paid === true ||

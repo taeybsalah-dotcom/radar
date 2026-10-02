@@ -399,10 +399,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const debouncedSyncStoreAndSubscription = useMemo(
     () =>
       debounce((storeId: string) => {
-        LoyaltyService.resolveStore(storeId).then((s) => {
-          if (s) setStore(s);
+        LoyaltyService.resolveStore(storeId, true).then((s) => {
+          if (s) {
+            setStore(s);
+            LoyaltyService.checkAndUpdateStoreSubscription(storeId, s).then(setSubscriptionInfo);
+          }
         });
-        LoyaltyService.checkAndUpdateStoreSubscription(storeId).then(setSubscriptionInfo);
       }, 300),
     []
   );
@@ -425,6 +427,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }, 300),
     []
   );
+
+  // Sync state if initialStore prop updates from parent
+  useEffect(() => {
+    if (initialStore) {
+      setStore(initialStore);
+    }
+  }, [initialStore]);
 
   // Dynamic Page Document Title Isolation
   useEffect(() => {
@@ -648,13 +657,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         gateway: 'sandbox',
         planId: sandboxPaymentConfig.planId,
       });
+
+      // 1. مزامنة الحالة المعتمدة مباشرة بالسطر المؤكد من قاعدة البيانات
       setStore(res.store);
       setSandboxPaymentConfig(null);
       setPaymentSuccessModal(res.invoice);
-      const sub = await LoyaltyService.checkAndUpdateStoreSubscription(store.id);
+
+      // 2. تحديث مؤشرات الاشتراك استناداً للسجل المؤكد
+      const sub = await LoyaltyService.checkAndUpdateStoreSubscription(res.store.id, res.store);
       setSubscriptionInfo(sub);
-      const invs = await LoyaltyService.getStoreInvoices(store.id);
+
+      const invs = await LoyaltyService.getStoreInvoices(res.store.id);
       setInvoices(invs);
+
+      // 3. إعادة تحميل البيانات الشاملة من قاعدة البيانات للتحقق التام
+      await loadAdminData();
+
       confetti({ particleCount: 140, spread: 80, origin: { y: 0.6 } });
     } catch (err: any) {
       console.error('Sandbox payment error:', err);
