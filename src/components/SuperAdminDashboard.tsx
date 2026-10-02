@@ -801,18 +801,24 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         </button>
       </div>
 
-      {activeSubTab === 'leads' ? (
+      <div className={activeSubTab === 'leads' ? 'block' : 'hidden'}>
         <SuperAdminLeadsConsole
           stores={stores}
           onSelectStore={onSelectStore}
           onFoundStoreFromLead={handleFoundStoreFromLead}
         />
-      ) : activeSubTab === 'partners' ? (
+      </div>
+
+      <div className={activeSubTab === 'partners' ? 'block' : 'hidden'}>
         <SuperAdminPartnersConsole />
-      ) : activeSubTab === 'billing' ? (
+      </div>
+
+      <div className={activeSubTab === 'billing' ? 'block' : 'hidden'}>
         <SuperAdminBillingConsole />
-      ) : (
-        /* Grid: Onboarding Form (Left) & Live Stores List (Right) */
+      </div>
+
+      <div className={activeSubTab === 'stores' ? 'block' : 'hidden'}>
+        {/* Grid: Onboarding Form (Left) & Live Stores List (Right) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* 📝 Left Form: Concierge Store Onboarding */}
@@ -1513,7 +1519,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         </div>
 
       </div>
-      )}
+      </div>
 
       {/* ✏️ Modal: Edit Store Details & Branding */}
       {isEditModalOpen && editingStore && (

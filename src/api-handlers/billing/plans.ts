@@ -218,7 +218,30 @@ export default async function handler(req: any, res: any) {
         query = query.eq('code', planId);
       }
 
-      const { data, error } = await query.select().maybeSingle();
+      let { data, error } = await query.select().maybeSingle();
+
+      if (!data && !error) {
+        // If row does not exist in DB yet, insert/upsert it
+        const cleanCode = (body.code || planId).toUpperCase().replace(/[^A-Z0-9_-]/g, '_').slice(0, 48);
+        const insertPayload: any = {
+          code: cleanCode,
+          name: (body.name || 'باقة اشتراك').trim(),
+          description: body.description || '',
+          amount: Number(body.amount) || 0,
+          currency: body.currency || 'SAR',
+          billing_interval: (durationMonths === 12 ? 'YEARLY' : 'MONTHLY'),
+          trial_days: Number(body.trial_days) ?? 7,
+          active: body.active !== false,
+          metadata: {
+            features: Array.isArray(body.features) ? body.features : [],
+            duration_months: durationMonths || 1,
+          },
+          updated_at: new Date().toISOString(),
+        };
+        const upsertRes = await supabase.from('billing_plans').upsert([insertPayload], { onConflict: 'code' }).select().maybeSingle();
+        data = upsertRes.data;
+        error = upsertRes.error;
+      }
 
       if (error) {
         console.error('[api/billing/plans] Update Error:', error);

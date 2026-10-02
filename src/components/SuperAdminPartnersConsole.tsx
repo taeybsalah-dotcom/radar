@@ -37,7 +37,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
   const [partners, setPartners] = useState<any[]>(() => {
     if (typeof window === 'undefined') return [];
     try {
-      const raw = localStorage.getItem('radar_local_partners');
+      const raw = localStorage.getItem('radar_local_partners') || localStorage.getItem('radar_partners');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -45,11 +45,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     } catch {}
     return [];
   });
-  const [loading, setLoading] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    const raw = localStorage.getItem('radar_local_partners');
-    return !raw || raw === '[]';
-  });
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -87,10 +83,11 @@ export const SuperAdminPartnersConsole: React.FC = () => {
     setError(null);
     try {
       const list = await LoyaltyService.getAllPartners();
-      setPartners(list || []);
+      if (list && Array.isArray(list)) {
+        setPartners(list);
+      }
     } catch (err: any) {
       console.error('[SuperAdminPartnersConsole] Fetch error:', err);
-      setError('تعذر استرجاع قائمة الشركاء');
     } finally {
       setLoading(false);
     }

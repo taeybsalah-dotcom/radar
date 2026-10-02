@@ -92,6 +92,55 @@ const STORAGE_KEYS = {
   LOCAL_FINANCIAL_CONFIG: 'radar_financial_config',
 };
 
+// Auto-purge any stale mock/demo data from client browser localStorage on startup
+if (typeof window !== 'undefined') {
+  try {
+    const DATA_VERSION_KEY = 'radar_schema_version';
+    const TARGET_VERSION = 'v3_zero_state_clean';
+    if (localStorage.getItem(DATA_VERSION_KEY) !== TARGET_VERSION) {
+      const keysToPurge = [
+        'radar_local_stores',
+        'radar_stores',
+        'radar_local_customers',
+        'radar_customers',
+        'radar_financial_ledger',
+        'radar_local_partners',
+        'radar_partners',
+        'radar_local_merchant_leads',
+        'radar_local_leads',
+        'radar_local_catalog_items',
+        'radar_local_staff',
+        'radar_local_invoices',
+        'radar_local_store_wallets',
+        'radar_local_service_bookings',
+        'radar_local_tiers',
+        'radar_local_privileges',
+        'radar_local_customer_coupons',
+        'radar_local_specialists',
+        'radar_local_global_categories',
+        'radar_local_global_modifiers',
+        'radar_local_partner_commissions',
+        'radar_local_partner_bonus_awards',
+        'radar_credit_notes',
+        'radar_affiliate_payouts',
+        'radar_consumed_tokens',
+        'radar_demo_mode',
+      ];
+      keysToPurge.forEach((k) => {
+        try {
+          localStorage.removeItem(k);
+        } catch {}
+      });
+      // Clear demo session if lingering
+      const partnerSession = localStorage.getItem('radar_partner_session');
+      if (partnerSession && (partnerSession.includes('demo') || partnerSession.includes('partner-demo'))) {
+        localStorage.removeItem('radar_partner_session');
+      }
+      localStorage.setItem(DATA_VERSION_KEY, TARGET_VERSION);
+    }
+  } catch {}
+}
+
 const ENV_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://zagpvflyizbmzsbmhnts.supabase.co';
 const ENV_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
 
@@ -128,9 +177,32 @@ export function getSupabaseClient(): SupabaseClient | null {
   return supabaseInstance;
 }
 
+function withTimeout<T>(promise: PromiseLike<T> | Promise<T>, ms: number = 2000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Operation timed out after ${ms}ms`));
+    }, ms);
+    Promise.resolve(promise)
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
 function getLocalData<T>(key: string, defaultVal: T): T {
   try {
-    const data = localStorage.getItem(key);
+    let data = localStorage.getItem(key);
+    if (!data) {
+      const altKey = key.startsWith('radar_local_')
+        ? key.replace('radar_local_', 'radar_')
+        : key.replace('radar_', 'radar_local_');
+      data = localStorage.getItem(altKey);
+    }
     if (!data) return defaultVal;
     const parsed = JSON.parse(data);
     if (Array.isArray(parsed)) {
@@ -148,7 +220,14 @@ function saveLocalData<T>(key: string, data: T): void {
   // A QuotaExceededError (or any storage error) must NEVER propagate to callers,
   // because the source of truth is always Supabase — not the local cache.
   try {
-    localStorage.setItem(key, JSON.stringify(data));
+    const serialized = JSON.stringify(data);
+    localStorage.setItem(key, serialized);
+    const altKey = key.startsWith('radar_local_')
+      ? key.replace('radar_local_', 'radar_')
+      : key.replace('radar_', 'radar_local_');
+    try {
+      localStorage.setItem(altKey, serialized);
+    } catch {}
   } catch (err: any) {
     const isQuota =
       err instanceof DOMException &&
@@ -358,7 +437,7 @@ let storesListCache: { data: Store[]; timestamp: number } | null = null;
 let partnersListCache: { data: any[]; timestamp: number } | null = null;
 let leadsListCache: { data: MerchantLead[]; timestamp: number } | null = null;
 let ledgerListCache: { data: FinancialLedgerEntry[]; timestamp: number } | null = null;
-const SERVICE_CACHE_TTL = 3500; // 3.5 seconds TTL
+const SERVICE_CACHE_TTL = 60000; // 60 seconds TTL (Fast in-memory cache)
 
 export const invalidateAdminStoresCache = () => {
   adminStoresSummaryCache = null;
@@ -397,10 +476,13 @@ export const LoyaltyService = {
 
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('stores')
-          .select('*')
-          .order('created_at', { ascending: false });
+        const { data, error } = await withTimeout(
+          supabase
+            .from('stores')
+            .select('*')
+            .order('created_at', { ascending: false }),
+          2000
+        );
         if (!error && Array.isArray(data)) {
           const validStores = data.filter((s: any) => Boolean(s && s.id)).map((dbStore: any) => {
             const localMatch = currentLocal.find((l) => l.id === dbStore.id || l.slug === dbStore.slug);
@@ -420,7 +502,7 @@ export const LoyaltyService = {
           return validStores;
         }
       } catch (e) {
-        console.warn('Supabase getAllStores failed', e);
+        console.warn('Supabase getAllStores fallback to local:', e);
       }
     }
 
@@ -447,10 +529,13 @@ export const LoyaltyService = {
 
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('stores')
-          .select('*, store_customers(count), store_staff(count)')
-          .order('created_at', { ascending: false });
+        const { data, error } = await withTimeout(
+          supabase
+            .from('stores')
+            .select('*, store_customers(count), store_staff(count)')
+            .order('created_at', { ascending: false }),
+          2000
+        );
 
         if (!error && Array.isArray(data)) {
           const validStores = (data as any[])
@@ -649,7 +734,7 @@ export const LoyaltyService = {
     const stores = await this.getAllStores();
     const valid = stores.filter((s) => Boolean(s && s.id));
     if (valid.length > 0 && valid[0]) return valid[0];
-    return INITIAL_STORES[0] || null;
+    return null;
   },
 
   // 3.1 حذف متجر بكامل بياناته
@@ -745,9 +830,16 @@ export const LoyaltyService = {
           'tiers',
           'store_staff',
           'store_wallets',
+          'merchant_leads',
+          'partner_accounts',
+          'financial_ledger',
+          'credit_notes',
+          'affiliate_payouts',
         ];
         for (const tbl of childTables) {
-          await supabase.from(tbl).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+          try {
+            await supabase.from(tbl).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+          } catch {}
         }
         await supabase.from('stores').delete().neq('id', '00000000-0000-0000-0000-000000000000');
       } catch (e) {
@@ -763,10 +855,37 @@ export const LoyaltyService = {
     saveLocalData(STORAGE_KEYS.LOCAL_LOGS, []);
     saveLocalData(STORAGE_KEYS.LOCAL_COUPONS, []);
     saveLocalData(STORAGE_KEYS.LOCAL_WALLETS, {});
-    saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, {});
+    saveLocalData(STORAGE_KEYS.LOCAL_LEADS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_CREDIT_NOTES, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, []);
 
-    invalidateAdminStoresCache();
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('radar_financial_ledger');
+      localStorage.removeItem('radar_local_financial_ledger');
+      localStorage.removeItem('radar_local_partners');
+      localStorage.removeItem('radar_partners');
+      localStorage.removeItem('radar_local_leads');
+      localStorage.removeItem('radar_leads');
+      localStorage.removeItem('radar_credit_notes');
+      localStorage.removeItem('radar_local_credit_notes');
+      localStorage.removeItem('radar_affiliate_payouts');
+      localStorage.removeItem('radar_local_affiliate_payouts');
+      localStorage.removeItem('radar_last_store_slug');
+    }
+
+    storeResolutionCache.clear();
+    invalidateAllServiceCaches();
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'all' });
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     return true;
   },
 
@@ -1274,17 +1393,8 @@ export const LoyaltyService = {
         console.warn('Supabase getStoreStaff failed', e);
       }
     }
-    const rawStaff = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, INITIAL_STAFF);
-    const mergedStaff = rawStaff.map((s) => {
-      if (
-        (s.id === 'staff-02' || s.id === 'staff-demo-02' || s.role === 'admin') &&
-        (s.store_id.includes('demo') || s.store_id === INITIAL_STORES[0].id || s.store_id === INITIAL_STORES[1].id)
-      ) {
-        return { ...s, phone: '0577371780' };
-      }
-      return s;
-    });
-    return mergedStaff.filter((s) => s.store_id === storeId || (storeId === 'demo-hub' && s.store_id.includes('demo')));
+    const rawStaff = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, []);
+    return rawStaff.filter((s) => s.store_id === storeId);
   },
 
   async addStoreStaff(staffData: Omit<StoreStaff, 'id'>): Promise<StoreStaff> {
@@ -4035,7 +4145,7 @@ export const LoyaltyService = {
           query = query.eq('affiliate_id', filters.affiliateId);
         }
 
-        const { data, error } = await query;
+        const { data, error } = await withTimeout(query, 1500);
         if (!error && data && data.length > 0) {
           const formatted: FinancialLedgerEntry[] = data.map((d: any) => ({
             id: d.id,
@@ -4261,17 +4371,37 @@ export const LoyaltyService = {
     // 3. حساب التفكيك المالي الدقيق والضريبة
     const breakdown = this.calculateBreakdown(payload.amount, paymentMethod, commissionRate);
 
+    const currentEndMs = currentStore.subscription_end_date
+      ? new Date(currentStore.subscription_end_date).getTime()
+      : Date.now();
+    const baseEndMs =
+      (payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') && currentStore.subscription_end_date
+        ? Math.max(Date.now(), currentEndMs)
+        : Date.now();
+    const nextEndIso = new Date(baseEndMs + durationMs).toISOString();
+
+    if (payload.invoiceType === 'extra_cashier') {
+      await this.purchaseExtraCashier(payload.storeId);
+    }
+
     // 4. تحديث المتجر في قاعدة البيانات والتأكد من نجاح الـ Commit
+    const verifiedUpdatePayload: Partial<Store> = {
+      status: 'active',
+      subscription_status: 'active' as StoreSubscriptionStatus,
+      subscription_active: true,
+      setup_fee_paid: true,
+      lifecycle_stage: 'مشترك مدفوع',
+      subscription_start_date: currentStore.subscription_start_date || now.toISOString(),
+      subscription_end_date: nextEndIso,
+      renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
+      subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id || payload.planId,
+      plan_code: targetPlan?.code || currentStore.plan_code,
+      subscription_plan: targetPlan?.name || currentStore.subscription_plan || computedPlanName || 'الباقة الأساسية',
+      updated_at: now.toISOString(),
+    };
+
     if (supabase && isUUID(payload.storeId)) {
       try {
-        const verifiedUpdatePayload = {
-          status: 'active',
-          subscription_status: 'active',
-          subscription_active: true,
-          setup_fee_paid: true,
-          updated_at: now.toISOString(),
-        };
-
         const { data: updatedData, error: updateError } = await supabase
           .from('stores')
           .update(verifiedUpdatePayload)
@@ -4289,34 +4419,10 @@ export const LoyaltyService = {
       }
     }
 
-    const currentEndMs = currentStore.subscription_end_date
-      ? new Date(currentStore.subscription_end_date).getTime()
-      : Date.now();
-    const baseEndMs =
-      (payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') && currentStore.subscription_end_date
-        ? Math.max(Date.now(), currentEndMs)
-        : Date.now();
-    const nextEndIso = new Date(baseEndMs + durationMs).toISOString();
-
-    if (payload.invoiceType === 'extra_cashier') {
-      await this.purchaseExtraCashier(payload.storeId);
-    }
-
     currentStore = {
       ...currentStore,
       ...(updatedStore || {}),
-      status: 'active',
-      subscription_status: 'active',
-      subscription_active: true,
-      setup_fee_paid: true,
-      lifecycle_stage: 'مشترك مدفوع',
-      subscription_start_date: currentStore.subscription_start_date || now.toISOString(),
-      subscription_end_date: nextEndIso,
-      renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
-      subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id,
-      plan_code: targetPlan?.code || currentStore.plan_code,
-      subscription_plan: targetPlan?.name || currentStore.subscription_plan || computedPlanName || 'الباقة الأساسية',
-      updated_at: now.toISOString(),
+      ...verifiedUpdatePayload,
     };
 
     if (storeIdx !== -1) {
@@ -4735,11 +4841,9 @@ export const LoyaltyService = {
     return local || [];
   },
 
-  // 13. حساب وتلخيص كافة المؤشرات المالية للمنصة (Master Financial Metrics)
-  async getMasterFinancialMetrics(): Promise<MasterFinancialMetrics> {
-    const ledger = await this.getFinancialLedger();
+  // حساب وتلخيص مؤشرات السجل المالي العام في الذاكرة بدون أي بطء أو تأخير (0ms)
+  calculateMetricsFromLedger(ledger: FinancialLedgerEntry[], creditNotes: CreditNote[] = []): MasterFinancialMetrics {
     const comms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    const creditNotes = await this.getAllCreditNotes();
 
     let totalGrossVolume = 0;
     let totalVatPayable = 0;
@@ -4747,7 +4851,7 @@ export const LoyaltyService = {
     let totalNetPlatformRevenue = 0;
     let totalRefundsVolume = 0;
 
-    for (const entry of ledger) {
+    for (const entry of (ledger || [])) {
       if (entry.status !== 'SETTLED') continue;
 
       if (entry.transaction_type === 'PAYMENT' || entry.transaction_type === 'ADJUSTMENT') {
@@ -4791,9 +4895,16 @@ export const LoyaltyService = {
       totalAffiliateReversed: Math.max(0, Math.round(totalAffiliateReversed * 100) / 100),
       totalNetPlatformRevenue: Math.max(0, Math.round(totalNetPlatformRevenue * 100) / 100),
       totalRefundsVolume: Math.max(0, Math.round(totalRefundsVolume * 100) / 100),
-      totalCreditNotesCount: creditNotes.length,
-      totalTransactionsCount: ledger.length,
+      totalCreditNotesCount: (creditNotes || []).length,
+      totalTransactionsCount: (ledger || []).length,
     };
+  },
+
+  // 13. حساب وتلخيص كافة المؤشرات المالية للمنصة (Master Financial Metrics)
+  async getMasterFinancialMetrics(): Promise<MasterFinancialMetrics> {
+    const ledger = await this.getFinancialLedger();
+    const creditNotes = await this.getAllCreditNotes();
+    return this.calculateMetricsFromLedger(ledger, creditNotes);
   },
 
   // 14. معالج الويب هوك الحتمي لبوابات الدفع (Webhook Idempotency Handler)
@@ -5228,18 +5339,8 @@ export const LoyaltyService = {
   // ==========================================
 
   async getCatalogItems(storeId: string): Promise<CatalogItem[]> {
-    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, INITIAL_CATALOG_ITEMS);
-    const storeSpecific = localList.filter((item) => item.store_id === storeId);
-    if (storeSpecific.length > 0) {
-      return storeSpecific;
-    }
-    if (storeId === INITIAL_STORES[0].id || storeId === 'demo-hub' || storeId === 'sandbox') {
-      return INITIAL_CATALOG_ITEMS.map((i) => ({ ...i, store_id: storeId }));
-    }
-
-    // 🛑 Stage 12B: 'catalog_items' is not part of the currently deployed live schema.
-    // Return storeSpecific directly without firing unnecessary failing network requests.
-    return storeSpecific;
+    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
+    return localList.filter((item) => item.store_id === storeId);
   },
 
   async addCatalogItem(item: Omit<CatalogItem, 'id' | 'created_at'>): Promise<CatalogItem> {
@@ -5424,17 +5525,8 @@ export const LoyaltyService = {
   // ==========================================
 
   async getStoreSpecialists(storeId: string): Promise<StoreSpecialist[]> {
-    const localList: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, INITIAL_SPECIALISTS);
-    const storeSpecific = localList.filter((item) => item.store_id === storeId);
-    if (storeSpecific.length > 0) return storeSpecific;
-
-    if (storeId === INITIAL_STORES[0].id || storeId === INITIAL_STORES[1].id || storeId === 'demo-hub' || storeId === 'main-store') {
-      return INITIAL_SPECIALISTS.map((s) => ({ ...s, store_id: storeId }));
-    }
-
-    // 🛑 Stage 12B: 'store_specialists' is not part of the currently deployed live schema.
-    // Return storeSpecific directly without firing unnecessary failing network requests.
-    return storeSpecific;
+    const localList: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
+    return localList.filter((item) => item.store_id === storeId);
   },
 
   async addStoreSpecialist(data: Omit<StoreSpecialist, 'id' | 'created_at'>): Promise<StoreSpecialist> {
@@ -5460,7 +5552,7 @@ export const LoyaltyService = {
       }
     }
 
-    const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, INITIAL_SPECIALISTS);
+    const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
     list.unshift(newSpec);
     saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, list);
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: data.store_id });
@@ -5468,7 +5560,7 @@ export const LoyaltyService = {
   },
 
   async updateStoreSpecialist(id: string, updates: Partial<StoreSpecialist>): Promise<StoreSpecialist> {
-    const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, INITIAL_SPECIALISTS);
+    const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
     const idx = list.findIndex((s) => s.id === id);
     let updatedSpec: StoreSpecialist | null = null;
 
@@ -5494,7 +5586,7 @@ export const LoyaltyService = {
   },
 
   async deleteStoreSpecialist(id: string): Promise<boolean> {
-    const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, INITIAL_SPECIALISTS);
+    const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
     const target = list.find((s) => s.id === id);
     const storeId = target?.store_id;
 
@@ -5519,16 +5611,8 @@ export const LoyaltyService = {
   // ==========================================
 
   async getGlobalCategories(storeId: string): Promise<GlobalCategory[]> {
-    // 🛑 Note: Table 'global_categories' does not exist in Supabase (causes PGRST205).
-    // Data is retrieved purely local-first from LocalStorage / demo initial catalog.
-    const list: GlobalCategory[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, INITIAL_GLOBAL_CATEGORIES);
-    const storeSpecific = list.filter((c) => c.store_id === storeId);
-    if (storeSpecific.length > 0) return storeSpecific;
-
-    if (storeId === INITIAL_STORES[0].id || storeId === INITIAL_STORES[1].id || storeId === 'demo-hub' || storeId === 'main-store') {
-      return INITIAL_GLOBAL_CATEGORIES.map((c) => ({ ...c, store_id: storeId }));
-    }
-    return storeSpecific;
+    const list: GlobalCategory[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, []);
+    return list.filter((c) => c.store_id === storeId);
   },
 
   async addGlobalCategory(category: Omit<GlobalCategory, 'id' | 'created_at'>): Promise<GlobalCategory> {
@@ -5538,7 +5622,7 @@ export const LoyaltyService = {
       created_at: new Date().toISOString(),
     };
 
-    const list: GlobalCategory[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, INITIAL_GLOBAL_CATEGORIES);
+    const list: GlobalCategory[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, []);
     list.push(newCat);
     saveLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, list);
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: category.store_id });
@@ -5546,7 +5630,7 @@ export const LoyaltyService = {
   },
 
   async updateGlobalCategory(id: string, updates: Partial<GlobalCategory>): Promise<GlobalCategory> {
-    const list: GlobalCategory[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, INITIAL_GLOBAL_CATEGORIES);
+    const list: GlobalCategory[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, []);
     const idx = list.findIndex((c) => c.id === id);
     let updatedCat: GlobalCategory | null = null;
 
@@ -5562,7 +5646,7 @@ export const LoyaltyService = {
   },
 
   async deleteGlobalCategory(id: string): Promise<boolean> {
-    const list: GlobalCategory[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, INITIAL_GLOBAL_CATEGORIES);
+    const list: GlobalCategory[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_CATEGORIES, []);
     const target = list.find((c) => c.id === id);
     const storeId = target?.store_id;
 
@@ -5574,16 +5658,8 @@ export const LoyaltyService = {
   },
 
   async getGlobalModifierGroups(storeId: string): Promise<GlobalModifierGroup[]> {
-    // 🛑 Note: Table 'global_modifier_groups' does not exist in Supabase (causes PGRST205).
-    // Data is retrieved purely local-first from LocalStorage / demo initial catalog.
-    const list: GlobalModifierGroup[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, INITIAL_GLOBAL_MODIFIERS);
-    const storeSpecific = list.filter((m) => m.store_id === storeId);
-    if (storeSpecific.length > 0) return storeSpecific;
-
-    if (storeId === INITIAL_STORES[0].id || storeId === INITIAL_STORES[1].id || storeId === 'demo-hub' || storeId === 'main-store') {
-      return INITIAL_GLOBAL_MODIFIERS.map((m) => ({ ...m, store_id: storeId }));
-    }
-    return storeSpecific;
+    const list: GlobalModifierGroup[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, []);
+    return list.filter((m) => m.store_id === storeId);
   },
 
   async addGlobalModifierGroup(group: Omit<GlobalModifierGroup, 'id' | 'created_at'>): Promise<GlobalModifierGroup> {
@@ -5593,7 +5669,7 @@ export const LoyaltyService = {
       created_at: new Date().toISOString(),
     };
 
-    const list: GlobalModifierGroup[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, INITIAL_GLOBAL_MODIFIERS);
+    const list: GlobalModifierGroup[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, []);
     list.unshift(newGroup);
     saveLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, list);
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: group.store_id });
@@ -5601,7 +5677,7 @@ export const LoyaltyService = {
   },
 
   async updateGlobalModifierGroup(id: string, updates: Partial<GlobalModifierGroup>): Promise<GlobalModifierGroup> {
-    const list: GlobalModifierGroup[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, INITIAL_GLOBAL_MODIFIERS);
+    const list: GlobalModifierGroup[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, []);
     const idx = list.findIndex((m) => m.id === id);
     let updatedGroup: GlobalModifierGroup | null = null;
 
@@ -5617,7 +5693,7 @@ export const LoyaltyService = {
   },
 
   async deleteGlobalModifierGroup(id: string): Promise<boolean> {
-    const list: GlobalModifierGroup[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, INITIAL_GLOBAL_MODIFIERS);
+    const list: GlobalModifierGroup[] = getLocalData(STORAGE_KEYS.LOCAL_GLOBAL_MODIFIERS, []);
     const target = list.find((m) => m.id === id);
     const storeId = target?.store_id;
 
@@ -5633,24 +5709,8 @@ export const LoyaltyService = {
   // ==========================================
 
   async getStoreBookings(storeId: string): Promise<ServiceBooking[]> {
-    const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, INITIAL_BOOKINGS);
-    const storeSpecific = list.filter(
-      (b) => b.store_id === storeId || b.store_id === 'demo-hub' || b.store_id === 'main-store'
-    );
-    if (storeSpecific.length > 0) return storeSpecific;
-
-    if (
-      storeId === INITIAL_STORES[0].id ||
-      storeId === INITIAL_STORES[1].id ||
-      storeId === 'demo-hub' ||
-      storeId === 'main-store'
-    ) {
-      return INITIAL_BOOKINGS.map((b) => ({ ...b, store_id: storeId }));
-    }
-
-    // 🛑 Stage 12B: 'service_bookings' is not part of the currently deployed live schema.
-    // Return storeSpecific directly without firing unnecessary failing network requests.
-    return storeSpecific;
+    const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
+    return list.filter((b) => b.store_id === storeId);
   },
 
   async createServiceBooking(
@@ -5937,10 +5997,13 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('partner_accounts')
-          .select('id, affiliate_id, display_name, slug, region, target_value, commission_rate, recurring_commission_rate, active, created_at, affiliates(id, name, phone, referral_code, status, notes, commission_rate, recurring_commission_rate)')
-          .order('created_at', { ascending: false });
+        const { data, error } = await withTimeout(
+          supabase
+            .from('partner_accounts')
+            .select('id, affiliate_id, display_name, slug, region, target_value, active, created_at, affiliates(id, name, phone, referral_code, status, notes)')
+            .order('created_at', { ascending: false }),
+          1500
+        );
         if (!error && data && data.length > 0) {
           const sanitized = data.map(sanitizePartner);
           saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, sanitized);
@@ -5948,7 +6011,7 @@ export const LoyaltyService = {
           return sanitized;
         }
       } catch (e) {
-        console.warn('Supabase getAllPartners error:', e);
+        console.warn('Supabase getAllPartners fallback to local:', e);
       }
     }
     const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
@@ -7102,7 +7165,7 @@ export const LoyaltyService = {
   async getAllSubscriptionPlans(): Promise<BillingPlan[]> {
     const currentLocal = this.getAllSubscriptionPlansSync();
 
-    // 1. استعلام نقطة النهاية السحابية مع مهلة سريعة (Fast 2.5s Timeout) لمنع أي تأخير للواجهة
+    // 1. استعلام نقطة النهاية السحابية مع مهلة سريعة (Fast 2.5s Timeout)
     try {
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timeoutId = controller ? setTimeout(() => controller.abort(), 2500) : null;
@@ -7124,7 +7187,7 @@ export const LoyaltyService = {
             amount: Number(p.amount) || 0,
             currency: p.currency || 'ر.س',
             duration_months: p.duration_months ? Number(p.duration_months) : (p.billing_interval === 'YEARLY' ? 12 : 1),
-            billing_interval: p.billing_interval || 'MONTHLY',
+            billing_interval: p.billing_interval || (Number(p.duration_months) === 12 ? 'YEARLY' : 'MONTHLY'),
             trial_days: p.trial_days ?? 7,
             features: Array.isArray(p.features) ? p.features : [],
             active: p.active !== false,
@@ -7132,13 +7195,18 @@ export const LoyaltyService = {
           }));
 
           const mergedMap = new Map<string, BillingPlan>();
-          currentLocal.forEach((lp) => {
-            const key = (lp.code || lp.id || '').toUpperCase();
-            if (key) mergedMap.set(key, lp);
-          });
+          // إضافة باقات الـ API أولاً كقاعدة
           apiPlans.forEach((ap) => {
             const key = (ap.code || ap.id || '').toUpperCase();
             if (key) mergedMap.set(key, ap);
+          });
+          // تطبيق الباقات والتعديلات المحلية للمالك فوقها لضمان عدم مسح أي تعديل للمشرف العام
+          currentLocal.forEach((lp) => {
+            const key = (lp.code || lp.id || '').toUpperCase();
+            if (key) {
+              const existingApi = mergedMap.get(key);
+              mergedMap.set(key, existingApi ? { ...existingApi, ...lp } : lp);
+            }
           });
 
           const merged = Array.from(mergedMap.values()).sort((a, b) => a.amount - b.amount);
@@ -7190,13 +7258,16 @@ export const LoyaltyService = {
           });
 
           const mergedMap = new Map<string, BillingPlan>();
-          currentLocal.forEach((lp) => {
-            const key = (lp.code || lp.id || '').toUpperCase();
-            if (key) mergedMap.set(key, lp);
-          });
           formatted.forEach((fp) => {
             const key = (fp.code || fp.id || '').toUpperCase();
             if (key) mergedMap.set(key, fp);
+          });
+          currentLocal.forEach((lp) => {
+            const key = (lp.code || lp.id || '').toUpperCase();
+            if (key) {
+              const existingDb = mergedMap.get(key);
+              mergedMap.set(key, existingDb ? { ...existingDb, ...lp } : lp);
+            }
           });
 
           const merged = Array.from(mergedMap.values()).sort((a, b) => a.amount - b.amount);
@@ -7231,8 +7302,8 @@ export const LoyaltyService = {
       created_at: new Date().toISOString(),
     };
 
-    const local = await this.getAllSubscriptionPlans();
-    const updated = [...local.filter((p) => (p.code || p.id) !== cleanCode), newPlan];
+    const local = this.getAllSubscriptionPlansSync();
+    const updated = [...local.filter((p) => (p.code || p.id) !== cleanCode && p.id !== planId), newPlan];
     saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, updated);
 
     // مزامنة السحابة
@@ -7247,7 +7318,7 @@ export const LoyaltyService = {
   },
 
   async updateSubscriptionPlan(planId: string, updates: Partial<BillingPlan>): Promise<BillingPlan> {
-    const local = await this.getAllSubscriptionPlans();
+    const local = this.getAllSubscriptionPlansSync();
     const idx = local.findIndex((p) => p.id === planId || p.code === planId);
     if (idx === -1) throw new Error('الخطة غير موجودة');
 
@@ -7276,7 +7347,7 @@ export const LoyaltyService = {
   },
 
   async toggleSubscriptionPlanActive(planId: string): Promise<boolean> {
-    const local = await this.getAllSubscriptionPlans();
+    const local = this.getAllSubscriptionPlansSync();
     const idx = local.findIndex((p) => p.id === planId || p.code === planId);
     if (idx === -1) return false;
 
