@@ -72,11 +72,57 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     window.history.replaceState({}, '', url.toString());
   };
 
-  const [stores, setStores] = useState<Store[]>([]);
+  const [stores, setStores] = useState<Store[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem('radar_local_stores');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return [];
+  });
+
   const [storesAnalytics, setStoresAnalytics] = useState<
     Record<string, { customerCount: number; totalSales: number; totalPoints: number; staffCount: number }>
-  >({});
-  const [loading, setLoading] = useState(true);
+  >(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const rawStores = localStorage.getItem('radar_local_stores');
+      const rawCust = localStorage.getItem('radar_local_customers');
+      const rawLogs = localStorage.getItem('radar_local_logs');
+      const rawStaff = localStorage.getItem('radar_local_staff');
+      if (rawStores) {
+        const parsedStores: Store[] = JSON.parse(rawStores);
+        const parsedCust = rawCust ? JSON.parse(rawCust) : [];
+        const parsedLogs = rawLogs ? JSON.parse(rawLogs) : [];
+        const parsedStaff = rawStaff ? JSON.parse(rawStaff) : [];
+        const initialMap: Record<string, any> = {};
+        for (const s of parsedStores) {
+          const sCust = Array.isArray(parsedCust) ? parsedCust.filter((c: any) => c.store_id === s.id).length : 0;
+          const sStaff = Array.isArray(parsedStaff) ? parsedStaff.filter((st: any) => st.store_id === s.id).length : 0;
+          const sLogs = Array.isArray(parsedLogs) ? parsedLogs.filter((l: any) => l.store_id === s.id) : [];
+          initialMap[s.id] = {
+            customerCount: sCust,
+            staffCount: sStaff,
+            totalSales: sLogs.reduce((sum: number, l: any) => sum + (Number(l.purchase_amount) || 0), 0),
+            totalPoints: sLogs.reduce((sum: number, l: any) => sum + (l.points_changed > 0 ? l.points_changed : 0), 0),
+          };
+        }
+        return initialMap;
+      }
+    } catch {}
+    return {};
+  });
+
+  const [loading, setLoading] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const raw = localStorage.getItem('radar_local_stores');
+    return !raw || raw === '[]';
+  });
   const [isCreating, setIsCreating] = useState(false);
 
   // Form State
@@ -211,10 +257,21 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
   const { role, login: authLogin, logout: authLogout } = useAuth();
 
-  // Master Security Gate State (🔒 حماية بوابة المالك برمز رئيسي)
+  // Master Security Gate State (🔒 حماية بوابة المالك برمز رئيسي مع استمرارية الجلسة عند التحديث)
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return role === 'super_admin' || sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true';
+    try {
+      const rawAuth = localStorage.getItem('radar_unified_auth_user');
+      if (rawAuth) {
+        const parsed = JSON.parse(rawAuth);
+        if (parsed?.role === 'super_admin') return true;
+      }
+    } catch {}
+    return (
+      role === 'super_admin' ||
+      localStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true' ||
+      sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true'
+    );
   });
   const [masterPinInput, setMasterPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
@@ -233,6 +290,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     e.preventDefault();
     const correctPin = '2026';
     if (masterPinInput.trim() === correctPin) {
+      localStorage.setItem('RADAR_SUPER_ADMIN_AUTH', 'true');
       sessionStorage.setItem('RADAR_SUPER_ADMIN_AUTH', 'true');
       authLogin('super_admin', {
         id: 'super_admin_1',
@@ -247,6 +305,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
   const handleMasterLogout = () => {
     authLogout('super_admin');
+    localStorage.removeItem('RADAR_SUPER_ADMIN_AUTH');
     sessionStorage.removeItem('RADAR_SUPER_ADMIN_AUTH');
     setIsAuthenticated(false);
     setMasterPinInput('');
@@ -390,7 +449,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   };
 
   const loadStores = async () => {
-    setLoading(true);
+    if (stores.length === 0) {
+      setLoading(true);
+    }
     try {
       const [{ stores: validStores, analytics }, invs] = await Promise.all([
         LoyaltyService.getSuperAdminStoresSummary(),

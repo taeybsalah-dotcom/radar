@@ -266,7 +266,10 @@ function parseRouteParams() {
     } else if (localStorage.getItem('radar_partner_session')) {
       resolvedRolePortal = 'partner';
       hasSession = true;
-    } else if (sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true') {
+    } else if (
+      localStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true' ||
+      sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true'
+    ) {
       resolvedRolePortal = 'super-admin';
       hasSession = true;
     }

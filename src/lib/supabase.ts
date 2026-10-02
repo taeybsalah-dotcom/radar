@@ -346,7 +346,7 @@ export function normalizeLead(l: any): MerchantLead {
 const storeResolutionCache = new Map<string, { store: Store | null; timestamp: number }>();
 const scanDebounceCache = new Map<string, { timestamp: number; promise: Promise<any> }>();
 
-// ⚡ كاش ذاكرة فائق السرعة لملخص المتاجر في لوحة المالك (Super Admin Summary Cache)
+// ⚡ كاش ذاكرة فائق السرعة لعمليات منصة Radar (0ms Instant In-Memory Cache)
 let adminStoresSummaryCache: {
   data: {
     stores: Store[];
@@ -354,15 +354,38 @@ let adminStoresSummaryCache: {
   };
   timestamp: number;
 } | null = null;
-const ADMIN_STORES_SUMMARY_TTL = 3500; // 3.5 seconds TTL
+let storesListCache: { data: Store[]; timestamp: number } | null = null;
+let partnersListCache: { data: any[]; timestamp: number } | null = null;
+let leadsListCache: { data: MerchantLead[]; timestamp: number } | null = null;
+const SERVICE_CACHE_TTL = 3500; // 3.5 seconds TTL
 
 export const invalidateAdminStoresCache = () => {
   adminStoresSummaryCache = null;
+  storesListCache = null;
+};
+
+export const invalidatePartnersCache = () => {
+  partnersListCache = null;
+};
+
+export const invalidateLeadsCache = () => {
+  leadsListCache = null;
+};
+
+export const invalidateAllServiceCaches = () => {
+  adminStoresSummaryCache = null;
+  storesListCache = null;
+  partnersListCache = null;
+  leadsListCache = null;
 };
 
 export const LoyaltyService = {
-  // 1. جلب جميع المتاجر (من Supabase مباشرة مع كاش محلي سريع)
-  async getAllStores(): Promise<Store[]> {
+  // 1. جلب جميع المتاجر (من Supabase مباشرة مع كاش محلي فائق السرعة)
+  async getAllStores(forceFresh: boolean = false): Promise<Store[]> {
+    if (!forceFresh && storesListCache && (Date.now() - storesListCache.timestamp < SERVICE_CACHE_TTL)) {
+      return storesListCache.data;
+    }
+
     const supabase = getSupabaseClient();
     const currentLocal = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
 
@@ -387,6 +410,7 @@ export const LoyaltyService = {
             });
           }) as Store[];
           saveLocalData(STORAGE_KEYS.LOCAL_STORES, validStores);
+          storesListCache = { data: validStores, timestamp: Date.now() };
           return validStores;
         }
       } catch (e) {
@@ -397,6 +421,7 @@ export const LoyaltyService = {
     // في حال عدم توفر اتصال بـ Supabase نستخدم الكاش المحلي
     if (currentLocal && Array.isArray(currentLocal)) {
       const valid = currentLocal.filter((s) => Boolean(s && s.id)).map(normalizeStore);
+      storesListCache = { data: valid, timestamp: Date.now() };
       return valid;
     }
     return [];
@@ -408,7 +433,7 @@ export const LoyaltyService = {
     analytics: Record<string, { customerCount: number; totalSales: number; totalPoints: number; staffCount: number }>;
   }> {
     // 1. التحقق من كاش الذاكرة اللحظي للوحة المالك (0ms Response)
-    if (!forceFresh && adminStoresSummaryCache && (Date.now() - adminStoresSummaryCache.timestamp < ADMIN_STORES_SUMMARY_TTL)) {
+    if (!forceFresh && adminStoresSummaryCache && (Date.now() - adminStoresSummaryCache.timestamp < SERVICE_CACHE_TTL)) {
       return adminStoresSummaryCache.data;
     }
 
@@ -5850,7 +5875,11 @@ export const LoyaltyService = {
     return `https://wa.me/${intlPhone}?text=${encoded}`;
   },
 
-  async getAllPartners(): Promise<any[]> {
+  async getAllPartners(forceFresh: boolean = false): Promise<any[]> {
+    if (!forceFresh && partnersListCache && (Date.now() - partnersListCache.timestamp < SERVICE_CACHE_TTL)) {
+      return partnersListCache.data;
+    }
+
     const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', '']);
 
     const sanitizePartner = (p: any) => {
@@ -5898,6 +5927,7 @@ export const LoyaltyService = {
         if (!error && data && data.length > 0) {
           const sanitized = data.map(sanitizePartner);
           saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, sanitized);
+          partnersListCache = { data: sanitized, timestamp: Date.now() };
           return sanitized;
         }
       } catch (e) {
@@ -5906,6 +5936,7 @@ export const LoyaltyService = {
     }
     const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
     const sanitizedLocal = local.map(sanitizePartner);
+    partnersListCache = { data: sanitizedLocal, timestamp: Date.now() };
     return sanitizedLocal;
   },
 
@@ -6013,6 +6044,7 @@ export const LoyaltyService = {
       }
     }
 
+    invalidatePartnersCache();
     return newPartnerObj;
   },
 
@@ -6044,6 +6076,7 @@ export const LoyaltyService = {
         console.warn('Supabase toggle partner error:', e);
       }
     }
+    invalidatePartnersCache();
     return nextActive;
   },
 
@@ -6170,7 +6203,11 @@ export const LoyaltyService = {
   // ==============================================================================
   // 📋 إدارة طلبات انضمام التجار (Merchant Leads Management)
   // ==============================================================================
-  async getAllLeads(): Promise<MerchantLead[]> {
+  async getAllLeads(forceFresh: boolean = false): Promise<MerchantLead[]> {
+    if (!forceFresh && leadsListCache && (Date.now() - leadsListCache.timestamp < SERVICE_CACHE_TTL)) {
+      return leadsListCache.data;
+    }
+
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -6181,6 +6218,7 @@ export const LoyaltyService = {
         if (!error && Array.isArray(data)) {
           const validLeads = data.map(normalizeLead);
           saveLocalData(STORAGE_KEYS.LOCAL_LEADS, validLeads);
+          leadsListCache = { data: validLeads, timestamp: Date.now() };
           return validLeads;
         }
       } catch (e) {
@@ -6188,7 +6226,9 @@ export const LoyaltyService = {
       }
     }
     const local = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-    return local.map(normalizeLead);
+    const validLocal = local.map(normalizeLead);
+    leadsListCache = { data: validLocal, timestamp: Date.now() };
+    return validLocal;
   },
 
   async submitLead(payload: {
@@ -6935,6 +6975,7 @@ export const LoyaltyService = {
       }
     }
 
+    invalidatePartnersCache();
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     return { success: true, partner: updated };
@@ -6955,6 +6996,7 @@ export const LoyaltyService = {
       return l;
     });
     saveLocalData(STORAGE_KEYS.LOCAL_LEADS, updated);
+    invalidateLeadsCache();
 
     const supabase = getSupabaseClient();
     if (supabase) {

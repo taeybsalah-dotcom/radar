@@ -12,77 +12,72 @@ interface AuthContextValue extends AuthSessionState {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const UNIFIED_AUTH_KEY = 'radar_unified_auth_user';
+const SUPER_ADMIN_AUTH_KEY = 'RADAR_SUPER_ADMIN_AUTH';
+
+function getInitialAuthSync(): { user: AuthUser | null; role: UserRole | null; isAuthenticated: boolean } {
+  if (typeof window === 'undefined') return { user: null, role: null, isAuthenticated: false };
+  try {
+    // 1. Check Unified Auth Store
+    const savedUnified = localStorage.getItem(UNIFIED_AUTH_KEY);
+    if (savedUnified) {
+      try {
+        const parsed = JSON.parse(savedUnified) as AuthUser;
+        if (parsed && parsed.role && parsed.id) {
+          return { user: parsed, role: parsed.role, isAuthenticated: true };
+        }
+      } catch {}
+    }
+
+    // 2. Check Super Admin Persistent Auth
+    const isSuperAdmin =
+      localStorage.getItem(SUPER_ADMIN_AUTH_KEY) === 'true' ||
+      sessionStorage.getItem(SUPER_ADMIN_AUTH_KEY) === 'true';
+    if (isSuperAdmin) {
+      const superAdminUser: AuthUser = {
+        id: 'super_admin_session',
+        role: 'super_admin',
+        name: 'مالك المنصة (Super Admin)',
+      };
+      return { user: superAdminUser, role: 'super_admin', isAuthenticated: true };
+    }
+
+    // 3. Check Partner Session
+    const partnerSession = LoyaltyService.getPartnerSession();
+    if (partnerSession && partnerSession.id) {
+      const partnerUser: AuthUser = {
+        id: partnerSession.id,
+        role: 'partner',
+        name: partnerSession.display_name || partnerSession.name,
+        phone: partnerSession.affiliates?.phone || partnerSession.phone,
+        partnerId: partnerSession.id,
+        partnerSlug: partnerSession.slug || partnerSession.referral_code,
+        metadata: partnerSession,
+      };
+      return { user: partnerUser, role: 'partner', isAuthenticated: true };
+    }
+  } catch {}
+  return { user: null, role: null, isAuthenticated: false };
+}
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [role, setRole] = useState<UserRole | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const initialAuth = getInitialAuthSync();
+  const [user, setUser] = useState<AuthUser | null>(initialAuth.user);
+  const [role, setRole] = useState<UserRole | null>(initialAuth.role);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(initialAuth.isAuthenticated);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   // 🔍 Synchronous and Asynchronous Session Resolver
   const resolveSession = useCallback(async () => {
-    setIsLoading(true);
     try {
-      // 1. Check Unified Auth Store
-      const savedUnified = localStorage.getItem(UNIFIED_AUTH_KEY);
-      if (savedUnified) {
-        try {
-          const parsed = JSON.parse(savedUnified) as AuthUser;
-          if (parsed && parsed.role && parsed.id) {
-            setUser(parsed);
-            setRole(parsed.role);
-            setIsAuthenticated(true);
-            setIsLoading(false);
-            return;
-          }
-        } catch {}
+      const fresh = getInitialAuthSync();
+      setUser(fresh.user);
+      setRole(fresh.role);
+      setIsAuthenticated(fresh.isAuthenticated);
+      if (fresh.user) {
+        localStorage.setItem(UNIFIED_AUTH_KEY, JSON.stringify(fresh.user));
       }
-
-      // 2. Check Partner Session
-      const partnerSession = LoyaltyService.getPartnerSession();
-      if (partnerSession && partnerSession.id) {
-        const partnerUser: AuthUser = {
-          id: partnerSession.id,
-          role: 'partner',
-          name: partnerSession.display_name || partnerSession.name,
-          phone: partnerSession.affiliates?.phone || partnerSession.phone,
-          partnerId: partnerSession.id,
-          partnerSlug: partnerSession.slug || partnerSession.referral_code,
-          metadata: partnerSession,
-        };
-        setUser(partnerUser);
-        setRole('partner');
-        setIsAuthenticated(true);
-        localStorage.setItem(UNIFIED_AUTH_KEY, JSON.stringify(partnerUser));
-        setIsLoading(false);
-        return;
-      }
-
-      // 3. Check Super Admin Session
-      const isSuperAdminAuth = typeof window !== 'undefined' && sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true';
-      if (isSuperAdminAuth) {
-        const superAdminUser: AuthUser = {
-          id: 'super_admin_session',
-          role: 'super_admin',
-          name: 'مالك المنصة (Super Admin)',
-        };
-        setUser(superAdminUser);
-        setRole('super_admin');
-        setIsAuthenticated(true);
-        localStorage.setItem(UNIFIED_AUTH_KEY, JSON.stringify(superAdminUser));
-        setIsLoading(false);
-        return;
-      }
-
-      // 4. If no explicit active session found, reset state cleanly
-      setUser(null);
-      setRole(null);
-      setIsAuthenticated(false);
     } catch (e) {
       console.warn('[AuthContext] Failed to resolve auth session:', e);
-      setUser(null);
-      setRole(null);
-      setIsAuthenticated(false);
     } finally {
       setIsLoading(false);
     }
@@ -116,7 +111,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Synchronize role-specific legacy session keys for deep backward compatibility
       if (newRole === 'super_admin') {
-        sessionStorage.setItem('RADAR_SUPER_ADMIN_AUTH', 'true');
+        localStorage.setItem(SUPER_ADMIN_AUTH_KEY, 'true');
+        sessionStorage.setItem(SUPER_ADMIN_AUTH_KEY, 'true');
       } else if (newRole === 'partner' && userDetails.metadata) {
         localStorage.setItem('radar_partner_session', JSON.stringify(userDetails.metadata));
       }
@@ -134,7 +130,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem(UNIFIED_AUTH_KEY);
 
       if (!specificRole || specificRole === 'super_admin') {
-        sessionStorage.removeItem('RADAR_SUPER_ADMIN_AUTH');
+        localStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
+        sessionStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
       }
       if (!specificRole || specificRole === 'partner') {
         LoyaltyService.clearPartnerSession();

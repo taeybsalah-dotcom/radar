@@ -34,8 +34,22 @@ import {
 } from 'lucide-react';
 
 export const SuperAdminPartnersConsole: React.FC = () => {
-  const [partners, setPartners] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [partners, setPartners] = useState<any[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem('radar_local_partners');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const raw = localStorage.getItem('radar_local_partners');
+    return !raw || raw === '[]';
+  });
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -70,7 +84,6 @@ export const SuperAdminPartnersConsole: React.FC = () => {
   const [copiedAction, setCopiedAction] = useState<{ id: string; type: 'affiliate' | 'merchant' } | null>(null);
 
   const fetchPartners = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       const list = await LoyaltyService.getAllPartners();

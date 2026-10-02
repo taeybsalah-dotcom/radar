@@ -61,11 +61,45 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
   // 2. Leads Data State
-  const [leads, setLeads] = useState<MerchantLead[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [totalLeads, setTotalLeads] = useState(0);
+  const [leads, setLeads] = useState<MerchantLead[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem('radar_local_leads');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed.slice(0, 15);
+      }
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    const raw = localStorage.getItem('radar_local_leads');
+    return !raw || raw === '[]';
+  });
+  const [totalLeads, setTotalLeads] = useState(() => {
+    if (typeof window === 'undefined') return 0;
+    try {
+      const raw = localStorage.getItem('radar_local_leads');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.length;
+      }
+    } catch {}
+    return 0;
+  });
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [totalPages, setTotalPages] = useState(() => {
+    if (typeof window === 'undefined') return 1;
+    try {
+      const raw = localStorage.getItem('radar_local_leads');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return Math.max(1, Math.ceil(parsed.length / 15));
+      }
+    } catch {}
+    return 1;
+  });
   const pageSize = 15;
 
   // 3. Filters State
