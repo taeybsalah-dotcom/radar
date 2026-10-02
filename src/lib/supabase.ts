@@ -1003,7 +1003,8 @@ export const LoyaltyService = {
     let updatedSupabaseStore: Store | null = null;
     if (supabase) {
       try {
-        const query = supabase.from('stores').update(updates);
+        const { lifecycle_stage, plan, matchedStore, ...dbUpdates } = updates as any;
+        const query = supabase.from('stores').update(dbUpdates);
         const res = isUUID(currentStore.id)
           ? await query.eq('id', currentStore.id).select().maybeSingle()
           : await query.eq('slug', currentStore.slug).select().maybeSingle();
@@ -4185,13 +4186,16 @@ export const LoyaltyService = {
       try {
         if (isUUID(payload.storeId)) {
           const nextEndIso = new Date(Date.now() + durationMs).toISOString();
+          const validPlanId = targetPlan?.id && isUUID(targetPlan.id)
+            ? targetPlan.id
+            : (isUUID(currentStore.subscription_plan_id) ? currentStore.subscription_plan_id : null);
+
           const updatePayload: Record<string, any> = {
             setup_fee_paid: true,
             status: 'active',
             subscription_status: 'active',
             subscription_active: true,
-            lifecycle_stage: 'مشترك مدفوع',
-            subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id || null,
+            subscription_plan_id: validPlanId,
             plan_code: targetPlan?.code || currentStore.plan_code || null,
             subscription_plan: targetPlan?.name || currentStore.subscription_plan || null,
             renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
