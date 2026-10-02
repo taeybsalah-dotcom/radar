@@ -2399,7 +2399,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 تنبيه تجديد الاشتراك: ينتهي اشتراك متجرك خلال {subscriptionInfo?.daysLeft ?? 3} أيام!
               </h4>
               <p className="text-xs text-slate-300 mt-0.5">
-                بادر بتجديد الاشتراك الشهري (195 ر.س) لضمان استمرار عمل شاشات الكاشير ونقاط البيع دون توقف.
+                بادر بتجديد اشتراك المتجر لضمان استمرار عمل شاشات الكاشير ونقاط البيع دون توقف.
               </p>
             </div>
           </div>
@@ -2411,7 +2411,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             className="px-5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition flex items-center justify-center space-x-2 rtl:space-x-reverse shadow-lg shadow-amber-500/20 shrink-0 disabled:opacity-50"
           >
             <CreditCard className="w-4 h-4" />
-            <span>{isPayingRenewal ? 'جاري الدفع...' : 'تجديد الاشتراك الآن (195 ر.س) 💳'}</span>
+            <span>{isPayingRenewal ? 'جاري الدفع...' : `تجديد الاشتراك الآن (${subscriptionInfo?.renewalAmount || (store as any).renewal_amount || 690} ر.س) 💳`}</span>
           </button>
         </div>
       )}
@@ -2501,7 +2501,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                 <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-bold flex items-center space-x-2.5 rtl:space-x-reverse">
                   <Gift className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <span>هدية التأسيس: اشتراك الشهر الأول مجاناً بالكامل (وفّرت 195 ريال)! 🎁</span>
+                  <span>هدية التأسيس: فترة تجربة مجانية كاملة لكافة مميزات وبوابات النظام! 🎁</span>
                 </div>
 
                 <div className="space-y-2.5 text-xs text-slate-300">
@@ -2532,7 +2532,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </div>
                   <div className="text-left">
                     <span className="text-3xl font-black text-amber-400 font-mono">
-                      {subscriptionInfo?.renewalAmount || (store as any).renewal_amount || 195}
+                      {subscriptionInfo?.renewalAmount || (store as any).renewal_amount || 690}
                     </span>
                     <span className="text-xs text-slate-400 font-bold mr-1">ر.س</span>
                   </div>
@@ -2571,7 +2571,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-black font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center space-x-2 rtl:space-x-reverse disabled:opacity-50"
               >
                 <CreditCard className="w-5 h-5" />
-                <span>{isPayingRenewal || isPayingSetup ? 'جاري معالجة الاشتراك...' : `سداد الاشتراك وتفعيل المتجر (${store.renewal_amount || 195} ر.س) 💳`}</span>
+                <span>{isPayingRenewal || isPayingSetup ? 'جاري معالجة الاشتراك...' : `سداد الاشتراك وتفعيل المتجر (${subscriptionInfo?.renewalAmount || (store as any).renewal_amount || 690} ر.س) 💳`}</span>
               </button>
             </div>
           </div>

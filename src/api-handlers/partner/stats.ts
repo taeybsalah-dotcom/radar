@@ -67,19 +67,26 @@ export default async function handler(req: any, res: any) {
     // 3. Fetch commissions summary for this partner
     const { data: commissions } = await supabase
       .from('partner_commissions')
-      .select('status, commission_amount')
-      .eq('partner_account_id', partner.id);
+      .select('status, commission_amount, store_id')
+      .eq('partner_account_id', partner.id)
+      .neq('status', 'PENDING');
 
-    let pendingCommissions = 0;
     let earnedCommissions = 0;
     let paidCommissions = 0;
+    const paidStoreIds = new Set<string>();
 
     commissions?.forEach((c: any) => {
       const amt = Number(c.commission_amount) || 0;
-      if (c.status === 'PENDING') pendingCommissions += amt;
-      else if (c.status === 'EARNED') earnedCommissions += amt;
-      else if (c.status === 'PAID') paidCommissions += amt;
+      if (c.status === 'PAID') {
+        paidCommissions += amt;
+        if (c.store_id) paidStoreIds.add(c.store_id);
+      } else if (c.status === 'EARNED' || c.status === 'AVAILABLE') {
+        earnedCommissions += amt;
+        if (c.store_id) paidStoreIds.add(c.store_id);
+      }
     });
+
+    const paidStoreCount = paidStoreIds.size;
 
     // 4. Fetch bonuses summary for this partner
     const { data: bonusAwards } = await supabase
@@ -108,11 +115,11 @@ export default async function handler(req: any, res: any) {
         },
         target: {
           target_value: targetValue,
-          achieved_count: leadCounts.converted,
-          status_note: leadCounts.converted > 0 ? `تم تحقيق ${leadCounts.converted} من إجمالي هدف ${targetValue} متجر` : 'بانتظار تحويل أول متجر عبر رابطك',
+          achieved_count: paidStoreCount,
+          status_note: paidStoreCount > 0 ? `تم تحقيق ${paidStoreCount} من إجمالي هدف ${targetValue} متجر مدفوع` : 'بانتظار سداد أول متجر لاحتسابه ضمن الهدف',
         },
         financials: {
-          pending_commissions: pendingCommissions,
+          pending_commissions: 0,
           earned_commissions: earnedCommissions,
           paid_commissions: paidCommissions,
           bonuses_earned: totalBonusEarned,

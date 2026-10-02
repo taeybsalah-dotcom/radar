@@ -1154,8 +1154,7 @@ export const LoyaltyService = {
           ).catch(() => {});
         }
 
-        // Record pending affiliate commission for partner
-        LoyaltyService.recordLeadConversionCommission(matchingLead.id, newStore.id).catch(() => {});
+        // Note: Commissions are ONLY recorded upon actual subscription payment, never during onboarding/trial
         invalidateLeadsCache();
         invalidatePartnersCache();
         LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: newStore.id });
@@ -6665,13 +6664,7 @@ export const LoyaltyService = {
       }
     }
 
-    // 💰 Auto-trigger commission recording and milestone evaluation
-    try {
-      await this.recordLeadConversionCommission(leadId, storeId);
-    } catch (commErr) {
-      console.warn('Auto recordLeadConversionCommission non-blocking warning:', commErr);
-    }
-
+    // 💰 العمولات لا تُسجل إطلاقاً عند تأسيس أو تحويل المتجر، بل تُسجل حصراً عند سداد الاشتراك الفعلي للباقة
     LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: storeId || 'global' });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: storeId || 'global' });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: storeId || 'global' });
@@ -6683,94 +6676,19 @@ export const LoyaltyService = {
   // 💰 دفتر حركات العمولات والمكافآت للشركاء (Affiliate Financial Ledger & Milestones)
   // ==============================================================================
 
+  // دالة متوافقة خلفياً - لا تنشئ أي عمولات معلقة أو تخمينية
   async recordLeadConversionCommission(
-    leadId: string,
-    storeId: string,
-    basisAmount: number = 195.00
+    _leadId: string,
+    _storeId: string,
+    _basisAmount?: number
   ): Promise<{ success: boolean; commission_id?: string; amount?: number; rate?: number; error?: string }> {
-    const supabase = getSupabaseClient();
-
-    // 1. Dual-mode Client / Local Fallback calculation:
-    const allLeads = await this.getAllLeads();
-    const lead = allLeads.find((l) => l.id === leadId);
-    if (!lead || !lead.referral_code) {
-      // Direct lead without affiliate code
-      return { success: true };
-    }
-
-    const allPartners = await this.getAllPartners();
-    const leadRef = (lead.referral_code || '').toLowerCase().trim();
-    const partner = allPartners.find((p) => {
-      const pRef = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim();
-      const pSlug = (p.slug || '').toLowerCase().trim();
-      return pRef === leadRef || pSlug === leadRef;
-    });
-
-    if (!partner || partner.active === false) {
-      return { success: true };
-    }
-
-    const rate = typeof partner.acquisition_commission_rate === 'number'
-      ? partner.acquisition_commission_rate
-      : (typeof partner.commission_rate === 'number' ? partner.commission_rate : 0.20);
-    const commAmount = Math.round(basisAmount * rate * 100) / 100;
-    const commId = `comm-${leadId}`;
-    const idempotencyKey = `conv_comm_${leadId}`;
-
-    // 🛡️ INITIAL STATE IS STRICTLY PENDING UNTIL MERCHANT PAYS SUBSCRIPTION / SETUP
-    const newComm = {
-      id: commId,
-      partner_account_id: partner.id,
-      merchant_lead_id: leadId,
-      store_id: storeId,
-      commission_type: 'STORE_CONVERSION',
-      basis_amount: basisAmount,
-      commission_rate: rate,
-      commission_amount: commAmount,
-      status: 'PENDING',
-      qualifying_event: 'تأسيس المتجر - بانتظار سداد رسوم الاشتراك/التأسيس',
-      idempotency_key: idempotencyKey,
-      merchant_name: lead.store_name,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    // Save to local commissions
-    const existingComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    const commIdx = existingComms.findIndex((c) => c.idempotency_key === idempotencyKey || c.id === commId);
-    if (commIdx !== -1) {
-      existingComms[commIdx] = { ...existingComms[commIdx], ...newComm };
-    } else {
-      existingComms.unshift(newComm);
-    }
-    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, existingComms);
-
-    // Sync to Supabase partner_commissions if connected
-    if (supabase) {
-      try {
-        await supabase
-          .from('partner_commissions')
-          .upsert([newComm], { onConflict: 'idempotency_key' });
-      } catch (dbErr) {
-        console.warn('Supabase partner_commissions sync warning:', dbErr);
-      }
-    }
-
-    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
-    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
-
-    return {
-      success: true,
-      commission_id: commId,
-      amount: commAmount,
-      rate,
-    };
+    return { success: true };
   },
 
-  // 💰 تفعيل وتحرير العمولة المكتسبة عند سداد الاشتراك أو التجديد (Dual Commission Engine)
+  // 💰 تسجيل وتحرير العمولة المكتسبة فور سداد التاجر للاشتراك الفعلي (Dual Commission Engine on Real Paid Subscriptions)
   async unlockPaidStoreCommission(
     storeId: string,
-    paidAmount: number = 195.00,
+    paidAmount: number,
     commissionType?: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE',
     invoiceId?: string,
     invoiceNumber?: string
@@ -6781,96 +6699,81 @@ export const LoyaltyService = {
 
     const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
     const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    let unlockedCount = 0;
-    let foundPending = false;
+    const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
+    const store = stores.find((s) => s.id === storeId || s.slug === storeId);
+    const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+    const lead = allLeads.find((l) => l.converted_store_id === storeId || l.store_name === store?.name);
 
-    const updatedComms = localComms.map((c) => {
-      if ((c.store_id === storeId || c.merchant_lead_id === storeId) && c.status === 'PENDING') {
-        const partner = allPartners.find((p) => p.id === c.partner_account_id);
-        // 🛡️ إذا كان الشريك موقوفاً لا يتم تحرير أو تفعيل أي عمولة
-        if (partner && partner.active === false) {
-          return c;
-        }
-
-        unlockedCount++;
-        foundPending = true;
-        if (c.partner_account_id) partnerIdsToEvaluate.add(c.partner_account_id);
-        const rate = c.commission_rate || 0.20;
-        const basis = paidAmount || c.basis_amount || 195.00;
-        return {
-          ...c,
-          status: 'AVAILABLE',
-          commission_type: commissionType || c.commission_type || 'STORE_ACQUISITION',
-          qualifying_event: commissionType === 'SUBSCRIPTION_RENEWAL' ? 'تجديد اشتراك المتجر بنجاح' : 'تأسيس وتفعيل المتجر بنجاح',
-          basis_amount: basis,
-          commission_amount: Math.round(basis * rate * 100) / 100,
-          invoice_id: invoiceId || c.invoice_id,
-          invoice_number: invoiceNumber || c.invoice_number,
-          updated_at: now,
-        };
-      }
-      return c;
+    // البحث عن الشريك عبر كود الإحالة أو المعرف المباشر
+    const leadRef = (lead?.referral_code || '').toLowerCase().trim();
+    const partner = allPartners.find((p) => {
+      const pRef = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim();
+      const pSlug = (p.slug || '').toLowerCase().trim();
+      return (pRef && leadRef && pRef === leadRef) || (pSlug && leadRef && pSlug === leadRef) || p.id === lead?.affiliate_id;
     });
 
-    // إذا كانت العملية تجديد دوري ولم يكن هناك عمولة معلقة سابقة (Renewal Commission)
-    if (!foundPending && (commissionType === 'SUBSCRIPTION_RENEWAL' || commissionType === 'SUBSCRIPTION_UPGRADE')) {
-      const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
-      const store = stores.find((s) => s.id === storeId);
-      const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-      const lead = allLeads.find((l) => l.converted_store_id === storeId || l.store_name === store?.name);
-      const partner = allPartners.find((p) => p.referral_code === lead?.referral_code || p.id === lead?.affiliate_id);
-
-      // 🛡️ التحقق من أن الشريك نشط وليس موقوفاً
-      if (partner && partner.active !== false) {
-        partnerIdsToEvaluate.add(partner.id);
-        const recRate = partner.recurring_commission_rate ?? 0.10;
-        const basis = paidAmount;
-        const commAmt = Math.round(basis * recRate * 100) / 100;
-        const newComm = {
-          id: 'comm-rec-' + Date.now(),
-          partner_account_id: partner.id,
-          merchant_lead_id: lead?.id || null,
-          store_id: storeId,
-          commission_type: commissionType,
-          basis_amount: basis,
-          commission_rate: recRate,
-          commission_amount: commAmt,
-          status: 'AVAILABLE',
-          qualifying_event: commissionType === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد اشتراك المتجر الدوري',
-          idempotency_key: `rec_comm_${invoiceNumber || Date.now()}`,
-          merchant_name: store?.name || lead?.store_name || 'متجر معتمد',
-          invoice_id: invoiceId,
-          invoice_number: invoiceNumber,
-          created_at: now,
-          updated_at: now,
-        };
-        updatedComms.unshift(newComm);
-        unlockedCount++;
-      }
+    if (!partner || partner.active === false) {
+      return { success: true, unlockedCommissionsCount: 0 };
     }
 
-    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
+    partnerIdsToEvaluate.add(partner.id);
+
+    const isAcquisition = commissionType === 'STORE_ACQUISITION' || commissionType === 'STORE_CONVERSION' || !commissionType;
+    const rate = isAcquisition
+      ? (partner.acquisition_commission_rate ?? partner.commission_rate ?? 0.20)
+      : (partner.recurring_commission_rate ?? 0.10);
+
+    const basis = Number(paidAmount) || 0;
+    if (basis <= 0) {
+      return { success: true, unlockedCommissionsCount: 0 };
+    }
+
+    const commAmt = Math.round(basis * rate * 100) / 100;
+    const idempotencyKey = `paid_comm_${invoiceNumber || invoiceId || storeId}_${Date.now()}`;
+
+    const newComm = {
+      id: 'comm-' + (invoiceNumber || Date.now()),
+      partner_account_id: partner.id,
+      merchant_lead_id: lead?.id || null,
+      store_id: storeId,
+      commission_type: commissionType || 'STORE_ACQUISITION',
+      basis_amount: basis,
+      commission_rate: rate,
+      commission_amount: commAmt,
+      status: 'AVAILABLE',
+      qualifying_event: isAcquisition
+        ? 'سداد اشتراك متجر جديد'
+        : (commissionType === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد اشتراك المتجر الدوري'),
+      idempotency_key: idempotencyKey,
+      merchant_name: store?.name || lead?.store_name || 'متجر معتمد',
+      invoice_id: invoiceId,
+      invoice_number: invoiceNumber,
+      created_at: now,
+      updated_at: now,
+    };
+
+    // حفظ محلي مع تنظيف أي سجلات قديمة غير مدفوعة
+    const filteredComms = localComms.filter((c) => c.status !== 'PENDING');
+    filteredComms.unshift(newComm);
+    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, filteredComms);
 
     if (supabase) {
       try {
         await supabase
           .from('partner_commissions')
-          .update({
-            status: 'AVAILABLE',
-            commission_type: commissionType || 'STORE_ACQUISITION',
-            qualifying_event: 'تم سداد الاشتراك وتثبيت المتجر بنجاح',
-            invoice_id: invoiceId,
-            invoice_number: invoiceNumber,
-            updated_at: now,
-          })
+          .delete()
           .eq('store_id', storeId)
           .eq('status', 'PENDING');
+
+        await supabase
+          .from('partner_commissions')
+          .upsert([newComm], { onConflict: 'idempotency_key' });
       } catch (dbErr) {
         console.warn('Supabase unlockPaidStoreCommission warning:', dbErr);
       }
     }
 
-    // 3. Evaluate milestone bonuses for affected partners based strictly on PAID stores
+    // تقييم مكافآت التارقت للأعضاء بناءً على المتاجر المدفوعة فقط
     for (const partnerId of Array.from(partnerIdsToEvaluate)) {
       await this.evaluatePartnerMilestones(partnerId);
     }
@@ -6878,7 +6781,7 @@ export const LoyaltyService = {
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
 
-    return { success: true, unlockedCommissionsCount: unlockedCount };
+    return { success: true, unlockedCommissionsCount: 1 };
   },
 
   // 🏆 تقييم واحتساب مكافآت التارقت للأعضاء بناءً على المتاجر المدفوعة فقط
@@ -6892,7 +6795,7 @@ export const LoyaltyService = {
 
     const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
     const earnedOrPaidComms = localComms.filter(
-      (c) => c.partner_account_id === partnerId && (c.status === 'EARNED' || c.status === 'PAID')
+      (c) => c.partner_account_id === partnerId && (c.status === 'AVAILABLE' || c.status === 'EARNED' || c.status === 'PAID')
     );
 
     const paidStoreIds = new Set<string>();
@@ -6940,42 +6843,43 @@ export const LoyaltyService = {
 
   async getPartnerCommissions(partnerId: string): Promise<any[]> {
     const supabase = getSupabaseClient();
-    const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
+
+    // تنظيف أي سجلات قديمة غير مدفوعة (PENDING) محلياً
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    const cleanLocal = local.filter((c) => c.status !== 'PENDING');
+    if (cleanLocal.length !== local.length) {
+      saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, cleanLocal);
+    }
 
     const reconcileComm = (c: any) => {
-      const store = localStores.find(
-        (s) =>
-          s.id === c.store_id ||
-          (c.merchant_name && s.name && s.name.trim().toLowerCase() === c.merchant_name.trim().toLowerCase())
-      );
-      const isStorePaid = store && store.setup_fee_paid === true && store.status !== 'trial';
-      const effectiveStatus = c.status === 'PAID' ? 'PAID' : isStorePaid ? (c.status === 'PENDING' ? 'EARNED' : c.status) : 'PENDING';
-
       return {
         ...c,
-        merchant_name: c.merchant_leads?.store_name || c.merchant_name || 'متجر محول',
-        status: effectiveStatus,
+        merchant_name: c.merchant_leads?.store_name || c.merchant_name || 'متجر معتمد',
+        status: c.status === 'PAID' ? 'PAID' : 'AVAILABLE',
       };
     };
 
     if (supabase) {
       try {
+        // حذف أي عمولات معلقة من قاعدة البيانات تلقائياً
+        Promise.resolve(supabase.from('partner_commissions').delete().eq('status', 'PENDING')).catch(() => {});
+
         const { data, error } = await supabase
           .from('partner_commissions')
           .select('*, merchant_leads(store_name)')
           .eq('partner_account_id', partnerId)
+          .neq('status', 'PENDING')
           .order('created_at', { ascending: false });
 
         if (!error && Array.isArray(data)) {
-          return data.map(reconcileComm);
+          return data.filter((c) => c.status !== 'PENDING').map(reconcileComm);
         }
       } catch (e) {
         console.warn('Supabase getPartnerCommissions failed:', e);
       }
     }
 
-    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    return local.filter((c) => c.partner_account_id === partnerId).map(reconcileComm);
+    return cleanLocal.filter((c) => c.partner_account_id === partnerId && c.status !== 'PENDING').map(reconcileComm);
   },
 
   async getPartnerBonuses(partnerId: string, affiliateId?: string): Promise<{ milestones: any[]; paidCount: number }> {
@@ -7003,7 +6907,7 @@ export const LoyaltyService = {
           .from('partner_commissions')
           .select('store_id')
           .eq('partner_account_id', partnerId)
-          .in('status', ['EARNED', 'PAID']);
+          .in('status', ['AVAILABLE', 'EARNED', 'PAID']);
 
         if (commRows && Array.isArray(commRows)) {
           const uniquePaid = new Set(commRows.map((c) => c.store_id).filter(Boolean));
@@ -7017,7 +6921,7 @@ export const LoyaltyService = {
     if (paidCount === 0) {
       const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
       const partnerComms = localComms.filter(
-        (c) => c.partner_account_id === partnerId && (c.status === 'EARNED' || c.status === 'PAID')
+        (c) => c.partner_account_id === partnerId && (c.status === 'AVAILABLE' || c.status === 'EARNED' || c.status === 'PAID')
       );
       const uniqueStores = new Set(partnerComms.map((c) => c.store_id).filter(Boolean));
       paidCount = uniqueStores.size;
@@ -7068,15 +6972,16 @@ export const LoyaltyService = {
     const commissions = await this.getPartnerCommissions(partnerId);
     const bonusesData = await this.getPartnerBonuses(partnerId, affiliateId);
 
-    let pending_commissions = 0;
     let earned_commissions = 0;
     let paid_commissions = 0;
 
     commissions.forEach((c) => {
       const amt = Number(c.commission_amount) || 0;
-      if (c.status === 'PENDING') pending_commissions += amt;
-      else if (c.status === 'EARNED') earned_commissions += amt;
-      else if (c.status === 'PAID') paid_commissions += amt;
+      if (c.status === 'PAID') {
+        paid_commissions += amt;
+      } else if (c.status === 'EARNED' || c.status === 'AVAILABLE') {
+        earned_commissions += amt;
+      }
     });
 
     let bonuses_earned = 0;
@@ -7087,7 +6992,7 @@ export const LoyaltyService = {
     });
 
     return {
-      pending_commissions,
+      pending_commissions: 0,
       earned_commissions,
       paid_commissions,
       bonuses_earned,

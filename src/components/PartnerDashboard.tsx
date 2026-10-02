@@ -43,6 +43,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  CreditCard,
   X,
   Phone,
   KeyRound,
@@ -58,8 +59,6 @@ export function getLeadStatusArabic(status?: string, lead?: any): { label: strin
 
 export function getCommissionStatusArabic(status?: string): { label: string; colorClass: string } {
   switch (status) {
-    case 'PENDING':
-      return { label: 'معلق (فترة التجربة) ⏳', colorClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
     case 'EARNED':
     case 'AVAILABLE':
       return { label: 'مستحقة وجاهزة للصرف 💰', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
@@ -70,7 +69,7 @@ export function getCommissionStatusArabic(status?: string): { label: string; col
     case 'REVERSED':
       return { label: 'ملغاة ✕', colorClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40' };
     default:
-      return { label: status || 'معلق', colorClass: 'bg-slate-800 text-slate-300 border-slate-700' };
+      return { label: 'مكتسبة 💰', colorClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
   }
 }
 
@@ -916,15 +915,15 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           <span className="text-[10px] text-slate-500 block">مكافآت التارقت</span>
         </div>
 
-        <div className="bg-slate-900/70 border border-amber-500/20 rounded-3xl p-5 space-y-1">
-          <div className="flex items-center justify-between text-xs text-amber-400 font-medium">
-            <span>العمولات المعلقة</span>
-            <Clock className="w-4 h-4 text-amber-400" />
+        <div className="bg-slate-900/70 border border-slate-800 rounded-3xl p-5 space-y-1">
+          <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
+            <span>العمولات المصروفة</span>
+            <CreditCard className="w-4 h-4 text-slate-400" />
           </div>
-          <span className="text-2xl font-black text-amber-400 font-mono block">
-            {stats?.financials?.pending_commissions ?? 0} <span className="text-xs">ريال</span>
+          <span className="text-2xl font-black text-slate-200 font-mono block">
+            {stats?.financials?.paid_commissions ?? 0} <span className="text-xs">ريال</span>
           </span>
-          <span className="text-[10px] text-amber-300/70 block">بانتظار تأكيد الدفع الفعلي</span>
+          <span className="text-[10px] text-slate-500 block">تم تحويلها لحسابك البنكي</span>
         </div>
       </div>
 
@@ -1616,20 +1615,20 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-slate-900/80 border border-amber-500/30 rounded-3xl p-5 space-y-1">
-              <span className="text-xs text-amber-400 font-medium block">عمولات معلقة (Pending)</span>
-              <span className="text-2xl font-black text-amber-400 font-mono block">
-                {commissionsSummary.total_pending} <span className="text-xs">ريال</span>
-              </span>
-              <span className="text-[10px] text-slate-400 block">بانتظار تأكيد الدفع التجاري الفعلي</span>
-            </div>
-
             <div className="bg-slate-900/80 border border-emerald-500/30 rounded-3xl p-5 space-y-1">
               <span className="text-xs text-emerald-400 font-medium block">عمولات مكتسبة جاهزة (Available)</span>
               <span className="text-2xl font-black text-emerald-400 font-mono block">
                 {commissionsSummary.total_earned} <span className="text-xs">ريال</span>
               </span>
               <span className="text-[10px] text-slate-400 block">مستحقة وجاهزة للصرف الفوري</span>
+            </div>
+
+            <div className="bg-slate-900/80 border border-purple-500/30 rounded-3xl p-5 space-y-1">
+              <span className="text-xs text-purple-400 font-medium block">المكافآت المحققة (Bonuses)</span>
+              <span className="text-2xl font-black text-purple-400 font-mono block">
+                {stats?.financials?.bonuses_earned ?? 0} <span className="text-xs">ريال</span>
+              </span>
+              <span className="text-[10px] text-purple-300/70 block">مكافآت إنجاز أهداف المبيعات</span>
             </div>
 
             <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 space-y-1">

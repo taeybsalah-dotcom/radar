@@ -398,16 +398,7 @@ export default async function handler(req: any, res: any) {
           return res.status(statusMap[data?.code] || 400).json(data);
         }
 
-        // 💰 Trigger Affiliate Commission & Milestone Recording (Idempotent)
-        try {
-          await supabase.rpc('record_lead_conversion_commission', {
-            p_lead_id: leadId,
-            p_store_id: storeId,
-            p_basis_amount: 195.00,
-          });
-        } catch (commErr) {
-          console.warn('[api/admin/leads] record_lead_conversion_commission error (non-blocking):', commErr);
-        }
+        // Note: Commissions are ONLY recorded upon actual subscription payment, never upon lead conversion
 
         // Return success (including idempotent_replay flag if winner retried)
         return res.status(200).json(data || { success: true, lead_id: leadId, status: 'CONVERTED', store_id: storeId });
