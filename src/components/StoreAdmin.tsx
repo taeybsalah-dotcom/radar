@@ -384,6 +384,67 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     planId?: string;
   } | null>(null);
 
+  // 🛡️ Pre-calculate unified stage and trial status at top level
+  const unifiedStage = getStoreUnifiedStage(store);
+  const stageInfo = resolveUnifiedStage(store);
+  const isPaidActive = Boolean(
+    stageInfo.isPaidActive ||
+      unifiedStage === 'مشترك مدفوع' ||
+      store.setup_fee_paid === true ||
+      store.subscription_status === 'active' ||
+      store.status === 'active' ||
+      subscriptionInfo?.status === 'active'
+  );
+
+  const isStoreSuspended =
+    store.subscription_active === false ||
+    store.subscription_status === 'suspended' ||
+    store.status === 'suspended' ||
+    subscriptionInfo?.isSuspended === true;
+
+  // 🛡️ Strict Trial Detection: Any unpaid store (setup_fee_paid === false) is in trial unless explicitly suspended
+  const isTrial = !isPaidActive && !isStoreSuspended;
+
+  // ⏱️ Live Precision Countdown Hook for Trial Banner (Days, Hours, Minutes, Seconds)
+  const [trialCountdown, setTrialCountdown] = useState<{
+    days: number;
+    hours: number;
+    minutes: number;
+    seconds: number;
+    isExpired: boolean;
+  }>({ days: 7, hours: 0, minutes: 0, seconds: 0, isExpired: false });
+
+  useEffect(() => {
+    if (!isTrial) return;
+
+    const calculateTimeLeft = () => {
+      const now = Date.now();
+      const targetDate = store.trial_end_date
+        ? new Date(store.trial_end_date).getTime()
+        : subscriptionInfo?.trialEndDate
+        ? new Date(subscriptionInfo.trialEndDate).getTime()
+        : (store.trial_start_date ? new Date(store.trial_start_date).getTime() : now) + 7 * 86400000;
+
+      const diffMs = targetDate - now;
+      if (diffMs <= 0) {
+        setTrialCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, isExpired: true });
+        return;
+      }
+
+      const totalSeconds = Math.floor(diffMs / 1000);
+      const days = Math.floor(totalSeconds / 86400);
+      const hours = Math.floor((totalSeconds % 86400) / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+
+      setTrialCountdown({ days, hours, minutes, seconds, isExpired: false });
+    };
+
+    calculateTimeLeft();
+    const interval = setInterval(calculateTimeLeft, 1000);
+    return () => clearInterval(interval);
+  }, [isTrial, store.trial_end_date, store.trial_start_date, subscriptionInfo?.trialEndDate]);
+
   const handleLogout = () => {
     LoyaltyService.clearStaffSession(store.id, 'admin', store.slug);
     setAuthenticatedAdmin(null);
@@ -2047,66 +2108,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       />
     );
   }
-
-  const unifiedStage = getStoreUnifiedStage(store);
-  const stageInfo = resolveUnifiedStage(store);
-  const isPaidActive = Boolean(
-    stageInfo.isPaidActive ||
-      unifiedStage === 'مشترك مدفوع' ||
-      store.setup_fee_paid === true ||
-      store.subscription_status === 'active' ||
-      store.status === 'active' ||
-      subscriptionInfo?.status === 'active'
-  );
-
-  const isStoreSuspended =
-    store.subscription_active === false ||
-    store.subscription_status === 'suspended' ||
-    store.status === 'suspended' ||
-    subscriptionInfo?.isSuspended === true;
-
-  // 🛡️ Strict Trial Detection: Any unpaid store (setup_fee_paid === false) is in trial unless explicitly suspended
-  // When isPaidActive is true, isTrial is GUARANTEED to be FALSE!
-  const isTrial = !isPaidActive && !isStoreSuspended;
-  // ⏱️ Live Precision Countdown Hook for Trial Banner (Days, Hours, Minutes, Seconds)
-  const [trialCountdown, setTrialCountdown] = useState<{
-    days: number;
-    hours: number;
-    minutes: number;
-    seconds: number;
-    isExpired: boolean;
-  }>({ days: 7, hours: 0, minutes: 0, seconds: 0, isExpired: false });
-
-  useEffect(() => {
-    if (!isTrial) return;
-
-    const calculateTimeLeft = () => {
-      const now = Date.now();
-      const targetDate = store.trial_end_date
-        ? new Date(store.trial_end_date).getTime()
-        : subscriptionInfo?.trialEndDate
-        ? new Date(subscriptionInfo.trialEndDate).getTime()
-        : (store.trial_start_date ? new Date(store.trial_start_date).getTime() : now) + 7 * 86400000;
-
-      const diffMs = targetDate - now;
-      if (diffMs <= 0) {
-        setTrialCountdown({ days: 0, hours: 0, minutes: 0, seconds: 0, isExpired: true });
-        return;
-      }
-
-      const totalSeconds = Math.floor(diffMs / 1000);
-      const days = Math.floor(totalSeconds / 86400);
-      const hours = Math.floor((totalSeconds % 86400) / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      const seconds = totalSeconds % 60;
-
-      setTrialCountdown({ days, hours, minutes, seconds, isExpired: false });
-    };
-
-    calculateTimeLeft();
-    const interval = setInterval(calculateTimeLeft, 1000);
-    return () => clearInterval(interval);
-  }, [isTrial, store.trial_end_date, store.trial_start_date, subscriptionInfo?.trialEndDate]);
 
   const baseDomain = store.custom_domain
     ? `https://${store.custom_domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}`
