@@ -664,9 +664,21 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           (p) =>
             (p.id && (p.id === (store as any).subscription_plan_id || p.id === (store as any).plan_id)) ||
             (p.code && (p.code === (store as any).plan_code || p.code === (store as any).plan_id)) ||
-            (p.name && (store as any).subscription_plan && (p.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(p.name) || p.name.includes((store as any).subscription_plan)))
-        ) || null
+            (p.name && (store as any).subscription_plan && (p.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(p.name) || p.name.includes((store as any).subscription_plan))) ||
+            (p.amount && (store as any).renewal_amount && p.amount === (store as any).renewal_amount)
+        ) || (allPlans.length > 0 ? allPlans[0] : null)
       : null;
+
+    // 🛡️ صمام أمان حتمي: منع ترقية المتجر إلى باقته الحالية أو أي باقة سابقة/أدنى سعراً
+    if (isPaid && currentPlan) {
+      const isCurrent =
+        (plan.id && (plan.id === currentPlan.id || plan.id === (store as any).subscription_plan_id)) ||
+        (plan.code && (plan.code === currentPlan.code || plan.code === (store as any).plan_code)) ||
+        plan.name === currentPlan.name;
+      if (isCurrent || plan.amount <= currentPlan.amount) {
+        return;
+      }
+    }
 
     const proration = currentPlan
       ? LoyaltyService.calculateProratedUpgrade(store, currentPlan, plan)
@@ -6064,11 +6076,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             (plan.name && (store as any).subscription_plan && (plan.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(plan.name) || plan.name.includes((store as any).subscription_plan))))
                       );
 
+                    const isLowerTier =
+                      !isTrial &&
+                      Boolean(store.setup_fee_paid) &&
+                      currentPaidPlan !== null &&
+                      !isCurrent &&
+                      plan.amount <= currentPaidPlan.amount;
+
+                    const isHigherTier =
+                      !isTrial &&
+                      Boolean(store.setup_fee_paid) &&
+                      currentPaidPlan !== null &&
+                      !isCurrent &&
+                      plan.amount > currentPaidPlan.amount;
+
                     const planKey = plan.id || plan.code || plan.name;
                     const isUpgradingThis = isUpgradingPlanId === planKey;
 
                     const proration =
-                      !isTrial && Boolean(store.setup_fee_paid) && currentPaidPlan && !isCurrent
+                      isHigherTier && currentPaidPlan
                         ? LoyaltyService.calculateProratedUpgrade(store, currentPaidPlan, plan)
                         : null;
 
@@ -6078,6 +6104,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         className={`rounded-3xl p-6 sm:p-7 space-y-6 flex flex-col justify-between transition-all duration-300 relative ${
                           isCurrent
                             ? 'bg-gradient-to-b from-slate-900 to-slate-950 border-2 border-emerald-500 shadow-2xl shadow-emerald-500/20 ring-2 ring-emerald-500/30'
+                            : isLowerTier
+                            ? 'bg-slate-950/50 border border-slate-800/80 opacity-75'
                             : 'bg-slate-950/80 border border-slate-800 hover:border-amber-500/40 hover:shadow-lg'
                         }`}
                       >
@@ -6095,7 +6123,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                               🗓️ {getPlanDurationLabel(plan)}
                             </span>
 
-                            {plan.trial_days && plan.trial_days > 0 ? (
+                            {isLowerTier ? (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-lg bg-slate-800 text-slate-400 border border-slate-700/50">
+                                🔒 باقة سابقة
+                              </span>
+                            ) : isHigherTier ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                ⚡ ترقية متاحة
+                              </span>
+                            ) : plan.trial_days && plan.trial_days > 0 ? (
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                 تجربة {plan.trial_days} أيام
                               </span>
@@ -6112,8 +6148,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             )}
                           </div>
 
-                          {/* Price Tag with Smart Proration Breakdown */}
-                          {proration && proration.hasProrationDiscount ? (
+                          {/* Price Tag with Smart Proration Breakdown (Only for higher tiers) */}
+                          {isHigherTier && proration && proration.hasProrationDiscount ? (
                             <div className="p-4 rounded-2xl bg-slate-900/90 border border-emerald-500/30 space-y-2.5">
                               <div className="flex items-baseline justify-between">
                                 <div>
@@ -6143,7 +6179,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                           ) : (
                             <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 flex items-baseline justify-between">
                               <div>
-                                <span className="text-3xl font-black text-amber-400 font-mono">
+                                <span className={`text-3xl font-black font-mono ${isLowerTier ? 'text-slate-400' : 'text-amber-400'}`}>
                                   {plan.amount.toLocaleString()}
                                 </span>
                                 <span className="text-xs text-slate-400 font-bold mr-1.5">
@@ -6170,12 +6206,17 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                           </div>
                         </div>
 
-                        {/* Action Button */}
+                        {/* Action Button: Frozen for lower/previous tiers */}
                         <div className="pt-4 mt-2 border-t border-slate-800/80">
                           {isCurrent ? (
-                            <div className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/20 to-teal-500/10 border-2 border-emerald-500/40 text-emerald-300 text-xs font-black flex items-center justify-center gap-2 shadow-inner">
+                            <div className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/20 to-teal-500/10 border-2 border-emerald-500/40 text-emerald-300 text-xs font-black flex items-center justify-center gap-2 shadow-inner select-none">
                               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                               <span>باقتك الحالية (نشطة ومفعلة) ✅</span>
+                            </div>
+                          ) : isLowerTier ? (
+                            <div className="w-full py-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 text-slate-500 text-xs font-bold flex items-center justify-center gap-2 cursor-not-allowed select-none opacity-60">
+                              <Lock className="w-4 h-4 text-slate-500" />
+                              <span>باقة سابقة (غير متاحة للترقية) 🔒</span>
                             </div>
                           ) : (
                             <button
@@ -6202,7 +6243,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                               ) : (
                                 <>
                                   <Zap className="w-4 h-4" />
-                                  <span>ترقية أو تغيير الباقة 🚀</span>
+                                  <span>ترقية إلى هذه الباقة ({plan.amount.toLocaleString()} ر.س) 🚀</span>
                                 </>
                               )}
                             </button>

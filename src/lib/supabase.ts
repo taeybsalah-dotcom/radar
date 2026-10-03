@@ -4194,7 +4194,8 @@ export const LoyaltyService = {
     let unusedCredit = 0;
     let dailyRateCurrent = 0;
 
-    if (store.setup_fee_paid && currentPlan && remainingDays > 0) {
+    // 🛡️ الحساب التناسبي وتطبيق خصم الرصيد المتبقي يُطبّق حصراً عند الترقية لباقة أعلى سعراً
+    if (store.setup_fee_paid && currentPlan && remainingDays > 0 && newPlan.amount > currentPlan.amount) {
       const planMonths = currentPlan.duration_months ?? (currentPlan.billing_interval === 'YEARLY' ? 12 : 1);
       const totalDays = Math.max(1, planMonths * 30);
       dailyRateCurrent = currentPlan.amount / totalDays;
