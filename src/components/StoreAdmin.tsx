@@ -48,6 +48,7 @@ import {
   AlertTriangle,
   Award,
   Lock,
+  PauseCircle,
   Unlock,
   Shield,
   UserPlus,
@@ -398,6 +399,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     store.subscription_status === 'suspended' ||
     store.status === 'suspended' ||
     subscriptionInfo?.isSuspended === true;
+
+  const nowMs = Date.now();
+  const subEndDateMs = store.subscription_end_date ? new Date(store.subscription_end_date).getTime() : 0;
+  const isSubscriptionValidInFuture = isPaidActive && subEndDateMs > nowMs;
 
   // 🛡️ Strict Trial Detection: Any unpaid store (setup_fee_paid === false) is in trial unless explicitly suspended
   const isTrial = !isPaidActive && !isStoreSuspended;
@@ -2469,9 +2474,60 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       </div>
 
       {/* ========================================== */}
-      {/* 🔒 PAYWALL LOCK SCREEN: When Suspended / Trial Expired */}
+      {/* 🔒 1. شاشة الإيقاف المؤقت بقرار إداري / بطلب المتجر (مع بقاء الاشتراك سارياً ومحفوظاً) */}
       {/* ========================================== */}
-      {isStoreSuspended && (
+      {isStoreSuspended && isSubscriptionValidInFuture && (
+        <div className="rounded-3xl p-6 sm:p-10 bg-slate-900/95 border-2 border-amber-500/40 shadow-2xl space-y-6 animate-fade-in relative overflow-hidden backdrop-blur-xl">
+          <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none -mr-24 -mt-24"></div>
+          <div className="max-w-2xl mx-auto text-center space-y-5">
+            <div className="w-20 h-20 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto shadow-inner">
+              <PauseCircle className="w-10 h-10" />
+            </div>
+
+            <span className="px-3.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-black">
+              حساب المتجر موقوف مؤقتاً ⏸️
+            </span>
+
+            <h2 className="text-2xl sm:text-3xl font-black text-white">
+              تم إيقاف تشغيل المتجر مؤقتاً
+            </h2>
+
+            <div className="p-5 rounded-2xl bg-slate-950/90 border border-slate-800 text-slate-300 text-xs sm:text-sm space-y-3 text-right">
+              <p className="leading-relaxed">
+                تم إيقاف تشغيل واجهات المتجر ونقاط البيع مؤقتاً من قبل إدارة المنصة (بناءً على طلبكم أو لأسباب إدارية وتشغيلية).
+              </p>
+              <div className="flex items-center gap-2 text-emerald-400 font-bold pt-2 border-t border-slate-800">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>
+                  اشتراككم وباقاتكم سارية المفعول حتى تاريخ: <strong className="text-white font-mono text-sm">{new Date(store.subscription_end_date!).toLocaleDateString('ar-SA')} ({new Date(store.subscription_end_date!).toISOString().split('T')[0]})</strong>
+                </span>
+              </div>
+              <p className="text-slate-400 text-[11px]">
+                جميع بيانات متجركم، العملاء، النقاط، وسجلات الكاشير محفوظة بأمان تام. لإعادة تشغيل وتنشيط المتجر فوراً، يرجى التواصل مع إدارة منصة RADAR.
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const text = encodeURIComponent(`السلام عليكم، بخصوص متجر (${store.name} - ${store.slug}) نود طلب إعادة تنشيط وتشغيل المتجر على منصة RADAR.`);
+                  window.open(`https://wa.me/966577371780?text=${text}`, '_blank');
+                }}
+                className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-emerald-500/20 transition flex items-center justify-center gap-2 mx-auto hover:scale-105"
+              >
+                <Send className="w-4 h-4" />
+                <span>تواصل مع إدارة المنصة لإعادة التنشيط (WhatsApp) 💬</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 🔒 2. PAYWALL LOCK SCREEN: When Subscription / Trial Expired */}
+      {/* ========================================== */}
+      {isStoreSuspended && !isSubscriptionValidInFuture && (
         <div className="rounded-3xl p-6 sm:p-10 bg-slate-900/95 border-2 border-rose-500/40 shadow-2xl space-y-8 animate-fade-in relative overflow-hidden backdrop-blur-xl">
           {/* Background Glow */}
           <div className="absolute top-0 right-0 w-80 h-80 bg-rose-500/10 rounded-full blur-3xl pointer-events-none -mr-24 -mt-24"></div>
@@ -2485,7 +2541,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             <span className="px-3.5 py-1 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-black uppercase tracking-wider">
               {subscriptionInfo?.requiresSetup || !store.setup_fee_paid
                 ? 'انتهت فترة التجربة المجانية (7 أيام)'
-                : 'تم تعليق حساب المتجر مؤقتاً (SUSPENDED)'}
+                : 'انتهت فترة اشتراك المتجر'}
             </span>
 
             <h2 className="text-2xl sm:text-3xl font-black text-white">

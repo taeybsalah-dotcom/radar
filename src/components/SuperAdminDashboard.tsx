@@ -770,29 +770,27 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
   const handleToggleSubscription = async (targetStore: Store) => {
     try {
+      const currentActive = targetStore.subscription_active !== false && targetStore.status !== 'suspended';
       const updatedStatus = await LoyaltyService.toggleStoreSubscription(
         targetStore.id,
-        targetStore.subscription_active
+        currentActive
       );
       setStores(
         stores.map((s) =>
-          s.id === targetStore.id
+          s.id === targetStore.id || s.slug === targetStore.slug
             ? {
                 ...s,
                 subscription_active: updatedStatus,
-                status: updatedStatus ? 'active' : 'suspended',
-                subscription_status: updatedStatus ? 'active' : 'suspended',
-                lifecycle_stage: updatedStatus
-                  ? (s.setup_fee_paid ? 'مشترك مدفوع' : 'تم التأسيس')
-                  : 'تحت المراجعة',
+                status: updatedStatus ? (s.setup_fee_paid ? 'active' : 'trial') : 'suspended',
+                subscription_status: updatedStatus ? (s.setup_fee_paid ? 'active' : 'trial') : 'suspended',
               }
             : s
         )
       );
       setSuccessMessage(
         updatedStatus
-          ? `تم بنجاح تنشيط وتفعيل متجر [${targetStore.name}] 🟢`
-          : `تم بنجاح إيقاف وتعليق متجر [${targetStore.name}] 🔴`
+          ? `تم بنجاح تنشيط وتشغيل متجر [${targetStore.name}] 🟢`
+          : `تم بنجاح إيقاف متجر [${targetStore.name}] مؤقتاً 🔴`
       );
       setTimeout(() => setSuccessMessage(null), 3500);
       await loadStores();

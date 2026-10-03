@@ -501,14 +501,18 @@ export const LoyaltyService = {
           const validStores = data.filter((s: any) => Boolean(s && s.id)).map((dbStore: any) => {
             const localMatch = currentLocal.find((l) => l.id === dbStore.id || l.slug === dbStore.slug);
             const normalized = normalizeStore({
-              ...(localMatch || {}),
               ...dbStore,
+              ...(localMatch || {}),
+              subscription_active: localMatch?.subscription_active !== undefined ? localMatch.subscription_active : dbStore.subscription_active,
+              status: localMatch?.status || dbStore.status,
+              subscription_status: localMatch?.subscription_status || dbStore.subscription_status,
+              lifecycle_stage: localMatch?.lifecycle_stage || dbStore.lifecycle_stage,
               subscription_plan: localMatch?.subscription_plan || dbStore.subscription_plan,
               subscription_plan_id: localMatch?.subscription_plan_id || dbStore.subscription_plan_id,
               plan_code: localMatch?.plan_code || dbStore.plan_code,
               subscription_end_date: localMatch?.subscription_end_date || dbStore.subscription_end_date,
               subscription_start_date: localMatch?.subscription_start_date || dbStore.subscription_start_date,
-              setup_fee_paid: localMatch?.setup_fee_paid ?? dbStore.setup_fee_paid,
+              setup_fee_paid: localMatch?.setup_fee_paid !== undefined ? localMatch.setup_fee_paid : dbStore.setup_fee_paid,
             });
 
             // 🛡️ Auto-repair legacy DB store rows that mistakenly have active/paid status or setup_fee_paid=true without paid invoice
@@ -1234,30 +1238,25 @@ export const LoyaltyService = {
     };
   },
 
-  // 5. تفعيل / تعطيل اشتراك المتجر (Kill Switch)
-  async toggleStoreSubscription(storeId: string, currentStatus: boolean): Promise<boolean> {
-    const newActive = !currentStatus;
-    const now = Date.now();
-    const newStatus: StoreSubscriptionStatus = newActive ? 'active' : 'suspended';
-
+  // 5. تفعيل / تعطيل تشغيل المتجر (إيقاف مؤقت / تنشيط إداري - منفصل تماماً عن مدة وانتهاء الاشتراك)
+  async toggleStoreSubscription(storeId: string, currentStatus?: boolean): Promise<boolean> {
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const idx = stores.findIndex((s) => s.id === storeId || s.slug === storeId);
     let targetStore: Store = idx !== -1 ? stores[idx] : { ...INITIAL_STORE, id: storeId };
 
+    const isCurrentlyActive = currentStatus !== undefined
+      ? currentStatus
+      : (targetStore.subscription_active !== false && targetStore.status !== 'suspended');
+
+    const newActive = !isCurrentlyActive;
+    const newStatus: StoreSubscriptionStatus = newActive
+      ? (targetStore.setup_fee_paid ? 'active' : 'trial')
+      : 'suspended';
+
     targetStore.subscription_active = newActive;
     targetStore.status = newStatus;
     targetStore.subscription_status = newStatus;
-    if (newActive) {
-      targetStore.lifecycle_stage = targetStore.setup_fee_paid ? 'مشترك مدفوع' : 'تم التأسيس';
-      const currentEnd = targetStore.subscription_end_date
-        ? new Date(targetStore.subscription_end_date).getTime()
-        : 0;
-      if (currentEnd <= now) {
-        targetStore.subscription_end_date = new Date(now + 30 * 86400000).toISOString();
-      }
-    } else {
-      targetStore.lifecycle_stage = 'تحت المراجعة';
-    }
+
     if (idx !== -1) {
       stores[idx] = targetStore;
     } else {
@@ -1277,9 +1276,6 @@ export const LoyaltyService = {
           status: newStatus,
           subscription_status: newStatus,
         };
-        if (newActive && targetStore.subscription_end_date) {
-          updatePayload.subscription_end_date = targetStore.subscription_end_date;
-        }
 
         const query = supabase.from('stores').update(updatePayload);
         if (isUUID(targetStore.id)) {
