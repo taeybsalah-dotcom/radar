@@ -6066,7 +6066,7 @@ export const LoyaltyService = {
         const { data, error } = await withTimeout(
           supabase
             .from('partner_accounts')
-            .select('id, affiliate_id, display_name, slug, region, target_value, active, created_at, affiliates(id, name, phone, referral_code, status, notes)')
+            .select('id, affiliate_id, display_name, slug, region, target_value, active, pin_code, created_at, affiliates(id, name, phone, referral_code, status, notes)')
             .order('created_at', { ascending: false }),
           1500
         );
@@ -6234,28 +6234,40 @@ export const LoyaltyService = {
       return { success: false, error: 'الرمز السري الجديد يجب أن يتكون من 4 أرقام على الأقل' };
     }
 
-    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const idx = local.findIndex((p: any) => p.id === partnerId || p.affiliate_id === partnerId);
-    if (idx === -1) {
+    // Fetch up-to-date partners list
+    const allPartners = await this.getAllPartners();
+    const existingPartner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId);
+    if (!existingPartner) {
       return { success: false, error: 'لم يتم العثور على حساب الشريك' };
     }
 
-    const existingPartner = local[idx];
-    const expectedPin = existingPartner.pin_code || '1234';
+    const expectedPin = (existingPartner.pin_code || '1234').trim();
 
-    if (cleanCurrent !== expectedPin && cleanCurrent !== '1234') {
+    if (cleanCurrent !== expectedPin) {
       return { success: false, error: 'الرمز السري الحالي غير صحيح' };
     }
 
-    // Update local
+    // Update local copy
     const updatedPartner = {
       ...existingPartner,
       pin_code: cleanNew,
+      affiliates: existingPartner.affiliates ? {
+        ...existingPartner.affiliates,
+        notes: `PIN: ${cleanNew}`,
+      } : existingPartner.affiliates,
     };
-    local[idx] = updatedPartner;
-    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, local);
 
-    // Update session
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const updatedLocal = local.map((p: any) => (p.id === existingPartner.id || p.affiliate_id === existingPartner.affiliate_id) ? updatedPartner : p);
+    if (!updatedLocal.some((p: any) => p.id === existingPartner.id)) {
+      updatedLocal.push(updatedPartner);
+    }
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updatedLocal);
+
+    // Invalidate memory cache so next getAllPartners() returns fresh pin
+    invalidatePartnersCache();
+
+    // Update session storage
     try {
       localStorage.setItem('radar_partner_session', JSON.stringify(updatedPartner));
     } catch {}
@@ -6264,6 +6276,12 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
+        if (existingPartner.id) {
+          await supabase
+            .from('partner_accounts')
+            .update({ pin_code: cleanNew })
+            .eq('id', existingPartner.id);
+        }
         if (existingPartner.affiliate_id) {
           await supabase
             .from('affiliates')
@@ -6275,6 +6293,7 @@ export const LoyaltyService = {
       }
     }
 
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     return { success: true, partner: updatedPartner };
   },
 
@@ -6282,9 +6301,13 @@ export const LoyaltyService = {
     const cleanPhone = phone.replace(/\D/g, '');
     const normPhone = cleanPhone.startsWith('966') ? cleanPhone.substring(3) : cleanPhone.startsWith('0') ? cleanPhone.substring(1) : cleanPhone;
 
+    if (!normPhone || normPhone.length < 7) {
+      return { success: false, error: 'يرجى إدخال رقم جوال صحيح' };
+    }
+
     const allPartners = await this.getAllPartners();
     const found = allPartners.find((p: any) => {
-      const pPhone = (p.affiliates?.phone || '').replace(/\D/g, '');
+      const pPhone = (p.affiliates?.phone || p.phone || '').replace(/\D/g, '');
       const normPPhone = pPhone.startsWith('966') ? pPhone.substring(3) : pPhone.startsWith('0') ? pPhone.substring(1) : pPhone;
       return normPPhone === normPhone;
     });
@@ -6297,8 +6320,10 @@ export const LoyaltyService = {
       return { success: false, error: 'حساب الشريك موقوف حالياً، يرجى التواصل مع الإدارة' };
     }
 
-    const expectedPin = found.pin_code || '1234';
-    if (pin.trim() !== expectedPin && (found.pin_code ? false : pin.trim() === '1234')) {
+    const expectedPin = (found.pin_code || '1234').trim();
+    const enteredPin = pin.trim();
+
+    if (enteredPin !== expectedPin) {
       return { success: false, error: 'الرمز السري (PIN) غير صحيح' };
     }
 
@@ -7343,6 +7368,60 @@ export const LoyaltyService = {
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     return { success: true, partner: updated };
+  },
+
+  async adminUpdatePartnerPin(partnerId: string, newPin: string): Promise<{ success: boolean; error?: string; partner?: any }> {
+    const cleanNew = newPin.trim();
+    if (!cleanNew || cleanNew.length < 4) {
+      return { success: false, error: 'الرمز السري الجديد يجب أن يتكون من 4 أرقام على الأقل' };
+    }
+
+    const allPartners = await this.getAllPartners();
+    const existingPartner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId);
+    if (!existingPartner) {
+      return { success: false, error: 'لم يتم العثور على حساب الشريك' };
+    }
+
+    const updatedPartner = {
+      ...existingPartner,
+      pin_code: cleanNew,
+      affiliates: existingPartner.affiliates ? {
+        ...existingPartner.affiliates,
+        notes: `PIN: ${cleanNew}`,
+      } : existingPartner.affiliates,
+    };
+
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const updatedLocal = local.map((p: any) => (p.id === existingPartner.id || p.affiliate_id === existingPartner.affiliate_id) ? updatedPartner : p);
+    if (!updatedLocal.some((p: any) => p.id === existingPartner.id)) {
+      updatedLocal.push(updatedPartner);
+    }
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updatedLocal);
+
+    invalidatePartnersCache();
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        if (existingPartner.id) {
+          await supabase
+            .from('partner_accounts')
+            .update({ pin_code: cleanNew })
+            .eq('id', existingPartner.id);
+        }
+        if (existingPartner.affiliate_id) {
+          await supabase
+            .from('affiliates')
+            .update({ notes: `PIN: ${cleanNew}` })
+            .eq('id', existingPartner.affiliate_id);
+        }
+      } catch (e) {
+        console.warn('Supabase adminUpdatePartnerPin error:', e);
+      }
+    }
+
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+    return { success: true, partner: updatedPartner };
   },
 
   async rollbackLeadConversion(leadId: string, reason?: string): Promise<{ success: boolean; error?: string }> {

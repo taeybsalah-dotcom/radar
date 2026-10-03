@@ -657,6 +657,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       }
 
       setPartner(res.partner);
+      authLogin('partner', {
+        id: res.partner.id,
+        partnerId: res.partner.id,
+        partnerSlug: res.partner.slug || res.partner.referral_code,
+        name: res.partner.display_name || res.partner.name,
+        phone: res.partner.affiliates?.phone || res.partner.phone,
+        metadata: res.partner,
+      });
       setPinChangeSuccess('تم تحديث الرمز السري بنجاح! 🔒');
       setCurrentPinInput('');
       setNewPinInput('');
