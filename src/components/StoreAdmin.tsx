@@ -2475,8 +2475,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         <div className="rounded-3xl p-6 sm:p-10 bg-slate-900/95 border-2 border-rose-500/40 shadow-2xl space-y-8 animate-fade-in relative overflow-hidden backdrop-blur-xl">
           {/* Background Glow */}
           <div className="absolute top-0 right-0 w-80 h-80 bg-rose-500/10 rounded-full blur-3xl pointer-events-none -mr-24 -mt-24"></div>
+          <div className="absolute bottom-0 left-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none -ml-24 -mb-24"></div>
 
-          <div className="max-w-2xl mx-auto text-center space-y-4">
+          <div className="max-w-3xl mx-auto text-center space-y-4">
             <div className="w-20 h-20 rounded-3xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mx-auto shadow-inner">
               <Lock className="w-10 h-10" />
             </div>
@@ -2484,141 +2485,151 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             <span className="px-3.5 py-1 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-black uppercase tracking-wider">
               {subscriptionInfo?.requiresSetup || !store.setup_fee_paid
                 ? 'انتهت فترة التجربة المجانية (7 أيام)'
-                : 'تم تعليق حساب المتجر مؤقتاً (Suspended)'}
+                : 'تم تعليق حساب المتجر مؤقتاً (SUSPENDED)'}
             </span>
 
             <h2 className="text-2xl sm:text-3xl font-black text-white">
               {subscriptionInfo?.requiresSetup || !store.setup_fee_paid
-                ? 'تفعيل حساب المتجر وسداد رسوم التأسيس'
-                : 'تجديد الاشتراك الشهري لاستئناف الخدمة فوراً'}
+                ? 'تفعيل حساب المتجر وسداد الاشتراك'
+                : 'تجديد الاشتراك واختيار الباقة لاستئناف الخدمة فوراً'}
             </h2>
 
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-lg mx-auto">
-              {subscriptionInfo?.requiresSetup || !store.setup_fee_paid
-                ? 'لقد انتهت فترة التجربة المجانية لمتجرك (7 أيام). للاستمرار في استخدام نظام Radar Loyalty ونقاط البيع، يرجى سداد رسوم التأسيس لمرة واحدة مع الاستفادة من اشتراك الشهر الأول مجاناً!'
-                : 'انتهت دورة اشتراك المتجر الشهرية. جميع بيانات العملاء، الحركات، ونقاط الولاء محفوظة بأمان تام في قاعدة البيانات. قم بسداد رسوم التجديد لفتح لوحة التحكم والكاشير فوراً.'}
+            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed max-w-xl mx-auto">
+              جميع بيانات متجرك، حركات العملاء، نقاط الولاء، وكافة إعدادات الكاشير محفوظة بأمان تام في قاعدة البيانات.
+              اختر باقة الاشتراك المناسبة لنشاطك لسدادها واستئناف لوحة التحكم وشاشة الكاشير فوراً.
             </p>
           </div>
 
-          {/* Pricing & Offer Card */}
-          <div className="max-w-xl mx-auto rounded-3xl p-6 sm:p-8 bg-slate-950/90 border border-slate-800 space-y-6 shadow-2xl relative">
-            {subscriptionInfo?.requiresSetup || !store.setup_fee_paid ? (
-              <>
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                  <div>
-                    <span className="text-xs text-slate-400 font-bold block">رسوم التأسيس والربط (تدفع لمرة واحدة فقط):</span>
-                    <h3 className="text-lg font-black text-white mt-0.5">باقة التأسيس الشاملة (Setup Package)</h3>
-                  </div>
-                  <div className="text-left">
-                    <span className="text-3xl font-black text-amber-400 font-mono">500</span>
-                    <span className="text-xs text-slate-400 font-bold mr-1">ر.س</span>
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs font-bold flex items-center space-x-2.5 rtl:space-x-reverse">
-                  <Gift className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <span>هدية التأسيس: فترة تجربة مجانية كاملة لكافة مميزات وبوابات النظام! 🎁</span>
-                </div>
-
-                <div className="space-y-2.5 text-xs text-slate-300">
-                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>تفعيل فوري لكافة بوابات النظام (شاشة الكاشير POS وبوابة الزبائن)</span>
-                  </div>
-                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>حصة شهرية: 200 رسالة واتساب + 500 رسالة SMS مجاناً</span>
-                  </div>
-                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>ربط وتفعيل الدومين المخصص لمتجرك وسجل التدقيق المالي</span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                  <div>
-                    <span className="text-xs text-slate-400 font-bold block">رسوم الاشتراك والخدمة (SaaS Subscription):</span>
-                    <h3 className="text-lg font-black text-white mt-0.5">
-                      {store.subscription_plan && store.subscription_plan !== 'trial'
-                        ? `تجديد ${store.subscription_plan}`
-                        : 'تجديد الاشتراك الدوري'}
-                    </h3>
-                  </div>
-                  <div className="text-left">
-                    <span className="text-3xl font-black text-amber-400 font-mono">
-                      {subscriptionInfo?.renewalAmount || (store as any).renewal_amount || 690}
-                    </span>
-                    <span className="text-xs text-slate-400 font-bold mr-1">ر.س</span>
-                  </div>
-                </div>
-
-                <div className="space-y-2.5 text-xs text-slate-300">
-                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>استئناف فوري لعمليات مسح الباركود ونقاط البيع للكاشير</span>
-                  </div>
-                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>تجديد رصيد رسائل الواتساب ورادار استرداد العملاء المفقودين</span>
-                  </div>
-                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>تمديد فترة الصلاحية 30 يوماً إضافية تبدأ من تاريخ السداد</span>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Payment Method Selector & Instant Action */}
-            <div className="space-y-4 pt-2 border-t border-slate-800">
-              <div className="flex items-center justify-center gap-3 text-xs text-slate-400">
-                <span>بوابات الدفع المعتمدة:</span>
-                <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-white font-bold">مدى Mada</span>
-                <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-white font-bold">Apple Pay</span>
-                <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-white font-bold">Visa / MC</span>
+          {/* Dynamic Billing Plans Grid */}
+          <div className="max-w-5xl mx-auto space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-black text-white">باقات وخطط الاشتراك المعتمدة</h3>
               </div>
-
-              <button
-                type="button"
-                disabled={isPayingRenewal || isPayingSetup}
-                onClick={() => handlePayRenewal('mada')}
-                className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-black font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center space-x-2 rtl:space-x-reverse disabled:opacity-50"
-              >
-                <CreditCard className="w-5 h-5" />
-                <span>{isPayingRenewal || isPayingSetup ? 'جاري معالجة الاشتراك...' : `سداد الاشتراك وتفعيل المتجر (${subscriptionInfo?.renewalAmount || (store as any).renewal_amount || 690} ر.س) 💳`}</span>
-              </button>
+              <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 font-bold">
+                {allPlans.filter((p) => p.active !== false).length} باقات متاحة
+              </span>
             </div>
-          </div>
 
-          {/* Quick Sandbox & Simulation Switcher (For Developer / Demo Testing) */}
-          <div className="max-w-xl mx-auto p-4 rounded-2xl bg-slate-950/60 border border-dashed border-slate-800 text-center space-y-2">
-            <span className="text-[11px] text-slate-400 font-bold block">
-              🧪 مختبر الفحص السريع (Sandbox Simulation Controls):
-            </span>
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleSimulateSubscription('trial_active')}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold border border-slate-700 transition"
-              >
-                تفعيل تجربة (5 أيام)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSimulateSubscription('active_sub')}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold border border-slate-700 transition"
-              >
-                تفعيل اشتراك نشط (20 يوماً)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSimulateSubscription('expiring_soon')}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold border border-slate-700 transition"
-              >
-                تنبيه تجديد (يومان)
-              </button>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {allPlans
+                .filter((p) => p.active !== false)
+                .map((plan) => {
+                  const isCurrent =
+                    store.subscription_plan &&
+                    (plan.name === store.subscription_plan ||
+                      store.subscription_plan.includes(plan.name) ||
+                      plan.name.includes(store.subscription_plan));
+
+                  return (
+                    <div
+                      key={plan.id || plan.code}
+                      className={`rounded-3xl p-6 sm:p-7 space-y-6 flex flex-col justify-between transition-all duration-300 relative ${
+                        isCurrent
+                          ? 'bg-gradient-to-b from-slate-900 to-slate-950 border-2 border-amber-500 shadow-2xl shadow-amber-500/20 ring-2 ring-amber-500/30'
+                          : 'bg-slate-950/80 border border-slate-800 hover:border-amber-500/50 hover:shadow-xl'
+                      }`}
+                    >
+                      {isCurrent && (
+                        <div className="absolute -top-3.5 right-6 px-3.5 py-1 rounded-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-slate-950 text-[11px] font-black shadow-lg shadow-amber-500/30 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-slate-950 stroke-[2.5]" />
+                          <span>باقتك السابقة 👑</span>
+                        </div>
+                      )}
+
+                      <div className="space-y-4">
+                        {/* Plan Duration Badge */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 font-mono">
+                            🗓️ {getPlanDurationLabel(plan)}
+                          </span>
+                          {plan.code === 'PRO' || plan.name.includes('الاحترافية') ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                              الأكثر شمولاً 🚀
+                            </span>
+                          ) : plan.code === 'ADVANCED' || plan.name.includes('المتقدمة') ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                              الأكثر طلباً ⭐
+                            </span>
+                          ) : null}
+                        </div>
+
+                        {/* Title & Description */}
+                        <div>
+                          <h4 className="text-xl font-black text-white">{plan.name}</h4>
+                          {plan.description && (
+                            <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+                              {plan.description}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Price Tag */}
+                        <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 flex items-baseline justify-between">
+                          <div>
+                            <span className="text-3xl font-black text-amber-400 font-mono">
+                              {plan.amount.toLocaleString()}
+                            </span>
+                            <span className="text-xs text-slate-400 font-bold mr-1.5">
+                              {plan.currency || 'ر.س'}
+                            </span>
+                          </div>
+                          <span className="text-xs text-slate-400 font-medium">
+                            / {getPlanPriceSuffix(plan)}
+                          </span>
+                        </div>
+
+                        {/* Features List */}
+                        <div className="space-y-2 pt-2 border-t border-slate-800/60">
+                          <span className="text-[11px] font-bold text-slate-400 block">المميزات المضمنة:</span>
+                          <ul className="space-y-2 text-xs text-slate-300">
+                            {(plan.features || []).map((feat, fIdx) => (
+                              <li key={fIdx} className="flex items-start gap-2 leading-relaxed">
+                                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                                <span>{feat}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Action Button */}
+                      <div className="pt-4 mt-2 border-t border-slate-800/80">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSandboxPaymentConfig({
+                              isOpen: true,
+                              title: `سداد واشتراك متجر [${store.name}] في ${plan.name}`,
+                              itemDescription: `تفعيل باقة ${plan.name} (+${plan.duration_months ? plan.duration_months * 30 : 30} يوماً صلاحية لكافة بوابات النظام)`,
+                              amount: plan.amount,
+                              invoiceType: 'renewal',
+                              planId: plan.id || plan.code,
+                            });
+                          }}
+                          className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99]"
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          <span>سداد وتفعيل الباقة ({plan.amount.toLocaleString()} ر.س) 💳</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Approved Payment Methods Bar */}
+            <div className="rounded-2xl p-4 bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>دفع آمن ومشفر 100% معتمد لجميع البنوك السعودية ومزودي الدفع:</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-white font-bold font-mono">مدى Mada</span>
+                <span className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-white font-bold font-mono">Apple Pay</span>
+                <span className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-white font-bold font-mono">Visa / MasterCard</span>
+              </div>
             </div>
           </div>
         </div>

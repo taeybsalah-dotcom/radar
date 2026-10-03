@@ -576,9 +576,21 @@ export const LoyaltyService = {
         );
 
         if (!error && Array.isArray(data)) {
+          const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
           const validStores = (data as any[])
             .filter((s) => Boolean(s && s.id))
-            .map(normalizeStore) as Store[];
+            .map((dbStore) => {
+              const localMatch = localStores.find((ls) => ls.id === dbStore.id || (dbStore.slug && ls.slug === dbStore.slug));
+              const merged = {
+                ...dbStore,
+                subscription_active: localMatch?.subscription_active !== undefined ? localMatch.subscription_active : dbStore.subscription_active,
+                status: localMatch?.status || dbStore.status,
+                subscription_status: localMatch?.subscription_status || dbStore.subscription_status,
+                lifecycle_stage: localMatch?.lifecycle_stage || dbStore.lifecycle_stage,
+                subscription_end_date: localMatch?.subscription_end_date || dbStore.subscription_end_date,
+              };
+              return normalizeStore(merged);
+            }) as Store[];
           saveLocalData(STORAGE_KEYS.LOCAL_STORES, validStores);
 
           const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, INITIAL_CUSTOMERS);
@@ -1236,12 +1248,15 @@ export const LoyaltyService = {
     targetStore.status = newStatus;
     targetStore.subscription_status = newStatus;
     if (newActive) {
+      targetStore.lifecycle_stage = targetStore.setup_fee_paid ? 'مشترك مدفوع' : 'تم التأسيس';
       const currentEnd = targetStore.subscription_end_date
         ? new Date(targetStore.subscription_end_date).getTime()
         : 0;
       if (currentEnd <= now) {
         targetStore.subscription_end_date = new Date(now + 30 * 86400000).toISOString();
       }
+    } else {
+      targetStore.lifecycle_stage = 'تحت المراجعة';
     }
     if (idx !== -1) {
       stores[idx] = targetStore;
@@ -1249,6 +1264,10 @@ export const LoyaltyService = {
       stores.push(targetStore);
     }
     saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
+
+    invalidateAdminStoresCache();
+    storeResolutionCache.delete(targetStore.id.toLowerCase());
+    if (targetStore.slug) storeResolutionCache.delete(targetStore.slug.toLowerCase());
 
     const supabase = getSupabaseClient();
     if (supabase) {

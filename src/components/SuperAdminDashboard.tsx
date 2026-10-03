@@ -268,6 +268,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   };
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const { role, login: authLogin, logout: authLogout } = useAuth();
@@ -768,22 +769,36 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   };
 
   const handleToggleSubscription = async (targetStore: Store) => {
-    const updatedStatus = await LoyaltyService.toggleStoreSubscription(
-      targetStore.id,
-      targetStore.subscription_active
-    );
-    setStores(
-      stores.map((s) =>
-        s.id === targetStore.id
-          ? {
-              ...s,
-              subscription_active: updatedStatus,
-              status: updatedStatus ? 'active' : 'suspended',
-              subscription_status: updatedStatus ? 'active' : 'suspended',
-            }
-          : s
-      )
-    );
+    try {
+      const updatedStatus = await LoyaltyService.toggleStoreSubscription(
+        targetStore.id,
+        targetStore.subscription_active
+      );
+      setStores(
+        stores.map((s) =>
+          s.id === targetStore.id
+            ? {
+                ...s,
+                subscription_active: updatedStatus,
+                status: updatedStatus ? 'active' : 'suspended',
+                subscription_status: updatedStatus ? 'active' : 'suspended',
+                lifecycle_stage: updatedStatus
+                  ? (s.setup_fee_paid ? 'مشترك مدفوع' : 'تم التأسيس')
+                  : 'تحت المراجعة',
+              }
+            : s
+        )
+      );
+      setSuccessMessage(
+        updatedStatus
+          ? `تم بنجاح تنشيط وتفعيل متجر [${targetStore.name}] 🟢`
+          : `تم بنجاح إيقاف وتعليق متجر [${targetStore.name}] 🔴`
+      );
+      setTimeout(() => setSuccessMessage(null), 3500);
+      await loadStores();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'فشل في تغيير حالة المتجر');
+    }
   };
 
   if (!isAuthenticated) {
@@ -843,6 +858,23 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
   return (
     <div className="max-w-7xl mx-auto space-y-10">
+      {/* Toast Feedback */}
+      {(successMessage || errorMessage) && (
+        <div className="fixed bottom-6 right-6 z-50 animate-bounce max-w-md">
+          {successMessage && (
+            <div className="p-4 rounded-2xl bg-emerald-500/90 text-slate-950 font-bold text-sm shadow-2xl border border-emerald-400/50 backdrop-blur-lg flex items-center gap-3">
+              <span className="text-xl">✅</span>
+              <span>{successMessage}</span>
+            </div>
+          )}
+          {errorMessage && (
+            <div className="p-4 rounded-2xl bg-rose-500/90 text-white font-bold text-sm shadow-2xl border border-rose-400/50 backdrop-blur-lg flex items-center gap-3">
+              <span className="text-xl">⚠️</span>
+              <span>{errorMessage}</span>
+            </div>
+          )}
+        </div>
+      )}
       
       {/* 👑 Super Admin Hero Banner */}
       <div className="relative rounded-3xl bg-gradient-to-r from-amber-500/20 via-slate-900 to-slate-900 border-2 border-amber-500/40 p-6 sm:p-10 overflow-hidden shadow-2xl">
