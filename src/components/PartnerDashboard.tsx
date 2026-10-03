@@ -83,50 +83,50 @@ const PARTNER_STATUS_FILTER_TABS = [
 ];
 
 const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): SalesKitMessage[] => {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.sa';
-  const publicLink = `${origin}/${pSlug}`;
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.taeybsalah.workers.dev';
+  const joinLink = `${origin}/join?ref=${pRef}`;
   return [
     {
       id: 'msg-cashier',
       title: 'رسالة الكاشير والعميل العائد 🏪',
       tag: 'CASHIER_LOST',
       headline: 'كم عميل يجيك مرة ويختفي؟',
-      body: `كم عميل يجيك مرة ويختفي؟ 🤔\n\nأغلب المحلات تركز على جلب زبون جديد وتنسى الزبون اللي اشترى وراح.\nمع منصة RADAR للولاء الذكي، تقدر تجمع بيانات عملائك وتخليهم يرجعون لك بدون ما تدفع مبالغ ضخمة على الإعلانات.\n\nجرّب بنفسك وشوف كيف يشتغل لمتجرك:\n${publicLink}\n\nأخوك: ${pName}`,
+      body: `كم عميل يجيك مرة ويختفي؟ 🤔\n\nأغلب المحلات تركز على جلب زبون جديد وتنسى الزبون اللي اشترى وراح.\nمع منصة RADAR للولاء الذكي، تقدر تجمع بيانات عملائك وتخليهم يرجعون لك بدون ما تدفع مبالغ ضخمة على الإعلانات.\n\nجرّب بنفسك وسجّل متجرك من هنا:\n${joinLink}\n\nأخوك: ${pName}`,
     },
     {
       id: 'msg-app',
       title: 'رسالة التطبيق والهوية الخاصة 📱',
       tag: 'BRAND_EXPERIENCE',
       headline: 'تخيل عميلك يفتح تجربة باسم محلك بدون ما تبني تطبيق من الصفر',
-      body: `تخيل عميلك يفتح تجربة وبطاقة ولاء باسم وشعار محلك في ثواني بدون ما تدفع عشرات الآلاف لبناء تطبيق من الصفر! 🚀\n\nنظام RADAR يعطيك PWA فورية لكاشيرك وعملائك برابط وهوية خاصة.\n\nاطلع على التفاصيل وابدأ هنا:\n${publicLink}\n\nتحياتي، ${pName}`,
+      body: `تخيل عميلك يفتح تجربة وبطاقة ولاء باسم وشعار محلك في ثواني بدون ما تدفع عشرات الآلاف لبناء تطبيق من الصفر! 🚀\n\nنظام RADAR يعطيك PWA فورية لكاشيرك وعملائك برابط وهوية خاصة.\n\nسجّل متجرك وابدأ هنا:\n${joinLink}\n\nتحياتي، ${pName}`,
     },
     {
       id: 'msg-loyalty',
       title: 'رسالة قيمة الولاء والخصم 💎',
       tag: 'VALUE_VS_DISCOUNT',
       headline: 'مو كل عميل يحتاج خصم... بعضهم يحتاج سبب يرجع',
-      body: `مو كل عميل يحتاج خصم... بعضهم يحتاج سبب يرجع! ✨\n\nالخصومات تحرق هامش ربحك، لكن نظام النقاط والمستويات (Tiers) يخلي العميل يرتبط بمحلك ويتحمس يجمع نقاط ويكرر زيارته.\n\nشوف النظام وشلون يفيد نشاطك:\n${publicLink}\n\n${pName} — رادار لخدمات التجار`,
+      body: `مو كل عميل يحتاج خصم... بعضهم يحتاج سبب يرجع! ✨\n\nالخصومات تحرق هامش ربحك، لكن نظام النقاط والمستويات (Tiers) يخلي العميل يرتبط بمحلك ويتحمس يجمع نقاط ويكرر زيارته.\n\nسجّل متجرك وشوف كيف يفيد نشاطك:\n${joinLink}\n\n${pName} — رادار لخدمات التجار`,
     },
     {
       id: 'msg-lost-customers',
       title: 'رسالة استعادة العملاء المنقطعين ⏰',
       tag: 'RETENTION',
       headline: 'عندك عملاء ما شفتهم من شهر؟',
-      body: `عندك عملاء كانوا يجونك دايماً وفجأة انقطعوا من شهر؟ 📉\n\nنظام رادار ينبهك عليهم ويساعدك ترسل لهم عروض حصرية وترجعهم لك بضغطة زر.\n\nسجل متجرك وجرب التجربة:\n${publicLink}\n\nمستشارك: ${pName}`,
+      body: `عندك عملاء كانوا يجونك دايماً وفجأة انقطعوا من شهر؟ 📉\n\nنظام رادار ينبهك عليهم ويساعدك ترسل لهم عروض حصرية وترجعهم لك بضغطة زر.\n\nسجل متجرك وابدأ التجربة:\n${joinLink}\n\nمستشارك: ${pName}`,
     },
     {
       id: 'msg-positioning',
       title: 'رسالة التموضع الاستراتيجي ⚡',
       tag: 'COMPETITIVE',
       headline: 'الكاشير يعرف كم بعت اليوم. RADAR يساعدك تعرف مين تبغى يرجع بكرة',
-      body: `الكاشير يعرف كم بعت اليوم... لكن RADAR يساعدك تعرف مين تبغى يرجع بكرة! 🎯\n\nحوّل كل عملية بيع إلى علاقة مستمرة وزبون وفيّ.\n\nابدأ تجربتك الآن:\n${publicLink}\n\n${pName}`,
+      body: `الكاشير يعرف كم بعت اليوم... لكن RADAR يساعدك تعرف مين تبغى يرجع بكرة! 🎯\n\nحوّل كل عملية بيع إلى علاقة مستمرة وزبون وفيّ.\n\nسجّل متجرك الآن عبر هذا الرابط:\n${joinLink}\n\n${pName}`,
     },
   ];
 };
 
-const buildDefaultStatusTemplates = (pName: string, pSlug: string) => {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.sa';
-  const directJoinLink = `${origin}/join`;
+const buildDefaultStatusTemplates = (pName: string, pRef: string) => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.taeybsalah.workers.dev';
+  const joinLink = `${origin}/join?ref=${pRef}`;
   return {
     trial: {
       title: 'متابعة تجربة المتجر (Trial Follow-up)',
@@ -134,7 +134,7 @@ const buildDefaultStatusTemplates = (pName: string, pSlug: string) => {
     },
     pending_payment: {
       title: 'تذكير التفعيل والاعتماد (Payment / Setup Reminder)',
-      body: `أهلاً بك عزيزي،\nطلب متجركم معتمد وجاهز للانطلاق على رادار. باقي فقط خطوة الاعتماد النهائي لنفعل لكم الربط الكامل وهوية المتجر الخاصة.\n\nيسعدني مساعدتك لإتمام التفعيل في أي وقت:\n${directJoinLink}\n\n${pName}`,
+      body: `أهلاً بك عزيزي،\nطلب متجركم معتمد وجاهز للانطلاق على رادار. باقي فقط خطوة الاعتماد النهائي لنفعل لكم الربط الكامل وهوية المتجر الخاصة.\n\nيسعدني مساعدتك لإتمام التفعيل في أي وقت:\n${joinLink}\n\n${pName}`,
     },
     no_response: {
       title: 'إعادة فتح التواصل (No Response Check-in)',
@@ -151,13 +151,13 @@ const buildDefaultStatusTemplates = (pName: string, pSlug: string) => {
   };
 };
 
-const buildDefaultLogoPitch = (pName: string, pSlug: string) => {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.sa';
-  const publicLink = `${origin}/${pSlug}`;
+const buildDefaultLogoPitch = (pName: string, pRef: string) => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.taeybsalah.workers.dev';
+  const joinLink = `${origin}/join?ref=${pRef}`;
   return {
     title: 'أداة أرسل شعارك (Logo Pitch)',
     headline: 'أرسل لي اسم محلك وشعاره، وأوريك كيف ممكن تكون تجربة RADAR باسم محلك',
-    body: `أرسل لي اسم محلك وشعاره 🎨\n\nوأنا بجهّز لك نموذج حي يعرض كيف تظهر تجربة وبطاقة ولاء RADAR بهوية وألوان محلك قبل ما تشترك!\n\nشوف الرابط وجرب:\n${publicLink}\n\n${pName}`,
+    body: `أرسل لي اسم محلك وشعاره 🎨\n\nوأنا بجهّز لك نموذج حي يعرض كيف تظهر تجربة وبطاقة ولاء RADAR بهوية وألوان محلك قبل ما تشترك!\n\nسجّل متجرك وجرب من هنا:\n${joinLink}\n\n${pName}`,
   };
 };
 
@@ -782,16 +782,6 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
   }
   const partnerRefCode = rawCode.toLowerCase();
 
-  let safeSlug = (partner.slug || '').toLowerCase().trim().replace(/^\/+|\/+$/g, '');
-  if (RESERVED_SLUGS.has(safeSlug) || safeSlug.length < 2) {
-    safeSlug = partnerRefCode;
-  }
-
-  // Derived Links
-  const publicLandingLink = typeof window !== 'undefined'
-    ? `${window.location.origin}/${safeSlug}`
-    : `https://radar.sa/${safeSlug}`;
-
   const directJoinLink = typeof window !== 'undefined'
     ? `${window.location.origin}/join?ref=${encodeURIComponent(partnerRefCode)}`
     : `https://radar.sa/join?ref=${encodeURIComponent(partnerRefCode)}`;
@@ -825,10 +815,6 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               <span className="text-slate-400">
                 كود الإحالة: <strong className="text-amber-400 font-bold px-2 py-0.5 bg-amber-500/10 border border-amber-500/30 rounded-lg">{partnerRefCode}</strong>
               </span>
-              <span className="text-slate-500">•</span>
-              <span className="text-slate-400">
-                معرف الصفحة: <strong className="text-slate-300">/{safeSlug}</strong>
-              </span>
             </div>
           </div>
         </div>
@@ -842,16 +828,6 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             {copiedKey === 'header-direct-join' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
             <span>{copiedKey === 'header-direct-join' ? 'تم نسخ رابط التسجيل!' : 'نسخ رابط تسجيل التاجر'}</span>
           </button>
-
-          <a
-            href={publicLandingLink}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 px-3.5 py-2 rounded-2xl text-xs font-bold transition"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
-            <span>معاينة صفحتك الترويجية</span>
-          </a>
 
           <button
             onClick={() => {
@@ -995,31 +971,6 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                   <span>{stats?.target?.status_note || 'لا تتوفر بيانات الدفع الكافية لاحتساب الهدف'}</span>
                 </p>
               </div>
-
-              {/* Demo CTA (Section 41 & 104) */}
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                    <span>⚡ بيئة تجربة المنصة (Demo Hub):</span>
-                  </span>
-                  <span className="text-[10px] bg-slate-800 text-amber-400 px-2 py-0.5 rounded font-mono font-bold">
-                    DEMO ENVIRONMENT REQUIRED
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  لحماية بيانات المتاجر الإنتاجية القائمة، تتيح المنصة تجربة شاشة العميل والكاشير في بيئة ديمو معزولة تماماً.
-                </p>
-                <button
-                  onClick={() => {
-                    const demoUrl = `${window.location.origin}/?store=demo-hub&portal=customer`;
-                    window.open(demoUrl, '_blank');
-                  }}
-                  className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-xs font-bold transition flex items-center justify-center gap-1.5"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
-                  <span>فتح نافذة الديمو المعزولة</span>
-                </button>
-              </div>
             </div>
 
             {/* Right: Personal Link & Quick QR Card */}
@@ -1054,22 +1005,6 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                       className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-[10px] font-black transition flex-shrink-0"
                     >
                       {copiedKey === 'direct-link-quick' ? 'تم النسخ' : 'نسخ'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Public Landing Link */}
-                <div className="space-y-1.5 text-right">
-                  <span className="text-[11px] font-bold text-slate-300 block">
-                    🌐 صفحتك التعريفية الترويجية (Landing Page):
-                  </span>
-                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 break-all select-all flex items-center justify-between gap-2">
-                    <span className="truncate">{publicLandingLink}</span>
-                    <button
-                      onClick={() => copyText(publicLandingLink, 'public-link-quick')}
-                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[10px] font-bold transition flex-shrink-0"
-                    >
-                      {copiedKey === 'public-link-quick' ? 'تم النسخ' : 'نسخ'}
                     </button>
                   </div>
                 </div>
@@ -1406,86 +1341,43 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       {/* TAB 4: REFERRAL LINK & QR CODE (Section 25 & 26)                     */}
       {/* -------------------------------------------------------------------- */}
       {activeTab === 'qr' && (
-        <div className="max-w-4xl mx-auto space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Card 1: Direct Merchant Registration Link & QR */}
-            <div className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-5 text-center shadow-2xl flex flex-col justify-between">
-              <div className="space-y-3">
-                <span className="px-3 py-1 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-400 border border-amber-500/30 inline-block">
-                  الأكثر استخداماً للتسجيل المباشر ⚡
-                </span>
-                <h3 className="text-base font-black text-white">رابط وباركود تسجيل التاجر المباشر</h3>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  يفتح للتاجر نموذج التسجيل الفوري مع تثبيت كودك <strong className="text-amber-400 font-mono">({partnerRefCode})</strong> تلقائياً ليُحتسب العميل لك فور تسجيله.
-                </p>
+        <div className="max-w-2xl mx-auto space-y-6">
+          {/* Card: Direct Merchant Registration Link & QR */}
+          <div className="bg-slate-900/90 border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-6 text-center shadow-2xl">
+            <div className="space-y-3">
+              <span className="px-3 py-1 rounded-full text-[10px] font-black bg-amber-500/15 text-amber-400 border border-amber-500/30 inline-block">
+                رابط وباركود تسجيل التاجر المباشر ⚡
+              </span>
+              <h3 className="text-lg font-black text-white">رابط وباركود تسجيل التاجر</h3>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
+                يفتح للتاجر نموذج التسجيل الفوري مع تثبيت كودك <strong className="text-amber-400 font-mono">({partnerRefCode})</strong> تلقائياً ليُحتسب العميل لك فور تسجيله.
+              </p>
 
-                <div className="p-4 bg-white rounded-2xl w-44 h-44 mx-auto shadow-xl flex items-center justify-center border-2 border-amber-500/30">
-                  <QRCodeSVG value={directJoinLink} size={150} level="H" includeMargin={true} />
-                </div>
-
-                <div className="bg-slate-950 p-3 rounded-xl border border-amber-500/20 font-mono text-xs text-amber-400 break-all select-all text-left" dir="ltr">
-                  {directJoinLink}
-                </div>
+              <div className="p-4 bg-white rounded-2xl w-48 h-48 mx-auto shadow-xl flex items-center justify-center border-2 border-amber-500/30 my-4">
+                <QRCodeSVG value={directJoinLink} size={165} level="H" includeMargin={true} />
               </div>
 
-              <div className="space-y-2 pt-2">
-                <button
-                  onClick={() => copyText(directJoinLink, 'full-direct-join-link')}
-                  className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/20"
-                >
-                  {copiedKey === 'full-direct-join-link' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  <span>{copiedKey === 'full-direct-join-link' ? 'تم النسخ!' : 'نسخ رابط التسجيل المباشر'}</span>
-                </button>
-
-                <button
-                  onClick={() => openWhatsApp(`أهلاً بك! سجّل متجرك عبر منظومة RADAR مع كود الشريك [${partnerRefCode}]:\n${directJoinLink}`)}
-                  className="w-full py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  <span>إرسال عبر واتساب</span>
-                </button>
+              <div className="bg-slate-950 p-3 rounded-xl border border-amber-500/20 font-mono text-xs text-amber-400 break-all select-all text-left" dir="ltr">
+                {directJoinLink}
               </div>
             </div>
 
-            {/* Card 2: Promotional Landing Page Link & QR */}
-            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-5 text-center shadow-2xl flex flex-col justify-between">
-              <div className="space-y-3">
-                <span className="px-3 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 inline-block">
-                  صفحة الهبوط التعريفية 🌐
-                </span>
-                <h3 className="text-base font-black text-white">رابط وباركود صفحتك التعريفية</h3>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  صفحة تسويقية خاصة باسمك تعرض مميزات رادار للتاجر، وبها أزرار تنقله لنموذج التسجيل مع كودك.
-                </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+              <button
+                onClick={() => copyText(directJoinLink, 'full-direct-join-link')}
+                className="w-full py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20"
+              >
+                {copiedKey === 'full-direct-join-link' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                <span>{copiedKey === 'full-direct-join-link' ? 'تم النسخ بنجاح!' : 'نسخ رابط التسجيل المباشر'}</span>
+              </button>
 
-                <div className="p-4 bg-white rounded-2xl w-44 h-44 mx-auto shadow-xl flex items-center justify-center border-2 border-slate-700">
-                  <QRCodeSVG value={publicLandingLink} size={150} level="H" includeMargin={true} />
-                </div>
-
-                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-xs text-slate-300 break-all select-all text-left" dir="ltr">
-                  {publicLandingLink}
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2">
-                <button
-                  onClick={() => copyText(publicLandingLink, 'full-public-landing-link')}
-                  className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition flex items-center justify-center gap-1.5"
-                >
-                  {copiedKey === 'full-public-landing-link' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  <span>{copiedKey === 'full-public-landing-link' ? 'تم النسخ!' : 'نسخ رابط الصفحة التعريفية'}</span>
-                </button>
-
-                <a
-                  href={publicLandingLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="w-full py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 text-xs font-bold transition flex items-center justify-center gap-1.5"
-                >
-                  <ExternalLink className="w-4 h-4 text-amber-400" />
-                  <span>معاينة الصفحة في نافذة جديدة</span>
-                </a>
-              </div>
+              <button
+                onClick={() => openWhatsApp(`أهلاً بك! سجّل متجرك عبر منظومة RADAR مع كود الشريك [${partnerRefCode}]:\n${directJoinLink}`)}
+                className="w-full py-3.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-2"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>مشاركة عبر واتساب</span>
+              </button>
             </div>
           </div>
         </div>
