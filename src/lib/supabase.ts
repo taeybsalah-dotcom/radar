@@ -6751,6 +6751,11 @@ export const LoyaltyService = {
 
   // 🏆 تقييم واحتساب مكافآت التارقت للأعضاء بناءً على المتاجر المدفوعة فقط
   async evaluatePartnerMilestones(partnerId: string): Promise<void> {
+    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const partner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId || p.slug === partnerId);
+    const resolvedPartnerId = partner?.id || partnerId;
+    const resolvedAffiliateId = partner?.affiliate_id || partnerId;
+
     const defaultMilestones = [
       { id: 'rule-3', milestone: 3, bonus_amount: 100 },
       { id: 'rule-5', milestone: 5, bonus_amount: 250 },
@@ -6760,7 +6765,13 @@ export const LoyaltyService = {
 
     const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
     const earnedOrPaidComms = localComms.filter(
-      (c) => c.partner_account_id === partnerId && (c.status === 'AVAILABLE' || c.status === 'EARNED' || c.status === 'PAID')
+      (c) =>
+        (c.partner_account_id === resolvedPartnerId ||
+         c.affiliate_id === resolvedPartnerId ||
+         c.partner_account_id === resolvedAffiliateId ||
+         c.affiliate_id === resolvedAffiliateId ||
+         (partner && (c.partner_account_id === partner.id || c.affiliate_id === partner.affiliate_id))) &&
+        (c.status === 'AVAILABLE' || c.status === 'EARNED' || c.status === 'PAID')
     );
 
     const paidStoreIds = new Set<string>();
@@ -6774,11 +6785,18 @@ export const LoyaltyService = {
 
     for (const rule of defaultMilestones) {
       if (paidCount >= rule.milestone) {
-        const awardKey = `bonus_${partnerId}_${rule.milestone}`;
-        if (!existingAwards.some((a) => a.idempotency_key === awardKey || (a.partner_account_id === partnerId && a.milestone === rule.milestone))) {
+        const awardKey = `bonus_${resolvedPartnerId}_${rule.milestone}`;
+        const hasAward = existingAwards.some(
+          (a) =>
+            a.idempotency_key === awardKey ||
+            ((a.partner_account_id === resolvedPartnerId || a.partner_account_id === resolvedAffiliateId) &&
+              Number(a.milestone) === rule.milestone)
+        );
+
+        if (!hasAward) {
           const newAward = {
             id: `award-${Date.now()}-${rule.milestone}`,
-            partner_account_id: partnerId,
+            partner_account_id: resolvedPartnerId,
             bonus_rule_id: rule.id,
             milestone: rule.milestone,
             bonus_amount: rule.bonus_amount,
@@ -6807,6 +6825,11 @@ export const LoyaltyService = {
   },
 
   async getPartnerCommissions(partnerId: string): Promise<any[]> {
+    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const partner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId || p.slug === partnerId);
+    const resolvedPartnerId = partner?.id || partnerId;
+    const resolvedAffiliateId = partner?.affiliate_id || partnerId;
+
     const supabase = getSupabaseClient();
 
     // تنظيف أي سجلات قديمة غير مدفوعة (PENDING) محلياً
@@ -6815,6 +6838,13 @@ export const LoyaltyService = {
     if (cleanLocal.length !== local.length) {
       saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, cleanLocal);
     }
+
+    const isMatch = (c: any) =>
+      c.partner_account_id === resolvedPartnerId ||
+      c.affiliate_id === resolvedPartnerId ||
+      c.partner_account_id === resolvedAffiliateId ||
+      c.affiliate_id === resolvedAffiliateId ||
+      (partner && (c.partner_account_id === partner.id || c.affiliate_id === partner.affiliate_id));
 
     const reconcileComm = (c: any) => {
       return {
@@ -6832,7 +6862,7 @@ export const LoyaltyService = {
         const { data, error } = await supabase
           .from('partner_commissions')
           .select('*, merchant_leads(store_name)')
-          .eq('partner_account_id', partnerId)
+          .eq('partner_account_id', resolvedPartnerId)
           .neq('status', 'PENDING')
           .order('created_at', { ascending: false });
 
@@ -6844,10 +6874,15 @@ export const LoyaltyService = {
       }
     }
 
-    return cleanLocal.filter((c) => c.partner_account_id === partnerId && c.status !== 'PENDING').map(reconcileComm);
+    return cleanLocal.filter((c) => isMatch(c) && c.status !== 'PENDING').map(reconcileComm);
   },
 
   async getPartnerBonuses(partnerId: string, affiliateId?: string): Promise<{ milestones: any[]; paidCount: number }> {
+    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const partner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId || p.slug === partnerId);
+    const resolvedPartnerId = partner?.id || partnerId;
+    const resolvedAffiliateId = partner?.affiliate_id || affiliateId || partnerId;
+
     const supabase = getSupabaseClient();
     let rules = [
       { id: 'rule-3', milestone: 3, bonus_amount: 100 },
@@ -6862,7 +6897,7 @@ export const LoyaltyService = {
       try {
         const [rulesRes, awardsRes] = await Promise.all([
           supabase.from('partner_bonus_rules').select('*').eq('active', true).order('milestone', { ascending: true }),
-          supabase.from('partner_bonus_awards').select('*').eq('partner_account_id', partnerId),
+          supabase.from('partner_bonus_awards').select('*').or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`),
         ]);
 
         if (rulesRes.data && rulesRes.data.length > 0) rules = rulesRes.data;
@@ -6871,7 +6906,7 @@ export const LoyaltyService = {
         const { data: commRows } = await supabase
           .from('partner_commissions')
           .select('store_id')
-          .eq('partner_account_id', partnerId)
+          .or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`)
           .in('status', ['AVAILABLE', 'EARNED', 'PAID']);
 
         if (commRows && Array.isArray(commRows)) {
@@ -6883,31 +6918,101 @@ export const LoyaltyService = {
       }
     }
 
+    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    const isMatchingComm = (c: any) =>
+      c.partner_account_id === resolvedPartnerId ||
+      c.affiliate_id === resolvedPartnerId ||
+      c.partner_account_id === resolvedAffiliateId ||
+      c.affiliate_id === resolvedAffiliateId ||
+      (partner && (c.partner_account_id === partner.id || c.affiliate_id === partner.affiliate_id));
+
     if (paidCount === 0) {
-      const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
       const partnerComms = localComms.filter(
-        (c) => c.partner_account_id === partnerId && (c.status === 'AVAILABLE' || c.status === 'EARNED' || c.status === 'PAID')
+        (c) => isMatchingComm(c) && (c.status === 'AVAILABLE' || c.status === 'EARNED' || c.status === 'PAID')
       );
       const uniqueStores = new Set(partnerComms.map((c) => c.store_id).filter(Boolean));
       paidCount = uniqueStores.size;
     }
 
-    const localAwards = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []).filter((a) => a.partner_account_id === partnerId);
-    const combinedAwards = [...awards, ...localAwards.filter((la) => !awards.some((a) => a.idempotency_key === la.idempotency_key))];
+    let localAwards = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+    const partnerAwards = localAwards.filter(
+      (a) =>
+        a.partner_account_id === resolvedPartnerId ||
+        a.partner_account_id === resolvedAffiliateId ||
+        (partner && (a.partner_account_id === partner.id || a.partner_account_id === partner.affiliate_id))
+    );
+
+    // 🔄 Auto-Reconciliation: Check if any previous payout already settled bonuses
+    const localPayouts = getLocalData<AffiliatePayoutRecord[]>(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, []);
+    const partnerPayouts = localPayouts.filter(
+      (p) =>
+        p.affiliate_id === resolvedPartnerId ||
+        p.affiliate_id === resolvedAffiliateId ||
+        (partner && (p.affiliate_id === partner.id || p.affiliate_id === partner.affiliate_id))
+    );
+    const totalPayoutsAmt = partnerPayouts.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+    const totalPaidCommsAmt = localComms
+      .filter((c) => isMatchingComm(c) && c.status === 'PAID')
+      .reduce((sum, c) => sum + (Number(c.commission_amount) || 0), 0);
+
+    let awardsUpdated = false;
+    const combinedAwards = [...awards, ...partnerAwards.filter((la) => !awards.some((a) => a.idempotency_key === la.idempotency_key))];
+
+    // If total payout exceeds paid commissions, milestone bonuses were disbursed
+    let cumulativeBonusBudget = Math.max(0, Math.round((totalPayoutsAmt - totalPaidCommsAmt) * 100) / 100);
 
     const awardMap = new Map();
     combinedAwards.forEach((a) => {
-      awardMap.set(a.bonus_rule_id || `rule-${a.milestone}`, a);
-      if (a.milestone) awardMap.set(a.milestone, a);
+      if (a.bonus_rule_id) awardMap.set(a.bonus_rule_id, a);
+      if (a.milestone) {
+        awardMap.set(a.milestone, a);
+        awardMap.set(Number(a.milestone), a);
+        awardMap.set(`rule-${a.milestone}`, a);
+      }
     });
 
     const milestones = rules.map((r) => {
-      const award = awardMap.get(r.id) || awardMap.get(r.milestone);
+      let award = awardMap.get(r.id) || awardMap.get(r.milestone) || awardMap.get(Number(r.milestone)) || awardMap.get(`rule-${r.milestone}`);
+      const isAchievedByCount = paidCount >= r.milestone;
+
+      // Auto-reconcile to PAID if historical payouts covered it
+      if (isAchievedByCount && (!award || award.status !== 'PAID') && cumulativeBonusBudget >= Number(r.bonus_amount)) {
+        cumulativeBonusBudget -= Number(r.bonus_amount);
+        const awardKey = `bonus_${resolvedPartnerId}_${r.milestone}`;
+        award = {
+          ...(award || {}),
+          id: award?.id || `award-${Date.now()}-${r.milestone}`,
+          partner_account_id: resolvedPartnerId,
+          bonus_rule_id: r.id,
+          milestone: r.milestone,
+          bonus_amount: Number(r.bonus_amount),
+          status: 'PAID',
+          idempotency_key: awardKey,
+          paid_at: award?.paid_at || new Date().toISOString(),
+          awarded_at: award?.awarded_at || new Date().toISOString(),
+        };
+        awardMap.set(r.id, award);
+        awardMap.set(r.milestone, award);
+
+        // Update local storage awards
+        const idx = localAwards.findIndex(
+          (la) => la.idempotency_key === awardKey || ((la.partner_account_id === resolvedPartnerId || la.partner_account_id === resolvedAffiliateId) && Number(la.milestone) === r.milestone)
+        );
+        if (idx !== -1) {
+          localAwards[idx] = award;
+        } else {
+          localAwards.push(award);
+        }
+        awardsUpdated = true;
+      }
+
       let status: 'LOCKED' | 'IN_PROGRESS' | 'ACHIEVED' | 'AWARDED' = 'LOCKED';
-      if (award) {
-        status = award.status === 'PAID' ? 'AWARDED' : 'ACHIEVED';
-      } else if (paidCount >= r.milestone) {
-        status = 'ACHIEVED';
+      const isPaid = award?.status === 'PAID' || award?.status === 'AWARDED';
+
+      if (isPaid) {
+        status = 'AWARDED'; // Awarded & Paid out
+      } else if (award?.status === 'ACHIEVED' || isAchievedByCount) {
+        status = 'ACHIEVED'; // Achieved & Unpaid
       } else if (paidCount > 0) {
         status = 'IN_PROGRESS';
       }
@@ -6917,11 +7022,17 @@ export const LoyaltyService = {
         milestone: r.milestone,
         bonus_amount: Number(r.bonus_amount),
         status,
+        is_paid: isPaid,
         current_progress: paidCount,
         required_merchants: r.milestone,
         awarded_at: award?.awarded_at || null,
+        paid_at: award?.paid_at || null,
       };
     });
+
+    if (awardsUpdated) {
+      saveLocalData(STORAGE_KEYS.LOCAL_BONUS_AWARDS, localAwards);
+    }
 
     return { milestones, paidCount };
   },
@@ -6931,6 +7042,7 @@ export const LoyaltyService = {
     earned_commissions: number;
     paid_commissions: number;
     bonuses_earned: number;
+    bonuses_paid: number;
     total_payable: number;
     currency: string;
   }> {
@@ -6950,18 +7062,26 @@ export const LoyaltyService = {
     });
 
     let bonuses_earned = 0;
+    let bonuses_paid = 0;
+
     bonusesData.milestones.forEach((m) => {
-      if (m.status === 'ACHIEVED' || m.status === 'AWARDED') {
+      if (m.status === 'ACHIEVED' && !m.is_paid) {
         bonuses_earned += Number(m.bonus_amount) || 0;
+      } else if (m.is_paid || m.status === 'AWARDED') {
+        bonuses_paid += Number(m.bonus_amount) || 0;
       }
     });
 
+    const total_payable = Math.round((earned_commissions + bonuses_earned) * 100) / 100;
+    const total_paid = Math.round((paid_commissions + bonuses_paid) * 100) / 100;
+
     return {
       pending_commissions: 0,
-      earned_commissions,
-      paid_commissions,
-      bonuses_earned,
-      total_payable: earned_commissions + bonuses_earned,
+      earned_commissions: Math.round(earned_commissions * 100) / 100,
+      paid_commissions: total_paid,
+      bonuses_earned: Math.round(bonuses_earned * 100) / 100,
+      bonuses_paid: Math.round(bonuses_paid * 100) / 100,
+      total_payable,
       currency: 'SAR',
     };
   },
@@ -7001,7 +7121,34 @@ export const LoyaltyService = {
     };
 
     const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    const localBonuses = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+    let localBonuses = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+
+    // 🌟 ضمان توثيق جميع مكافآت التارقت المحققة للشريك قبل الصرف
+    const bonusesData = await this.getPartnerBonuses(resolvedPartnerId, resolvedAffiliateId);
+    bonusesData.milestones.forEach((m) => {
+      if (m.status === 'ACHIEVED' && !m.is_paid) {
+        const awardKey = `bonus_${resolvedPartnerId}_${m.milestone}`;
+        const existingIdx = localBonuses.findIndex(
+          (b) =>
+            b.idempotency_key === awardKey ||
+            ((b.partner_account_id === resolvedPartnerId || b.partner_account_id === resolvedAffiliateId) &&
+              Number(b.milestone) === m.milestone)
+        );
+        if (existingIdx === -1) {
+          localBonuses.push({
+            id: `award-${Date.now()}-${m.milestone}`,
+            partner_account_id: resolvedPartnerId,
+            bonus_rule_id: m.id,
+            milestone: m.milestone,
+            bonus_amount: m.bonus_amount,
+            status: 'ACHIEVED',
+            idempotency_key: awardKey,
+            awarded_at: now.toISOString(),
+            created_at: now.toISOString(),
+          });
+        }
+      }
+    });
 
     let settledCommsAmt = 0;
     const commIds: string[] = [];
@@ -7069,7 +7216,7 @@ export const LoyaltyService = {
         await supabase
           .from('partner_bonus_awards')
           .update({ status: 'PAID' })
-          .eq('partner_account_id', resolvedPartnerId)
+          .or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`)
           .in('status', ['ACHIEVED', 'AWARDED']);
       } catch (dbErr) {
         console.warn('Supabase settlePartnerCommissions sync warning:', dbErr);

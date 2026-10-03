@@ -1551,12 +1551,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                       <span className="text-2xl">🏆</span>
                       <span
                         className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                          isAchieved
+                          m.is_paid || m.status === 'AWARDED'
+                            ? 'bg-blue-500/20 text-blue-400 border-blue-500/40'
+                            : isAchieved
                             ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
                             : 'bg-slate-800 text-slate-400 border-slate-700'
                         }`}
                       >
-                        {m.status === 'AWARDED' ? 'تم الصرف' : isAchieved ? 'محققة' : 'مقفلة 🔒'}
+                        {m.is_paid || m.status === 'AWARDED' ? 'تم الصرف والتحويل ✅' : isAchieved ? 'محققة جاهزة للصرف 🎁' : 'مقفلة 🔒'}
                       </span>
                     </div>
 
@@ -1632,9 +1634,9 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             </div>
 
             <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 space-y-1">
-              <span className="text-xs text-slate-400 font-medium block">عمولات مدفوعة (Paid)</span>
+              <span className="text-xs text-slate-400 font-medium block">عمولات ومكافآت مدفوعة (Paid)</span>
               <span className="text-2xl font-black text-white font-mono block">
-                {commissionsSummary.total_paid} <span className="text-xs">ريال</span>
+                {stats?.financials?.paid_commissions ?? commissionsSummary.total_paid} <span className="text-xs">ريال</span>
               </span>
               <span className="text-[10px] text-slate-400 block">تم تحويلها لحسابك البنكي</span>
             </div>

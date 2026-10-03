@@ -713,9 +713,11 @@ export interface PartnerBonusMilestone {
   milestone: number;
   bonus_amount: number;
   status: 'LOCKED' | 'IN_PROGRESS' | 'ACHIEVED' | 'AWARDED';
+  is_paid?: boolean;
   current_progress: number;
   required_merchants: number;
   awarded_at?: string | null;
+  paid_at?: string | null;
 }
 
 export interface SalesKitMessage {
