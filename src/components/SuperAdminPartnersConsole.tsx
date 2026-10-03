@@ -69,6 +69,11 @@ export const SuperAdminPartnersConsole: React.FC = () => {
   const [editingRecurringRate, setEditingRecurringRate] = useState<number>(10);
   const [isUpdatingRate, setIsUpdatingRate] = useState(false);
 
+  // Partner PIN Edit Modal State (Super Admin)
+  const [pinModalPartner, setPinModalPartner] = useState<any | null>(null);
+  const [editingPinValue, setEditingPinValue] = useState<string>('1234');
+  const [isUpdatingPartnerPin, setIsUpdatingPartnerPin] = useState(false);
+
   // Settlement Modal State
   const [settlePartner, setSettlePartner] = useState<any | null>(null);
   const [settleSummary, setSettleSummary] = useState<any | null>(null);
@@ -142,6 +147,39 @@ export const SuperAdminPartnersConsole: React.FC = () => {
       setError(err.message || 'فشل في تحديث نسبة العمولة');
     } finally {
       setIsUpdatingRate(false);
+    }
+  };
+
+  // Open PIN Edit Modal
+  const openPinModal = (p: any) => {
+    setPinModalPartner(p);
+    setEditingPinValue(p.pin_code || '1234');
+    setError(null);
+  };
+
+  const handleUpdatePinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pinModalPartner) return;
+    const cleanPin = editingPinValue.trim();
+    if (!cleanPin || cleanPin.length < 4) {
+      setError('الرمز السري الجديد يجب أن يتكون من 4 أرقام على الأقل');
+      return;
+    }
+    setIsUpdatingPartnerPin(true);
+    setError(null);
+    try {
+      const res = await LoyaltyService.adminUpdatePartnerPin(pinModalPartner.id, cleanPin);
+      if (res.success) {
+        setSuccess(`تم بنجاح تحديث الرمز السري للمسوق [${pinModalPartner.display_name}] إلى [${cleanPin}] 🔒🎉`);
+        setPinModalPartner(null);
+        await fetchPartners();
+      } else {
+        setError(res.error || 'فشل تحديث الرمز السري');
+      }
+    } catch (err: any) {
+      setError(err.message || 'حدث خطأ أثناء تحديث الرمز السري');
+    } finally {
+      setIsUpdatingPartnerPin(false);
     }
   };
 
@@ -527,9 +565,18 @@ ${origin}/join?ref=${refCode}`;
                       </td>
 
                       <td className="py-4 px-4 font-mono text-slate-300">
-                        <span className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px]">
-                          🔑 {partnerPin}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-bold text-amber-400">
+                            🔑 {partnerPin}
+                          </span>
+                          <button
+                            onClick={() => openPinModal(p)}
+                            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 transition shadow-inner"
+                            title="تعديل الرمز السري للمسوق"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
 
                       <td className="py-4 px-4 font-mono">
@@ -972,6 +1019,72 @@ ${origin}/join?ref=${refCode}`;
                 <button
                   type="button"
                   onClick={() => setRateModalPartner(null)}
+                  className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-bold transition"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Partner PIN Edit Modal (Super Admin) */}
+      {pinModalPartner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-sm w-full bg-slate-900 border border-amber-500/30 rounded-3xl p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-amber-400" />
+                <h4 className="text-base font-black text-white">تعديل الرمز السري (PIN)</h4>
+              </div>
+              <button onClick={() => setPinModalPartner(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <strong className="text-white block text-sm">{pinModalPartner.display_name}</strong>
+                  <span className="text-slate-400 text-[11px] font-mono" dir="ltr">📞 {pinModalPartner.affiliates?.phone || '—'}</span>
+                </div>
+                <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono font-bold text-xs">
+                  {pinModalPartner.affiliates?.referral_code || pinModalPartner.referral_code}
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleUpdatePinSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">الرمز السري الجديد (PIN)</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    maxLength={8}
+                    value={editingPinValue}
+                    onChange={(e) => setEditingPinValue(e.target.value)}
+                    placeholder="1234"
+                    dir="ltr"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl pr-4 pl-10 py-3 text-sm text-white placeholder-slate-600 outline-none transition text-left tracking-widest font-mono font-bold"
+                  />
+                  <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                <p className="text-[10px] text-slate-500">يتكون من 4 أرقام على الأقل لدخول بوابة الشريك</p>
+              </div>
+
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={isUpdatingPartnerPin}
+                  className="flex-1 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20"
+                >
+                  {isUpdatingPartnerPin ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>حفظ الرمز السري 🔒</span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPinModalPartner(null)}
                   className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-bold transition"
                 >
                   إلغاء

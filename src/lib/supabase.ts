@@ -79,6 +79,7 @@ const STORAGE_KEYS = {
   LOCAL_BOOKINGS: 'radar_local_service_bookings',
   LOCAL_ORDERS: 'radar_local_whatsapp_orders',
   LOCAL_PARTNERS: 'radar_local_partners',
+  LOCAL_PARTNER_PINS: 'radar_partner_pins',
   LOCAL_LEADS: 'radar_local_merchant_leads',
   LOCAL_COMMISSIONS: 'radar_local_partner_commissions',
   LOCAL_BONUS_AWARDS: 'radar_local_partner_bonus_awards',
@@ -6053,8 +6054,10 @@ export const LoyaltyService = {
     }
 
     const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', '']);
+    const pinOverrides = getLocalData<Record<string, string>>(STORAGE_KEYS.LOCAL_PARTNER_PINS, {});
+    const existingLocal = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
 
-    const sanitizePartner = (p: any) => {
+    const sanitizePartner = (p: any, localPartnerMatch?: any) => {
       let code = p.affiliates?.referral_code || p.referral_code || 'r1001';
       if (code.toLowerCase().startsWith('radar-')) {
         code = 'r' + (code.replace(/\D/g, '') || '1001');
@@ -6068,24 +6071,72 @@ export const LoyaltyService = {
         slug = code;
       }
 
+      const pPhone = normalizePhone(p.affiliates?.phone || p.phone);
       const notes = p.affiliates?.notes || '';
       const parsedPinFromNotes = notes.match(/PIN:\s*(\S+)/)?.[1];
-      const pinCode = p.pin_code || parsedPinFromNotes || '1234';
-      const commRate = typeof p.commission_rate === 'number' ? p.commission_rate : (typeof p.affiliates?.commission_rate === 'number' ? p.affiliates.commission_rate : 0.20);
-      const recurringRate = typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : (typeof p.affiliates?.recurring_commission_rate === 'number' ? p.affiliates.recurring_commission_rate : 0.10);
+
+      // Priority of PIN:
+      // 1. Explicit local PIN override (by ID, affiliate_id, normalized phone, or referral code)
+      // 2. Explicit non-default DB pin_code if available
+      // 3. Local partner pin_code
+      // 4. Notes PIN
+      // 5. DB pin_code (or default '1234')
+      const overridePin =
+        (p.id && pinOverrides[p.id]) ||
+        (p.affiliate_id && pinOverrides[p.affiliate_id]) ||
+        (pPhone && pinOverrides[pPhone]) ||
+        (code && pinOverrides[code]) ||
+        (slug && pinOverrides[slug]);
+
+      const pinCode =
+        overridePin ||
+        (p.pin_code && p.pin_code !== '1234' ? p.pin_code : undefined) ||
+        localPartnerMatch?.pin_code ||
+        parsedPinFromNotes ||
+        p.pin_code ||
+        '1234';
+
+      const commRate = typeof p.commission_rate === 'number'
+        ? p.commission_rate
+        : typeof p.affiliates?.commission_rate === 'number'
+        ? p.affiliates.commission_rate
+        : (localPartnerMatch?.commission_rate || 0.20);
+
+      const recurringRate = typeof p.recurring_commission_rate === 'number'
+        ? p.recurring_commission_rate
+        : typeof p.affiliates?.recurring_commission_rate === 'number'
+        ? p.affiliates.recurring_commission_rate
+        : (localPartnerMatch?.recurring_commission_rate || 0.10);
 
       return {
         ...p,
-        pin_code: pinCode,
+        pin_code: String(pinCode).trim(),
         slug,
         referral_code: code,
         commission_rate: commRate,
         acquisition_commission_rate: commRate,
         recurring_commission_rate: recurringRate,
-        target_value: p.target_value || 20,
+        target_value: p.target_value || localPartnerMatch?.target_value || 20,
         affiliates: p.affiliates
-          ? { ...p.affiliates, referral_code: code, commission_rate: commRate, acquisition_commission_rate: commRate, recurring_commission_rate: recurringRate }
-          : { referral_code: code, commission_rate: commRate, acquisition_commission_rate: commRate, recurring_commission_rate: recurringRate },
+          ? {
+              ...p.affiliates,
+              referral_code: code,
+              commission_rate: commRate,
+              acquisition_commission_rate: commRate,
+              recurring_commission_rate: recurringRate,
+              notes: `PIN: ${String(pinCode).trim()}`,
+            }
+          : {
+              id: p.affiliate_id || p.id,
+              name: p.display_name,
+              phone: p.phone,
+              referral_code: code,
+              commission_rate: commRate,
+              acquisition_commission_rate: commRate,
+              recurring_commission_rate: recurringRate,
+              status: p.active !== false ? 'ACTIVE' : 'SUSPENDED',
+              notes: `PIN: ${String(pinCode).trim()}`,
+            },
       };
     };
 
@@ -6100,17 +6151,34 @@ export const LoyaltyService = {
           1500
         );
         if (!error && data && data.length > 0) {
-          const sanitized = data.map(sanitizePartner);
-          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, sanitized);
-          partnersListCache = { data: sanitized, timestamp: Date.now() };
-          return sanitized;
+          const sanitized = data.map((p: any) => {
+            const localMatch = existingLocal.find(
+              (lp) =>
+                lp.id === p.id ||
+                lp.affiliate_id === p.affiliate_id ||
+                (p.affiliates?.phone && normalizePhone(lp.affiliates?.phone || lp.phone) === normalizePhone(p.affiliates.phone))
+            );
+            return sanitizePartner(p, localMatch);
+          });
+
+          // Merge any local-only partners that are not in Supabase yet
+          const dbIds = new Set(data.map((d: any) => d.id));
+          const dbAffIds = new Set(data.map((d: any) => d.affiliate_id));
+          const localOnly = existingLocal
+            .filter((lp) => !dbIds.has(lp.id) && !dbAffIds.has(lp.affiliate_id))
+            .map((lp) => sanitizePartner(lp));
+
+          const combined = [...sanitized, ...localOnly];
+          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, combined);
+          partnersListCache = { data: combined, timestamp: Date.now() };
+          return combined;
         }
       } catch (e) {
         console.warn('Supabase getAllPartners fallback to local:', e);
       }
     }
-    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const sanitizedLocal = local.map(sanitizePartner);
+
+    const sanitizedLocal = existingLocal.map((lp) => sanitizePartner(lp));
     partnersListCache = { data: sanitizedLocal, timestamp: Date.now() };
     return sanitizedLocal;
   },
@@ -6128,6 +6196,7 @@ export const LoyaltyService = {
   }): Promise<any> {
     const cleanName = payload.name.trim();
     const cleanPhone = payload.phone.trim();
+    const normP = normalizePhone(cleanPhone);
     const commRate = typeof payload.commission_rate === 'number' ? Math.max(0.01, Math.min(1.0, payload.commission_rate)) : 0.20;
     const recurringRate = typeof payload.recurring_commission_rate === 'number' ? Math.max(0.01, Math.min(1.0, payload.recurring_commission_rate)) : 0.10;
     
@@ -6176,10 +6245,19 @@ export const LoyaltyService = {
       },
     };
 
-    // Save locally first (guaranteed instant success)
+    // Save locally first
     const existing = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
     const updated = [newPartnerObj, ...existing.filter((p: any) => p.slug !== cleanSlug && p.id !== partnerId)];
     saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updated);
+
+    // Save PIN override map
+    const pinOverrides = getLocalData<Record<string, string>>(STORAGE_KEYS.LOCAL_PARTNER_PINS, {});
+    pinOverrides[partnerId] = pinCode;
+    pinOverrides[affiliateId] = pinCode;
+    pinOverrides[cleanCode] = pinCode;
+    pinOverrides[cleanSlug] = pinCode;
+    if (normP) pinOverrides[normP] = pinCode;
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNER_PINS, pinOverrides);
 
     // Sync to Supabase in background
     const supabase = getSupabaseClient();
@@ -6256,39 +6334,73 @@ export const LoyaltyService = {
   },
 
   async updatePartnerPin(partnerId: string, currentPin: string, newPin: string): Promise<{ success: boolean; error?: string; partner?: any }> {
-    const cleanCurrent = currentPin.trim();
-    const cleanNew = newPin.trim();
+    const cleanCurrent = (currentPin || '').trim();
+    const cleanNew = (newPin || '').trim();
 
     if (!cleanNew || cleanNew.length < 4) {
       return { success: false, error: 'الرمز السري الجديد يجب أن يتكون من 4 أرقام على الأقل' };
     }
 
-    // Fetch up-to-date partners list
-    const allPartners = await this.getAllPartners();
-    const existingPartner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId);
+    // Fetch fresh partners list
+    const allPartners = await this.getAllPartners(true);
+    const targetNormId = normalizePhone(partnerId);
+    const existingPartner = allPartners.find(
+      (p: any) =>
+        p.id === partnerId ||
+        p.affiliate_id === partnerId ||
+        p.slug === partnerId ||
+        p.referral_code === partnerId ||
+        (targetNormId && normalizePhone(p.affiliates?.phone || p.phone) === targetNormId)
+    );
     if (!existingPartner) {
       return { success: false, error: 'لم يتم العثور على حساب الشريك' };
     }
 
-    const expectedPin = (existingPartner.pin_code || '1234').trim();
+    const pinOverrides = getLocalData<Record<string, string>>(STORAGE_KEYS.LOCAL_PARTNER_PINS, {});
+    const pPhone = normalizePhone(existingPartner.affiliates?.phone || existingPartner.phone);
+    const expectedPin = (
+      pinOverrides[existingPartner.id] ||
+      pinOverrides[existingPartner.affiliate_id] ||
+      (pPhone && pinOverrides[pPhone]) ||
+      pinOverrides[existingPartner.referral_code] ||
+      pinOverrides[existingPartner.slug] ||
+      existingPartner.pin_code ||
+      '1234'
+    ).trim();
 
     if (cleanCurrent !== expectedPin) {
       return { success: false, error: 'الرمز السري الحالي غير صحيح' };
     }
 
-    // Update local copy
+    // Save in persistent PIN overrides
+    if (existingPartner.id) pinOverrides[existingPartner.id] = cleanNew;
+    if (existingPartner.affiliate_id) pinOverrides[existingPartner.affiliate_id] = cleanNew;
+    if (existingPartner.referral_code) pinOverrides[existingPartner.referral_code] = cleanNew;
+    if (existingPartner.slug) pinOverrides[existingPartner.slug] = cleanNew;
+    if (pPhone) pinOverrides[pPhone] = cleanNew;
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNER_PINS, pinOverrides);
+
+    // Update local partner copy
     const updatedPartner = {
       ...existingPartner,
       pin_code: cleanNew,
       affiliates: existingPartner.affiliates ? {
         ...existingPartner.affiliates,
         notes: `PIN: ${cleanNew}`,
-      } : existingPartner.affiliates,
+      } : {
+        id: existingPartner.affiliate_id || existingPartner.id,
+        name: existingPartner.display_name,
+        phone: existingPartner.phone,
+        referral_code: existingPartner.referral_code,
+        notes: `PIN: ${cleanNew}`,
+      },
     };
 
     const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const updatedLocal = local.map((p: any) => (p.id === existingPartner.id || p.affiliate_id === existingPartner.affiliate_id) ? updatedPartner : p);
-    if (!updatedLocal.some((p: any) => p.id === existingPartner.id)) {
+    const updatedLocal = local.map((p: any) =>
+      p.id === existingPartner.id || p.affiliate_id === existingPartner.affiliate_id ? updatedPartner : p
+    );
+    if (!updatedLocal.some((p: any) => p.id === existingPartner.id || p.affiliate_id === existingPartner.affiliate_id)) {
       updatedLocal.push(updatedPartner);
     }
     saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updatedLocal);
@@ -6299,6 +6411,14 @@ export const LoyaltyService = {
     // Update session storage
     try {
       localStorage.setItem('radar_partner_session', JSON.stringify(updatedPartner));
+      const authRaw = localStorage.getItem('radar_unified_auth_user');
+      if (authRaw) {
+        const authParsed = JSON.parse(authRaw);
+        if (authParsed.role === 'partner') {
+          authParsed.metadata = updatedPartner;
+          localStorage.setItem('radar_unified_auth_user', JSON.stringify(authParsed));
+        }
+      }
     } catch {}
 
     // Sync to Supabase
@@ -6326,41 +6446,69 @@ export const LoyaltyService = {
     return { success: true, partner: updatedPartner };
   },
 
-  async authenticatePartner(phone: string, pin: string): Promise<{ success: boolean; partner?: any; error?: string }> {
-    const cleanPhone = phone.replace(/\D/g, '');
-    const normPhone = cleanPhone.startsWith('966') ? cleanPhone.substring(3) : cleanPhone.startsWith('0') ? cleanPhone.substring(1) : cleanPhone;
+  async authenticatePartner(phoneOrCode: string, pin: string): Promise<{ success: boolean; partner?: any; error?: string }> {
+    const cleanInput = (phoneOrCode || '').trim();
+    const enteredPin = (pin || '').trim();
 
-    if (!normPhone || normPhone.length < 7) {
-      return { success: false, error: 'يرجى إدخال رقم جوال صحيح' };
+    if (!cleanInput) {
+      return { success: false, error: 'يرجى إدخال رقم الجوال أو كود الشريك' };
+    }
+    if (!enteredPin) {
+      return { success: false, error: 'يرجى إدخال الرمز السري (PIN)' };
     }
 
-    const allPartners = await this.getAllPartners();
+    const normPhone = normalizePhone(cleanInput);
+    const cleanCode = cleanInput.toLowerCase();
+
+    // Fetch fresh list
+    const allPartners = await this.getAllPartners(true);
     const found = allPartners.find((p: any) => {
-      const pPhone = (p.affiliates?.phone || p.phone || '').replace(/\D/g, '');
-      const normPPhone = pPhone.startsWith('966') ? pPhone.substring(3) : pPhone.startsWith('0') ? pPhone.substring(1) : pPhone;
-      return normPPhone === normPhone;
+      const pPhone = normalizePhone(p.affiliates?.phone || p.phone);
+      const pCode = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim();
+      const pSlug = (p.slug || '').toLowerCase().trim();
+      return (
+        (normPhone && pPhone === normPhone) ||
+        (cleanCode && pCode === cleanCode) ||
+        (cleanCode && pSlug === cleanCode) ||
+        (p.id === cleanInput) ||
+        (p.affiliate_id === cleanInput)
+      );
     });
 
     if (!found) {
-      return { success: false, error: 'رقم الجوال غير مسجل كشريك مبيعات معتمد' };
+      return { success: false, error: 'رقم الجوال أو كود الشريك غير مسجل كشريك مبيعات معتمد' };
     }
 
     if (found.active === false || found.affiliates?.status === 'SUSPENDED') {
       return { success: false, error: 'حساب الشريك موقوف حالياً، يرجى التواصل مع الإدارة' };
     }
 
-    const expectedPin = (found.pin_code || '1234').trim();
-    const enteredPin = pin.trim();
+    const pinOverrides = getLocalData<Record<string, string>>(STORAGE_KEYS.LOCAL_PARTNER_PINS, {});
+    const pPhone = normalizePhone(found.affiliates?.phone || found.phone);
+    const expectedPin = (
+      pinOverrides[found.id] ||
+      pinOverrides[found.affiliate_id] ||
+      (pPhone && pinOverrides[pPhone]) ||
+      pinOverrides[found.referral_code] ||
+      pinOverrides[found.slug] ||
+      found.pin_code ||
+      '1234'
+    ).trim();
 
     if (enteredPin !== expectedPin) {
       return { success: false, error: 'الرمز السري (PIN) غير صحيح' };
     }
 
+    const authenticatedPartner = {
+      ...found,
+      pin_code: expectedPin,
+    };
+
     // Save session
     try {
-      localStorage.setItem('radar_partner_session', JSON.stringify(found));
+      localStorage.setItem('radar_partner_session', JSON.stringify(authenticatedPartner));
     } catch {}
-    return { success: true, partner: found };
+    return { success: true, partner: authenticatedPartner };
   },
 
   getPartnerSession(): any | null {
@@ -7400,16 +7548,34 @@ export const LoyaltyService = {
   },
 
   async adminUpdatePartnerPin(partnerId: string, newPin: string): Promise<{ success: boolean; error?: string; partner?: any }> {
-    const cleanNew = newPin.trim();
+    const cleanNew = (newPin || '').trim();
     if (!cleanNew || cleanNew.length < 4) {
       return { success: false, error: 'الرمز السري الجديد يجب أن يتكون من 4 أرقام على الأقل' };
     }
 
-    const allPartners = await this.getAllPartners();
-    const existingPartner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId);
+    const allPartners = await this.getAllPartners(true);
+    const targetNormId = normalizePhone(partnerId);
+    const existingPartner = allPartners.find(
+      (p: any) =>
+        p.id === partnerId ||
+        p.affiliate_id === partnerId ||
+        p.slug === partnerId ||
+        p.referral_code === partnerId ||
+        (targetNormId && normalizePhone(p.affiliates?.phone || p.phone) === targetNormId)
+    );
     if (!existingPartner) {
       return { success: false, error: 'لم يتم العثور على حساب الشريك' };
     }
+
+    // Save in persistent PIN overrides
+    const pinOverrides = getLocalData<Record<string, string>>(STORAGE_KEYS.LOCAL_PARTNER_PINS, {});
+    const pPhone = normalizePhone(existingPartner.affiliates?.phone || existingPartner.phone);
+    if (existingPartner.id) pinOverrides[existingPartner.id] = cleanNew;
+    if (existingPartner.affiliate_id) pinOverrides[existingPartner.affiliate_id] = cleanNew;
+    if (existingPartner.referral_code) pinOverrides[existingPartner.referral_code] = cleanNew;
+    if (existingPartner.slug) pinOverrides[existingPartner.slug] = cleanNew;
+    if (pPhone) pinOverrides[pPhone] = cleanNew;
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNER_PINS, pinOverrides);
 
     const updatedPartner = {
       ...existingPartner,
@@ -7417,17 +7583,44 @@ export const LoyaltyService = {
       affiliates: existingPartner.affiliates ? {
         ...existingPartner.affiliates,
         notes: `PIN: ${cleanNew}`,
-      } : existingPartner.affiliates,
+      } : {
+        id: existingPartner.affiliate_id || existingPartner.id,
+        name: existingPartner.display_name,
+        phone: existingPartner.phone,
+        referral_code: existingPartner.referral_code,
+        notes: `PIN: ${cleanNew}`,
+      },
     };
 
     const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const updatedLocal = local.map((p: any) => (p.id === existingPartner.id || p.affiliate_id === existingPartner.affiliate_id) ? updatedPartner : p);
-    if (!updatedLocal.some((p: any) => p.id === existingPartner.id)) {
+    const updatedLocal = local.map((p: any) =>
+      p.id === existingPartner.id || p.affiliate_id === existingPartner.affiliate_id ? updatedPartner : p
+    );
+    if (!updatedLocal.some((p: any) => p.id === existingPartner.id || p.affiliate_id === existingPartner.affiliate_id)) {
       updatedLocal.push(updatedPartner);
     }
     saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updatedLocal);
 
     invalidatePartnersCache();
+
+    // Update active partner session if currently logged in
+    try {
+      const activePartnerSession = localStorage.getItem('radar_partner_session');
+      if (activePartnerSession) {
+        const parsed = JSON.parse(activePartnerSession);
+        if (parsed.id === existingPartner.id || parsed.affiliate_id === existingPartner.affiliate_id) {
+          localStorage.setItem('radar_partner_session', JSON.stringify(updatedPartner));
+        }
+      }
+      const authRaw = localStorage.getItem('radar_unified_auth_user');
+      if (authRaw) {
+        const authParsed = JSON.parse(authRaw);
+        if (authParsed.role === 'partner' && (authParsed.id === existingPartner.id || authParsed.partnerId === existingPartner.id)) {
+          authParsed.metadata = updatedPartner;
+          localStorage.setItem('radar_unified_auth_user', JSON.stringify(authParsed));
+        }
+      }
+    } catch {}
 
     const supabase = getSupabaseClient();
     if (supabase) {
