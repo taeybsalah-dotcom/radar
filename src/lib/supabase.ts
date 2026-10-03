@@ -4862,91 +4862,27 @@ export const LoyaltyService = {
     transferReference: string;
     adminUser: string;
     notes?: string;
-  }): Promise<{ success: boolean; payout: AffiliatePayoutRecord; ledgerEntry: FinancialLedgerEntry; error?: string }> {
+  }): Promise<{ success: boolean; payout?: AffiliatePayoutRecord; ledgerEntry?: FinancialLedgerEntry; error?: string }> {
     if (!payload.iban || !payload.transferReference) {
-      return { success: false, error: 'الآيبان ورقم مرجع الحوالة البنكية إلزاميان للصرف' } as any;
+      return { success: false, error: 'الآيبان ورقم مرجع الحوالة البنكية إلزاميان للصرف' };
     }
 
-    // جلب العمولات المستحقة للصرف (EARNED / AVAILABLE)
-    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    const eligibleComms = localComms.filter(
-      (c) => (c.partner_account_id === payload.affiliateId || c.affiliate_id === payload.affiliateId) &&
-             (c.status === 'EARNED' || c.status === 'AVAILABLE')
-    );
-
-    const payoutAmount = eligibleComms.reduce((sum, c) => sum + (Number(c.commission_amount) || 0), 0);
-    if (payoutAmount <= 0) {
-      return { success: false, error: 'لا توجد عمولات معتمدة ومؤهلة للصرف لهذا الشريك' } as any;
-    }
-
-    const now = new Date();
-    const payoutNumber = `PAY-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
-      now.getDate()
-    ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    // 1. تحديث حالات العمولات إلى PAID
-    const commIds = eligibleComms.map((c) => c.id);
-    const updatedComms = localComms.map((c) => {
-      if (commIds.includes(c.id)) {
-        return {
-          ...c,
-          status: 'PAID',
-          updated_at: now.toISOString(),
-          payout_reference: payload.transferReference,
-          payout_number: payoutNumber,
-        };
-      }
-      return c;
-    });
-    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
-
-    // 2. تسجيل قيد الصرف في السجل المالي العام
-    const ledgerEntry = await this.recordFinancialLedgerEntry({
-      transaction_id: `tx_payout_${payoutNumber}`,
-      affiliate_id: payload.affiliateId,
-      affiliate_name: payload.partnerName,
-      transaction_type: 'PAYOUT',
-      gross_amount: -payoutAmount,
-      vat_amount: 0.00,
-      gateway_fee: 0.00,
-      affiliate_commission: -payoutAmount,
-      net_platform_amount: 0.00, // Liability settled
-      status: 'SETTLED',
-      created_by: payload.adminUser || 'SUPER_ADMIN',
-      metadata: {
-        payout_number: payoutNumber,
-        iban: payload.iban,
-        bank_name: payload.bankName,
-        transfer_reference: payload.transferReference,
-        commissions_count: eligibleComms.length,
-        admin_notes: payload.notes || '',
-      },
-    });
-
-    // 3. حفظ سجل الصرف
-    const payoutRecord: AffiliatePayoutRecord = {
-      id: 'payout-' + Date.now(),
-      payout_number: payoutNumber,
-      affiliate_id: payload.affiliateId,
-      partner_name: payload.partnerName,
+    const res = await this.settlePartnerCommissions(payload.affiliateId, payload.transferReference, {
       iban: payload.iban,
-      bank_name: payload.bankName,
-      transfer_reference: payload.transferReference,
-      amount: payoutAmount,
-      commissions_count: eligibleComms.length,
-      commission_ids: commIds,
-      status: 'COMPLETED',
-      disbursed_by: payload.adminUser || 'SUPER_ADMIN',
-      disbursed_at: now.toISOString(),
-      ledger_entry_id: ledgerEntry.id,
-      notes: payload.notes || '',
+      bankName: payload.bankName,
+      adminUser: payload.adminUser,
+      notes: payload.notes,
+    });
+
+    if (!res.success) {
+      return { success: false, error: res.error || 'فشلت عملية الصرف' };
+    }
+
+    return {
+      success: true,
+      payout: res.payout,
+      ledgerEntry: res.ledgerEntry,
     };
-
-    const localPayouts = getLocalData<AffiliatePayoutRecord[]>(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, []);
-    saveLocalData(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, [payoutRecord, ...localPayouts]);
-
-    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
-    return { success: true, payout: payoutRecord, ledgerEntry };
   },
 
   // 11. جلب كافة الإشعارات الدائنة
@@ -5002,6 +4938,16 @@ export const LoyaltyService = {
         totalAffiliatePending += amt;
       } else if (comm.status === 'REVERSED') {
         totalAffiliateReversed += amt;
+      }
+    }
+
+    const bonuses = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+    for (const b of bonuses) {
+      const amt = Number(b.bonus_amount) || 0;
+      if (b.status === 'ACHIEVED' || b.status === 'AWARDED') {
+        totalAffiliatePayable += amt;
+      } else if (b.status === 'PAID') {
+        totalAffiliatePaid += amt;
       }
     }
 
@@ -7020,46 +6966,174 @@ export const LoyaltyService = {
     };
   },
 
-  async settlePartnerCommissions(partnerId: string, reference?: string): Promise<{ success: boolean; total_amount?: number; error?: string }> {
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.rpc('admin_settle_partner_commissions', {
-          p_partner_account_id: partnerId,
-          p_settlement_reference: reference || `SETTLE-${Date.now()}`,
-        });
-
-        if (!error && data?.success) {
-          return { success: true, total_amount: Number(data.total_amount) };
-        }
-      } catch (e) {
-        console.warn('Supabase admin_settle_partner_commissions failed, settling locally:', e);
-      }
+  // 💸 تنفيذ صرف وتسوية مستحقات الشريك والعمولات والمكافآت وتوثيقها في دفتر الأستاذ وسجل الحوالات
+  async settlePartnerCommissions(
+    partnerId: string,
+    reference?: string,
+    options?: {
+      iban?: string;
+      bankName?: string;
+      adminUser?: string;
+      notes?: string;
     }
+  ): Promise<{ success: boolean; total_amount?: number; payout?: AffiliatePayoutRecord; ledgerEntry?: FinancialLedgerEntry; error?: string }> {
+    const now = new Date();
+    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const partner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId || p.slug === partnerId);
+    const resolvedPartnerId = partner?.id || partnerId;
+    const resolvedAffiliateId = partner?.affiliate_id || partnerId;
+    const partnerName = partner?.display_name || partner?.affiliates?.name || 'الشريك المعتمد';
 
-    // Local settlement
+    const isMatchingComm = (c: any) => {
+      const pId = c.partner_account_id || c.affiliate_id;
+      return (
+        (pId === resolvedPartnerId || pId === resolvedAffiliateId || (partner && (pId === partner.id || pId === partner.affiliate_id))) &&
+        (c.status === 'AVAILABLE' || c.status === 'EARNED')
+      );
+    };
+
+    const isMatchingBonus = (b: any) => {
+      const pId = b.partner_account_id;
+      return (
+        (pId === resolvedPartnerId || pId === resolvedAffiliateId || (partner && (pId === partner.id || pId === partner.affiliate_id))) &&
+        (b.status === 'ACHIEVED' || b.status === 'AWARDED')
+      );
+    };
+
     const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    let settledAmt = 0;
+    const localBonuses = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+
+    let settledCommsAmt = 0;
+    const commIds: string[] = [];
+
+    const payoutNumber = `PAY-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+      now.getDate()
+    ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+    const payoutRef = reference?.trim() || `PAYOUT-${now.toISOString().substring(0, 10)}-${partner?.slug || resolvedPartnerId}`;
+
     const updatedComms = localComms.map((c) => {
-      if (c.partner_account_id === partnerId && c.status === 'EARNED') {
-        settledAmt += Number(c.commission_amount) || 0;
-        return { ...c, status: 'PAID', updated_at: new Date().toISOString() };
+      if (isMatchingComm(c)) {
+        const amt = Number(c.commission_amount) || 0;
+        settledCommsAmt += amt;
+        commIds.push(c.id);
+        return {
+          ...c,
+          status: 'PAID',
+          payout_reference: payoutRef,
+          payout_number: payoutNumber,
+          paid_at: now.toISOString(),
+          updated_at: now.toISOString(),
+        };
       }
       return c;
     });
-    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
 
-    const localBonuses = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+    let settledBonusesAmt = 0;
     const updatedBonuses = localBonuses.map((b) => {
-      if (b.partner_account_id === partnerId && (b.status === 'ACHIEVED' || b.status === 'AWARDED')) {
-        return { ...b, status: 'PAID' };
+      if (isMatchingBonus(b)) {
+        const amt = Number(b.bonus_amount) || 0;
+        settledBonusesAmt += amt;
+        return {
+          ...b,
+          status: 'PAID',
+          payout_reference: payoutRef,
+          payout_number: payoutNumber,
+          paid_at: now.toISOString(),
+          updated_at: now.toISOString(),
+        };
       }
       return b;
     });
+
+    const totalSettledAmt = Math.round((settledCommsAmt + settledBonusesAmt) * 100) / 100;
+
+    if (totalSettledAmt <= 0) {
+      return { success: false, error: 'لا توجد أي عمولات أو مكافآت مستحقة للصرف حالياً لهذا الشريك' };
+    }
+
+    // 1. حفظ الحركات المحدثة محلياً فورياً
+    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
     saveLocalData(STORAGE_KEYS.LOCAL_BONUS_AWARDS, updatedBonuses);
 
+    // 2. مزامنة Supabase إن وجدت
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        if (commIds.length > 0) {
+          await supabase
+            .from('partner_commissions')
+            .update({ status: 'PAID', updated_at: now.toISOString() })
+            .in('id', commIds);
+        }
+        await supabase
+          .from('partner_bonus_awards')
+          .update({ status: 'PAID' })
+          .eq('partner_account_id', resolvedPartnerId)
+          .in('status', ['ACHIEVED', 'AWARDED']);
+      } catch (dbErr) {
+        console.warn('Supabase settlePartnerCommissions sync warning:', dbErr);
+      }
+    }
+
+    // 3. تسجيل قيد الصرف في السجل المالي العام (خصم من إيرادات وسيولة المنصة في دفتر الأستاذ)
+    const ledgerEntry = await this.recordFinancialLedgerEntry({
+      transaction_id: `tx_payout_${payoutNumber}_${Date.now()}`,
+      affiliate_id: resolvedPartnerId,
+      affiliate_name: partnerName,
+      transaction_type: 'PAYOUT',
+      gross_amount: -totalSettledAmt,
+      vat_amount: 0.00,
+      gateway_fee: 0.00,
+      affiliate_commission: -totalSettledAmt,
+      net_platform_amount: -totalSettledAmt,
+      status: 'SETTLED',
+      created_by: options?.adminUser || 'Super Admin (المالك)',
+      metadata: {
+        payout_number: payoutNumber,
+        transfer_reference: payoutRef,
+        iban: options?.iban || (partner as any)?.iban || 'حوالة بنكية مباشرة',
+        bank_name: options?.bankName || 'تحويل بنكي فوري',
+        commissions_count: commIds.length,
+        bonuses_count: localBonuses.filter(isMatchingBonus).length,
+        admin_notes: options?.notes || `صرف وتسوية عمولات الشريك [${partnerName}] بموجب الحوالة ${payoutRef}`,
+        settled_at: now.toISOString(),
+      },
+    });
+
+    // 4. تسجيل وتوثيق عملية الصرف في سجل الحوالات (Affiliate Payouts Audit)
+    const payoutRecord: AffiliatePayoutRecord = {
+      id: 'payout-' + Date.now(),
+      payout_number: payoutNumber,
+      affiliate_id: resolvedPartnerId,
+      partner_name: partnerName,
+      iban: options?.iban || (partner as any)?.iban || 'حوالة بنكية مباشرة',
+      bank_name: options?.bankName || 'تحويل بنكي فوري',
+      transfer_reference: payoutRef,
+      amount: totalSettledAmt,
+      commissions_count: commIds.length,
+      commission_ids: commIds,
+      status: 'COMPLETED',
+      disbursed_by: options?.adminUser || 'Super Admin (المالك)',
+      disbursed_at: now.toISOString(),
+      ledger_entry_id: ledgerEntry.id,
+      notes: options?.notes || `صرف وتسوية عمولات الشريك [${partnerName}] بموجب الحوالة ${payoutRef}`,
+    };
+
+    const localPayouts = getLocalData<AffiliatePayoutRecord[]>(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, []);
+    saveLocalData(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, [payoutRecord, ...localPayouts.filter((p) => p.id !== payoutRecord.id)]);
+
+    invalidatePartnersCache();
+    invalidateLedgerCache();
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
-    return { success: true, total_amount: settledAmt };
+
+    return {
+      success: true,
+      total_amount: totalSettledAmt,
+      payout: payoutRecord,
+      ledgerEntry,
+    };
   },
 
   async updatePartnerCommissionRate(

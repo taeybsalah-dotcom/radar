@@ -183,6 +183,9 @@ export const SuperAdminBillingConsole: React.FC = () => {
     LoyaltyService.getFinancialConfig()
   );
 
+  // Partner Payable Summaries Map
+  const [partnerSummaries, setPartnerSummaries] = useState<Record<string, { earned_commissions: number; bonuses_earned: number; total_payable: number; paid_commissions: number }>>({});
+
   // Interactive 520 SAR Calculator State
   const [calcGross, setCalcGross] = useState<number>(520);
   const [calcMethod, setCalcMethod] = useState<string>('mada');
@@ -218,7 +221,18 @@ export const SuperAdminBillingConsole: React.FC = () => {
       if (creditNotesRes.status === 'fulfilled') setCreditNotes(freshCreditNotes);
       if (payoutsRes.status === 'fulfilled') setPayouts(payoutsRes.value);
       if (storesRes.status === 'fulfilled') setStores(storesRes.value.stores || []);
-      if (partnersRes.status === 'fulfilled') setPartners(partnersRes.value || []);
+      if (partnersRes.status === 'fulfilled') {
+        const loadedPartners = partnersRes.value || [];
+        setPartners(loadedPartners);
+        const summariesMap: Record<string, any> = {};
+        await Promise.all(
+          loadedPartners.map(async (p) => {
+            const summary = await LoyaltyService.getPartnerFinancialSummary(p.id, p.affiliate_id);
+            summariesMap[p.id] = summary;
+          })
+        );
+        setPartnerSummaries(summariesMap);
+      }
       if (invoicesRes.status === 'fulfilled') setAllInvoices(invoicesRes.value || {});
 
       // Instant in-memory metric computation without redundant network queries
@@ -461,7 +475,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
       });
 
       if (result.success) {
-        setActionSuccess(`تم تسجيل وتوثيق صرف المستحقات للشريك بنجاح برقم: ${result.payout.payout_number} 💸`);
+        setActionSuccess(`تم تسجيل وتوثيق صرف المستحقات للشريك بنجاح برقم: ${result.payout?.payout_number || 'PAY-CONFIRMED'} 💸`);
         setIsPayoutModalOpen(false);
         await loadAllFinancialData();
         setTimeout(() => setActionSuccess(null), 4000);
@@ -1183,8 +1197,8 @@ export const SuperAdminBillingConsole: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {partners.map((partner) => {
-                // Compute available commission from local commissions
-                const availableAmt = 1500; // default / dynamic
+                const summary = partnerSummaries[partner.id];
+                const availableAmt = summary ? summary.total_payable : 0;
                 return (
                   <div
                     key={partner.id}
@@ -1202,23 +1216,28 @@ export const SuperAdminBillingConsole: React.FC = () => {
 
                       <h5 className="text-base font-black text-white">{partner.display_name}</h5>
                       <p className="text-xs text-slate-400 font-mono">
-                        {partner.affiliates?.phone || '05xxxxxxxx'}
+                        {partner.affiliates?.phone || (partner as any).phone || '05xxxxxxxx'}
                       </p>
 
                       <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between">
                         <span className="text-xs text-slate-400">الرصيد الجاهز للصرف:</span>
                         <span className="text-lg font-black text-emerald-400 font-mono">
-                          {(partner.target_value ? partner.target_value * 150 : 350).toLocaleString()} ر.س
+                          {availableAmt.toLocaleString()} ر.س
                         </span>
                       </div>
                     </div>
 
                     <button
                       onClick={() => handleOpenPayoutModal(partner)}
-                      className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/20"
+                      disabled={availableAmt <= 0}
+                      className={`w-full py-2.5 rounded-xl font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg ${
+                        availableAmt > 0
+                          ? 'bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 text-slate-950 shadow-emerald-500/20'
+                          : 'bg-slate-800/60 text-slate-500 cursor-not-allowed shadow-none'
+                      }`}
                     >
                       <Send className="w-3.5 h-3.5" />
-                      <span>صرف المستحقات وتسجيل الحوالة 💸</span>
+                      <span>{availableAmt > 0 ? 'صرف المستحقات وتسجيل الحوالة 💸' : 'لا توجد مستحقات معلقة'}</span>
                     </button>
                   </div>
                 );
@@ -1757,6 +1776,13 @@ export const SuperAdminBillingConsole: React.FC = () => {
               >
                 <X className="w-4 h-4" />
               </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-xs">
+              <span className="text-slate-300 font-bold">إجمالي المبلغ المستحق للصرف والترحيل:</span>
+              <span className="text-xl font-black text-emerald-400 font-mono">
+                {(partnerSummaries[selectedPartnerForPayout.id]?.total_payable ?? 0).toLocaleString()} ر.س
+              </span>
             </div>
 
             <form onSubmit={handleSubmitPayout} className="space-y-4 text-xs">
