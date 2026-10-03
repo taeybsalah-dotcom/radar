@@ -4180,7 +4180,7 @@ export const LoyaltyService = {
     };
   },
 
-  // 🧮 حساب الترقية التناسبية للباقات (Prorated Mid-Term Upgrade Engine)
+  // 🧮 حساب ترقية الباقات المباشرة وفروقات الأسعار (Tier Difference Upgrade Engine)
   calculateProratedUpgrade(
     store: Store,
     currentPlan: BillingPlan | null,
@@ -4193,26 +4193,22 @@ export const LoyaltyService = {
 
     let unusedCredit = 0;
     let dailyRateCurrent = 0;
+    let netUpgradeAmount = newPlan.amount;
 
-    // 🛡️ الحساب التناسبي وتطبيق خصم الرصيد المتبقي يُطبّق حصراً عند الترقية لباقة أعلى سعراً
-    if (store.setup_fee_paid && currentPlan && remainingDays > 0 && newPlan.amount > currentPlan.amount) {
-      const planMonths = currentPlan.duration_months ?? (currentPlan.billing_interval === 'YEARLY' ? 12 : 1);
-      const totalDays = Math.max(1, planMonths * 30);
-      dailyRateCurrent = currentPlan.amount / totalDays;
-      unusedCredit = Math.round(remainingDays * dailyRateCurrent * 100) / 100;
-      unusedCredit = Math.min(unusedCredit, currentPlan.amount, newPlan.amount);
+    // 🛡️ احتساب ترقية الباقة ودفع فرق الباقة (الصافي) حصراً عند الترقية لباقة أعلى سعراً
+    if (store.setup_fee_paid && currentPlan && newPlan.amount > currentPlan.amount) {
+      unusedCredit = currentPlan.amount;
+      netUpgradeAmount = Math.max(0, Math.round((newPlan.amount - currentPlan.amount) * 100) / 100);
+      dailyRateCurrent = Math.round((currentPlan.amount / 30) * 100) / 100;
     }
-
-    const newPlanAmount = newPlan.amount;
-    const netUpgradeAmount = Math.max(0, Math.round((newPlanAmount - unusedCredit) * 100) / 100);
 
     return {
       currentPlan,
       newPlan,
       remainingDays,
-      dailyRateCurrent: Math.round(dailyRateCurrent * 100) / 100,
+      dailyRateCurrent,
       unusedCredit,
-      newPlanAmount,
+      newPlanAmount: newPlan.amount,
       netUpgradeAmount,
       hasProrationDiscount: unusedCredit > 0,
     };
@@ -4418,10 +4414,24 @@ export const LoyaltyService = {
     let createdInvoice: StoreInvoice | null = null;
 
     // استخراج الخطة لمعرفة مدة الاشتراك بالأشهر (duration_months)
-    const allBillingPlans = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, []);
+    const allBillingPlans = this.getAllSubscriptionPlansSync();
     const targetPlan =
-      (payload.planId ? allBillingPlans.find((p) => p.id === payload.planId || p.code === payload.planId) : null) ||
-      allBillingPlans.find((p) => p.id === currentStore.subscription_plan_id || p.code === currentStore.plan_code) ||
+      (payload.planId
+        ? allBillingPlans.find(
+            (p) =>
+              p.id === payload.planId ||
+              p.code === payload.planId ||
+              (p.code && p.code.toUpperCase() === String(payload.planId).toUpperCase()) ||
+              (p.id && p.id.toUpperCase() === String(payload.planId).toUpperCase()) ||
+              p.name === payload.planId
+          )
+        : null) ||
+      allBillingPlans.find(
+        (p) =>
+          p.id === currentStore.subscription_plan_id ||
+          p.code === currentStore.plan_code ||
+          (p.name && currentStore.subscription_plan && (p.name === currentStore.subscription_plan || currentStore.subscription_plan.includes(p.name)))
+      ) ||
       null;
 
     const planMonths = targetPlan?.duration_months ?? (targetPlan?.billing_interval === 'YEARLY' ? 12 : 1);
@@ -4476,11 +4486,19 @@ export const LoyaltyService = {
     const currentEndMs = currentStore.subscription_end_date
       ? new Date(currentStore.subscription_end_date).getTime()
       : Date.now();
-    const baseEndMs =
-      (payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') && currentStore.subscription_end_date
+
+    // عند الترقية (upgrade)، يتم تفعيل مميزات الباقة الجديدة لكامل الفترة الحالية مع الحفاظ على نهاية الدورة
+    let nextEndIso: string;
+    if (payload.invoiceType === 'upgrade') {
+      nextEndIso = currentStore.subscription_end_date && currentEndMs > Date.now()
+        ? currentStore.subscription_end_date
+        : new Date(Date.now() + durationMs).toISOString();
+    } else {
+      const baseEndMs = payload.invoiceType === 'renewal' && currentStore.subscription_end_date
         ? Math.max(Date.now(), currentEndMs)
         : Date.now();
-    const nextEndIso = new Date(baseEndMs + durationMs).toISOString();
+      nextEndIso = new Date(baseEndMs + durationMs).toISOString();
+    }
 
     if (payload.invoiceType === 'extra_cashier') {
       await this.purchaseExtraCashier(payload.storeId);
@@ -4495,10 +4513,10 @@ export const LoyaltyService = {
       lifecycle_stage: 'مشترك مدفوع',
       subscription_start_date: currentStore.subscription_start_date || now.toISOString(),
       subscription_end_date: nextEndIso,
-      renewal_amount: targetPlan?.amount || payload.amount || currentStore.renewal_amount || 195,
-      subscription_plan_id: targetPlan?.id || currentStore.subscription_plan_id || payload.planId,
-      plan_code: targetPlan?.code || currentStore.plan_code,
-      subscription_plan: targetPlan?.name || currentStore.subscription_plan || computedPlanName || 'الباقة الأساسية',
+      renewal_amount: targetPlan?.amount || currentStore.renewal_amount || 690,
+      subscription_plan_id: targetPlan?.id || payload.planId || currentStore.subscription_plan_id || 'plan-basic',
+      plan_code: targetPlan?.code || currentStore.plan_code || 'BASIC',
+      subscription_plan: targetPlan?.name || computedPlanName || 'الباقة الأساسية',
       updated_at: now.toISOString(),
     };
 

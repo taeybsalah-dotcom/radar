@@ -686,7 +686,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
     const finalAmount = proration && proration.hasProrationDiscount ? proration.netUpgradeAmount : plan.amount;
     const desc = proration && proration.hasProrationDiscount
-      ? `ترقية إلى "${plan.name}" مع خصم رصيد الأيام المتبقية (-${proration.unusedCredit} ر.س عن ${proration.remainingDays} يوماً)`
+      ? `ترقية إلى "${plan.name}" ودفع فرق الباقة (${proration.netUpgradeAmount.toLocaleString()} ر.س مع خصم ${proration.unusedCredit.toLocaleString()} ر.س قيمة الباقة السابقة)`
       : `تفعيل باقة "${plan.name}" ومميزاتها المتقدمة`;
 
     setSandboxPaymentConfig({
@@ -6161,7 +6161,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                   </span>
                                 </div>
                                 <span className="text-[10px] text-emerald-400 font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                                  ترقية تناسبية ذكية ⚡
+                                  سداد فرق الترقية ⚡
                                 </span>
                               </div>
 
@@ -6171,8 +6171,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                   <span className="font-mono">{plan.amount.toLocaleString()} ر.س</span>
                                 </div>
                                 <div className="flex items-center justify-between text-emerald-400 font-bold">
-                                  <span>💡 خصم الرصيد المتبقي ({proration.remainingDays} يوماً):</span>
-                                  <span className="font-mono">-{proration.unusedCredit} ر.س</span>
+                                  <span>💡 خصم قيمة الباقة السابقة:</span>
+                                  <span className="font-mono">-{proration.unusedCredit.toLocaleString()} ر.س</span>
                                 </div>
                               </div>
                             </div>
@@ -6238,7 +6238,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                               ) : proration && proration.hasProrationDiscount ? (
                                 <>
                                   <Zap className="w-4 h-4" />
-                                  <span>ترقية مع خصم الرصيد ({proration.netUpgradeAmount.toLocaleString()} ر.س) 🚀</span>
+                                  <span>ترقية وسداد فرق الباقة ({proration.netUpgradeAmount.toLocaleString()} ر.س) 🚀</span>
                                 </>
                               ) : (
                                 <>
