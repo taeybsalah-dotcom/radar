@@ -1320,28 +1320,30 @@ export const LoyaltyService = {
       storeResolutionCache.set(merged.slug.toLowerCase(), { store: merged, timestamp: Date.now() });
     }
 
-    // مزامنة بيانات مدير المتجر في جدول الموظفين (إذا تم تعديل الاسم أو رقم الجوال)
-    if (updates.manager_name || updates.manager_contact) {
+    // مزامنة بيانات مدير المتجر في جدول الموظفين (إذا تم تعديل الاسم أو رقم الجوال أو الرمز السري)
+    if (updates.manager_name || updates.manager_contact || updates.admin_pin) {
       const staffList = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, INITIAL_STAFF);
       const adminStaffIdx = staffList.findIndex(
-        (st) => (st.store_id === merged.id || st.store_id === storeId) && st.role === 'admin'
+        (st) => (st.store_id === merged.id || st.store_id === storeId || (merged.slug && st.store_id === merged.slug)) && st.role === 'admin'
       );
       if (adminStaffIdx !== -1) {
         if (updates.manager_name) staffList[adminStaffIdx].name = updates.manager_name;
         if (updates.manager_contact) staffList[adminStaffIdx].phone = updates.manager_contact;
+        if (updates.admin_pin) staffList[adminStaffIdx].pin_code = updates.admin_pin;
         saveLocalData(STORAGE_KEYS.LOCAL_STAFF, staffList);
 
         if (supabase) {
           try {
+            const staffUpdateObj: any = {};
+            if (updates.manager_name) staffUpdateObj.name = updates.manager_name;
+            if (updates.manager_contact) staffUpdateObj.phone = updates.manager_contact;
+            if (updates.admin_pin) staffUpdateObj.pin_code = updates.admin_pin;
             await supabase
               .from('store_staff')
-              .update({
-                name: updates.manager_name || staffList[adminStaffIdx].name,
-                phone: updates.manager_contact || staffList[adminStaffIdx].phone,
-              })
+              .update(staffUpdateObj)
               .eq('id', staffList[adminStaffIdx].id);
           } catch (e) {
-            console.warn('Supabase sync staff manager contact failed', e);
+            console.warn('Supabase sync staff manager contact/pin failed', e);
           }
         }
       }
@@ -1535,7 +1537,11 @@ export const LoyaltyService = {
   async updateStoreStaff(staffId: string, updates: Partial<StoreStaff>): Promise<StoreStaff> {
     const supabase = getSupabaseClient();
     let updatedStaff: StoreStaff | null = null;
-    if (supabase) {
+    
+    const isSyntheticManager = staffId.startsWith('manager-');
+    const targetStoreId = isSyntheticManager ? staffId.replace('manager-', '') : '';
+
+    if (supabase && !isSyntheticManager) {
       try {
         const { data, error } = await supabase
           .from('store_staff')
@@ -1550,7 +1556,12 @@ export const LoyaltyService = {
     }
 
     const staffList = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, INITIAL_STAFF);
-    const index = staffList.findIndex((s) => s.id === staffId);
+    let index = staffList.findIndex((s) => s.id === staffId);
+
+    if (index === -1 && isSyntheticManager) {
+      index = staffList.findIndex((s) => (s.store_id === targetStoreId) && s.role === 'admin');
+    }
+
     let finalStaff: StoreStaff;
     if (index !== -1) {
       staffList[index] = { ...staffList[index], ...(updatedStaff || updates) };
@@ -1560,18 +1571,38 @@ export const LoyaltyService = {
       finalStaff = updatedStaff;
       staffList.push(updatedStaff);
       saveLocalData(STORAGE_KEYS.LOCAL_STAFF, staffList);
+    } else if (isSyntheticManager) {
+      const store = await this.resolveStore(targetStoreId);
+      finalStaff = {
+        id: staffId,
+        store_id: store?.id || targetStoreId,
+        name: updates.name || store?.manager_name || 'مدير المتجر',
+        phone: updates.phone || store?.manager_contact || '',
+        role: 'admin',
+        pin_code: updates.pin_code || store?.admin_pin || '9999',
+        is_active: updates.is_active !== undefined ? updates.is_active : true,
+        can_manual_input_phone: updates.can_manual_input_phone !== undefined ? updates.can_manual_input_phone : true,
+        created_at: new Date().toISOString(),
+      };
+      staffList.push(finalStaff);
+      saveLocalData(STORAGE_KEYS.LOCAL_STAFF, staffList);
     } else {
       throw new Error('الموظف غير موجود');
+    }
+
+    // If this is an admin staff and pin_code was updated, sync to store.admin_pin
+    if (finalStaff.role === 'admin' && updates.pin_code) {
+      await this.updateStoreSettings(finalStaff.store_id, { admin_pin: updates.pin_code });
     }
 
     // Sync active staff session in localStorage if logged in
     try {
       const cashierSession = this.getStaffSession(finalStaff.store_id, 'cashier');
-      if (cashierSession && cashierSession.id === finalStaff.id) {
+      if (cashierSession && (cashierSession.id === finalStaff.id || cashierSession.phone === finalStaff.phone)) {
         this.saveStaffSession(finalStaff.store_id, finalStaff);
       }
       const adminSession = this.getStaffSession(finalStaff.store_id, 'admin');
-      if (adminSession && adminSession.id === finalStaff.id) {
+      if (adminSession && (adminSession.id === finalStaff.id || adminSession.phone === finalStaff.phone)) {
         this.saveStaffSession(finalStaff.store_id, finalStaff);
       }
     } catch (e) {
@@ -1628,60 +1659,6 @@ export const LoyaltyService = {
     const resolvedStoreSlug = currentStore?.slug || storeSlug;
 
     if (!resolvedStoreId && !resolvedStoreSlug) return null;
-
-    // 0.1 مطابقة رقم جوال مدير المتجر الحالي مباشرة
-    if (currentStore && currentStore.manager_contact) {
-      const storeMgrNorm = normalizePhone(currentStore.manager_contact);
-      if (storeMgrNorm === normInput && (!requiredRole || requiredRole === 'admin')) {
-        return {
-          id: 'manager-' + currentStore.id,
-          store_id: currentStore.id,
-          name: currentStore.manager_name || 'مدير المتجر',
-          phone: currentStore.manager_contact,
-          role: 'admin',
-          pin_code: currentStore.admin_pin || '9999',
-          is_active: true,
-          can_manual_input_phone: true,
-          matchedStore: currentStore,
-        };
-      }
-    }
-
-    // 0.2 فحص INITIAL_STAFF المباشر للمتجر المستهدف فقط
-    const matchedInitial = INITIAL_STAFF.find((s) => {
-      if (!s.is_active) return false;
-      const matchesStore =
-        s.store_id === resolvedStoreId ||
-        s.store_id === resolvedStoreSlug ||
-        (resolvedStoreSlug && (s.store_id.includes('demo') && resolvedStoreSlug.includes('demo')));
-      const matchesPhone = normalizePhone(s.phone) === normInput;
-      const matchesRole = !requiredRole || requiredRole === 'cashier' || s.role === 'admin';
-      return matchesStore && matchesPhone && matchesRole;
-    });
-    if (matchedInitial) {
-      return {
-        ...matchedInitial,
-        matchedStore: currentStore || undefined,
-      };
-    }
-
-    // 0.3 فحص INITIAL_STORES للمتجر المستهدف فقط
-    const matchedInitialStore = INITIAL_STORES.find(
-      (s) => (s.id === resolvedStoreId || s.slug === resolvedStoreSlug) && normalizePhone(s.manager_contact) === normInput
-    );
-    if (matchedInitialStore && (!requiredRole || requiredRole === 'admin')) {
-      return {
-        id: 'manager-' + matchedInitialStore.id,
-        store_id: matchedInitialStore.id,
-        name: matchedInitialStore.manager_name || 'المدير العام',
-        phone: matchedInitialStore.manager_contact || phone,
-        role: 'admin',
-        pin_code: matchedInitialStore.admin_pin || '9999',
-        is_active: true,
-        can_manual_input_phone: true,
-        matchedStore: matchedInitialStore,
-      };
-    }
 
     const supabase = getSupabaseClient();
 
@@ -1764,7 +1741,24 @@ export const LoyaltyService = {
       };
     }
 
-    // 4. فحص التخزين المحلي لمدير المتجر المستهدف حصراً
+    // 4. مطابقة مدير المتجر الحالي مباشرة من التخزين المحلي
+    if (currentStore && currentStore.manager_contact) {
+      const storeMgrNorm = normalizePhone(currentStore.manager_contact);
+      if (storeMgrNorm === normInput && (!requiredRole || requiredRole === 'admin')) {
+        return {
+          id: 'manager-' + currentStore.id,
+          store_id: currentStore.id,
+          name: currentStore.manager_name || 'مدير المتجر',
+          phone: currentStore.manager_contact,
+          role: 'admin',
+          pin_code: currentStore.admin_pin || '9999',
+          is_active: true,
+          can_manual_input_phone: true,
+          matchedStore: currentStore,
+        };
+      }
+    }
+
     const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const matchedLocalStore = localStores.find((s) => {
       const matchesStore = s.id === resolvedStoreId || (resolvedStoreSlug && s.slug === resolvedStoreSlug);
@@ -1783,6 +1777,41 @@ export const LoyaltyService = {
         is_active: true,
         can_manual_input_phone: true,
         matchedStore: matchedLocalStore,
+      };
+    }
+
+    // 5. Fallback إلى INITIAL_STAFF و INITIAL_STORES فقط إذا لم يتم العثور على أي بيانات سابقة
+    const matchedInitial = INITIAL_STAFF.find((s) => {
+      if (!s.is_active) return false;
+      const matchesStore =
+        s.store_id === resolvedStoreId ||
+        s.store_id === resolvedStoreSlug ||
+        (resolvedStoreSlug && (s.store_id.includes('demo') && resolvedStoreSlug.includes('demo')));
+      const matchesPhone = normalizePhone(s.phone) === normInput;
+      const matchesRole = !requiredRole || requiredRole === 'cashier' || s.role === 'admin';
+      return matchesStore && matchesPhone && matchesRole;
+    });
+    if (matchedInitial) {
+      return {
+        ...matchedInitial,
+        matchedStore: currentStore || undefined,
+      };
+    }
+
+    const matchedInitialStore = INITIAL_STORES.find(
+      (s) => (s.id === resolvedStoreId || s.slug === resolvedStoreSlug) && normalizePhone(s.manager_contact) === normInput
+    );
+    if (matchedInitialStore && (!requiredRole || requiredRole === 'admin')) {
+      return {
+        id: 'manager-' + matchedInitialStore.id,
+        store_id: matchedInitialStore.id,
+        name: matchedInitialStore.manager_name || 'المدير العام',
+        phone: matchedInitialStore.manager_contact || phone,
+        role: 'admin',
+        pin_code: matchedInitialStore.admin_pin || '9999',
+        is_active: true,
+        can_manual_input_phone: true,
+        matchedStore: matchedInitialStore,
       };
     }
 

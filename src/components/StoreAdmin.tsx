@@ -1975,6 +1975,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       await LoyaltyService.updateStoreStaff(editingStaffForPin.id, {
         pin_code: cleanPin,
       });
+      if (editingStaffForPin.role === 'admin') {
+        setAdminPinCode(cleanPin);
+        setStore((prev) => ({ ...prev, admin_pin: cleanPin }));
+      }
       setStaffList(
         staffList.map((s) =>
           s.id === editingStaffForPin.id ? { ...s, pin_code: cleanPin } : s

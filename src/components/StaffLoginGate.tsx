@@ -98,12 +98,9 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
         return;
       }
 
-      // مطابقة الرقم السري (PIN) - يقبل رمز الموظف أو المدير (مع قبول 9999 كرمز رئيسي احتياطي للمدير)
-      const correctPin = staff.pin_code || (staff.role === 'admin' ? '9999' : '1234');
-      const isMatch =
-        normPin === correctPin ||
-        (staff.role === 'admin' && (normPin === '9999' || normPin === correctPin)) ||
-        (normPin === '1234' && staff.role === 'cashier' && !staff.pin_code);
+      // مطابقة الرقم السري (PIN) بدقة للموظف أو المدير
+      const correctPin = (staff.pin_code || (staff.role === 'admin' ? '9999' : '1234')).trim();
+      const isMatch = normPin === correctPin;
 
       if (!isMatch) {
         setErrorMessage('❌ الرقم السري (PIN) غير صحيح! يرجى التأكد وإعادة المحاولة.');

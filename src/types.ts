@@ -439,6 +439,7 @@ export interface StoreStaff {
   is_active: boolean;
   can_manual_input_phone: boolean; // صلاحية خاصة بالموظف: هل مسموح له بإدخال الجوال يدوياً أم مسح إجباري فقط؟
   created_at?: string;
+  updated_at?: string;
 }
 
 export interface Customer {
