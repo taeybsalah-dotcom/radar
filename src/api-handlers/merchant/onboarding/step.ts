@@ -170,7 +170,7 @@ export default async function handler(req: any, res: any) {
             .maybeSingle();
 
           const now = new Date();
-          const trialEndsAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+          const trialEndsAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
           // Create TRIALING subscription
           const { error: subError } = await supabase

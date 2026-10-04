@@ -158,7 +158,7 @@ function createMockSupabaseClient(): any {
     },
     rpc: async (fn: string) => {
       if (fn === 'check_store_trial_eligibility') {
-        return { data: { eligible: true, trial_days: 7 }, error: null };
+        return { data: { eligible: true, trial_days: 14 }, error: null };
       }
       return { data: null, error: null };
     },

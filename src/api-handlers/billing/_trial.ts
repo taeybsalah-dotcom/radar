@@ -1,6 +1,6 @@
 // ==============================================================================
 // 🛡️ RADAR LOYALTY ENGINE — STAGE 7: TRIAL SERVICE & ELIGIBILITY
-// Purpose: Server-side evaluation of 7-day trial eligibility.
+// Purpose: Server-side evaluation of 14-day trial eligibility.
 // Policy: Strict single-trial policy per store, impervious to client manipulation.
 // ==============================================================================
 
@@ -14,7 +14,7 @@ export interface TrialEligibilityResult {
 }
 
 /**
- * Checks if a store is eligible to initiate or enjoy the official 7-day trial.
+ * Checks if a store is eligible to initiate or enjoy the official 14-day trial.
  */
 export async function checkStoreTrialEligibility(
   supabase: SupabaseClient,
@@ -38,7 +38,7 @@ export async function checkStoreTrialEligibility(
       eligible: rpcData.eligible === true,
       code: rpcData.code,
       error: rpcData.error,
-      trialDays: rpcData.trial_days || 7,
+      trialDays: rpcData.trial_days || 14,
     };
   }
 

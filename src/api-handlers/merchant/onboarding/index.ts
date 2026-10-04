@@ -77,7 +77,7 @@ export default async function handler(req: any, res: any) {
       },
       billing_state: {
         trial_eligible: trialCheck.eligible,
-        trial_days: trialCheck.trialDays || 7,
+        trial_days: trialCheck.trialDays || 14,
         subscription_status: activeSub ? activeSub.status : 'NONE',
         trial_started_at: activeSub?.trial_started_at || null,
         trial_ends_at: activeSub?.trial_ends_at || null,

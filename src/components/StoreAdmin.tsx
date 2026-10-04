@@ -425,7 +425,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         ? new Date(store.trial_end_date).getTime()
         : subscriptionInfo?.trialEndDate
         ? new Date(subscriptionInfo.trialEndDate).getTime()
-        : (store.trial_start_date ? new Date(store.trial_start_date).getTime() : now) + 7 * 86400000;
+        : (store.trial_start_date ? new Date(store.trial_start_date).getTime() : now) + 14 * 86400000;
 
       const diffMs = targetDate - now;
       if (diffMs <= 0) {
@@ -2540,7 +2540,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
             <span className="px-3.5 py-1 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-400 text-xs font-black uppercase tracking-wider">
               {subscriptionInfo?.requiresSetup || !store.setup_fee_paid
-                ? 'انتهت فترة التجربة المجانية (7 أيام)'
+                ? 'انتهت فترة التجربة المجانية (14 يوم)'
                 : 'انتهت فترة اشتراك المتجر'}
             </span>
 
@@ -6024,7 +6024,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                   : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                               }`}
                             >
-                              {!isTrial && currentPaidPlan ? `🟢 باقة ${currentPaidPlan.name}` : '🎁 فترة التجربة المجانية (7 أيام)'}
+                              {!isTrial && currentPaidPlan ? `🟢 باقة ${currentPaidPlan.name}` : '🎁 فترة التجربة المجانية (14 يوم)'}
                             </span>
                           </div>
                           <p className="text-xs text-slate-400 mt-0.5">
@@ -6052,7 +6052,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                 month: 'long',
                                 day: 'numeric',
                               })
-                            : '7 أيام من تاريخ إنشاء المتجر'}
+                            : '14 يوم من تاريخ إنشاء المتجر'}
                         </strong>
                       </div>
                     </div>

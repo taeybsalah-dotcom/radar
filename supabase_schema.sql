@@ -24,9 +24,9 @@ CREATE TABLE IF NOT EXISTS public.stores (
     subscription_status TEXT NOT NULL DEFAULT 'trial',
     subscription_plan TEXT NOT NULL DEFAULT 'trial',
     trial_start_date TIMESTAMPTZ NOT NULL DEFAULT now(),
-    trial_end_date TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '7 days'),
+    trial_end_date TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '14 days'),
     subscription_start_date TIMESTAMPTZ DEFAULT now(),
-    subscription_end_date TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '7 days'),
+    subscription_end_date TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '14 days'),
     setup_fee_paid BOOLEAN NOT NULL DEFAULT false,
     renewal_amount NUMERIC NOT NULL DEFAULT 195.00,
     payment_gateway TEXT NOT NULL DEFAULT 'moyasar',
@@ -393,7 +393,7 @@ CREATE POLICY "Public access to partner_bonuses" ON public.partner_bonuses FOR A
 -- 5. RPC Functions (Server-Side Logic)
 -- ==============================================================================
 
--- [A] Store Onboarding Function (Strict 7-Day Free Trial Default)
+-- [A] Store Onboarding Function (Strict 14-Day Free Trial Default)
 CREATE OR REPLACE FUNCTION public.create_store_concierge_onboarding(
     p_name TEXT,
     p_slug TEXT,
@@ -447,9 +447,9 @@ BEGIN
         'trial',
         'trial',
         now(),
-        (now() + interval '7 days'),
+        (now() + interval '14 days'),
         now(),
-        (now() + interval '7 days'),
+        (now() + interval '14 days'),
         false
     )
     ON CONFLICT (slug) DO UPDATE SET

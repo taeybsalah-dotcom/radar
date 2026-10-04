@@ -66,7 +66,7 @@ const STEPS: { key: StepKey; title: string; subtitle: string; icon: any }[] = [
   {
     key: 'BILLING',
     title: 'الاشتراك والتجربة',
-    subtitle: 'فترة التجربة 7 أيام وسياسة الدفع',
+    subtitle: 'فترة التجربة 14 يوم وسياسة الدفع',
     icon: CreditCard,
   },
   {
@@ -268,7 +268,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
     }
   };
 
-  // 4. Start 7-Day Trial on Step 5
+  // 4. Start 14-Day Trial on Step 5
   const handleStartTrial = async () => {
     setSaving(true);
     setErrorMsg(null);
@@ -295,7 +295,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
         return;
       }
 
-      setSuccessMsg('تم تفعيل الفترة التجريبية المجانية بنجاح (7 أيام)!');
+      setSuccessMsg('تم تفعيل الفترة التجريبية المجانية بنجاح (14 يوم)!');
       await fetchOnboardingState();
       setCurrentStep('REVIEW');
     } catch (err: any) {
@@ -399,7 +399,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
           <div className="flex items-center justify-between">
             <span className="font-mono text-amber-400">
               {billingState?.trial_ends_at
-                ? 'فترة تجريبية سارية (7 أيام)'
+                ? 'فترة تجريبية سارية (14 يوم)'
                 : 'في انتظار اشتراك مفعل'}
             </span>
             <span>حالة الاشتراك:</span>
@@ -794,7 +794,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
                 تنويه هام بشأن الفوترة وبوابات الدفع
               </div>
               <p className="text-slate-300 leading-relaxed">
-                التجربة المجانية متاحة رسمياً لمتجرك لمدة <strong>7 أيام</strong> كاملة.
+                التجربة المجانية متاحة رسمياً لمتجرك لمدة <strong>14 يوم</strong> كاملة.
                 بوابات الدفع الإلكتروني المباشرة ستفعل لاحقاً عند اعتماد المشغل البنكي.
               </p>
             </div>
@@ -802,7 +802,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
             <div className="p-6 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1">
-                  <h4 className="text-sm font-bold text-white">فترة التجربة الرسمية المجانية (7 أيام)</h4>
+                  <h4 className="text-sm font-bold text-white">فترة التجربة الرسمية المجانية (14 يوم)</h4>
                   <p className="text-xs text-slate-400">
                     استكشف جميع مزايا رادار دون أي قيود مالية خلال فترة التجربة.
                   </p>
@@ -818,7 +818,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
                     className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition flex items-center gap-2 shrink-0"
                   >
                     <Clock className="w-3.5 h-3.5" />
-                    بدء التجربة المجانية (7 أيام)
+                    بدء التجربة المجانية (14 يوم)
                   </button>
                 ) : (
                   <span className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-400 text-xs font-semibold shrink-0">

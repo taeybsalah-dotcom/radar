@@ -1271,7 +1271,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                             ) : (
                               <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-teal-500/15 text-teal-300 border border-teal-500/30 flex items-center gap-1">
                                 <Clock className="w-3 h-3 text-teal-400" />
-                                <span>فترة تجربة مجانية (7 أيام)</span>
+                                <span>فترة تجربة مجانية (14 يوم)</span>
                               </span>
                             )}
                             {s.in_grace_period && (
@@ -1447,7 +1447,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-bold text-white">
-                              {stageInfo.isPaidActive ? (s.subscription_plan || 'الباقة الأساسية') : 'فترة تجربة مجانية (7 أيام)'}
+                              {stageInfo.isPaidActive ? (s.subscription_plan || 'الباقة الأساسية') : 'فترة تجربة مجانية (14 يوم)'}
                             </span>
                             <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
                               stageInfo.isPaidActive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'

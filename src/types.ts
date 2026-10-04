@@ -309,7 +309,7 @@ export interface Store {
   subscription_plan_id?: string; // معرف باقة الاشتراك المختارة
   plan_code?: string; // كود الباقة المختارة
   trial_start_date?: string;
-  trial_end_date?: string; // نهاية فترة الـ 7 أيام المجانية
+  trial_end_date?: string; // نهاية فترة الـ 14 يوم المجانية
   subscription_start_date?: string;
   subscription_end_date?: string; // تاريخ انتهاء الاشتراك الشهري
   setup_fee_paid?: boolean; // هل تم سداد رسوم التأسيس (500 ريال) لمرة واحدة؟

@@ -357,9 +357,9 @@ export function normalizeStore(s: any): Store {
     }
   }
 
-  // إذا لم يكن مشتركاً مدفوعاً، فهو في فترة التجربة المجانية (7 أيام)
+  // إذا لم يكن مشتركاً مدفوعاً، فهو في فترة التجربة المجانية (14 يوم)
   const trialStart = s.trial_start_date || s.created_at || new Date().toISOString();
-  const trialEnd = s.trial_end_date || new Date(new Date(trialStart).getTime() + 7 * 86400000).toISOString();
+  const trialEnd = s.trial_end_date || new Date(new Date(trialStart).getTime() + 14 * 86400000).toISOString();
 
   const finalStage: UnifiedLifecycleStage = isPaid
     ? 'مشترك مدفوع'
@@ -993,7 +993,7 @@ export const LoyaltyService = {
         });
 
         const nowIso = new Date().toISOString();
-        const trialEndIso = new Date(Date.now() + 7 * 86400000).toISOString();
+        const trialEndIso = new Date(Date.now() + 14 * 86400000).toISOString();
 
         if (!error && data && data.success) {
           createdStore = data.store as Store;
@@ -1092,9 +1092,9 @@ export const LoyaltyService = {
       subscription_status: 'trial',
       subscription_plan: 'trial',
       trial_start_date: new Date().toISOString(),
-      trial_end_date: new Date(Date.now() + 7 * 86400000).toISOString(),
+      trial_end_date: new Date(Date.now() + 14 * 86400000).toISOString(),
       subscription_start_date: new Date().toISOString(),
-      subscription_end_date: new Date(Date.now() + 7 * 86400000).toISOString(),
+      subscription_end_date: new Date(Date.now() + 14 * 86400000).toISOString(),
       setup_fee_paid: false,
       renewal_amount: 195,
       payment_gateway: 'moyasar',
@@ -5134,7 +5134,7 @@ export const LoyaltyService = {
     const now = Date.now();
     const trialEndMs = store.trial_end_date
       ? new Date(store.trial_end_date).getTime()
-      : now + 7 * 86400000;
+      : now + 14 * 86400000;
     const subEndMs = store.subscription_end_date
       ? new Date(store.subscription_end_date).getTime()
       : trialEndMs;
