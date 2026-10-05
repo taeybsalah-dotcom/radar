@@ -555,7 +555,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       }
     };
 
-    const syncInterval = setInterval(runSync, 12000);
+    const syncInterval = setInterval(runSync, 60000);
 
     const onVisibilityOrFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {

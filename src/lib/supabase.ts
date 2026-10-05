@@ -451,7 +451,7 @@ let storesListCache: { data: Store[]; timestamp: number } | null = null;
 let partnersListCache: { data: any[]; timestamp: number } | null = null;
 let leadsListCache: { data: MerchantLead[]; timestamp: number } | null = null;
 let ledgerListCache: { data: FinancialLedgerEntry[]; timestamp: number } | null = null;
-const SERVICE_CACHE_TTL = 60000; // 60 seconds TTL (Fast in-memory cache)
+const SERVICE_CACHE_TTL = 300000; // 5 min TTL — cut Supabase egress (stores rows carry large image payloads)
 
 export const invalidateAdminStoresCache = () => {
   adminStoresSummaryCache = null;
