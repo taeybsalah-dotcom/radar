@@ -478,6 +478,86 @@ export const invalidateAllServiceCaches = () => {
   ledgerListCache = null;
 };
 
+// ==============================================================================
+// 🛡️ EGRESS GUARD — explicit column lists (never select('*') on heavy tables)
+// stores.logo_url / stores.slider_images and customer_coupons.privilege_image_url
+// may hold base64 data URLs (hundreds of KB each). They are excluded from list /
+// polling queries and fetched once per hour per client via attachStoreAssets().
+// ==============================================================================
+const STORE_SAFE_COLS =
+  'id, slug, name, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, subscription_plan, trial_start_date, trial_end_date, subscription_start_date, subscription_end_date, setup_fee_paid, renewal_amount, payment_gateway, gateway_customer_id, gateway_subscription_id, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, created_at, updated_at';
+const STORE_FULL_COLS =
+  STORE_SAFE_COLS +
+  ', lifecycle_stage, subscription_plan_id, plan_code, admin_pin, max_cashier_invoice_amount, catalog_enabled, fulfillment_settings, grace_period_days, grace_period_ends_at, complimentary_days_granted, last_override_at, last_override_reason';
+const CUSTOMER_SAFE_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at';
+const CUSTOMER_FULL_COLS = CUSTOMER_SAFE_COLS + ', is_active, visits_count';
+const COUPON_SAFE_COLS =
+  'id, coupon_code, store_id, customer_id, customer_phone, customer_name, privilege_id, privilege_title, cost_points, status, valid_start_time, valid_end_time, purchased_at';
+const COUPON_FULL_COLS = COUPON_SAFE_COLS + ', used_at, cashier_name';
+
+// Probe (zero-row query, no payload) once per table to learn which optional columns exist.
+const colProbeCache = new Map<string, Promise<'*'>>();
+function probeCols(supabase: any, table: string, full: string, safe: string): Promise<'*'> {
+  let p = colProbeCache.get(table);
+  if (!p) {
+    p = (async () => {
+      try {
+        const r: any = await supabase.from(table).select(full).limit(0);
+        if (!r.error) return full as unknown as '*';
+        if (!/column|42703|PGRST204/i.test(String(r.error.code || '') + String(r.error.message || ''))) {
+          colProbeCache.delete(table); // transient error — retry next time
+        }
+      } catch {
+        colProbeCache.delete(table);
+      }
+      return safe as unknown as '*';
+    })();
+    colProbeCache.set(table, p);
+  }
+  return p;
+}
+const storeCols = (s: any) => probeCols(s, 'stores', STORE_FULL_COLS, STORE_SAFE_COLS);
+const customerCols = (s: any) => probeCols(s, 'store_customers', CUSTOMER_FULL_COLS, CUSTOMER_SAFE_COLS);
+const couponCols = (s: any) => probeCols(s, 'customer_coupons', COUPON_FULL_COLS, COUPON_SAFE_COLS);
+
+// Heavy store assets (logo + slider) — fetched at most once per hour, persisted in sessionStorage.
+const STORE_ASSET_TTL = 3600000;
+const STORE_ASSET_SS_KEY = 'radar_store_assets_v1';
+const storeAssetsCache = new Map<string, { logo_url: any; slider_images: any; ts: number }>();
+try {
+  if (typeof sessionStorage !== 'undefined') {
+    const raw = sessionStorage.getItem(STORE_ASSET_SS_KEY);
+    if (raw) Object.entries(JSON.parse(raw)).forEach(([k, v]: any) => storeAssetsCache.set(k, v));
+  }
+} catch {}
+function persistStoreAssets() {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(STORE_ASSET_SS_KEY, JSON.stringify(Object.fromEntries(storeAssetsCache)));
+    }
+  } catch {}
+}
+function mergeStoreAssets(row: any): any {
+  const a = row && row.id ? storeAssetsCache.get(row.id) : undefined;
+  return a ? { ...row, logo_url: a.logo_url, slider_images: a.slider_images } : row;
+}
+async function attachStoreAssets(supabase: any, row: any): Promise<any> {
+  if (!row || !isUUID(row.id)) return row;
+  const a = storeAssetsCache.get(row.id);
+  if (!a || Date.now() - a.ts > STORE_ASSET_TTL) {
+    try {
+      const { data } = await supabase.from('stores').select('logo_url, slider_images').eq('id', row.id).maybeSingle();
+      if (data) {
+        storeAssetsCache.set(row.id, { logo_url: data.logo_url, slider_images: data.slider_images, ts: Date.now() });
+        persistStoreAssets();
+      }
+    } catch {}
+  }
+  return mergeStoreAssets(row);
+}
+const couponImageCache = new Map<string, string>(); // privilege_id -> image (loaded once per session)
+const couponImagesLoaded = new Set<string>();
+
 export const LoyaltyService = {
   // 1. جلب جميع المتاجر (من Supabase مباشرة مع كاش محلي فائق السرعة)
   async getAllStores(forceFresh: boolean = false): Promise<Store[]> {
@@ -493,7 +573,7 @@ export const LoyaltyService = {
         const { data, error } = await withTimeout(
           supabase
             .from('stores')
-            .select('*')
+            .select(await storeCols(supabase))
             .order('created_at', { ascending: false }),
           2000
         );
@@ -501,7 +581,7 @@ export const LoyaltyService = {
           const validStores = data.filter((s: any) => Boolean(s && s.id)).map((dbStore: any) => {
             const localMatch = currentLocal.find((l) => l.id === dbStore.id || l.slug === dbStore.slug);
             const normalized = normalizeStore({
-              ...dbStore,
+              ...mergeStoreAssets(dbStore),
               ...(localMatch || {}),
               subscription_active: localMatch?.subscription_active !== undefined ? localMatch.subscription_active : dbStore.subscription_active,
               status: localMatch?.status || dbStore.status,
@@ -574,7 +654,7 @@ export const LoyaltyService = {
         const { data, error } = await withTimeout(
           supabase
             .from('stores')
-            .select('*, store_customers(count), store_staff(count)')
+            .select((`${await storeCols(supabase)}, store_customers(count), store_staff(count)`) as unknown as '*')
             .order('created_at', { ascending: false }),
           2000
         );
@@ -586,7 +666,7 @@ export const LoyaltyService = {
             .map((dbStore) => {
               const localMatch = localStores.find((ls) => ls.id === dbStore.id || (dbStore.slug && ls.slug === dbStore.slug));
               const merged = {
-                ...dbStore,
+                ...mergeStoreAssets(dbStore),
                 subscription_active: localMatch?.subscription_active !== undefined ? localMatch.subscription_active : dbStore.subscription_active,
                 status: localMatch?.status || dbStore.status,
                 subscription_status: localMatch?.subscription_status || dbStore.subscription_status,
@@ -692,7 +772,7 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        let storeQuery = supabase.from('stores').select('*');
+        let storeQuery = supabase.from('stores').select(await storeCols(supabase));
         if (isUUID(clean)) {
           storeQuery = storeQuery.eq('id', clean);
         } else {
@@ -705,7 +785,7 @@ export const LoyaltyService = {
         if (!data && !isUUID(clean)) {
           const fallbackRes = await supabase
             .from('stores')
-            .select('*')
+            .select(await storeCols(supabase))
             .or(`name.ilike.${clean},custom_domain.ilike.${clean}`)
             .limit(1)
             .maybeSingle();
@@ -713,7 +793,7 @@ export const LoyaltyService = {
         }
 
         if (!error && data && data.id) {
-          const resolved = normalizeStore(data) as Store;
+          const resolved = normalizeStore(await attachStoreAssets(supabase, data)) as Store;
 
           // 🛡️ Auto-repair legacy DB store rows that mistakenly have active/paid status or setup_fee_paid=true without paid invoice
           if (
@@ -1711,7 +1791,7 @@ export const LoyaltyService = {
 
       // 2. فحص مدير المتجر في جدول المتاجر في Supabase للمتجر الحالي حصراً
       try {
-        let storeQuery = supabase.from('stores').select('*');
+        let storeQuery = supabase.from('stores').select(await storeCols(supabase));
         if (resolvedStoreId && isUUID(resolvedStoreId)) {
           storeQuery = storeQuery.eq('id', resolvedStoreId);
         } else if (resolvedStoreSlug) {
@@ -2213,9 +2293,10 @@ export const LoyaltyService = {
 
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        const couponKey = `${resolvedStoreId}:${customerId}`;
         let query = supabase
           .from('customer_coupons')
-          .select('*')
+          .select(couponImagesLoaded.has(couponKey) ? await couponCols(supabase) : '*' as '*')
           .eq('store_id', resolvedStoreId);
 
         if (isUUID(customerId)) {
@@ -2230,6 +2311,10 @@ export const LoyaltyService = {
 
         const { data, error } = await query.order('purchased_at', { ascending: false });
         if (!error && Array.isArray(data)) {
+          if (!couponImagesLoaded.has(couponKey)) {
+            data.forEach((c: any) => { if (c.privilege_id && c.privilege_image_url) couponImageCache.set(c.privilege_id, c.privilege_image_url); });
+            couponImagesLoaded.add(couponKey);
+          }
           return data.map((c: any) => ({
             id: c.id,
             coupon_code: c.coupon_code,
@@ -2239,7 +2324,7 @@ export const LoyaltyService = {
             store_id: c.store_id,
             privilege_id: c.privilege_id,
             privilege_title: c.privilege_title,
-            privilege_image_url: c.privilege_image_url,
+            privilege_image_url: c.privilege_image_url ?? couponImageCache.get(c.privilege_id) ?? null,
             cost_points: Number(c.cost_points) || 0,
             status: c.status,
             valid_start_time: c.valid_start_time,
@@ -2270,7 +2355,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('customer_coupons')
-          .select('*')
+          .select(await couponCols(supabase))
           .eq('store_id', resolvedStoreId)
           .order('purchased_at', { ascending: false });
         if (!error && Array.isArray(data)) {
@@ -2322,7 +2407,7 @@ export const LoyaltyService = {
         const [custRes, privRes, quotaRes] = await Promise.all([
           supabase
             .from('store_customers')
-            .select('*')
+            .select(await customerCols(supabase))
             .eq('id', customerId)
             .eq('store_id', resolvedStoreId)
             .maybeSingle(),
@@ -3246,7 +3331,7 @@ export const LoyaltyService = {
         const cleanPhone = phone.trim();
         const { data, error } = await supabase
           .from('store_customers')
-          .select('*')
+          .select(await customerCols(supabase))
           .eq('store_id', resolvedId)
           .or(`phone.eq.${cleanPhone},phone.eq.${normInput},phone.eq.0${normInput},phone.eq.+966${normInput},phone.eq.966${normInput}`)
           .limit(1)
@@ -3290,7 +3375,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('store_customers')
-          .select('*')
+          .select(await customerCols(supabase))
           .eq('store_id', resolvedId)
           .order('last_visit_date', { ascending: false });
         if (!error && Array.isArray(data)) {
@@ -3411,7 +3496,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('store_customers')
-          .select('*')
+          .select(await customerCols(supabase))
           .eq('id', customerId)
           .eq('store_id', resolvedStoreId)
           .maybeSingle();
@@ -3750,7 +3835,7 @@ export const LoyaltyService = {
         const cleanPhone = phone.trim();
         const { data: matchedCust } = await supabase
           .from('store_customers')
-          .select('*')
+          .select(await customerCols(supabase))
           .eq('store_id', resolvedStoreId)
           .or(`phone.eq.${cleanPhone},phone.eq.${normPhone},phone.eq.0${normPhone},phone.eq.+966${normPhone},phone.eq.966${normPhone}`)
           .limit(1)
@@ -3966,7 +4051,7 @@ export const LoyaltyService = {
         const cleanPhone = phone.trim();
         const { data: matchedCust } = await supabase
           .from('store_customers')
-          .select('*')
+          .select(await customerCols(supabase))
           .eq('store_id', resolvedStoreId)
           .or(`phone.eq.${cleanPhone},phone.eq.${normPhone},phone.eq.0${normPhone},phone.eq.+966${normPhone},phone.eq.966${normPhone}`)
           .limit(1)

@@ -1,0 +1,33 @@
+-- ==============================================================================
+-- Base64 -> Supabase Storage migration (PLAN / helper SQL). Run in order.
+-- ==============================================================================
+-- 1. Create a public bucket (served via Cloudflare CDN, e.g. cdn.<domain> -> proxied
+--    CNAME to <project>.supabase.co with "Cache Everything" + Edge TTL 1 month;
+--    use content-hashed filenames so objects are immutable).
+insert into storage.buckets (id, name, public)
+values ('store-assets', 'store-assets', true)
+on conflict (id) do nothing;
+
+-- 2. Audit how heavy the data is (run first, read-only).
+select 'stores.logo_url' as col, count(*) filter (where logo_url like 'data:%') as base64_rows,
+       pg_size_pretty(sum(length(logo_url)) filter (where logo_url like 'data:%')) as total
+from public.stores
+union all
+select 'stores.slider_images', count(*) filter (where slider_images::text like '%data:image%'),
+       pg_size_pretty(sum(length(slider_images::text)) filter (where slider_images::text like '%data:image%'))
+from public.stores
+union all
+select 'customer_coupons.privilege_image_url', count(*) filter (where privilege_image_url like 'data:%'),
+       pg_size_pretty(sum(length(privilege_image_url)) filter (where privilege_image_url like 'data:%'))
+from public.customer_coupons
+union all
+select 'privileges.image_url', count(*) filter (where image_url like 'data:%'),
+       pg_size_pretty(sum(length(image_url)) filter (where image_url like 'data:%'))
+from public.privileges;
+
+-- 3. Migration is done by scripts/migrate-base64-to-storage.mjs (service role key):
+--    for each row with a data: URL -> decode -> upload to store-assets/<store_id>/<sha1>.webp
+--    -> replace the column with https://cdn.<domain>/storage/v1/object/public/store-assets/<path>.
+--    privilege_image_url on customer_coupons: set from privileges.image_url after that table is migrated
+--    (or drop the denormalised column and join on privilege_id).
+-- 4. Frontend: imageCompressor.ts must upload the compressed Blob to Storage and persist only the URL.
