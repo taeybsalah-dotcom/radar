@@ -278,7 +278,7 @@ function parseRouteParams() {
   const savedSlug = localStorage.getItem('radar_last_store_slug');
   const storeSlug = slugParam || savedSlug || null;
 
-  if (!portalParam && !hasSession && storeSlug) {
+  if (!portalParam && !hasSession && slugParam) {
     resolvedRolePortal = 'customer';
   }
 
