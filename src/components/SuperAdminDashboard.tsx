@@ -5,7 +5,8 @@ import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
-import { generateSafeSlug, resolveUniqueStoreSlug } from '../lib/slugUtils';
+import { generateSafeSlug, resolveUniqueStoreSlug, isDemoStore, isDemoStoreSlug } from '../lib/slugUtils';
+import { DEMO_STORE_SLUG } from '../lib/demoStoreSeed';
 import {
   Crown,
   PlusCircle,
@@ -536,28 +537,70 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     };
   }, [isAuthenticated, debouncedLoadStores]);
 
-  // Total platform customer count across all stores
-  const totalPlatformCustomers = useMemo(() => {
-    return Object.values(storesAnalytics).reduce((sum, item) => sum + (item.customerCount || 0), 0);
-  }, [storesAnalytics]);
+  // 🛡️ عزل المتاجر الحقيقية عن متاجر وحركات الديمو
+  const realStores = useMemo(() => {
+    return stores.filter((s) => !isDemoStore(s));
+  }, [stores]);
 
-  // Total platform sales across all stores + paid subscription revenue
+  const demoStores = useMemo(() => {
+    return stores.filter((s) => isDemoStore(s));
+  }, [stores]);
+
+  const [isResettingDemo, setIsResettingDemo] = useState(false);
+
+  const handleResetDemoStore = async () => {
+    if (isResettingDemo) return;
+    setIsResettingDemo(true);
+    try {
+      const res = await LoyaltyService.resetDemoStore();
+      setSuccessMessage(res.message);
+      await loadStores();
+      confetti({
+        particleCount: 50,
+        spread: 60,
+        origin: { y: 0.6 },
+      });
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (e: any) {
+      setErrorMessage('فشل تصفير متجر الديمو: ' + (e?.message || 'خطأ غير معروف'));
+      setTimeout(() => setErrorMessage(null), 3000);
+    } finally {
+      setIsResettingDemo(false);
+    }
+  };
+
+  // Total platform customer count across REAL stores only
+  const totalPlatformCustomers = useMemo(() => {
+    return realStores.reduce((sum, s) => {
+      const analytics = storesAnalytics[s.id];
+      return sum + (analytics?.customerCount || 0);
+    }, 0);
+  }, [realStores, storesAnalytics]);
+
+  // Total platform sales across REAL stores only + paid subscription revenue
   const totalPlatformSales = useMemo(() => {
-    const storeSales = Object.values(storesAnalytics).reduce((sum, item) => sum + (item.totalSales || 0), 0);
-    const paidInvoicesTotal = Object.values(allInvoices)
+    const storeSales = realStores.reduce((sum, s) => {
+      const analytics = storesAnalytics[s.id];
+      return sum + (analytics?.totalSales || 0);
+    }, 0);
+    const paidInvoicesTotal = Object.entries(allInvoices)
+      .filter(([sId]) => !isDemoStoreSlug(sId) && sId !== 'demo-cafe-store-uuid')
+      .map(([, invList]) => invList)
       .flat()
       .filter((i) => i.status === 'paid')
       .reduce((sum, i) => sum + (i.amount || 0), 0);
     return storeSales + paidInvoicesTotal;
-  }, [storesAnalytics, allInvoices]);
+  }, [realStores, storesAnalytics, allInvoices]);
 
-  // Unconverted Leads (leads that have not yet been registered as a store)
+  // Unconverted Leads (leads that have not yet been registered as a store and are not demo)
   const unconvertedLeads = useMemo(() => {
     const storeIds = new Set(stores.map((s) => s.id));
     const storePhones = new Set(stores.map((s) => normalizePhone(s.manager_contact)));
     const storeNames = new Set(stores.map((s) => s.name.trim().toLowerCase()));
 
     return allLeads.filter((l) => {
+      if (l.is_demo === true) return false;
+      if (l.referral_code?.toLowerCase().startsWith('demo-')) return false;
       if (l.converted_store_id && storeIds.has(l.converted_store_id)) return false;
       if (l.phone && storePhones.has(normalizePhone(l.phone))) return false;
       if (l.store_name && storeNames.has(l.store_name.trim().toLowerCase())) return false;
@@ -565,10 +608,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     });
   }, [allLeads, stores]);
 
-  // Pipeline counts for all 5 stages
+  // Pipeline counts for all 5 stages (Calculated strictly from REAL stores & leads)
   const pipelineCounts = useMemo(() => {
     const counts: Record<string, number> = {
-      ALL: stores.length + unconvertedLeads.length,
+      ALL: realStores.length + unconvertedLeads.length,
       'طلب جديد': 0,
       'جاري التأسيس': 0,
       'تم التأسيس': 0,
@@ -576,7 +619,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       'مشترك مدفوع': 0,
     };
 
-    for (const s of stores) {
+    for (const s of realStores) {
       const stage = getStoreUnifiedStage(s);
       if (counts[stage] !== undefined) {
         counts[stage]++;
@@ -591,7 +634,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     }
 
     return counts;
-  }, [stores, unconvertedLeads]);
+  }, [realStores, unconvertedLeads]);
 
   // Filtered stores and leads based on storeStageFilter and storeSearchQuery
   const filteredStores = useMemo(() => {
@@ -899,9 +942,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
           <div className="flex items-center space-x-3 rtl:space-x-reverse">
             <div className="bg-slate-950/80 px-4 py-2.5 rounded-2xl border border-slate-800 text-center">
-              <span className="text-[11px] text-slate-400 block">المتاجر النشطة</span>
+              <span className="text-[11px] text-slate-400 block">المتاجر الحقيقية النشطة</span>
               <span className="text-xl font-black text-amber-400 font-mono">
-                {stores.filter((s) => s.subscription_active).length} / {stores.length}
+                {realStores.filter((s) => s.subscription_active).length} / {realStores.length}
               </span>
             </div>
             {stores.length > 0 && (
@@ -1117,6 +1160,76 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
           </div>
         </div>
 
+        {/* ☕ بيئة العرض والتجربة التفاعلية المعزولة (Demo Cafe Showcase & Instant Reset) */}
+        <div className="relative rounded-3xl bg-gradient-to-r from-cyan-950/40 via-slate-900 to-indigo-950/40 border-2 border-cyan-500/30 p-5 sm:p-6 shadow-xl overflow-hidden">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-2xl shrink-0 shadow-inner">
+                ☕
+              </div>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-base sm:text-lg font-black text-white">متجر التجربة التفاعلي (Demo Cafe)</h4>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold">
+                    معزول تماماً عن أرقام البزنس 🛡️
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                    /demo-cafe
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                  متجر تجريبي متكامل وجاهز للاختبار والعرض (منيو، موظفين، خدمات، عملاء، ونقاط). يمكنك تجربته أو تصفير بياناته في أي لحظة.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <a
+                href="/?store=demo-cafe&portal=customer"
+                target="_blank"
+                rel="noreferrer"
+                className="px-3.5 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-cyan-300 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                title="فتح محفظة العميل لمتجر الديمو"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>محفظة العميل</span>
+              </a>
+
+              <a
+                href="/?store=demo-cafe&portal=cashier"
+                target="_blank"
+                rel="noreferrer"
+                className="px-3.5 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-amber-300 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                title="فتح نقطة البيع (PIN: 1234)"
+              >
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>نقطة البيع (1234)</span>
+              </a>
+
+              <a
+                href="/?store=demo-cafe&portal=admin"
+                target="_blank"
+                rel="noreferrer"
+                className="px-3.5 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-emerald-300 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                title="فتح لوحة إدارة المتجر (PIN: 9999)"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>إدارة المتجر (9999)</span>
+              </a>
+
+              <button
+                onClick={handleResetDemoStore}
+                disabled={isResettingDemo}
+                className="px-4 py-2.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500 text-cyan-300 hover:text-slate-950 border border-cyan-500/40 text-xs font-black transition flex items-center gap-1.5 shadow-md active:scale-95 disabled:opacity-50"
+                title="تصفير وحذف جميع حركات وعملاء الديمو وإعادته لنقطة الصفر الأصلية"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isResettingDemo ? 'animate-spin' : ''}`} />
+                <span>{isResettingDemo ? 'جاري التصفير...' : '🔄 تصفير متجر الديمو (Reset)'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* 🔍 Search & 5-Stage Filter Bar */}
         <div className="bg-slate-900/70 p-4 rounded-3xl border border-slate-800 space-y-3 shadow-lg">
           <div className="flex items-center gap-2 bg-slate-950/80 p-2.5 rounded-2xl border border-slate-800">
@@ -1250,6 +1363,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                             <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-slate-700 font-bold">
                               /{s.slug}
                             </span>
+
+                            {isDemoStore(s) && (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold flex items-center gap-1">
+                                <span>🎯 متجر تجريبي (DEMO)</span>
+                              </span>
+                            )}
                             
                             {/* 🏷️ Unified 5-Stage Status Badge */}
                             <span className={`text-[10px] font-bold px-3 py-0.5 rounded-full border flex items-center gap-1 ${stageInfo.badgeClass}`}>
@@ -1343,6 +1462,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           <Edit3 className="w-3.5 h-3.5" />
                           <span>تعديل ✏️</span>
                         </button>
+
+                        {isDemoStore(s) && (
+                          <button
+                            onClick={handleResetDemoStore}
+                            disabled={isResettingDemo}
+                            className="px-3 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500 text-cyan-300 hover:text-slate-950 border border-cyan-500/40 transition text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse"
+                            title="تصفير وحذف جميع حركات وعملاء الديمو وإعادته لنقطة الصفر الأصلية"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isResettingDemo ? 'animate-spin' : ''}`} />
+                            <span>تصفير الديمو 🔄</span>
+                          </button>
+                        )}
 
                         {/* WhatsApp Handover Quick Button */}
                         <button

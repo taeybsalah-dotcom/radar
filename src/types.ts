@@ -297,6 +297,7 @@ export interface Store {
   id: string;
   slug: string;
   name: string;
+  is_demo?: boolean;
   logo_url: string | null;
   primary_color: string;
   secondary_color: string;
@@ -450,6 +451,7 @@ export interface Customer {
   lifetime_xp: number;
   wallet_balance: number;
   last_visit_date: string;
+  is_demo?: boolean;
   is_active?: boolean; // حالة تنشيط أو إيقاف العميل
   visits_count?: number; // عدد الزيارات
   created_at?: string;
@@ -462,6 +464,7 @@ export interface Tier {
   required_xp: number;
   badge_color?: string;
   icon?: string;
+  created_at?: string;
 }
 
 export interface Privilege {
@@ -515,6 +518,7 @@ export interface AuditLog {
   purchase_amount: number;
   points_changed: number;
   entry_method?: 'qr_scan' | 'manual'; // نوع الإدخال: مسح باركود بالكاميرا أم إدخال يدوي
+  is_demo?: boolean;
   metadata: Record<string, any>;
   created_at: string;
 }
@@ -642,6 +646,7 @@ export interface MerchantLead {
   affiliate_id?: string | null;
   status: LeadStatus;
   lifecycle_stage?: UnifiedLifecycleStage;
+  is_demo?: boolean;
   conversion_started_at?: string | null;
   conversion_error?: string | null;
   converted_store_id?: string | null;

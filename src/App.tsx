@@ -4,6 +4,8 @@ import { LoyaltyService } from './lib/supabase';
 import { LoyaltyEvents } from './lib/events';
 import { debounce } from './lib/debounce';
 import { INITIAL_STORE } from './lib/demoData';
+import { isDemoStoreSlug } from './lib/slugUtils';
+import { INITIAL_DEMO_STORE, DEMO_STORE_SLUG } from './lib/demoStoreSeed';
 import { updateDynamicPWA } from './lib/pwa';
 import { useAuth } from './context/AuthContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
@@ -45,6 +47,10 @@ type PortalTab =
 
 function getInitialStoreSync(targetSlug?: string | null): Store | null {
   if (typeof window === 'undefined') return null;
+  const clean = (targetSlug || '').trim().toLowerCase();
+  if (clean === DEMO_STORE_SLUG || isDemoStoreSlug(clean)) {
+    return INITIAL_DEMO_STORE;
+  }
   try {
     const rawList = localStorage.getItem('radar_local_stores');
     if (rawList) {
@@ -124,7 +130,7 @@ function parseRouteParams() {
     pathname === '/join/' ||
     portalParam === 'join' ||
     rawHash === 'join' ||
-    (pathname === '/' && isRefParam);
+    (pathname === '/' && isRefParam && !slugParam);
   if (isJoin) {
     return {
       portal: 'join' as const,
@@ -195,7 +201,23 @@ function parseRouteParams() {
     };
   }
 
-  // 7. Check Public Partner Landing Page (/<partner-slug>)
+  // 7. Check Direct Store Path or Hash (e.g. /demo-cafe, #/demo-cafe)
+  const pathSegments = pathname.split('/').filter(Boolean);
+  const potentialSlug = pathSegments.length === 1 ? pathSegments[0] : null;
+  const isDemoPath = potentialSlug && (potentialSlug === DEMO_STORE_SLUG || isDemoStoreSlug(potentialSlug));
+  const isDemoHash = rawHash && (rawHash === DEMO_STORE_SLUG || isDemoStoreSlug(rawHash));
+
+  if ((isDemoPath || isDemoHash) && !slugParam) {
+    const effectiveSlug = isDemoPath ? potentialSlug! : rawHash;
+    return {
+      portal: (portalParam as PortalTab) || 'customer',
+      isPreview: previewParam,
+      storeSlug: effectiveSlug,
+      partnerSlug: null,
+    };
+  }
+
+  // 8. Check Public Partner Landing Page (/<partner-slug>)
   const RESERVED_SLUGS = new Set([
     '',
     'join',
@@ -217,21 +239,19 @@ function parseRouteParams() {
     'owner',
     'store',
     'store-admin',
+    'demo-cafe',
   ]);
 
-  const pathSegments = pathname.split('/').filter(Boolean);
-  const potentialPartnerSlug = pathSegments.length === 1 ? pathSegments[0] : null;
-
-  if (potentialPartnerSlug && !RESERVED_SLUGS.has(potentialPartnerSlug) && !slugParam) {
+  if (potentialSlug && !RESERVED_SLUGS.has(potentialSlug) && !slugParam) {
     return {
       portal: 'partner-landing' as const,
       isPreview: false,
       storeSlug: null,
-      partnerSlug: potentialPartnerSlug,
+      partnerSlug: potentialSlug,
     };
   }
 
-  // 8. If URL contains store slug explicitly (?store=xyz)
+  // 9. If URL contains store slug explicitly (?store=xyz)
   if (slugParam) {
     let defaultStorePortal: PortalTab = 'customer';
     try {

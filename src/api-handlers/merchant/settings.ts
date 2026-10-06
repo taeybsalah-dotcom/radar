@@ -127,7 +127,15 @@ export default async function handler(req: any, res: any) {
       }
 
       if (body.logo_url !== undefined) {
-        updates.logo_url = String(body.logo_url).trim();
+        const cleanLogo = String(body.logo_url).trim();
+        if (cleanLogo.toLowerCase().startsWith('data:')) {
+          return res.status(400).json({
+            success: false,
+            code: 'INVALID_LOGO_FORMAT',
+            error: 'لا يمكن حفظ الصورة بصيغة Base64، يجب رفع الصورة إلى Supabase Storage وحفظ الرابط فقط.',
+          });
+        }
+        updates.logo_url = cleanLogo;
       }
 
       if (body.points_per_riyal !== undefined) {

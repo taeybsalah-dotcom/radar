@@ -20,9 +20,13 @@ import {
   Layers,
   Check,
   Zap,
+  Upload,
+  Loader2,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { SandboxPaymentModal } from './SandboxPaymentModal';
 import { LoyaltyService } from '../lib/supabase';
+import { compressImage } from '../lib/imageCompressor';
 
 interface MerchantOnboardingConsoleProps {
   store: Store;
@@ -103,6 +107,23 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
   const [primaryColor, setPrimaryColor] = useState(initialStore.primary_color || '#0F172A');
   const [secondaryColor, setSecondaryColor] = useState(initialStore.secondary_color || '#F59E0B');
   const [logoUrl, setLogoUrl] = useState(initialStore.logo_url || '');
+  const [isCompressingLogo, setIsCompressingLogo] = useState(false);
+
+  const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsCompressingLogo(true);
+    setErrorMsg(null);
+    try {
+      const result = await compressImage(file, 400, 400, 0.8, 'image/png', 'logos');
+      setLogoUrl(result.dataUrl);
+    } catch (err: any) {
+      console.error('Failed to compress and upload logo:', err);
+      setErrorMsg('تعذر رفع وضغط الشعار: ' + (err?.message || 'خطأ غير معروف'));
+    } finally {
+      setIsCompressingLogo(false);
+    }
+  };
 
   // Form Fields for Step 3
   const [slug, setSlug] = useState(initialStore.slug || '');
@@ -579,15 +600,40 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1.5 sm:col-span-2">
-                <label className="text-xs font-medium text-slate-300">رابط الشعار (Logo URL)</label>
-                <input
-                  type="url"
-                  value={logoUrl}
-                  onChange={(e) => setLogoUrl(e.target.value)}
-                  placeholder="https://example.com/logo.png"
-                  className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm font-mono focus:border-amber-500 focus:outline-none text-left"
-                />
+              <div className="space-y-2 sm:col-span-2">
+                <label className="text-xs font-medium text-slate-300">شعار المتجر (Logo)</label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="url"
+                      value={logoUrl}
+                      onChange={(e) => setLogoUrl(e.target.value)}
+                      placeholder="https://.../logo.png"
+                      className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm font-mono focus:border-amber-500 focus:outline-none text-left"
+                    />
+                  </div>
+                  <label className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer border border-slate-700 transition shrink-0">
+                    {isCompressingLogo ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                        <span>جاري الرفع...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 text-amber-400" />
+                        <span>رفع شعار من الجهاز</span>
+                      </>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleLogoFileChange}
+                      disabled={isCompressingLogo}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+                <p className="text-[11px] text-slate-500">يتم ضغط الصورة تلقائياً ورفعها إلى Supabase Storage السحابي.</p>
               </div>
 
               <div className="space-y-1.5">

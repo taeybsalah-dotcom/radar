@@ -88,10 +88,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [selectedRewardPass, setSelectedRewardPass] = useState<Privilege | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Active Navigation Tab: 'pass' (بطاقتي) | 'menu' (المنيو) | 'services' (حجز موعد) | 'perks' (حصرياتك) | 'tickets' (امتيازاتي) | 'tiers' (مكانتك)
   const [activeTab, setActiveTab] = useState<'pass' | 'menu' | 'services' | 'perks' | 'tickets' | 'tiers'>('pass');
 
-  // Unified Catalog & Smart Cart State
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [catalogSearch, setCatalogSearch] = useState<string>('');
@@ -99,7 +97,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [pastOrders, setPastOrders] = useState<WhatsAppOrderPayload[]>([]);
   const [showPastOrdersModal, setShowPastOrdersModal] = useState(false);
 
-  // 💇‍♂️ Specialists & Interactive Appointment Booking Wizard State
   const [specialists, setSpecialists] = useState<StoreSpecialist[]>([]);
   const [storeBookings, setStoreBookings] = useState<ServiceBooking[]>([]);
   const [bookingStep, setBookingStep] = useState<1 | 2 | 3 | 4 | 5>(1);
@@ -116,14 +113,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [bookingSuccessData, setBookingSuccessData] = useState<ServiceBooking | null>(null);
   const [pastModalTab, setPastModalTab] = useState<'orders' | 'bookings'>('orders');
 
-  // Item Customization Modal State
   const [isCustomizeModalOpen, setIsCustomizeModalOpen] = useState(false);
   const [itemToCustomize, setItemToCustomize] = useState<CatalogItem | null>(null);
   const [customizingQuantity, setCustomizingQuantity] = useState(1);
   const [selectedModifierOptions, setSelectedModifierOptions] = useState<Record<string, CatalogModifierOption[]>>({});
   const [customizingNotes, setCustomizingNotes] = useState('');
 
-  // Cart & Fulfillment Checkout Modal State
   const [isCartModalOpen, setIsCartModalOpen] = useState(false);
   const [fulfillmentType, setFulfillmentType] = useState<'dine_in' | 'takeaway' | 'delivery' | 'service_booking'>('dine_in');
   const [tableNumber, setTableNumber] = useState('');
@@ -137,7 +132,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [generalOrderNotes, setGeneralOrderNotes] = useState('');
   const [orderSuccessPayload, setOrderSuccessPayload] = useState<WhatsAppOrderPayload | null>(null);
 
-  // Celebration Overlay Modal State
   const [celebrationModal, setCelebrationModal] = useState<{
     isOpen: boolean;
     type: 'COUPON_REDEEMED' | 'POINTS_EARNED' | 'REJECTED';
@@ -147,7 +141,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     newBalance?: number;
   } | null>(null);
 
-  // References for cross-device real-time sync
   const lastPointsRef = useRef<number | null>(null);
   const selectedCouponRef = useRef<CustomerCoupon | null>(null);
   selectedCouponRef.current = selectedCouponForQR;
@@ -156,14 +149,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const customerRef = useRef<Customer | null>(customer);
   customerRef.current = customer;
 
-  // Slider State for Showcase Hero Cards
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
 
-  // Fullscreen QR Zoom Modal
   const [isFullscreenQR, setIsFullscreenQR] = useState(false);
 
-  // Purchasing Privilege State
   const [purchasingPrivilege, setPurchasingPrivilege] = useState<Privilege | null>(null);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
@@ -173,7 +163,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     code: string;
   } | null>(null);
 
-  // Customer Name Editing State
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [savingName, setSavingName] = useState(false);
@@ -181,12 +170,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  // Dynamic Rotating QR Token State (60s countdown)
   const [currentQRToken, setCurrentQRToken] = useState<DynamicQRToken | null>(null);
   const [timeLeft, setTimeLeft] = useState(60);
   const [copiedCodeKey, setCopiedCodeKey] = useState<string | null>(null);
 
-  // Derive Slides: في حال لم يضف التاجر شرائح مخصصة، يظهر كارت هوية واحد أنيق يحمل اسم وشعار المتجر
   const defaultStoreSlide: StoreBanner = {
     id: `brand-slide-${store?.id || 'default'}`,
     image_url:
@@ -243,7 +230,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setTouchStartX(null);
   };
 
-  // Auto Advance Slides
   useEffect(() => {
     if (showcaseSlides.length <= 1) return;
     const interval = setInterval(() => {
@@ -252,7 +238,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     return () => clearInterval(interval);
   }, [showcaseSlides.length, currentSlideIndex]);
 
-  // Capture PWA Install prompt
   useEffect(() => {
     const handler = (e: any) => {
       e.preventDefault();
@@ -274,12 +259,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
   };
 
-  // Dynamic Page Document Title Isolation
   useEffect(() => {
     document.title = store?.name || 'بطاقة الولاء';
   }, [store?.name]);
 
-  // 1. Initial Data Loading & Event Sync
   useEffect(() => {
     if (!store?.id) return;
     loadInitialData();
@@ -288,7 +271,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       const curStore = storeRef.current;
       const curCust = customerRef.current;
 
-      // 1. Rejection Alert Broadcast from Guard Clauses
       if (event.type === 'SCAN_REJECTED') {
         const isTargetCustomer =
           event.storeId === store?.id ||
@@ -306,7 +288,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       }
 
       if (event.storeId === store?.id || event.storeId === 'all') {
-        // 🚀 رد فوري على حرق الكوبون عند قراءته من الكاشير (0ms Reaction - برمشة عين)
         if (event.type === 'COUPON_REDEEMED') {
           const currentSelected = selectedCouponRef.current;
           const isMyCoupon =
@@ -341,7 +322,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           return;
         }
 
-        // 🚀 رد فوري على إضافة النقاط عند مسح الباركود
         if (event.type === 'POINTS_ADDED') {
           const isMyPoints =
             event.phone && curCust && normalizePhone(event.phone) === normalizePhone(curCust.phone);
@@ -369,7 +349,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           return;
         }
 
-        // ─── أحداث أخرى تحتاج تحديث بيانات العميل التشغيلية ───────────────────
         if (
           event.type === 'COUPON_PURCHASED' ||
           event.type === 'WALLET_UPDATED' ||
@@ -379,7 +358,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           return;
         }
 
-        // ─── أحداث هيكلية وبصرية منفصلة ومستهدفة (Targeted Structural Updates) ──
         if (event.type === 'TIERS_UPDATED') {
           LoyaltyService.getTiers(store.id).then((t) => {
             setTiers(t.sort((a, b) => a.required_xp - b.required_xp));
@@ -395,7 +373,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         }
 
         if (event.type === 'STORE_UPDATED') {
-          // تحديث الهوية البصرية وإعدادات المتجر فقط دون المساس بالبيانات التشغيلية للعميل
           LoyaltyService.resolveStore(store.id || store.slug).then((fresh) => {
             if (fresh) setStore(fresh);
           }).catch(() => {});
@@ -409,17 +386,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     };
   }, [store?.id]);
 
-  // ─── التحميل الكامل: يُشغَّل مرة واحدة عند الدخول للصفحة فقط (Zero UI Flicker) ──
   const loadInitialData = async () => {
     if (!store?.id) return;
     setLoading(true);
     try {
       const savedPhone = LoyaltyService.getCustomerSession(store.id, store.slug);
-
-      // 1. Resolve customer first if session exists so coupons can be fetched concurrently
       const freshCust = savedPhone ? await LoyaltyService.getCustomer(store.id, savedPhone) : null;
 
-      // 2. Fetch everything concurrently in one single Promise.all (Zero UI flicker)
       const [freshStore, t, p, cat, specs, bks, freshCoupons] = await Promise.all([
         LoyaltyService.resolveStore(store.id || store.slug),
         LoyaltyService.getTiers(store.id),
@@ -450,7 +423,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
   };
 
-  // ─── تحديث خفيف: يُشغَّل عند أحداث الكوبون/النقاط بدون شاشة تحميل ────────
   const refreshCustomerData = async () => {
     if (!store?.id || !customer?.phone) return;
     try {
@@ -466,18 +438,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         setCustomerCoupons(freshCoupons);
       }
     } catch {
-      // silent — background refresh
     }
   };
 
-  // 1.5 Real-time background sync polling (optimized 3.5s interval + immediate trigger on window focus)
+  // 1.5 Lightweight Background Sync (تحديث خفيف للأرقام فقط كل 5 ثواني)
   useEffect(() => {
     if (!store?.id || !customer?.phone) return;
 
     let isSubscribed = true;
 
-    const runSync = async () => {
-      if (!isSubscribed || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
+    const runLightSync = async () => {
+      if (!isSubscribed) return;
       try {
         const [freshCust, freshCoupons] = await Promise.all([
           LoyaltyService.getCustomer(store.id, customer.phone),
@@ -487,7 +458,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         if (!isSubscribed) return;
 
         if (freshCust) {
-          // Check if points increased from a purchase/visit
           if (lastPointsRef.current !== null && freshCust.wallet_balance > lastPointsRef.current) {
             const pointsGained = freshCust.wallet_balance - lastPointsRef.current;
             lastPointsRef.current = freshCust.wallet_balance;
@@ -520,14 +490,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         }
 
         if (freshCoupons && Array.isArray(freshCoupons)) {
-          // Check if currently active selected coupon was redeemed / burned
           const currentSelected = selectedCouponRef.current;
           if (currentSelected) {
             const matchingCoupon = freshCoupons.find(
               (c) => c.id === currentSelected.id || c.coupon_code === currentSelected.coupon_code
             );
             if (matchingCoupon && (matchingCoupon.status === 'USED' || matchingCoupon.status === 'REDEEMED')) {
-              // Coupon was just redeemed by Cashier!
               setSelectedCouponForQR(null);
               setCustomerCoupons(freshCoupons);
               playBeepSound('success');
@@ -551,15 +519,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           }
         }
       } catch (e) {
-        // silent sync catch
       }
     };
 
-    const syncInterval = setInterval(runSync, 60000);
+    const lightInterval = setInterval(runLightSync, 5000);
 
     const onVisibilityOrFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        runSync();
+        runLightSync();
       }
     };
 
@@ -570,7 +537,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
     return () => {
       isSubscribed = false;
-      clearInterval(syncInterval);
+      clearInterval(lightInterval);
       if (typeof window !== 'undefined') {
         window.removeEventListener('visibilitychange', onVisibilityOrFocus);
         window.removeEventListener('focus', onVisibilityOrFocus);
@@ -578,7 +545,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     };
   }, [store?.id, customer?.phone, customer?.id]);
 
-  // 2. Generate Encrypted Dynamic QR Token
   const regenerateToken = (
     c: Customer,
     couponToRedeem: CustomerCoupon | null = selectedCouponForQR
@@ -610,7 +576,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setTimeLeft(60);
   };
 
-  // Real-time 60s countdown timer - ONLY for VIP Pass visits (Coupons have permanent fixed code)
   useEffect(() => {
     if (!customer || !currentQRToken || selectedCouponForQR) return;
 
@@ -627,7 +592,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     return () => clearInterval(timer);
   }, [customer?.id, currentQRToken?.token_id, selectedRewardPass, selectedCouponForQR]);
 
-  // Sync customer past orders
   useEffect(() => {
     try {
       const stored = JSON.parse(localStorage.getItem('radar_local_whatsapp_orders') || '[]');
@@ -644,7 +608,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
   }, [store?.id, customer?.phone, isCartModalOpen, orderSuccessPayload]);
 
-  // Handle Authentication
   const handleCustomerAuthenticated = async (authCustomer: Customer) => {
     setCustomer(authCustomer);
     lastPointsRef.current = authCustomer.wallet_balance;
@@ -655,11 +618,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     } catch (e) {
       console.error(e);
     }
-    // ملاحظة: بيانات المتجر (tiers, privileges, catalog) محملة مسبقاً عند دخول الصفحة
-    // لا حاجة لإعادة تحميلها عند تسجيل الدخول
   };
 
-  // Handle Logout
   const handleLogout = () => {
     LoyaltyService.clearCustomerSession(store.id, store.slug);
     setCustomer(null);
@@ -667,7 +627,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setCurrentQRToken(null);
   };
 
-  // Edit Name Handlers
   const openEditName = () => {
     setNameInput(customer?.name || '');
     setIsEditingName(true);
@@ -688,7 +647,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
   };
 
-  // Purchase Privilege Action with Optimistic UI & Robust Rollback Protocol (0ms Perceived Latency)
   const handleConfirmPurchaseCoupon = async () => {
     if (!customer || !purchasingPrivilege || purchaseLoading) return;
     setPurchaseLoading(true);
@@ -701,13 +659,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       return;
     }
 
-    // 1. Snapshot previous state for rollback
     const previousCustomer = { ...customer };
     const previousCoupons = [...customerCoupons];
     const previousSelectedCoupon = selectedCouponForQR;
     const activePrivilege = purchasingPrivilege;
 
-    // 2. Optimistic Coupon Creation & Immediate UI State Mutation (0ms Reaction)
     const optimisticCode =
       'CPN-' +
       Math.floor(1000 + Math.random() * 9000) +
@@ -735,7 +691,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       wallet_balance: customer.wallet_balance - cost,
     };
 
-    // Instant UI updates (0ms Perceived Latency)
     setCustomer(optimisticUpdatedCustomer);
     setCustomerCoupons([optimisticCoupon, ...customerCoupons]);
     setSelectedCouponForQR(optimisticCoupon);
@@ -748,7 +703,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     });
 
     setPurchasingPrivilege(null);
-    setActiveTab('tickets'); // Switch directly to tickets tab!
+    setActiveTab('tickets'); 
 
     playBeepSound('success');
     confetti({
@@ -758,7 +713,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       colors: [store.secondary_color || '#C6F27B', '#10B981', '#38BDF8', '#FFFFFF'],
     });
 
-    // 3. Background Supabase Execution with Strict Rollback Guard
     try {
       const result = await LoyaltyService.purchaseCoupon(
         store.id,
@@ -766,7 +720,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         activePrivilege.id
       );
 
-      // Confirm with server-persisted data
       if (result && result.coupon) {
         setCustomer(result.updatedCustomer);
         setCustomerCoupons((prev) =>
@@ -776,7 +729,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         regenerateToken(result.updatedCustomer, result.coupon);
       }
     } catch (err: any) {
-      // 🛡️ Rollback Protocol: Revert state and notify user
       console.error('Background redemption failed, executing rollback:', err);
       setCustomer(previousCustomer);
       setCustomerCoupons(previousCoupons);
@@ -789,7 +741,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
   };
 
-  // Select Privilege/Coupon for QR Burn
   const handleSelectCouponForRedeem = (coupon: CustomerCoupon) => {
     if (selectedCouponForQR?.id === coupon.id) {
       setSelectedCouponForQR(null);
@@ -797,7 +748,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     } else {
       setSelectedCouponForQR(coupon);
       if (customer) regenerateToken(customer, coupon);
-      setActiveTab('pass'); // Switch to main pass to show the QR!
+      setActiveTab('pass'); 
       window.scrollTo({ top: 0, behavior: 'smooth' });
       playBeepSound('success');
     }
@@ -809,7 +760,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setTimeout(() => setCopiedCodeKey(null), 2500);
   };
 
-  // 🔒 إذا كان المتجر في حالة تعليق (Suspended)
   const isStoreSuspended =
     store.subscription_active === false ||
     store.subscription_status === 'suspended' ||
@@ -852,7 +802,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     );
   }
 
-  // If customer not logged in, render login gate
   if (!customer && !loading) {
     return <CustomerLoginGate store={store} onAuthenticated={handleCustomerAuthenticated} />;
   }
@@ -872,7 +821,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     );
   }
 
-  // Time-lock check for selected coupon
   const timeLockCheck = selectedCouponForQR
     ? LoyaltyService.isWithinTimeRange(
         selectedCouponForQR.valid_start_time,
@@ -882,7 +830,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const isCouponFrozen = !timeLockCheck.allowed;
 
-  // Dynamic QR Payload - High Contrast, Bold, Store-Isolated & Instantly Scannable (Compact for Ultra-Fast Camera Reading)
   const qrDataPayload = isCouponFrozen
     ? 'FROZEN'
     : selectedCouponForQR
@@ -896,7 +843,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       })
     : '';
 
-  // Dynamic Tier Progress Calculation
   const sortedTiers = [...tiers].sort((a, b) => a.required_xp - b.required_xp);
   const currentTierObj =
     customer && sortedTiers.length > 0
@@ -926,7 +872,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const xpNeeded = nextTierObj ? Math.max(0, nextTierObj.required_xp - customerXP) : 0;
   const activeCouponsCount = customerCoupons.filter((c) => c.status === 'ACTIVE').length;
 
-  // Catalog filtering & categories (Products only for Menu tab)
   const catalogCategories = Array.from(
     new Set(
       catalogItems
@@ -938,7 +883,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const filteredCatalogItems = catalogItems.filter((item) => {
     if (!item.is_available) return false;
-    if (item.item_type === 'service') return false; // purely products in menu tab
+    if (item.item_type === 'service') return false; 
     const matchesCategory = selectedCategory === 'ALL' || item.category === selectedCategory;
     const matchesSearch =
       !catalogSearch.trim() ||
@@ -985,10 +930,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         }
       });
       setSelectedServiceModifiers(initialModifiers);
-      setBookingStep(2); // Go to modifiers step
+      setBookingStep(2); 
     } else {
       setSelectedServiceModifiers({});
-      setBookingStep(3); // Go directly to specialist step
+      setBookingStep(3); 
     }
   };
 
@@ -1025,7 +970,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const handleConfirmServiceBooking = async () => {
     if (!selectedBookingService || !customer) return;
 
-    // Validate required modifier groups if any
     if (selectedBookingService.modifier_groups) {
       for (const group of selectedBookingService.modifier_groups) {
         if (group.required) {
@@ -1039,7 +983,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       }
     }
 
-    // 🛑 Real-time Double-Booking Conflict Prevention Guard
     const isConflict = storeBookings.some((b) => 
       b.status !== 'cancelled' &&
       b.booking_date === selectedBookingDate &&
@@ -1145,7 +1088,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     playBeepSound('success');
   };
 
-  // Cart calculations
   const cartSubtotal = cartItems.reduce((acc, item) => acc + item.total_price, 0);
   const isDelivery = fulfillmentType === 'delivery';
   const deliveryFee = isDelivery ? (store.fulfillment_settings?.delivery_fee || 0) : 0;
@@ -1153,7 +1095,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const estimatedLoyaltyPoints = Math.floor(cartGrandTotal * (store.points_per_riyal || 1));
   const hasServiceInCart = cartItems.some((i) => i.catalog_item.item_type === 'service');
 
-  // Customization & Cart handlers
   const handleOpenCustomizeModal = (item: CatalogItem) => {
     setItemToCustomize(item);
     setCustomizingQuantity(1);
@@ -1377,7 +1318,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   return (
     <div className="max-w-md mx-auto space-y-5 pb-28 animate-fade-in" style={{ accentColor: brandSecondary }}>
       
-      {/* ⚠️ Suspended Customer Alert */}
       {customer && customer.is_active === false && (
         <div className="p-4 rounded-3xl bg-rose-950/80 border-2 border-rose-500/60 text-rose-200 text-xs font-semibold flex items-center space-x-3 rtl:space-x-reverse animate-shake shadow-2xl">
           <AlertCircle className="w-6 h-6 text-rose-400 shrink-0" />
@@ -1390,9 +1330,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 👑 1. TOP HEADER (Customer Name, Points Chip & Logout)    */}
-      {/* ======================================================== */}
       <div className="bg-slate-900/90 backdrop-blur-2xl px-4 py-3 rounded-2xl border border-slate-800 flex items-center justify-between gap-3 shadow-xl">
         <div className="flex items-center space-x-3 rtl:space-x-reverse">
           <div className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700/60 flex items-center justify-center font-bold text-slate-300 shrink-0">
@@ -1419,7 +1356,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
 
         <div className="flex items-center space-x-2 rtl:space-x-reverse">
-          {/* Quick Points Pill */}
           <div
             className="px-3 py-1.5 rounded-xl border flex items-center space-x-1.5 rtl:space-x-reverse shadow-inner"
             style={{
@@ -1446,7 +1382,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       </div>
 
-      {/* Inline Name Editor Form */}
       {isEditingName && (
         <div
           className="p-4 rounded-2xl bg-slate-900 border space-y-3 animate-fade-in shadow-xl"
@@ -1489,13 +1424,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 📱 TAB 1: VIP PASS & SNAPCODE-STYLE QR HUB               */}
-      {/* ======================================================== */}
       {activeTab === 'pass' && (
         <div className="space-y-4 animate-fade-in">
           
-          {/* 🌟 1. LUXURY SHOWCASE HERO SLIDER CARD (Full Cover Banner with Shadow Overlay) */}
           <div
             className="relative group select-none"
             onTouchStart={handleTouchStart}
@@ -1508,7 +1439,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 borderColor: `${store.secondary_color || '#d4af37'}30`,
               }}
             >
-              {/* Full Background Image */}
               <img
                 key={`img-${activeSlide.id || safeSlideIndex}`}
                 src={activeSlide.image_url}
@@ -1517,15 +1447,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 loading="lazy"
               />
 
-              {/* Gradient Shadow Overlay for Maximum Readability */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/60 to-black/25 pointer-events-none"></div>
 
-              {/* Slide Content Layer */}
               <div
                 key={`content-${activeSlide.id || safeSlideIndex}`}
                 className="relative z-10 space-y-1.5 text-right animate-fade-in"
               >
-                {/* Optional Badge: Only rendered if explicitly entered by the merchant */}
                 {activeSlide.badge_text && (
                   <div>
                     <span
@@ -1541,12 +1468,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </div>
                 )}
 
-                {/* Title */}
                 <h2 className="font-black text-white text-base sm:text-lg leading-tight tracking-tight drop-shadow-md">
                   {activeSlide.title || store.name}
                 </h2>
 
-                {/* Optional Quote / Marketing Text: Only rendered if explicitly entered by the merchant */}
                 {activeSlide.quote && (
                   <p className="text-[11px] sm:text-xs text-slate-200 leading-relaxed font-normal drop-shadow-sm max-w-[95%] line-clamp-2">
                     "{activeSlide.quote}"
@@ -1554,7 +1479,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 )}
               </div>
 
-              {/* Slider Dots Pagination */}
               {showcaseSlides.length > 1 && (
                 <div className="relative z-10 flex items-center justify-center gap-1.5 mt-3 pt-2 border-t border-white/10">
                   {showcaseSlides.map((_, idx) => (
@@ -1582,10 +1506,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           </div>
 
-          {/* 💎 2. BALANCES & LEVEL PROGRESS BAR (Directly below Slider) */}
           <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl space-y-3.5 shadow-xl">
             
-            {/* Prominent Current Points Header */}
             <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80">
               <div>
                 <span className="text-[11px] text-slate-400 block font-medium">رصيدك الحالي</span>
@@ -1612,7 +1534,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
             </div>
 
-            {/* XP Level Progress Bar */}
             <div className="space-y-2 pt-0.5">
               <div className="flex justify-between items-center text-xs font-semibold">
                 <span className="text-slate-300 flex items-center gap-1.5">
@@ -1650,7 +1571,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
           </div>
 
-          {/* Active Selected Coupon Alert Banner */}
           {selectedCouponForQR && (
             <div
               className="p-3.5 rounded-2xl border flex items-center justify-between gap-3 animate-fade-in shadow-lg"
@@ -1686,10 +1606,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           )}
 
-          {/* ⚡ 3. ULTRA-MODERN GLASSMORPHIC CYBER QR VAULT */}
           <div className="relative group">
             
-            {/* Ambient Background Aura */}
             <div
               className="absolute -inset-1 rounded-3xl blur-xl opacity-20 group-hover:opacity-40 transition duration-700 pointer-events-none"
               style={{
@@ -1697,10 +1615,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               }}
             ></div>
 
-            {/* Glass Container */}
             <div className="glass-qr-shield rounded-3xl p-5 sm:p-6 relative overflow-hidden backdrop-blur-2xl shadow-2xl flex flex-col items-center space-y-4 border border-slate-800 bg-slate-900/90">
               
-              {/* Top Status & Live Rotating Capsule */}
               <div className="w-full flex items-center justify-between gap-2 text-xs">
                 <div className="flex items-center space-x-1.5 rtl:space-x-reverse text-slate-300 text-[11px] font-bold">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -1733,16 +1649,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 )}
               </div>
 
-              {/* Futuristic Viewfinder Frame + QR */}
               <div className="relative p-3">
                 
-                {/* Viewfinder Corner Brackets */}
                 <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 rounded-tr-lg pointer-events-none" style={{ borderColor: `${brandSecondary}cc` }}></div>
                 <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 rounded-tl-lg pointer-events-none" style={{ borderColor: `${brandSecondary}cc` }}></div>
                 <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 rounded-br-lg pointer-events-none" style={{ borderColor: `${brandSecondary}cc` }}></div>
                 <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 rounded-bl-lg pointer-events-none" style={{ borderColor: `${brandSecondary}cc` }}></div>
 
-                {/* QR Box (High-Contrast, Pure Black & White for instant camera detection) */}
                 <div
                   onClick={() => setIsFullscreenQR(true)}
                   className={`relative p-3.5 rounded-3xl bg-white shadow-2xl cursor-pointer transition-all duration-300 hover:scale-[1.02] overflow-hidden ${
@@ -1757,7 +1670,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     includeMargin={true}
                   />
 
-                  {/* Tap to Zoom Overlay Hint on Hover */}
                   <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[11px] font-bold gap-1 rounded-3xl">
                     <Maximize2 className="w-4 h-4" style={{ color: brandSecondary }} />
                     <span>تكبير</span>
@@ -1765,7 +1677,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              {/* Bottom Details: Dynamic VIP ID & Live Indicator */}
               <div className="w-full pt-2.5 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono">
                 <div className="flex items-center space-x-1.5 rtl:space-x-reverse text-slate-300">
                   <span className="text-slate-400">
@@ -1805,7 +1716,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              {/* Welcoming Subtitle */}
               {selectedCouponForQR ? (
                 <p className="text-xs font-bold text-center pt-0.5" style={{ color: brandSecondary }}>
                   أبرز هذا الباركود للكاشير لصرف وتسليم طلبك فوراً 🎁
@@ -1822,13 +1732,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* ======================================================== */}
-      {/* 🍔 TAB 2: PRODUCTS & MENU (المنيو والمنتجات)                */}
-      {/* ======================================================== */}
       {activeTab === 'menu' && (
         <div className="space-y-4 animate-fade-in">
-          {/* Header Card */}
           <div className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl space-y-3 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
@@ -1848,7 +1753,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </span>
             </div>
 
-            {/* Search Input */}
             <div className="relative">
               <input
                 type="text"
@@ -1869,7 +1773,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               )}
             </div>
 
-            {/* Past Orders / Re-order Quick Access */}
             {pastOrders.length > 0 && (
               <div className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 text-xs">
                 <div className="flex items-center gap-2">
@@ -1887,7 +1790,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
             )}
 
-            {/* Category Filter Chips */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
               <button
                 type="button"
@@ -1937,7 +1839,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           </div>
 
-          {/* Catalog Items Grid */}
           {filteredCatalogItems.length === 0 ? (
             <div className="py-14 text-center text-slate-400 border border-dashed border-slate-800 rounded-3xl bg-slate-950/40 space-y-3">
               <ShoppingBag className="w-12 h-12 mx-auto text-slate-600 mb-1" />
@@ -1973,7 +1874,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     key={item.id}
                     className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition-all duration-300 shadow-xl flex gap-3.5 relative overflow-hidden group"
                   >
-                    {/* Item Thumbnail / Image */}
                     <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0 relative">
                       {item.image_url ? (
                         <img
@@ -1997,7 +1897,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       )}
                     </div>
 
-                    {/* Item Info & Actions */}
                     <div className="flex-1 flex flex-col justify-between min-w-0">
                       <div className="space-y-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -2029,7 +1928,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         )}
                       </div>
 
-                      {/* Bottom Pricing & Button */}
                       <div className="pt-2 flex items-center justify-between gap-2 mt-1">
                         <div className="flex items-baseline gap-1">
                           <span
@@ -2078,12 +1976,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 📅 TAB 2.5: SERVICES & APPOINTMENT BOOKING (حجز المواعيد) */}
-      {/* ======================================================== */}
       {activeTab === 'services' && (
         <div className="space-y-4 animate-fade-in">
-          {/* Header Card */}
           <div className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl space-y-3 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
@@ -2100,7 +1994,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </span>
             </div>
 
-            {/* Step Wizard Indicator */}
             {!bookingSuccessData && (
               <div className="grid grid-cols-5 gap-1 pt-1 text-[10px] sm:text-[11px] font-bold text-center">
                 {[
@@ -2149,7 +2042,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             )}
           </div>
 
-          {/* Success Screen after Booking */}
           {bookingSuccessData ? (
             <div className="p-6 rounded-3xl bg-slate-900 border border-emerald-500/40 text-center space-y-4 shadow-2xl animate-fade-in">
               <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto text-3xl shadow-inner">
@@ -2226,7 +2118,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           ) : (
             <>
-              {/* STEP 1: Select Service */}
               {bookingStep === 1 && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between px-1">
@@ -2306,7 +2197,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               )}
 
-              {/* STEP 2: Service Modifiers & Upgrades */}
               {bookingStep === 2 && selectedBookingService && (
                 <div className="space-y-4 animate-fade-in">
                   <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
@@ -2405,7 +2295,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     </div>
                   )}
 
-                  {/* Summary & Proceed Button */}
                   <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
                     <div>
                       <span className="text-[11px] text-slate-400 block">الإجمالي الحالي للخدمة:</span>
@@ -2425,7 +2314,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               )}
 
-              {/* STEP 3: Select Specialist (Filtered by Category/Department) */}
               {bookingStep === 3 && selectedBookingService && (() => {
                 const serviceCategory = selectedBookingService.category?.trim();
                 const qualifiedSpecialists = specialists.filter((s) => {
@@ -2466,7 +2354,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     </div>
 
                     <div className="grid grid-cols-1 gap-2.5">
-                      {/* Option 1: Any Available Specialist */}
                       <div
                         onClick={() => {
                           setSelectedBookingSpecialist(null);
@@ -2490,7 +2377,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         <span className="text-xs font-bold text-blue-400">اختيار ➔</span>
                       </div>
 
-                      {/* Qualified Specialists Roster */}
                       {qualifiedSpecialists.map((spec) => {
                         const isSelected = selectedBookingSpecialist?.id === spec.id;
                         return (
@@ -2551,7 +2437,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 );
               })()}
 
-              {/* STEP 4: Select Date & Time Slot (Dynamic Conflict Prevention Engine) */}
               {bookingStep === 4 && selectedBookingService && (() => {
                 const selectedDateObj = new Date(selectedBookingDate + 'T00:00:00');
                 const dayOfWeekIndex = selectedDateObj.getDay();
@@ -2651,7 +2536,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </span>
                     </div>
 
-                    {/* Date Picker Pills (Next 7 Days) */}
                     <div className="space-y-1.5">
                       <label className="text-[11px] text-slate-400 block">اختر اليوم:</label>
                       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -2682,7 +2566,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
                     </div>
 
-                    {/* Day Off Warning Banner */}
                     {isSpecialistOffToday && selectedBookingSpecialist && (
                       <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
                         <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
@@ -2692,7 +2575,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
                     )}
 
-                    {/* Time Slots Grid with Real-time Conflict Indicators */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-[11px] text-slate-400 block">
@@ -2756,7 +2638,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 );
               })()}
 
-              {/* STEP 5: Review & Confirm WhatsApp Booking */}
               {bookingStep === 5 && selectedBookingService && (() => {
                 const finalTotalPrice = calculateServiceBookingPrice();
                 const flatModifiers = getFlatSelectedServiceModifiers();
@@ -2780,7 +2661,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         <span className="font-bold text-slate-300">{selectedBookingService.category}</span>
                       </div>
 
-                      {/* Selected Modifiers list */}
                       {flatModifiers.length > 0 && (
                         <div className="pt-2 pb-1 border-t border-slate-900 space-y-1.5">
                           <span className="text-slate-400 block font-bold">الإضافات والترقيات المختارة:</span>
@@ -2826,7 +2706,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
                     </div>
 
-                    {/* Notes input */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-slate-300 block">ملاحظات إضافية للمتجر (اختياري):</label>
                       <textarea
@@ -2865,13 +2744,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 🎁 TAB 3: EXCLUSIVES & SECRET PERKS (حصرياتك)             */}
-      {/* ======================================================== */}
-
-      {/* ======================================================== */}
-      {/* 🎁 TAB 3: EXCLUSIVES & SECRET PERKS (حصرياتك)             */}
-      {/* ======================================================== */}
       {activeTab === 'perks' && (
         <div className="space-y-5 animate-fade-in">
           <div className="flex items-center justify-between">
@@ -2954,7 +2826,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     }`}
                   >
                     <div className="space-y-3">
-                      {/* Top Badges */}
                       <div className="flex items-center justify-between gap-2">
                         {requiredTier && (
                           <span
@@ -2982,7 +2853,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         </span>
                       </div>
 
-                      {/* Title & Desc */}
                       <div>
                         <h4 className="font-extrabold text-base text-white">{priv.title}</h4>
                         {priv.description && (
@@ -2992,7 +2862,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         )}
                       </div>
 
-                      {/* Limits & Timing Box */}
                       <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1.5 text-[11px]">
                         <div className="flex items-center justify-between text-slate-300">
                           <span className="flex items-center gap-1 text-slate-400">
@@ -3038,7 +2907,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
                     </div>
 
-                    {/* Action Button */}
                     <div className="mt-4 pt-3 border-t border-slate-800">
                       {isSoldOut ? (
                         <button
@@ -3094,9 +2962,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 🎟️ TAB 3: MY REWARDS & PRIVILEGES (امتيازاتي)             */}
-      {/* ======================================================== */}
       {activeTab === 'tickets' && (
         <div className="space-y-5 animate-fade-in">
           <div className="flex items-center justify-between">
@@ -3249,9 +3114,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 🏆 TAB 4: VIP TIERS & STATUS (مكانتك)                      */}
-      {/* ======================================================== */}
       {activeTab === 'tiers' && (
         <div className="space-y-5 animate-fade-in">
           <div className="flex items-center justify-between">
@@ -3341,13 +3203,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 📱 MOBILE FLOATING DOCK (Thumb Navigation)                */}
-      {/* ======================================================== */}
       <div className="fixed bottom-3 left-3 right-3 max-w-md mx-auto z-40">
         <nav className="glass-dock rounded-full p-1.5 flex items-center justify-around shadow-2xl bg-slate-950/90 backdrop-blur-2xl border border-slate-800">
           
-          {/* 1. VIP Pass Tab */}
           <button
             onClick={() => setActiveTab('pass')}
             style={
@@ -3368,7 +3226,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             <span>بطاقتي</span>
           </button>
 
-          {/* 2. Menu Tab */}
           <button
             onClick={() => setActiveTab('menu')}
             style={
@@ -3397,7 +3254,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             )}
           </button>
 
-          {/* 3. Services & Bookings Tab */}
           <button
             onClick={() => setActiveTab('services')}
             style={
@@ -3418,7 +3274,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             <span>حجز موعد</span>
           </button>
 
-          {/* 4. Perks Store Tab */}
           <button
             onClick={() => setActiveTab('perks')}
             style={
@@ -3439,7 +3294,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             <span>حصرياتك</span>
           </button>
 
-          {/* 5. My Rewards Tab */}
           <button
             onClick={() => setActiveTab('tickets')}
             style={
@@ -3468,7 +3322,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             )}
           </button>
 
-          {/* 6. Tiers Status Tab */}
           <button
             onClick={() => setActiveTab('tiers')}
             style={
@@ -3492,9 +3345,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </nav>
       </div>
 
-      {/* ======================================================== */}
-      {/* 🔍 FULLSCREEN QR ZOOM MODAL                              */}
-      {/* ======================================================== */}
       {isFullscreenQR && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl animate-fade-in">
           <div className="relative max-w-sm w-full p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-700 shadow-2xl flex flex-col items-center text-center space-y-5">
@@ -3512,7 +3362,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </p>
             </div>
 
-            {/* Huge Zoomed QR Code */}
             <div className="p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center">
               <QRCodeSVG
                 value={qrDataPayload}
@@ -3537,9 +3386,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 🛍️ PURCHASE CONFIRMATION MODAL                            */}
-      {/* ======================================================== */}
       {purchasingPrivilege && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div className="glass-card max-w-md w-full rounded-3xl p-6 sm:p-8 space-y-5 border border-slate-800 bg-slate-900 shadow-2xl relative">
@@ -3579,7 +3425,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <span className="font-mono text-white font-bold">{customer?.wallet_balance} نقطة</span>
               </div>
               <div className="flex items-center justify-between font-bold" style={{ color: brandSecondary }}>
-                <span>النقاط المستبدلة:</span>
+                <span>النقاط المستحقة:</span>
                 <span className="font-mono">-{purchasingPrivilege.cost_points} نقطة</span>
               </div>
               <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-emerald-400 font-bold">
@@ -3615,9 +3461,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 📲 PWA INSTALL GUIDE MODAL                               */}
-      {/* ======================================================== */}
       {showInstallGuide && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div className="glass-card max-w-md w-full rounded-3xl p-6 sm:p-8 space-y-6 border border-slate-800 bg-slate-900 shadow-2xl relative">
@@ -3646,7 +3489,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
 
             <div className="space-y-3.5">
-              {/* iOS Guide */}
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
                 <div className="flex items-center space-x-2 rtl:space-x-reverse font-bold text-xs" style={{ color: brandSecondary }}>
                   <span>🍎 لمستخدمي الآيفون (Safari):</span>
@@ -3658,7 +3500,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </ol>
               </div>
 
-              {/* Android Guide */}
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
                 <div className="flex items-center space-x-2 rtl:space-x-reverse text-emerald-400 font-bold text-xs">
                   <span>🤖 لمستخدمي الأندرويد (Chrome):</span>
@@ -3680,16 +3521,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 🎉 REAL-TIME CELEBRATION MODAL (صرف كوبون أو كسب نقاط)    */}
-      {/* ======================================================== */}
       {celebrationModal?.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div
             className="glass-card max-w-md w-full rounded-3xl p-6 sm:p-8 space-y-5 border text-center relative shadow-2xl bg-slate-900 overflow-hidden"
             style={{ borderColor: `${brandSecondary}80` }}
           >
-            {/* Background Glow */}
             <div
               className="absolute -top-10 -right-10 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-30"
               style={{ backgroundColor: brandSecondary }}
@@ -3788,9 +3625,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 🛒 SMART FLOATING CART BAR                               */}
-      {/* ======================================================== */}
       {cartItems.length > 0 && (
         <div className="fixed bottom-20 left-3 right-3 max-w-md mx-auto z-40 animate-slide-up">
           <div
@@ -3846,16 +3680,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* ⚡ ITEM CUSTOMIZATION MODAL                              */}
-      {/* ======================================================== */}
       {isCustomizeModalOpen && itemToCustomize && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div
             className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up"
             style={{ borderColor: `${brandSecondary}40` }}
           >
-            {/* Modal Header / Banner */}
             <div className="relative h-44 sm:h-48 w-full bg-slate-950 shrink-0">
               {itemToCustomize.image_url ? (
                 <img
@@ -3865,7 +3695,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-4xl text-slate-600">
-                  {itemToCustomize.item_type === 'service' ? '💇‍♂️' : '🍽️'}
+                  {itemToCustomize.item_type === 'service' ? '💇‍♂️' : '🍽'}
                 </div>
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/40 to-transparent"></div>
@@ -3897,7 +3727,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
             </div>
 
-            {/* Scrollable Modifiers & Options Body */}
             <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1 text-right">
               {itemToCustomize.description && (
                 <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-3 rounded-2xl border border-slate-800">
@@ -3905,7 +3734,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </p>
               )}
 
-              {/* Modifier Groups */}
               {itemToCustomize.modifier_groups && itemToCustomize.modifier_groups.length > 0 && (
                 <div className="space-y-4">
                   {itemToCustomize.modifier_groups.map((group) => {
@@ -3986,7 +3814,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               )}
 
-              {/* Special Notes / Instructions */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
                   <span>ملاحظات أو طلبات خاصة (اختياري):</span>
@@ -4000,7 +3827,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 />
               </div>
 
-              {/* Quantity Counter (for products) */}
               {itemToCustomize.item_type === 'product' && (
                 <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950 border border-slate-800">
                   <span className="text-xs font-bold text-white">الكمية المطلوبة:</span>
@@ -4011,7 +3837,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       disabled={customizingQuantity <= 1}
                       className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center transition"
                     >
-                      <Minus className="w-3.5 h-3.5" />
+                      <Minus className="w-3 gross-3" />
                     </button>
                     <span className="text-sm font-black font-mono text-white w-6 text-center">
                       {customizingQuantity}
@@ -4021,14 +3847,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       onClick={() => setCustomizingQuantity((prev) => prev + 1)}
                       className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="w-3 h-3" />
                     </button>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Modal Bottom Sticky Button */}
             <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-3 shrink-0">
               <div>
                 <span className="text-[10px] text-slate-400 block">المجموع للصنف:</span>
@@ -4060,16 +3885,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 🛒 CART & FULFILLMENT CHECKOUT MODAL                     */}
-      {/* ======================================================== */}
       {isCartModalOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div
             className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up"
             style={{ borderColor: `${brandSecondary}40` }}
           >
-            {/* Modal Header */}
             <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
               <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
                 <div
@@ -4100,9 +3921,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </button>
             </div>
 
-            {/* Scrollable Cart Content */}
             <div className="p-4 overflow-y-auto space-y-4 flex-1 text-right">
-              {/* 1. Items List */}
               <div className="space-y-2.5">
                 <h4 className="text-xs font-black text-slate-300">الأصناف والخدمات المختارة:</h4>
                 {cartItems.map((cartItem) => (
@@ -4117,14 +3936,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         </span>
                       </div>
 
-                      {/* Modifiers subtitle */}
                       {cartItem.selected_modifiers && cartItem.selected_modifiers.length > 0 && (
                         <p className="text-[10px] text-slate-400 mt-0.5">
                           + {cartItem.selected_modifiers.map((m) => m.name).join(', ')}
                         </p>
                       )}
 
-                      {/* Special notes */}
                       {cartItem.special_notes && (
                         <p className="text-[10px] text-amber-300/80 italic mt-0.5">
                           "{cartItem.special_notes}"
@@ -4139,7 +3956,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
                     </div>
 
-                    {/* Quantity controls */}
                     <div className="flex items-center space-x-2 rtl:space-x-reverse shrink-0">
                       {cartItem.catalog_item.item_type === 'product' && (
                         <div className="flex items-center bg-slate-900 rounded-xl border border-slate-800 p-1">
@@ -4176,11 +3992,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 ))}
               </div>
 
-              {/* 2. Fulfillment Selector (طريقة الاستلام / الحجز) */}
               <div className="space-y-2.5 pt-2 border-t border-slate-800">
                 <h4 className="text-xs font-black text-slate-300">طريقة الاستلام أو الحجز:</h4>
                 <div className="grid grid-cols-2 gap-2">
-                  {/* Dine-In */}
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('dine_in')}
@@ -4202,7 +4016,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     <span>🍽️ تناول محلي</span>
                   </button>
 
-                  {/* Takeaway */}
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('takeaway')}
@@ -4224,7 +4037,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     <span>🚗 استلام سفري</span>
                   </button>
 
-                  {/* Delivery */}
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('delivery')}
@@ -4246,7 +4058,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     <span>🛵 توصيل للعنوان</span>
                   </button>
 
-                  {/* Service Booking */}
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('service_booking')}
@@ -4270,7 +4081,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              {/* 3. Dynamic Fields Based on Fulfillment Method */}
               <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
                 {fulfillmentType === 'dine_in' && (
                   <div className="space-y-2.5">
@@ -4403,7 +4213,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </div>
                 )}
 
-                {/* General notes for order */}
                 <div>
                   <label className="text-xs font-bold text-slate-300 block mb-1">
                     ملاحظات عامة للطلب:
@@ -4418,7 +4227,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              {/* 4. Financial & Points Summary */}
               <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
                 <div className="flex items-center justify-between text-slate-400">
                   <span>المجموع الفرعي:</span>
@@ -4445,7 +4253,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
             </div>
 
-            {/* Sticky WhatsApp Submit Action */}
             <div className="p-4 bg-slate-950 border-t border-slate-800 shrink-0">
               <button
                 type="button"
@@ -4460,9 +4267,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 🚀 ORDER SUCCESS CONFIRMATION MODAL                      */}
-      {/* ======================================================== */}
       {orderSuccessPayload && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div
@@ -4486,7 +4290,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </span>
               <h3 className="text-xl font-black text-white">تم تجهيز وإرسال الطلب بنجاح!</h3>
               <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
-                تم تحويل طلبك لـ <strong className="text-white">{store.name}</strong> عبر الواتساب. سيقوم المتجر بتأكيد استلام الطلب وتجهيزه فوراً.
+                تم تحويل طلبك لـ <strong className="text-white">{store.name}</strong> عبر الواتساب. سيقوم المتجر بتأكيد استلاستلام الطلب وتجهيزه فوراً.
               </p>
             </div>
 
@@ -4526,9 +4330,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 📋 CUSTOMER PAST ORDERS & 1-CLICK RE-ORDER MODAL         */}
-      {/* ======================================================== */}
       {showPastOrdersModal && (() => {
         const customerServiceBookings = storeBookings.filter(
           (b) =>
@@ -4542,7 +4343,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up"
               style={{ borderColor: `${brandSecondary}40` }}
             >
-              {/* Header */}
               <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
                 <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
                   <div
@@ -4573,7 +4373,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </button>
               </div>
 
-              {/* Segmented Sub-Tabs */}
               <div className="p-2 bg-slate-950/80 border-b border-slate-800 grid grid-cols-2 gap-1.5 shrink-0">
                 <button
                   type="button"
@@ -4602,9 +4401,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </button>
               </div>
 
-              {/* Tab Content */}
               <div className="p-4 overflow-y-auto space-y-3.5 flex-1 text-right">
-                {/* 1. Orders Tab */}
                 {pastModalTab === 'orders' && (
                   <>
                     {pastOrders.length === 0 ? (
@@ -4663,7 +4460,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               </span>
                             </div>
 
-                            {/* Items summary */}
                             <div className="space-y-1 text-xs text-slate-300">
                               {order.items.map((item, idx) => (
                                 <div key={idx} className="flex justify-between items-center">
@@ -4706,7 +4502,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </>
                 )}
 
-                {/* 2. Service Bookings Tab */}
                 {pastModalTab === 'bookings' && (
                   <>
                     {customerServiceBookings.length === 0 ? (
@@ -4758,7 +4553,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               <span className="font-mono text-amber-400 font-bold">{bk.total_price || bk.service_price} ر.س</span>
                             </div>
 
-                            {/* Modifiers List */}
                             {bk.selected_modifiers && bk.selected_modifiers.length > 0 && (
                               <div className="flex flex-wrap gap-1 pt-0.5">
                                 {bk.selected_modifiers.map((mod, i) => (

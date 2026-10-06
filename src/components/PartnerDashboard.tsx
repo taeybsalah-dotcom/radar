@@ -83,7 +83,7 @@ const PARTNER_STATUS_FILTER_TABS = [
 ];
 
 const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): SalesKitMessage[] => {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.taeybsalah.workers.dev';
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://myradar.sarl';
   const joinLink = `${origin}/join?ref=${pRef}`;
   return [
     {
@@ -125,7 +125,7 @@ const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): Sales
 };
 
 const buildDefaultStatusTemplates = (pName: string, pRef: string) => {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.taeybsalah.workers.dev';
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://myradar.sarl';
   const joinLink = `${origin}/join?ref=${pRef}`;
   return {
     trial: {
@@ -152,7 +152,7 @@ const buildDefaultStatusTemplates = (pName: string, pRef: string) => {
 };
 
 const buildDefaultLogoPitch = (pName: string, pRef: string) => {
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.taeybsalah.workers.dev';
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://myradar.sarl';
   const joinLink = `${origin}/join?ref=${pRef}`;
   return {
     title: 'أداة أرسل شعارك (Logo Pitch)',

@@ -307,3 +307,21 @@ export async function resolveUniqueStoreSlug(
   const randomSuffix = Math.random().toString(36).substring(2, 6);
   return `${initialSlug}-${randomSuffix}`;
 }
+
+/**
+ * Checks if a store slug represents a demo / trial presentation store
+ */
+export function isDemoStoreSlug(slug?: string | null): boolean {
+  if (!slug || typeof slug !== 'string') return false;
+  const s = slug.toLowerCase().trim();
+  return s.startsWith('demo-') || s === 'demo';
+}
+
+/**
+ * Checks if a store object represents a demo store
+ */
+export function isDemoStore(store?: Partial<Store> | null): boolean {
+  if (!store) return false;
+  if (store.is_demo === true) return true;
+  return isDemoStoreSlug(store.slug);
+}

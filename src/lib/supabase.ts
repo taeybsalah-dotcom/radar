@@ -59,6 +59,21 @@ import {
   INITIAL_BOOKINGS,
 } from './demoData';
 import { LoyaltyEvents } from './events';
+import { isDemoStoreSlug, isDemoStore } from './slugUtils';
+import {
+  DEMO_STORE_ID,
+  DEMO_STORE_SLUG,
+  INITIAL_DEMO_STORE,
+  INITIAL_DEMO_TIERS,
+  INITIAL_DEMO_PRIVILEGES,
+  INITIAL_DEMO_STAFF,
+  INITIAL_DEMO_CUSTOMERS,
+  INITIAL_DEMO_CATALOG_ITEMS,
+  INITIAL_DEMO_SPECIALISTS,
+  INITIAL_DEMO_WALLET,
+  INITIAL_DEMO_COUPONS,
+  INITIAL_DEMO_AUDIT_LOGS,
+} from './demoStoreSeed';
 
 const STORAGE_KEYS = {
   URL: 'radar_supabase_url',
@@ -555,6 +570,60 @@ async function attachStoreAssets(supabase: any, row: any): Promise<any> {
   }
   return mergeStoreAssets(row);
 }
+
+// Non-heavy tables: explicit list, falls back to '*' only if a listed column is missing in the live schema.
+const WALLET_COLS = 'id, store_id, sms_quota, sms_used, wa_quota, wa_used, cashier_limit, extra_cashiers_purchased, whatsapp_provider, meta_phone_number_id, meta_waba_id, meta_access_token, created_at, updated_at';
+const STAFF_COLS = 'id, store_id, user_id, name, phone, role, pin_code, is_active, can_manual_input_phone, created_at, updated_at';
+const TIER_COLS = 'id, store_id, tier_name, required_xp, badge_color, icon, created_at';
+const PRIVILEGE_COLS = 'id, store_id, required_tier_id, title, description, image_url, cost_points, quantity_limit, per_customer_limit, redeemed_count, valid_start_time, valid_end_time, is_active, is_hidden, created_at';
+const LEDGER_COLS = 'id, ledger_id, transaction_id, invoice_id, store_id, store_name, affiliate_id, affiliate_name, payment_id, transaction_type, gross_amount, vat_amount, gateway_fee, affiliate_commission, net_platform_amount, status, created_at, effective_at, reversal_of, refund_of, created_by, metadata';
+const LEAD_COLS = 'id, store_name, manager_name, phone, city, business_type, attribution_source, referral_code, affiliate_id, status, lifecycle_stage, conversion_started_at, conversion_error, converted_store_id, notes, created_at, updated_at';
+const PLAN_COLS = 'id, code, name, description, amount, currency, duration_months, billing_interval, trial_days, features, active, created_at';
+const walletCols = (s: any) => probeCols(s, 'store_wallets', WALLET_COLS, '*');
+const staffCols = (s: any) => probeCols(s, 'store_staff', STAFF_COLS, '*');
+const tierCols = (s: any) => probeCols(s, 'tiers', TIER_COLS, '*');
+const privilegeCols = (s: any) => probeCols(s, 'privileges', PRIVILEGE_COLS, '*');
+const ledgerCols = (s: any) => probeCols(s, 'financial_ledger', LEDGER_COLS, '*');
+const leadCols = (s: any) => probeCols(s, 'merchant_leads', LEAD_COLS, '*');
+const planCols = (s: any) => probeCols(s, 'billing_plans', PLAN_COLS, '*');
+
+// 🛡️ NEVER persist base64 data URLs in the database. Images must be uploaded to Storage first
+// (see imageCompressor.ts) and only the public URL saved. Any data: value is dropped here as a last line of defence.
+const IMAGE_URL_KEYS = ['logo_url', 'image_url', 'privilege_image_url', 'avatar_url'];
+const isDataUrl = (v: any) => typeof v === 'string' && v.trim().toLowerCase().startsWith('data:');
+function stripDataUrls<T extends Record<string, any>>(obj: T): T {
+  if (!obj || typeof obj !== 'object') return obj;
+  for (const k of IMAGE_URL_KEYS) {
+    if (isDataUrl((obj as any)[k])) {
+      console.warn('[egress-guard] dropped base64 value for', k);
+      (obj as any)[k] = null;
+    }
+  }
+  if (Array.isArray((obj as any).slider_images)) {
+    (obj as any).slider_images = (obj as any).slider_images.filter((s: any) => !isDataUrl(s?.image_url));
+  }
+  return obj;
+}
+
+// Keep the asset cache coherent when a caller changes logo/slider (mutations no longer echo them back).
+function pickStoreAssets(updates: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (updates && 'logo_url' in updates) out.logo_url = updates.logo_url;
+  if (updates && 'slider_images' in updates) out.slider_images = updates.slider_images;
+  return out;
+}
+function noteStoreAssetUpdates(storeId: string, updates: any) {
+  const picked = pickStoreAssets(updates);
+  if (!storeId || Object.keys(picked).length === 0) return;
+  const prev = storeAssetsCache.get(storeId);
+  storeAssetsCache.set(storeId, {
+    logo_url: 'logo_url' in picked ? picked.logo_url : prev?.logo_url ?? null,
+    slider_images: 'slider_images' in picked ? picked.slider_images : prev?.slider_images ?? [],
+    ts: Date.now(),
+  });
+  persistStoreAssets();
+}
+
 const couponImageCache = new Map<string, string>(); // privilege_id -> image (loaded once per session)
 const couponImagesLoaded = new Set<string>();
 
@@ -735,11 +804,130 @@ export const LoyaltyService = {
     return result;
   },
 
+  // 🎯 تهيئة وضمان وجود متجر الديمو المتكامل (Demo Store Auto-Seed)
+  async seedDemoStore(forceReset: boolean = false): Promise<Store> {
+    const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
+    const existing = localStores.find((s) => s && (s.id === DEMO_STORE_ID || s.slug === DEMO_STORE_SLUG));
+
+    if (existing && !forceReset) {
+      return existing;
+    }
+
+    // 1. Store
+    const updatedStores = [
+      INITIAL_DEMO_STORE,
+      ...localStores.filter((s) => s && s.id !== DEMO_STORE_ID && s.slug !== DEMO_STORE_SLUG),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_STORES, updatedStores);
+
+    // 2. Tiers
+    const localTiers = getLocalData<Tier[]>(STORAGE_KEYS.LOCAL_TIERS, []);
+    const updatedTiers = [
+      ...INITIAL_DEMO_TIERS,
+      ...localTiers.filter((t) => t.store_id !== DEMO_STORE_ID),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_TIERS, updatedTiers);
+
+    // 3. Privileges
+    const localPrivs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, []);
+    const updatedPrivs = [
+      ...INITIAL_DEMO_PRIVILEGES,
+      ...localPrivs.filter((p) => p.store_id !== DEMO_STORE_ID),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, updatedPrivs);
+
+    // 4. Catalog Items
+    const localCatalog = getLocalData<CatalogItem[]>(STORAGE_KEYS.LOCAL_CATALOG, []);
+    const updatedCatalog = [
+      ...INITIAL_DEMO_CATALOG_ITEMS,
+      ...localCatalog.filter((c) => c.store_id !== DEMO_STORE_ID),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, updatedCatalog);
+
+    // 5. Specialists
+    const localSpecs = getLocalData<StoreSpecialist[]>(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
+    const updatedSpecs = [
+      ...INITIAL_DEMO_SPECIALISTS,
+      ...localSpecs.filter((s) => s.store_id !== DEMO_STORE_ID),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, updatedSpecs);
+
+    // 6. Staff
+    const localStaff = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, []);
+    const updatedStaff = [
+      ...INITIAL_DEMO_STAFF,
+      ...localStaff.filter((s) => s.store_id !== DEMO_STORE_ID),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_STAFF, updatedStaff);
+
+    // 7. Customers
+    const localCusts = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
+    const updatedCusts = [
+      ...INITIAL_DEMO_CUSTOMERS,
+      ...localCusts.filter((c) => c.store_id !== DEMO_STORE_ID),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, updatedCusts);
+
+    // 8. Wallet
+    const localWallets = getLocalData<Record<string, StoreWallet>>(STORAGE_KEYS.LOCAL_WALLETS, {});
+    localWallets[DEMO_STORE_ID] = INITIAL_DEMO_WALLET;
+    saveLocalData(STORAGE_KEYS.LOCAL_WALLETS, localWallets);
+
+    // 9. Coupons
+    const localCoupons = getLocalData<CustomerCoupon[]>(STORAGE_KEYS.LOCAL_COUPONS, []);
+    const updatedCoupons = [
+      ...INITIAL_DEMO_COUPONS,
+      ...localCoupons.filter((c) => c.store_id !== DEMO_STORE_ID),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_COUPONS, updatedCoupons);
+
+    // 10. Audit Logs
+    const localLogs = getLocalData<AuditLog[]>(STORAGE_KEYS.LOCAL_LOGS, []);
+    const updatedLogs = [
+      ...INITIAL_DEMO_AUDIT_LOGS,
+      ...localLogs.filter((l) => l.store_id !== DEMO_STORE_ID),
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_LOGS, updatedLogs);
+
+    // Clear caches
+    storesListCache = null;
+    adminStoresSummaryCache = null;
+    storeResolutionCache.delete(DEMO_STORE_SLUG);
+    storeResolutionCache.delete(DEMO_STORE_ID);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.rpc('reset_demo_store', { p_slug: DEMO_STORE_SLUG });
+      } catch (e) {
+        // Fallback is saved locally
+      }
+    }
+
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: DEMO_STORE_ID });
+    return INITIAL_DEMO_STORE;
+  },
+
+  // 🔄 تصفير متجر الديمو وحركاته وإعادته لنقطة الصفر الأصلية
+  async resetDemoStore(): Promise<{ success: boolean; message: string }> {
+    await this.seedDemoStore(true);
+    return {
+      success: true,
+      message: 'تم تصفير بيانات متجر الديمو وإعادة تهيئته لنقطة الصفر بنجاح! ☕',
+    };
+  },
+
   // 2. البحث والتحقق من المتجر (سواء برقم الـ UUID أو الاسم اللطيف Slug) مع كاش ذاكرة وتخزين فائق السرعة (0ms)
   async resolveStore(storeIdOrSlug?: string | null, forceFresh: boolean = false): Promise<Store | null> {
     if (!storeIdOrSlug) return await this.getStore();
     const clean = String(storeIdOrSlug).trim();
     const cleanLower = clean.toLowerCase();
+
+    // 0. فحص واسترجاع المتجر التجريبي الفوري (Demo Store Instant Resolution)
+    if (cleanLower === DEMO_STORE_SLUG || clean === DEMO_STORE_ID || isDemoStoreSlug(cleanLower)) {
+      const demoStore = await this.seedDemoStore();
+      return demoStore;
+    }
 
     const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
 
@@ -1099,7 +1287,7 @@ export const LoyaltyService = {
                 setup_fee_paid: false,
               },
             ])
-            .select()
+            .select(await storeCols(supabase))
             .single();
 
           if (!sErr && storeData) {
@@ -1384,14 +1572,15 @@ export const LoyaltyService = {
     let updatedSupabaseStore: Store | null = null;
     if (supabase) {
       try {
-        const { lifecycle_stage, plan, matchedStore, ...dbUpdates } = updates as any;
+        const { lifecycle_stage, plan, matchedStore, ...dbUpdates } = stripDataUrls({ ...(updates as any) });
         const query = supabase.from('stores').update(dbUpdates);
         const res = isUUID(currentStore.id)
-          ? await query.eq('id', currentStore.id).select().maybeSingle()
-          : await query.eq('slug', currentStore.slug).select().maybeSingle();
+          ? await query.eq('id', currentStore.id).select(await storeCols(supabase)).maybeSingle()
+          : await query.eq('slug', currentStore.slug).select(await storeCols(supabase)).maybeSingle();
 
         if (!res.error && res.data) {
-          updatedSupabaseStore = res.data as Store;
+          updatedSupabaseStore = { ...(res.data as any), ...pickStoreAssets(dbUpdates) } as Store;
+          noteStoreAssetUpdates(currentStore.id, dbUpdates);
         }
       } catch (e) {
         console.warn('Supabase updateStoreSettings failed', e);
@@ -1457,7 +1646,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('store_wallets')
-          .select('*')
+          .select(await walletCols(supabase))
           .eq('store_id', storeId)
           .maybeSingle();
         if (!error && data) return data as StoreWallet;
@@ -1584,7 +1773,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('store_staff')
-          .select('*')
+          .select(await staffCols(supabase))
           .eq('store_id', storeId)
           .order('created_at', { ascending: true });
         if (!error && data) return data as StoreStaff[];
@@ -1763,7 +1952,7 @@ export const LoyaltyService = {
       try {
         let staffQuery = supabase
           .from('store_staff')
-          .select('*')
+          .select(await staffCols(supabase))
           .eq('is_active', true);
 
         if (resolvedStoreId) {
@@ -1948,7 +2137,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('tiers')
-          .select('*')
+          .select(await tierCols(supabase))
           .eq('store_id', storeId)
           .order('required_xp', { ascending: true });
         if (!error && data && data.length > 0) return data as Tier[];
@@ -2075,7 +2264,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('privileges')
-          .select('*, tiers(tier_name)')
+          .select(`${await privilegeCols(supabase)}, tiers(tier_name)` as unknown as '*')
           .eq('store_id', storeId)
           .order('created_at', { ascending: false });
         if (!error && data) {
@@ -2106,11 +2295,11 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('privileges')
-          .insert([privilegeData])
-          .select('*, tiers(tier_name)')
+          .insert([stripDataUrls({ ...privilegeData })])
+          .select(`${await privilegeCols(supabase)}, tiers(tier_name)` as unknown as '*')
           .single();
         if (!error && data) {
-          result = { ...data, tier_name: data.tiers?.tier_name } as Privilege;
+          result = { ...data, tier_name: (data as any).tiers?.tier_name } as Privilege;
           const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
           privs.unshift(result);
           saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, privs);
@@ -2141,12 +2330,12 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('privileges')
-          .update(updates)
+          .update(stripDataUrls({ ...updates }))
           .eq('id', privilegeId)
-          .select('*, tiers(tier_name)')
+          .select(`${await privilegeCols(supabase)}, tiers(tier_name)` as unknown as '*')
           .single();
         if (!error && data) {
-          const updated = { ...data, tier_name: data.tiers?.tier_name } as Privilege;
+          const updated = { ...data, tier_name: (data as any).tiers?.tier_name } as Privilege;
           const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
           const idx = privs.findIndex((p) => p.id === privilegeId);
           if (idx !== -1) {
@@ -2413,7 +2602,7 @@ export const LoyaltyService = {
             .maybeSingle(),
           supabase
             .from('privileges')
-            .select('*')
+            .select(await privilegeCols(supabase))
             .eq('id', privilegeId)
             .eq('store_id', resolvedStoreId)
             .maybeSingle(),
@@ -2586,7 +2775,7 @@ export const LoyaltyService = {
           supabase
             .from('customer_coupons')
             .insert([dbCouponPayload])
-            .select()
+            .select('id')
             .maybeSingle(),
         ]);
 
@@ -2797,7 +2986,7 @@ export const LoyaltyService = {
           .update(updatePayload)
           .eq('id', coupon.id)
           .eq('status', 'ACTIVE')
-          .select();
+          .select('id');
 
         if (updateErr) {
           console.error('Supabase atomic update customer_coupons error:', updateErr);
@@ -3151,7 +3340,7 @@ export const LoyaltyService = {
             })
             .eq('id', couponData.id)
             .eq('status', 'ACTIVE') // Atomic guard: ensures double-spend is blocked
-            .select()
+            .select('id')
             .maybeSingle();
 
           if (updateErr || !updatedRows) {
@@ -3704,7 +3893,7 @@ export const LoyaltyService = {
           const { data: insertedCpn, error: cpnErr } = await supabase
             .from('customer_coupons')
             .insert([dbCouponPayload])
-            .select()
+            .select('id')
             .single();
           if (!cpnErr && insertedCpn) {
             couponId = insertedCpn.id;
@@ -3924,7 +4113,7 @@ export const LoyaltyService = {
         // جلب رتب المتجر لتحديد الرتبة الحالية
         const { data: storeTiers } = await supabase
           .from('tiers')
-          .select('*')
+          .select(await tierCols(supabase))
           .eq('store_id', resolvedStoreId)
           .order('required_xp', { ascending: false });
 
@@ -4360,7 +4549,7 @@ export const LoyaltyService = {
       try {
         let query = supabase
           .from('financial_ledger')
-          .select('*')
+          .select(await ledgerCols(supabase))
           .order('created_at', { ascending: false });
 
         if (filters?.type && filters.type !== 'ALL') {
@@ -4656,13 +4845,13 @@ export const LoyaltyService = {
           .from('stores')
           .update(verifiedUpdatePayload)
           .eq('id', payload.storeId)
-          .select()
+          .select(await storeCols(supabase))
           .maybeSingle();
 
         if (updateError) {
           console.warn('[processSubscriptionPayment] Supabase stores update warning:', updateError.message);
         } else if (updatedData) {
-          updatedStore = normalizeStore(updatedData) as Store;
+          updatedStore = normalizeStore({ ...updatedData, logo_url: currentStore.logo_url, slider_images: currentStore.slider_images }) as Store;
         }
       } catch (e: any) {
         console.warn('Supabase processSubscriptionPayment DB commit exception:', e);
@@ -5037,7 +5226,18 @@ export const LoyaltyService = {
     let totalNetPlatformRevenue = 0;
     let totalRefundsVolume = 0;
 
-    for (const entry of (ledger || [])) {
+    // 🛡️ استبعاد حركات ومعاملات متاجر الديمو من الحسابات المالية للإنتاج
+    const realLedger = (ledger || []).filter((entry) => {
+      if (!entry) return false;
+      const sId = (entry.store_id || '').toLowerCase();
+      const sName = (entry.store_name || '').toLowerCase();
+      if (sId === DEMO_STORE_ID || sId.startsWith('demo-') || sId === 'demo') return false;
+      if (sName.includes('demo') || sName.includes('تجريبي')) return false;
+      if ((entry.metadata as any)?.is_demo === true) return false;
+      return true;
+    });
+
+    for (const entry of realLedger) {
       if (entry.status !== 'SETTLED') continue;
 
       if (entry.transaction_type === 'PAYMENT' || entry.transaction_type === 'ADJUSTMENT') {
@@ -5549,7 +5749,7 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase.from('catalog_items').insert([newItem]).select().single();
+        const { data, error } = await supabase.from('catalog_items').insert([stripDataUrls({ ...newItem })]).select().single();
         if (!error && data) {
           // مزامنة محلياً أيضاً
           const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
@@ -5584,7 +5784,7 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase.from('catalog_items').update(updates).eq('id', id).select().single();
+        const { data, error } = await supabase.from('catalog_items').update(stripDataUrls({ ...updates })).eq('id', id).select().single();
         if (!error && data) {
           updatedItem = data;
         }
@@ -5735,7 +5935,7 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data: created, error } = await supabase.from('store_specialists').insert([newSpec]).select().single();
+        const { data: created, error } = await supabase.from('store_specialists').insert([stripDataUrls({ ...newSpec })]).select().single();
         if (!error && created) {
           const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
           list.unshift(created);
@@ -5769,7 +5969,7 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data: remoteUpdated } = await supabase.from('store_specialists').update(updates).eq('id', id).select().single();
+        const { data: remoteUpdated } = await supabase.from('store_specialists').update(stripDataUrls({ ...updates })).eq('id', id).select().single();
         if (remoteUpdated) updatedSpec = remoteUpdated;
       } catch (e) {
         console.warn('Supabase updateStoreSpecialist fallback', e);
@@ -6683,7 +6883,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('merchant_leads')
-          .select('*')
+          .select(await leadCols(supabase))
           .order('created_at', { ascending: false });
         if (!error && Array.isArray(data)) {
           const validLeads = data.map(reconcileLead);
@@ -7909,7 +8109,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('billing_plans')
-          .select('*')
+          .select(await planCols(supabase))
           .order('amount', { ascending: true });
 
         if (!error && data && data.length > 0) {

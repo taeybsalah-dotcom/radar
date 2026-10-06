@@ -349,7 +349,7 @@ export const SuperAdminPartnersConsole: React.FC = () => {
    * Contains Partner Dashboard URL (/partner) + PIN + Login Phone + Referral Code.
    */
   const getAffiliateCredentialsMessage = (p: any) => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.com';
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://myradar.sarl';
     const name = p.display_name || 'الشريك المعتمد';
     const phone = p.affiliates?.phone || '';
     const pin = p.pin_code || '1234';
@@ -374,7 +374,7 @@ ${origin}/join?ref=${refCode}
    * MUST NOT mention "affiliate", "partner", or "commission".
    */
   const getMerchantPromoMessage = (p: any) => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://radar.com';
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://myradar.sarl';
     const refCode = p.affiliates?.referral_code || p.referral_code || 'r1001';
 
     return `عميلك اشترى منك اليوم... هل يضمن لك أحد عودته غداً؟ 🎯
