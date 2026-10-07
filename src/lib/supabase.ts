@@ -509,8 +509,8 @@ const STORE_SAFE_COLS =
 const STORE_FULL_COLS =
   STORE_SAFE_COLS +
   ', lifecycle_stage, subscription_plan_id, plan_code, admin_pin, max_cashier_invoice_amount, catalog_enabled, fulfillment_settings, grace_period_days, grace_period_ends_at, complimentary_days_granted, last_override_at, last_override_reason';
-const CUSTOMER_SAFE_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at';
-const CUSTOMER_FULL_COLS = CUSTOMER_SAFE_COLS + ', is_active, visits_count';
+const CUSTOMER_SAFE_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at';
+const CUSTOMER_FULL_COLS = CUSTOMER_SAFE_COLS;
 const COUPON_SAFE_COLS =
   'id, coupon_code, store_id, customer_id, customer_phone, customer_name, privilege_id, privilege_title, cost_points, status, valid_start_time, valid_end_time, purchased_at';
 const COUPON_FULL_COLS = COUPON_SAFE_COLS + ', used_at, cashier_name';
@@ -3580,7 +3580,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('store_customers')
-          .select(await customerCols(supabase))
+          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at')
           .eq('store_id', resolvedId)
           .order('last_visit_date', { ascending: false });
         if (!error && Array.isArray(data)) {
