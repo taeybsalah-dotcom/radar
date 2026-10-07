@@ -505,7 +505,7 @@ export const invalidateAllServiceCaches = () => {
 // polling queries and fetched once per hour per client via attachStoreAssets().
 // ==============================================================================
 const STORE_SAFE_COLS =
-  'id, slug, name, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, subscription_plan, trial_start_date, trial_end_date, subscription_start_date, subscription_end_date, setup_fee_paid, renewal_amount, payment_gateway, gateway_customer_id, gateway_subscription_id, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, created_at, updated_at';
+  'id, slug, name, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, subscription_plan, trial_start_date, trial_end_date, subscription_start_date, subscription_end_date, setup_fee_paid, renewal_amount, payment_gateway, gateway_customer_id, gateway_subscription_id, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, created_at, updated_at';
 const STORE_FULL_COLS =
   STORE_SAFE_COLS +
   ', lifecycle_stage, subscription_plan_id, plan_code, admin_pin, max_cashier_invoice_amount, catalog_enabled, fulfillment_settings, grace_period_days, grace_period_ends_at, complimentary_days_granted, last_override_at, last_override_reason';
