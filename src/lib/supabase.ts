@@ -164,21 +164,6 @@ const STAGING_SUPABASE_URL = 'https://jipqqhtgfpgrurkozccl.supabase.co';
 const STAGING_SUPABASE_ANON_KEY = 'sb_publishable_NiNUdhILZLkMNGqpUUrfoA_eI_0-pSU';
 
 export function getSupabaseCredentials() {
-  const isStaging =
-    typeof window !== 'undefined' &&
-    (window.location.hostname.includes('staging') ||
-      window.location.hostname.includes('workers.dev') ||
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1');
-
-  if (isStaging) {
-    return {
-      url: STAGING_SUPABASE_URL,
-      anonKey: STAGING_SUPABASE_ANON_KEY,
-      isConfigured: true,
-    };
-  }
-
   return {
     url: PROD_SUPABASE_URL,
     anonKey: PROD_SUPABASE_ANON_KEY,
