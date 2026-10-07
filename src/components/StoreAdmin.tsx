@@ -33,6 +33,7 @@ import { compressImage, CompressionResult } from '../lib/imageCompressor';
 import { StaffLoginGate } from './StaffLoginGate';
 import { StoreAnalyticsView } from './merchant/StoreAnalyticsView';
 import { SandboxPaymentModal } from './SandboxPaymentModal';
+import { NotificationBell } from './NotificationBell';
 import {
   Users,
   Coins,
@@ -2308,6 +2309,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
           {/* Header Action Buttons */}
           <div className="flex items-center gap-2.5 self-start lg:self-auto flex-wrap">
+            <NotificationBell
+              portalName={store.name || 'لوحة التاجر'}
+              portalFilter="admin"
+            />
+
             <button
               onClick={() => setShowQuickLinks(!showQuickLinks)}
               className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1.5 rtl:space-x-reverse"

@@ -197,3 +197,140 @@ export function notifySuperAdmin(title: string, body: string, url?: string) {
     tag: 'super-admin-event',
   });
 }
+
+// ==============================================================================
+// 📬 INBOX NOTIFICATION CENTER STORE (All Portals)
+// ==============================================================================
+
+export interface InboxNotification {
+  id: string;
+  title: string;
+  body: string;
+  soundType?: 'notification' | 'commission' | 'success' | 'redeem' | 'error';
+  targetType?: string;
+  targetId?: string;
+  portal?: string;
+  read: boolean;
+  timestamp: string;
+  actionUrl?: string;
+}
+
+const INBOX_STORAGE_KEY = 'radar_inbox_notifications_history';
+const INBOX_EVENT_NAME = 'radar_inbox_updated';
+
+export function getInboxNotifications(portalFilter?: string): InboxNotification[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(INBOX_STORAGE_KEY);
+    if (!raw) return [];
+    const list: InboxNotification[] = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+    if (!portalFilter || portalFilter === 'all') return list;
+    return list.filter((n) => !n.portal || n.portal === portalFilter || n.portal === 'all');
+  } catch {
+    return [];
+  }
+}
+
+export function saveInboxNotification(
+  notif: Omit<InboxNotification, 'id' | 'read' | 'timestamp'> & {
+    id?: string;
+    read?: boolean;
+    timestamp?: string;
+  }
+): InboxNotification {
+  const current = getInboxNotifications();
+  const newNotif: InboxNotification = {
+    id: notif.id || `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    title: notif.title,
+    body: notif.body,
+    soundType: notif.soundType || 'notification',
+    targetType: notif.targetType,
+    targetId: notif.targetId,
+    portal: notif.portal || 'all',
+    read: notif.read ?? false,
+    timestamp: notif.timestamp || new Date().toISOString(),
+    actionUrl: notif.actionUrl,
+  };
+
+  const updated = [newNotif, ...current.filter((n) => n.id !== newNotif.id)].slice(0, 100);
+  try {
+    localStorage.setItem(INBOX_STORAGE_KEY, JSON.stringify(updated));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(INBOX_EVENT_NAME, { detail: updated }));
+    }
+  } catch {}
+  return newNotif;
+}
+
+export function markNotificationAsRead(id: string): void {
+  const current = getInboxNotifications();
+  const updated = current.map((n) => (n.id === id ? { ...n, read: true } : n));
+  try {
+    localStorage.setItem(INBOX_STORAGE_KEY, JSON.stringify(updated));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(INBOX_EVENT_NAME, { detail: updated }));
+    }
+  } catch {}
+}
+
+export function markAllNotificationsAsRead(portalFilter?: string): void {
+  const current = getInboxNotifications();
+  const updated = current.map((n) => {
+    if (!portalFilter || portalFilter === 'all' || !n.portal || n.portal === portalFilter) {
+      return { ...n, read: true };
+    }
+    return n;
+  });
+  try {
+    localStorage.setItem(INBOX_STORAGE_KEY, JSON.stringify(updated));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(INBOX_EVENT_NAME, { detail: updated }));
+    }
+  } catch {}
+}
+
+export function deleteInboxNotification(id: string): void {
+  const current = getInboxNotifications();
+  const updated = current.filter((n) => n.id !== id);
+  try {
+    localStorage.setItem(INBOX_STORAGE_KEY, JSON.stringify(updated));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(INBOX_EVENT_NAME, { detail: updated }));
+    }
+  } catch {}
+}
+
+export function clearAllInboxNotifications(portalFilter?: string): void {
+  const current = getInboxNotifications();
+  const updated = portalFilter && portalFilter !== 'all'
+    ? current.filter((n) => n.portal && n.portal !== portalFilter && n.portal !== 'all')
+    : [];
+  try {
+    localStorage.setItem(INBOX_STORAGE_KEY, JSON.stringify(updated));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(INBOX_EVENT_NAME, { detail: updated }));
+    }
+  } catch {}
+}
+
+export function getUnreadNotificationCount(portalFilter?: string): number {
+  const list = getInboxNotifications(portalFilter);
+  return list.filter((n) => !n.read).length;
+}
+
+export function subscribeToInboxUpdates(callback: (list: InboxNotification[]) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const handler = (e: any) => {
+    callback(e.detail || getInboxNotifications());
+  };
+  window.addEventListener(INBOX_EVENT_NAME, handler);
+  window.addEventListener('storage', (e) => {
+    if (e.key === INBOX_STORAGE_KEY) {
+      callback(getInboxNotifications());
+    }
+  });
+  return () => {
+    window.removeEventListener(INBOX_EVENT_NAME, handler);
+  };
+}

@@ -65,6 +65,7 @@ import {
   Scissors,
   BookmarkCheck,
 } from 'lucide-react';
+import { NotificationBell } from './NotificationBell';
 
 interface CustomerWalletProps {
   store: Store;
@@ -1371,6 +1372,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </span>
             <span className="text-[10px] text-slate-400 font-bold">نقطة</span>
           </div>
+
+          <NotificationBell
+            portalName={store.name || 'محفظة العميل'}
+            portalFilter="customer"
+            className="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-slate-300 hover:text-white"
+          />
 
           <button
             onClick={handleLogout}

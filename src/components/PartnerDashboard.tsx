@@ -15,6 +15,7 @@ import { LoyaltyEvents } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
+import { NotificationBell } from './NotificationBell';
 import {
   ShieldCheck,
   Sparkles,
@@ -828,6 +829,11 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          <NotificationBell
+            portalName="بوابة الشريك والمسوق"
+            portalFilter="partner"
+          />
+
           <button
             onClick={() => copyText(directJoinLink, 'header-direct-join')}
             className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 px-3.5 py-2 rounded-2xl text-xs font-black transition shadow-lg shadow-amber-500/20"

@@ -3,6 +3,7 @@ import { Store, Customer, Tier, Privilege, DynamicQRToken, StoreStaff, CustomerC
 import { LoyaltyService, normalizePhone } from '../lib/supabase';
 import { QRScannerModal } from './QRScannerModal';
 import { StaffLoginGate } from './StaffLoginGate';
+import { NotificationBell } from './NotificationBell';
 import { playBeepSound } from '../lib/sound';
 import { LoyaltyEvents } from '../lib/events';
 import {
@@ -764,6 +765,11 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
         {/* Authenticated Cashier Info & Logout */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
+          <NotificationBell
+            portalName={`كاشير (${store.name})`}
+            portalFilter="cashier"
+          />
+
           <div className="flex items-center space-x-2 rtl:space-x-reverse bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
             <User className="w-3.5 h-3.5" style={{ color: store.secondary_color || '#F59E0B' }} />
             <span className="text-slate-400">الكاشير:</span>

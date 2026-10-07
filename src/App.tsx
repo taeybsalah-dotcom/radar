@@ -10,7 +10,7 @@ import { updateDynamicPWA } from './lib/pwa';
 import { useAuth } from './context/AuthContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
-import { registerRadarServiceWorker, sendPortalNotification } from './lib/notifications';
+import { registerRadarServiceWorker, sendPortalNotification, saveInboxNotification } from './lib/notifications';
 import { playBeepSound } from './lib/sound';
 import { Bell, Coins, X } from 'lucide-react';
 
@@ -419,6 +419,24 @@ export function App() {
         if (isTargetCurrent && event.title && event.message) {
           playBeepSound(event.soundType || 'notification');
 
+          saveInboxNotification({
+            title: event.title,
+            body: event.message,
+            soundType: event.soundType || 'notification',
+            targetType: (event.targetType as any) || 'broadcast',
+            targetId: event.targetId || undefined,
+            portal:
+              activeTab === 'super-admin'
+                ? 'super_admin'
+                : activeTab === 'partner'
+                ? 'partner'
+                : activeTab === 'admin'
+                ? 'store'
+                : activeTab === 'cashier'
+                ? 'cashier'
+                : 'customer',
+          });
+
           setIncomingToast({
             id: 'toast-' + Date.now(),
             title: event.title,
@@ -433,6 +451,36 @@ export function App() {
             tag: `radar-notif-${Date.now()}`,
           }).catch(() => {});
         }
+      }
+
+      if (event.type === 'POINTS_ADDED' && event.points) {
+        saveInboxNotification({
+          title: 'نقاط ولاء جديدة 🌟',
+          body: `تمت إضافة +${event.points} نقطة بنجاح! رصيدك الجديد: ${event.newBalance ?? 0} نقطة.`,
+          soundType: 'success',
+          targetType: 'customer',
+          portal: 'customer',
+        });
+      }
+
+      if (event.type === 'REWARD_REDEEMED' && event.rewardTitle) {
+        saveInboxNotification({
+          title: 'استبدال مكافأة بنجاح 🎁',
+          body: `تم استبدال: "${event.rewardTitle}" بنجاح!`,
+          soundType: 'redeem',
+          targetType: 'customer',
+          portal: 'customer',
+        });
+      }
+
+      if (event.type === 'PAYMENT_COMPLETED') {
+        saveInboxNotification({
+          title: 'عملية دفع جديدة 💳',
+          body: 'تم استلام دفعة مالية جديدة وتحديث اشتراك المتجر.',
+          soundType: 'success',
+          targetType: 'store',
+          portal: 'store',
+        });
       }
     });
 
