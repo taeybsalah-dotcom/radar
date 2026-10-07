@@ -794,26 +794,24 @@ export function App() {
             (!store || !store.id) && (
               <div className="min-h-[60vh] flex items-center justify-center p-4">
                 <div className="max-w-md w-full p-8 rounded-3xl bg-slate-900/95 border border-slate-800 text-center space-y-5 shadow-2xl">
-                  <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto text-2xl font-bold">
+                  <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mx-auto text-2xl font-bold">
                     🏪
                   </div>
                   <div className="space-y-2">
-                    <h2 className="text-xl font-black text-white">لا يوجد متجر مسجل حالياً</h2>
+                    <h2 className="text-xl font-black text-white">المتجر غير متوفر حالياً</h2>
                     <p className="text-xs text-slate-400 leading-relaxed">
-                      تم تفريغ كافة المتاجر بنجاح لتجربة نظيفة. يرجى التوجه إلى لوحة المالك وتأسيس أول متجر.
+                      الرابط المطلوب غير موجود أو لم يتم تفعيل المتجر بعد. يرجى التحقق من الرابط أو العودة لصفحة البداية.
                     </p>
                   </div>
                   <button
                     onClick={() => {
-                      setActiveTab('super-admin');
-                      const url = new URL(window.location.href);
-                      url.searchParams.delete('store');
-                      url.searchParams.set('portal', 'super-admin');
+                      setActiveTab('join');
+                      const url = new URL(window.location.origin);
                       window.history.pushState({}, '', url.toString());
                     }}
-                    className="w-full py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-sm transition"
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-slate-950 font-black text-sm transition shadow-lg shadow-cyan-500/20"
                   >
-                    فتح بوابة المالك (Super Admin) 👑
+                    العودة لصفحة المنصة الرئيسية 🏠
                   </button>
                 </div>
               </div>
