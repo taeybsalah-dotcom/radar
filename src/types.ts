@@ -644,6 +644,7 @@ export interface MerchantLead {
   attribution_source: 'DIRECT' | 'REFERRAL';
   referral_code?: string | null;
   affiliate_id?: string | null;
+  partner_id?: string | null;
   status: LeadStatus;
   lifecycle_stage?: UnifiedLifecycleStage;
   is_demo?: boolean;

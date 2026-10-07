@@ -7033,6 +7033,21 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
+        let partnerId: string | null = null;
+        if (refCode) {
+          try {
+            const { data: pData } = await supabase
+              .from('partners')
+              .select('id')
+              .or(`referral_code.ilike.${refCode},slug.ilike.${refCode}`)
+              .limit(1)
+              .maybeSingle();
+            if (pData?.id) {
+              partnerId = pData.id;
+            }
+          } catch {}
+        }
+
         const { data, error } = await supabase
           .from('merchant_leads')
           .insert([
@@ -7040,11 +7055,11 @@ export const LoyaltyService = {
               store_name: cleanStore,
               manager_name: cleanManager,
               phone: cleanPhone,
-              normalized_phone: normPhone,
               city: payload.city || null,
               business_type: payload.business_type || null,
               attribution_source: refCode ? 'REFERRAL' : 'DIRECT',
               referral_code: refCode,
+              partner_id: partnerId,
               status: 'NEW',
               notes: newLead.notes,
             },
@@ -7054,9 +7069,16 @@ export const LoyaltyService = {
 
         if (!error && data?.id) {
           newLead.id = data.id;
+          newLead.partner_id = partnerId;
           const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
           saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.id !== newLead.id)]);
+          invalidateLeadsCache();
+          invalidatePartnersCache();
+          LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: 'global' });
+          LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
           return { success: true, lead_id: data.id };
+        } else if (error) {
+          console.warn('Supabase direct insert merchant_leads error details:', error);
         }
       } catch (dbErr) {
         console.warn('Supabase direct insert merchant_leads error:', dbErr);
