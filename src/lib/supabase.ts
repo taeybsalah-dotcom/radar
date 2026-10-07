@@ -341,13 +341,34 @@ export function normalizeStore(s: any): Store {
 
   const hasPaidInvoice = Boolean(latestPaidInvoice);
 
+  // التحقق من وجود عمولة معتمدة أو قيد مالي يثبت سداد المتجر
+  let hasCommissionProof = false;
+  try {
+    const allComms = getLocalData<PartnerCommission[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    const matchComm = allComms.find(
+      (c) => c && (c.store_id === s.id || (s.id && isUUID(s.id) && c.store_id === s.id)) && (c.status === 'EARNED' || c.status === 'PAID')
+    );
+    if (matchComm) {
+      hasCommissionProof = true;
+    }
+  } catch {}
+
   // 2. التحقق الحتمي من حالة الاشتراك المدفوع (Paid Active)
-  // لا يمكن للمتجر أن يكون مشتركاً مدفوعاً إلا إذا سدد رسوم التأسيس أو اشترك فعلياً في باقة
-  const isExplicitTrial = s.status === 'trial' || s.subscription_status === 'trial' || s.setup_fee_paid === false;
-  const isPaid = !isExplicitTrial && Boolean(
+  // لا يمكن للمتجر أن يعامل كتجربة إذا سدد رسوم التأسيس (setup_fee_paid === true) أو كان اشتراكه مفعلاً
+  const isSuspended = s.status === 'suspended' || s.subscription_status === 'suspended';
+  const hasPaidProof = Boolean(
     hasPaidInvoice ||
-      (s.setup_fee_paid === true && (s.lifecycle_stage === 'مشترك مدفوع' || s.status === 'مشترك مدفوع' || s.status === 'PAID_ACTIVE'))
+      hasCommissionProof ||
+      s.setup_fee_paid === true ||
+      s.lifecycle_stage === 'مشترك مدفوع' ||
+      s.status === 'مشترك مدفوع' ||
+      s.status === 'PAID_ACTIVE' ||
+      (s.status === 'active' && s.subscription_status === 'active' && s.setup_fee_paid !== false) ||
+      (s.setup_fee_paid === true && s.status === 'active')
   );
+
+  const isExplicitTrial = !hasPaidProof && (s.status === 'trial' || s.subscription_status === 'trial' || s.setup_fee_paid === false);
+  const isPaid = !isSuspended && hasPaidProof && !isExplicitTrial;
 
   // حساب باقة الاشتراك وتواريخ النهاية بذكاء
   let computedPlanName = s.subscription_plan;
@@ -377,13 +398,19 @@ export function normalizeStore(s: any): Store {
     }
   }
 
+  // إذا كان مشتركاً مدفوعاً ولم يحدد تاريخ نهاية، يتم منحه افتراضياً 90 يوماً
+  if (isPaid && !computedEndDate) {
+    const startMs = new Date(computedStartDate).getTime();
+    computedEndDate = new Date(startMs + 90 * 86400000).toISOString();
+  }
+
   // إذا لم يكن مشتركاً مدفوعاً، فهو في فترة التجربة المجانية (14 يوم)
   const trialStart = s.trial_start_date || s.created_at || new Date().toISOString();
   const trialEnd = s.trial_end_date || new Date(new Date(trialStart).getTime() + 14 * 86400000).toISOString();
 
   const finalStage: UnifiedLifecycleStage = isPaid
     ? 'مشترك مدفوع'
-    : s.status === 'suspended' || s.subscription_status === 'suspended'
+    : isSuspended
     ? 'تحت المراجعة'
     : s.lifecycle_stage === 'جاري التأسيس'
     ? 'جاري التأسيس'
@@ -391,15 +418,17 @@ export function normalizeStore(s: any): Store {
 
   return {
     ...s,
-    setup_fee_paid: isPaid,
-    status: isPaid ? (s.status === 'suspended' ? 'suspended' : 'active') : (s.status === 'suspended' ? 'suspended' : 'trial'),
-    subscription_status: isPaid ? (s.subscription_status === 'suspended' ? 'suspended' : 'active') : (s.subscription_status === 'suspended' ? 'suspended' : 'trial'),
+    setup_fee_paid: isPaid || s.setup_fee_paid === true,
+    status: isSuspended ? 'suspended' : isPaid ? 'active' : (s.status || 'trial'),
+    subscription_status: isSuspended ? 'suspended' : isPaid ? 'active' : (s.subscription_status || 'trial'),
     lifecycle_stage: finalStage,
-    subscription_plan: isPaid ? (computedPlanName || 'الباقة الأساسية') : (s.subscription_plan && s.subscription_plan !== 'trial' && s.subscription_plan !== 'الباقة الأساسية' && s.subscription_plan !== 'pro' ? s.subscription_plan : 'فترة تجربة مجانية (14 يوم)'),
-    subscription_plan_id: computedPlanId || (isPaid ? 'plan-3m' : undefined),
-    plan_code: computedPlanCode || (isPaid ? 'PLAN_3M' : undefined),
+    subscription_plan: isPaid
+      ? (computedPlanName && computedPlanName !== 'trial' && computedPlanName !== 'فترة تجربة مجانية (14 يوم)' ? computedPlanName : 'الباقة الأساسية')
+      : (s.subscription_plan && s.subscription_plan !== 'trial' && s.subscription_plan !== 'الباقة الأساسية' && s.subscription_plan !== 'pro' ? s.subscription_plan : 'فترة تجربة مجانية (14 يوم)'),
+    subscription_plan_id: computedPlanId || (isPaid ? 'plan-basic' : undefined),
+    plan_code: computedPlanCode || (isPaid ? 'BASIC' : undefined),
     subscription_start_date: isPaid ? computedStartDate : trialStart,
-    subscription_end_date: isPaid ? (computedEndDate || new Date(Date.now() + 30 * 86400000).toISOString()) : trialEnd,
+    subscription_end_date: isPaid ? (computedEndDate || new Date(Date.now() + 90 * 86400000).toISOString()) : trialEnd,
     trial_start_date: trialStart,
     trial_end_date: trialEnd,
     manager_contact,
@@ -651,31 +680,7 @@ export const LoyaltyService = {
         );
         if (!error && Array.isArray(data)) {
           const validStores = data.filter((s: any) => Boolean(s && s.id)).map((dbStore: any) => {
-            const normalized = normalizeStore(mergeStoreAssets(dbStore));
-
-            // 🛡️ Auto-repair legacy DB store rows that mistakenly have active/paid status or setup_fee_paid=true without paid invoice
-            if (
-              supabase &&
-              isUUID(dbStore.id) &&
-              !normalized.setup_fee_paid &&
-              (dbStore.status === 'active' || dbStore.setup_fee_paid === true || dbStore.subscription_plan === 'pro')
-            ) {
-              Promise.resolve(
-                supabase
-                  .from('stores')
-                  .update({
-                    status: 'trial',
-                    subscription_status: 'trial',
-                    setup_fee_paid: false,
-                    subscription_plan: 'trial',
-                    subscription_end_date: normalized.subscription_end_date,
-                    trial_end_date: normalized.trial_end_date,
-                  })
-                  .eq('id', dbStore.id)
-              ).catch(() => {});
-            }
-
-            return normalized;
+            return normalizeStore(mergeStoreAssets(dbStore));
           }) as Store[];
           saveLocalData(STORAGE_KEYS.LOCAL_STORES, validStores);
           storesListCache = { data: validStores, timestamp: Date.now() };
@@ -935,28 +940,6 @@ export const LoyaltyService = {
 
         if (!error && data && data.id) {
           const resolved = normalizeStore(await attachStoreAssets(supabase, data)) as Store;
-
-          // 🛡️ Auto-repair legacy DB store rows that mistakenly have active/paid status or setup_fee_paid=true without paid invoice
-          if (
-            supabase &&
-            isUUID(data.id) &&
-            !resolved.setup_fee_paid &&
-            (data.status === 'active' || data.setup_fee_paid === true || data.subscription_plan === 'pro')
-          ) {
-            Promise.resolve(
-              supabase
-                .from('stores')
-                .update({
-                  status: 'trial',
-                  subscription_status: 'trial',
-                  setup_fee_paid: false,
-                  subscription_plan: 'trial',
-                  subscription_end_date: resolved.subscription_end_date,
-                  trial_end_date: resolved.trial_end_date,
-                })
-                .eq('id', data.id)
-            ).catch(() => {});
-          }
 
           storeResolutionCache.set(cleanLower, { store: resolved, timestamp: Date.now() });
           storeResolutionCache.set(resolved.id.toLowerCase(), { store: resolved, timestamp: Date.now() });

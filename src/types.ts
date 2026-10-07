@@ -117,71 +117,56 @@ export function resolveUnifiedStage(
   }
 
   const effectiveObj = matchedStore || it;
-  const isExplicitTrial =
-    effectiveObj.subscription_status === 'trial' ||
-    effectiveObj.status === 'trial' ||
-    (effectiveObj.setup_fee_paid === false && effectiveObj.subscription_status !== 'active' && effectiveObj.status !== 'active' && effectiveObj.lifecycle_stage !== 'مشترك مدفوع');
 
-  // 1. Explicit lifecycle_stage priority
-  if (effectiveObj.lifecycle_stage === 'مشترك مدفوع') {
-    return {
-      key: 'PAID_ACTIVE',
-      label: 'مشترك مدفوع',
-      badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm',
-      icon: '👑',
-      isPaidActive: true,
-    };
-  }
-  if (effectiveObj.lifecycle_stage === 'تحت المراجعة') {
-    return {
-      key: 'UNDER_REVIEW',
-      label: 'تحت المراجعة',
-      badgeClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
-      icon: '⏳',
-      isPaidActive: false,
-    };
-  }
-  if (effectiveObj.lifecycle_stage === 'جاري التأسيس') {
-    return {
-      key: 'IN_SETUP',
-      label: 'جاري التأسيس',
-      badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-      icon: '⚙️',
-      isPaidActive: false,
-    };
-  }
-  if (effectiveObj.lifecycle_stage === 'طلب جديد') {
-    return {
-      key: 'NEW',
-      label: 'طلب جديد',
-      badgeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-      icon: '🆕',
-      isPaidActive: false,
-    };
-  }
-  if (effectiveObj.lifecycle_stage === 'تم التأسيس') {
-    return {
-      key: 'SETUP_COMPLETE',
-      label: 'تم التأسيس',
-      badgeClass: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
-      icon: '🚀',
-      isPaidActive: false,
-    };
+  // فحص ما إذا كان المتجر أو الطلب مرتبطاً بعمولة مسوق معتمدة أو قيد مالي مدفوع
+  let hasCommissionOrLedgerProof = false;
+  if (typeof window !== 'undefined') {
+    try {
+      const rawComms = localStorage.getItem('radar_local_partner_commissions');
+      if (rawComms) {
+        const comms = JSON.parse(rawComms);
+        if (Array.isArray(comms)) {
+          const cMatch = comms.find(
+            (c: any) =>
+              (c.store_id && (c.store_id === effectiveObj.id || c.store_id === it.converted_store_id)) ||
+              (c.merchant_lead_id && (c.merchant_lead_id === it.id || c.merchant_lead_id === effectiveObj.id))
+          );
+          if (cMatch && (cMatch.status === 'EARNED' || cMatch.status === 'PAID')) {
+            hasCommissionOrLedgerProof = true;
+          }
+        }
+      }
+    } catch {}
   }
 
-  // 2. مشترك مدفوع (Paid Subscriber) - أولوية مطلقة وحتمية لسداد الرسوم الفعلي
-  const isPaid =
-    !isExplicitTrial &&
-    Boolean(
+  const isSuspended =
+    effectiveObj.status === 'تحت المراجعة' ||
+    effectiveObj.status === 'UNDER_REVIEW' ||
+    effectiveObj.status === 'suspended' ||
+    effectiveObj.subscription_status === 'suspended' ||
+    effectiveObj.lifecycle_stage === 'تحت المراجعة';
+
+  const hasPaidProof = Boolean(
+    hasCommissionOrLedgerProof ||
       effectiveObj.has_paid_invoice === true ||
       effectiveObj.latest_paid_invoice ||
       effectiveObj.setup_fee_paid === true ||
       effectiveObj.status === 'مشترك مدفوع' ||
       effectiveObj.status === 'PAID_ACTIVE' ||
-      effectiveObj.subscription_status === 'active' ||
-      (effectiveObj.status === 'active' && effectiveObj.subscription_status !== 'trial' && effectiveObj.setup_fee_paid !== false)
-    );
+      effectiveObj.lifecycle_stage === 'مشترك مدفوع' ||
+      (effectiveObj.subscription_status === 'active' && effectiveObj.setup_fee_paid !== false) ||
+      (effectiveObj.status === 'active' && effectiveObj.setup_fee_paid !== false)
+  );
 
+  const isExplicitTrial =
+    !hasPaidProof &&
+    (effectiveObj.subscription_status === 'trial' ||
+      effectiveObj.status === 'trial' ||
+      effectiveObj.setup_fee_paid === false);
+
+  const isPaid = !isSuspended && hasPaidProof && !isExplicitTrial;
+
+  // 1. المشترك المدفوع (Paid Subscriber) - أولوية مطلقة فور سداد الرسوم أو وجود العمولة
   if (isPaid) {
     return {
       key: 'PAID_ACTIVE',
@@ -192,14 +177,8 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 3. تحت المراجعة (Under Review / Suspended)
-  if (
-    effectiveObj.status === 'تحت المراجعة' ||
-    effectiveObj.status === 'UNDER_REVIEW' ||
-    effectiveObj.status === 'suspended' ||
-    effectiveObj.subscription_status === 'suspended' ||
-    effectiveObj.status === 'CONTACTED'
-  ) {
+  // 2. تحت المراجعة (Under Review / Suspended)
+  if (isSuspended) {
     return {
       key: 'UNDER_REVIEW',
       label: 'تحت المراجعة',
@@ -209,8 +188,9 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 4. جاري التأسيس (In Setup / Converting)
+  // 3. جاري التأسيس (In Setup / Converting)
   if (
+    effectiveObj.lifecycle_stage === 'جاري التأسيس' ||
     effectiveObj.status === 'جاري التأسيس' ||
     effectiveObj.status === 'IN_SETUP' ||
     effectiveObj.status === 'CONVERTING'
@@ -224,32 +204,27 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 5. تم التأسيس (Setup Complete / Trial / Converted to Store)
+  // 4. طلب جديد (New Request)
   if (
-    effectiveObj.status === 'تم التأسيس' ||
-    effectiveObj.status === 'SETUP_COMPLETE' ||
-    effectiveObj.status === 'CONVERTED' ||
-    effectiveObj.status === 'APPROVED' ||
-    effectiveObj.status === 'trial' ||
-    effectiveObj.subscription_status === 'trial' ||
-    Boolean(effectiveObj.id && effectiveObj.slug) ||
-    Boolean(it.converted_store_id)
+    effectiveObj.lifecycle_stage === 'طلب جديد' ||
+    effectiveObj.status === 'طلب جديد' ||
+    effectiveObj.status === 'NEW'
   ) {
     return {
-      key: 'SETUP_COMPLETE',
-      label: 'تم التأسيس',
-      badgeClass: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
-      icon: '🚀',
+      key: 'NEW',
+      label: 'طلب جديد',
+      badgeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+      icon: '🆕',
       isPaidActive: false,
     };
   }
 
-  // 6. طلب جديد (New Request)
+  // 5. تم التأسيس (Setup Complete / Trial / Converted to Store)
   return {
-    key: 'NEW',
-    label: 'طلب جديد',
-    badgeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-    icon: '🆕',
+    key: 'SETUP_COMPLETE',
+    label: 'تم التأسيس',
+    badgeClass: 'bg-teal-500/15 text-teal-300 border-teal-500/30',
+    icon: '🚀',
     isPaidActive: false,
   };
 }
@@ -691,7 +666,10 @@ export interface PartnerAccount {
 
 export interface PartnerCommission {
   id: string;
-  merchant_name: string;
+  merchant_name?: string;
+  store_id?: string;
+  merchant_lead_id?: string;
+  partner_account_id?: string;
   commission_type: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE' | string;
   basis_amount: number;
   commission_rate: number;
