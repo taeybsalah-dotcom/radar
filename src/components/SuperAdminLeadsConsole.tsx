@@ -178,45 +178,7 @@ export const SuperAdminLeadsConsole: React.FC<SuperAdminLeadsConsoleProps> = ({
         params.set('page', String(pageToLoad));
         params.set('pageSize', String(pageSize));
 
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-        if (effectiveToken) {
-          headers['Authorization'] = `Bearer ${effectiveToken}`;
-        }
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1500);
-
-        const res = await fetch(`/api/admin/leads?${params.toString()}`, {
-          method: 'GET',
-          headers,
-          signal: controller.signal,
-        }).catch(() => null);
-        clearTimeout(timeoutId);
-
-        if (res && res.ok) {
-          const data = await res.json().catch(() => null);
-          if (data && data.success) {
-            setLeads(data.leads || []);
-            setTotalLeads(data.total || 0);
-            setCurrentPage(data.page || 1);
-            setTotalPages(data.totalPages || 1);
-            setAuthError(null);
-
-            // If a lead is currently selected, refresh its state from the fetched list
-            if (selectedLead) {
-              const fresh = (data.leads || []).find((l: MerchantLead) => l.id === selectedLead.id);
-              if (fresh) {
-                setSelectedLead(fresh);
-                setLeadNotes(fresh.notes || '');
-              }
-            }
-            return;
-          }
-        }
-
-        // Direct Fallback via LoyaltyService.getAllLeads()
+        // Direct Supabase Leads via LoyaltyService
         const allLeads = await LoyaltyService.getAllLeads();
         let filtered = allLeads;
         if (statusFilter && statusFilter !== 'ALL') {

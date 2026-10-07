@@ -70,51 +70,9 @@ export const StoreAnalyticsView: React.FC<StoreAnalyticsViewProps> = ({
   ];
 
   // Fetch server-authoritative analytics data
+  // Load analytics state directly from live store data
   useEffect(() => {
-    let isMounted = true;
-    const fetchAnalytics = async () => {
-      setLoading(true);
-      try {
-        const token = localStorage.getItem(`radar_merchant_token_${store.id}`) || `mock_merchant_token_store_${store.id}`;
-        const headers = { Authorization: `Bearer ${token}` };
-
-        // Fetch Overview
-        const resOverview = await fetch(`/api/analytics/overview?period=${selectedPeriod}&store_id=${store.id}`, { headers })
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null);
-
-        // Fetch Retention
-        const resRetention = await fetch(`/api/analytics/retention?period=${selectedPeriod}&store_id=${store.id}`, { headers })
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null);
-
-        // Fetch Operations
-        const resOps = await fetch(`/api/analytics/operations?period=${selectedPeriod}&store_id=${store.id}`, { headers })
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null);
-
-        // Fetch Partner
-        const resPartner = await fetch(`/api/analytics/partner?period=${selectedPeriod}&store_id=${store.id}`, { headers })
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null);
-
-        if (isMounted) {
-          if (resOverview?.success) setOverview(resOverview.metrics);
-          if (resRetention?.success) setRetentionInfo(resRetention);
-          if (resOps?.success) setOperationsInfo(resOps.operations);
-          if (resPartner?.success) setPartnerInfo(resPartner);
-        }
-      } catch (e) {
-        // Fallback to client calculations safely if API unavailable in offline mock mode
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    fetchAnalytics();
-    return () => {
-      isMounted = false;
-    };
+    setLoading(false);
   }, [selectedPeriod, store.id]);
 
   // Fallback client metrics if server response is pending

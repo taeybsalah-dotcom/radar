@@ -205,8 +205,30 @@ function parseRouteParams() {
     };
   }
 
-  // 7. Check Direct Store Path or Hash (e.g. /demo-cafe, #/demo-cafe)
+  // 7. Check Subpaths like /:slug/pos, /:slug/admin, /:slug/cashier
   const pathSegments = pathname.split('/').filter(Boolean);
+  if (pathSegments.length === 2) {
+    const [firstSeg, secondSeg] = pathSegments;
+    const cleanSecond = secondSeg.toLowerCase();
+    if (cleanSecond === 'pos' || cleanSecond === 'cashier') {
+      return {
+        portal: 'cashier' as const,
+        isPreview: previewParam,
+        storeSlug: firstSeg,
+        partnerSlug: null,
+      };
+    }
+    if (cleanSecond === 'admin' || cleanSecond === 'merchant' || cleanSecond === 'store') {
+      return {
+        portal: 'admin' as const,
+        isPreview: previewParam,
+        storeSlug: firstSeg,
+        partnerSlug: null,
+      };
+    }
+  }
+
+  // 8. Check Direct Store Path or Hash (e.g. /demo-cafe, #/demo-cafe)
   const potentialSlug = pathSegments.length === 1 ? pathSegments[0] : null;
   const isDemoPath = potentialSlug && (potentialSlug === DEMO_STORE_SLUG || isDemoStoreSlug(potentialSlug));
   const isDemoHash = rawHash && (rawHash === DEMO_STORE_SLUG || isDemoStoreSlug(rawHash));
@@ -221,7 +243,7 @@ function parseRouteParams() {
     };
   }
 
-  // 8. Check Public Partner Landing Page (/<partner-slug>)
+  // 9. Check Public Store or Partner Slug (/<slug>)
   const RESERVED_SLUGS = new Set([
     '',
     'join',
@@ -248,9 +270,9 @@ function parseRouteParams() {
 
   if (potentialSlug && !RESERVED_SLUGS.has(potentialSlug) && !slugParam) {
     return {
-      portal: 'partner-landing' as const,
-      isPreview: false,
-      storeSlug: null,
+      portal: (portalParam as PortalTab) || 'customer',
+      isPreview: previewParam,
+      storeSlug: potentialSlug,
       partnerSlug: potentialSlug,
     };
   }
@@ -530,38 +552,7 @@ export function App() {
         return;
       }
 
-      // 4. Direct Affiliate Slug Resolution -> Straight to Final Landing Page
-      if (config.portal === 'partner-landing' && config.partnerSlug) {
-        const cleanSlug = config.partnerSlug.trim().toLowerCase();
-        try {
-          const allPartners = await LoyaltyService.getAllPartners();
-          const found = allPartners.find(
-            (p: any) =>
-              (p.slug || '').toLowerCase() === cleanSlug ||
-              (p.affiliates?.referral_code || '').toLowerCase() === cleanSlug ||
-              (p.referral_code || '').toLowerCase() === cleanSlug
-          );
-
-          const refCode = found?.affiliates?.referral_code || found?.referral_code || cleanSlug;
-          sessionStorage.setItem('radar_captured_ref', refCode);
-
-          fetch(`/api/track?ref=${encodeURIComponent(refCode)}`, {
-            method: 'GET',
-            credentials: 'include',
-          }).catch(() => {});
-        } catch (e) {
-          sessionStorage.setItem('radar_captured_ref', cleanSlug);
-        }
-
-        setPartnerSlug(cleanSlug);
-        setActiveTab('partner-landing');
-        setStore(null);
-        updateDynamicPWA(null, 'partner-landing');
-        setLoading(false);
-        return;
-      }
-
-      // 5. Merchant Onboarding Route
+      // 4. Merchant Onboarding Route
       if (config.portal === 'onboarding') {
         let targetStore: Store | null = null;
         if (config.storeSlug) {
@@ -581,9 +572,11 @@ export function App() {
         return;
       }
 
-      // 6. Store-based Portals (admin, cashier, customer)
-      if (config.storeSlug) {
-        const found = await LoyaltyService.resolveStore(config.storeSlug);
+      // 5. Dynamic Slug Resolution (Resolves Store or Partner seamlessly)
+      const targetSlug = config.storeSlug || config.partnerSlug;
+      if (targetSlug) {
+        // A. Primary: Attempt to resolve as store first
+        const found = await LoyaltyService.resolveStore(targetSlug);
         if (found) {
           setStore(found);
           const targetPortal =
@@ -596,6 +589,31 @@ export function App() {
           localStorage.setItem('radar_last_portal', targetPortal);
           setLoading(false);
           return;
+        }
+
+        // B. Secondary: If not a store, check if it's a partner referral code or slug
+        const cleanSlug = targetSlug.trim().toLowerCase();
+        try {
+          const allPartners = await LoyaltyService.getAllPartners();
+          const foundPartner = allPartners.find(
+            (p: any) =>
+              (p.slug || '').toLowerCase() === cleanSlug ||
+              (p.affiliates?.referral_code || '').toLowerCase() === cleanSlug ||
+              (p.referral_code || '').toLowerCase() === cleanSlug
+          );
+
+          if (foundPartner) {
+            const refCode = foundPartner.affiliates?.referral_code || foundPartner.referral_code || cleanSlug;
+            sessionStorage.setItem('radar_captured_ref', refCode);
+            setPartnerSlug(cleanSlug);
+            setActiveTab('partner-landing');
+            setStore(null);
+            updateDynamicPWA(null, 'partner-landing');
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('Partner lookup error:', e);
         }
       }
 

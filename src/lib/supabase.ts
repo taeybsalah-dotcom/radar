@@ -7067,59 +7067,7 @@ export const LoyaltyService = {
       updated_at: new Date().toISOString(),
     };
 
-    // 1. Try API gateway
-    try {
-      const res = await fetch('/api/lead-submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          store_name: cleanStore,
-          owner_name: cleanManager,
-          phone: normPhone,
-          referral_code: refCode,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        if (data.success) {
-          newLead.id = data.lead_id || tempId;
-          const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-          // 🛡️ Deduplicate safely; preserve CONVERTED leads and history
-          const existingIdx = current.findIndex((l) => normalizeP(l.phone) === normPhone && l.status !== 'CONVERTED');
-          if (existingIdx !== -1) {
-            current[existingIdx] = {
-              ...current[existingIdx],
-              store_name: cleanStore,
-              manager_name: cleanManager,
-              referral_code: refCode || current[existingIdx].referral_code,
-              notes: payload.notes || current[existingIdx].notes,
-              updated_at: new Date().toISOString(),
-            };
-            saveLocalData(STORAGE_KEYS.LOCAL_LEADS, current);
-            return { success: true, lead_id: current[existingIdx].id };
-          }
-          saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.id !== newLead.id)]);
-          return { success: true, lead_id: newLead.id };
-        }
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        if (errData?.error === 'DUPLICATE_PHONE') {
-          return { success: false, error: 'رقم الجوال مسجل مسبقاً في قائمة الطلبات أو المتاجر النشطة.' };
-        }
-        if (errData?.error === 'RATE_LIMITED') {
-          return { success: false, error: 'تم تجاوز الحد المسموح من الطلبات، يرجى المحاولة لاحقاً.' };
-        }
-        if (errData?.error === 'INVALID_PHONE') {
-          return { success: false, error: 'يرجى إدخال رقم جوال سعودي صحيح يبدأ بـ 05.' };
-        }
-      }
-    } catch (apiErr) {
-      console.warn('API lead-submit fetch failed, falling back to direct Supabase/localStorage:', apiErr);
-    }
-
-    // 2. Direct Supabase Client fallback
+    // 1. Direct Supabase Client (Pure Single Source of Truth)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -8233,43 +8181,6 @@ export const LoyaltyService = {
       } catch (e) {
         console.warn('Supabase getAllSubscriptionPlans error:', e);
       }
-    }
-
-    // 2. استعلام نقطة النهاية السحابية كاحتياطي عند تعذر الاتصال المباشر
-    try {
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timeoutId = controller ? setTimeout(() => controller.abort(), 2500) : null;
-
-      const res = await fetch('/api/billing/plans', {
-        method: 'GET',
-        signal: controller?.signal,
-      });
-      if (timeoutId) clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && Array.isArray(json.plans) && json.plans.length > 0) {
-          const apiPlans: BillingPlan[] = json.plans.map((p: any) => ({
-            id: p.id || p.code,
-            code: p.code,
-            name: p.name,
-            description: p.description || '',
-            amount: Number(p.amount) || 0,
-            currency: p.currency || 'ر.س',
-            duration_months: p.duration_months ? Number(p.duration_months) : (p.billing_interval === 'YEARLY' ? 12 : 1),
-            billing_interval: p.billing_interval || (Number(p.duration_months) === 12 ? 'YEARLY' : 'MONTHLY'),
-            trial_days: p.trial_days ?? 7,
-            features: Array.isArray(p.features) ? p.features : [],
-            active: p.active !== false,
-            created_at: p.created_at,
-          }));
-
-          saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, apiPlans);
-          return apiPlans;
-        }
-      }
-    } catch (apiErr) {
-      // ignore
     }
 
     return this.getAllSubscriptionPlansSync();

@@ -30,29 +30,23 @@ export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug
 
         // 1. Direct query via LoyaltyService
         const allPartners = await LoyaltyService.getAllPartners();
-        const found = allPartners.find((p: any) => (p.slug || '').toLowerCase() === cleanSlug);
+        const found = allPartners.find(
+          (p: any) =>
+            (p.slug || '').toLowerCase() === cleanSlug ||
+            (p.referral_code || '').toLowerCase() === cleanSlug ||
+            (p.affiliates?.referral_code || '').toLowerCase() === cleanSlug
+        );
 
         if (found) {
           const refCode = found.affiliates?.referral_code || found.referral_code || 'r1001';
           setPartner({
             display_name: found.display_name,
-            slug: found.slug,
+            slug: found.slug || refCode,
             region: found.region || 'عام',
             referral_code: refCode,
           });
           setLoading(false);
           return;
-        }
-
-        // 2. Fallback to API if available
-        const res = await fetch(`/api/partner/resolve?slug=${encodeURIComponent(cleanSlug)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.partner) {
-            setPartner(data.partner);
-            setLoading(false);
-            return;
-          }
         }
 
         setError('صفحة الشريك غير متوفرة');

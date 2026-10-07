@@ -138,71 +138,39 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
     );
   };
 
-  // 1. Fetch Onboarding State from Server (Refresh-Safe)
+  // 1. Fetch Onboarding State from Supabase / Store (Refresh-Safe)
   const fetchOnboardingState = async () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const token = getAuthToken();
-      const res = await fetch(`/api/merchant/onboarding?store_id=${initialStore.id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const liveStore = (await LoyaltyService.resolveStore(initialStore.id)) || initialStore;
+      if (liveStore) {
+        setStore((prev) => ({ ...prev, ...liveStore }));
+        setStoreName(liveStore.name || '');
+        setManagerName(liveStore.manager_name || '');
+        setManagerContact(liveStore.manager_contact || '');
+        setPrimaryColor(liveStore.primary_color || '#0F172A');
+        setSecondaryColor(liveStore.secondary_color || '#F59E0B');
+        setLogoUrl(liveStore.logo_url || '');
+        setSlug(liveStore.slug || '');
+        setPointsPerRiyal(liveStore.points_per_riyal || 1.0);
+      }
 
-      const data = await res.json();
-      if (res.ok && data.success) {
-        if (data.onboarding) {
-          setCurrentStep(data.onboarding.current_step || 'BUSINESS_INFO');
-          setStatus(data.onboarding.status || 'IN_PROGRESS');
-          if (data.onboarding.metadata?.steps_completed) {
-            setCompletedSteps(data.onboarding.metadata.steps_completed);
-          }
-        }
-        if (data.store) {
-          setStore((prev) => ({ ...prev, ...data.store }));
-          setStoreName(data.store.name || '');
-          setManagerName(data.store.manager_name || '');
-          setManagerContact(data.store.manager_contact || '');
-          setPrimaryColor(data.store.primary_color || '#0F172A');
-          setSecondaryColor(data.store.secondary_color || '#F59E0B');
-          setLogoUrl(data.store.logo_url || '');
-          setSlug(data.store.slug || '');
-          setPointsPerRiyal(data.store.points_per_riyal || 1.0);
-        }
-        if (data.billing_state) {
-          setBillingState(data.billing_state);
-        }
-      } else {
-        // Idempotently start onboarding if not started
-        await startOnboarding();
+      const savedStep = localStorage.getItem(`radar_onboarding_step_${initialStore.id}`);
+      if (savedStep && STEPS.some((s) => s.key === savedStep)) {
+        setCurrentStep(savedStep as StepKey);
       }
     } catch (err: any) {
-      console.warn('[OnboardingConsole] Fetch failed, initializing start...', err);
-      await startOnboarding();
+      console.warn('[OnboardingConsole] Fetch failed:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. Start Onboarding on Server
+  // 2. Start Onboarding State
   const startOnboarding = async () => {
-    try {
-      const token = getAuthToken();
-      const res = await fetch('/api/merchant/onboarding/start', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ store_id: initialStore.id }),
-      });
-      const data = await res.json();
-      if (data.success && data.onboarding) {
-        setCurrentStep(data.onboarding.current_step || 'BUSINESS_INFO');
-        setStatus(data.onboarding.status || 'IN_PROGRESS');
-      }
-    } catch (e) {
-      console.error('[OnboardingConsole] Start failed', e);
-    }
+    setCurrentStep('BUSINESS_INFO');
+    setStatus('IN_PROGRESS');
   };
 
   useEffect(() => {
@@ -254,36 +222,34 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
     }
 
     try {
-      const token = getAuthToken();
       const nextStepKey =
         currentStepIndex < STEPS.length - 1 ? STEPS[currentStepIndex + 1].key : 'REVIEW';
 
-      const res = await fetch('/api/merchant/onboarding/step', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          store_id: initialStore.id,
-          step: currentStep,
-          next_step: nextStepKey,
-          data: stepPayload,
-        }),
-      });
+      const storeUpdates: Partial<Store> = {};
+      if (currentStep === 'BUSINESS_INFO') {
+        storeUpdates.name = storeName.trim();
+        storeUpdates.manager_name = managerName.trim();
+        storeUpdates.manager_contact = managerContact.trim();
+      } else if (currentStep === 'BRANDING') {
+        storeUpdates.primary_color = primaryColor;
+        storeUpdates.secondary_color = secondaryColor;
+        if (logoUrl) storeUpdates.logo_url = logoUrl;
+      } else if (currentStep === 'STORE_SETTINGS') {
+        storeUpdates.slug = slug.trim();
+        storeUpdates.points_per_riyal = pointsPerRiyal;
+      }
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setErrorMsg(data.error || 'فشل في حفظ الخطوة');
-        return;
+      if (Object.keys(storeUpdates).length > 0) {
+        await LoyaltyService.updateStoreSettings(initialStore.id, storeUpdates);
       }
 
       setCompletedSteps((prev) => ({ ...prev, [currentStep]: true }));
+      localStorage.setItem(`radar_onboarding_step_${initialStore.id}`, nextStepKey);
       setSuccessMsg('تم حفظ التقدم بنجاح');
       setCurrentStep(nextStepKey);
     } catch (err: any) {
       console.error('[OnboardingConsole] Save step exception:', err);
-      setErrorMsg('حدث خطأ في الاتصال بالخادم أثناء حفظ الخطوة');
+      setErrorMsg('حدث خطأ أثناء حفظ الخطوة');
     } finally {
       setSaving(false);
     }
@@ -295,29 +261,16 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
     setErrorMsg(null);
     setSuccessMsg(null);
     try {
-      const token = getAuthToken();
-      const res = await fetch('/api/merchant/onboarding/step', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          store_id: initialStore.id,
-          step: 'BILLING',
-          next_step: 'REVIEW',
-          data: { start_trial: true },
-        }),
+      const now = new Date();
+      const trialEndsAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString();
+      await LoyaltyService.updateStoreSettings(initialStore.id, {
+        status: 'trial',
+        subscription_status: 'trial',
+        subscription_plan: 'trial',
+        trial_end_date: trialEndsAt,
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setErrorMsg(data.error || 'تعذر بدء التجربة المجانية');
-        return;
-      }
-
       setSuccessMsg('تم تفعيل الفترة التجريبية المجانية بنجاح (14 يوم)!');
-      await fetchOnboardingState();
       setCurrentStep('REVIEW');
     } catch (err: any) {
       setErrorMsg('حدث خطأ أثناء تفعيل التجربة المجانية');
@@ -360,22 +313,10 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
     setSaving(true);
     setErrorMsg(null);
     try {
-      const token = getAuthToken();
-      const res = await fetch('/api/merchant/onboarding/complete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ store_id: initialStore.id }),
+      await LoyaltyService.updateStoreSettings(initialStore.id, {
+        status: initialStore.status === 'active' ? 'active' : 'trial',
       });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setErrorMsg(data.error || 'فشل في إكمال التهيئة');
-        return;
-      }
-
+      localStorage.removeItem(`radar_onboarding_step_${initialStore.id}`);
       setStatus('COMPLETED');
       setSuccessMsg('تهانينا! اكتملت تهيئة المتجر بنجاح.');
       if (onComplete) {
