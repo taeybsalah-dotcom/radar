@@ -6579,23 +6579,25 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data: affData } = await supabase
+        const { data: affData, error: affErr } = await supabase
           .from('affiliates')
           .upsert([{
             name: cleanName,
             phone: cleanPhone,
             referral_code: cleanCode,
             status: 'ACTIVE',
-            commission_rate: commRate,
-            recurring_commission_rate: recurringRate,
             notes: `PIN: ${pinCode}`
           }], { onConflict: 'phone' })
           .select('id')
           .single();
 
+        if (affErr) {
+          console.warn('Supabase affiliates upsert error:', affErr);
+        }
+
         const realAffId = affData?.id || affiliateId;
 
-        await supabase
+        const { error: paErr } = await supabase
           .from('partner_accounts')
           .insert([{
             affiliate_id: realAffId,
@@ -6608,6 +6610,10 @@ export const LoyaltyService = {
             pin_code: pinCode,
             active: true
           }]);
+
+        if (paErr) {
+          console.warn('Supabase partner_accounts insert error:', paErr);
+        }
       } catch (e) {
         console.warn('Supabase sync partner error:', e);
       }
