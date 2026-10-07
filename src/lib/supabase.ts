@@ -944,12 +944,15 @@ export const LoyaltyService = {
       }
 
       // 2. فحص كاش التخزين المحلي فورياً
+      const rootSlug = cleanLower.replace(/[iy]$/, '');
       const localMatch = localStores.find(
         (s) =>
           s &&
           (s.id === clean ||
             s.slug?.toLowerCase() === cleanLower ||
+            (rootSlug.length > 3 && s.slug?.toLowerCase().startsWith(rootSlug)) ||
             s.custom_domain?.toLowerCase() === cleanLower ||
+            s.name?.trim().toLowerCase() === clean.toLowerCase() ||
             s.slug?.toLowerCase().replace(/[-_]/g, '') === cleanLower.replace(/[-_]/g, ''))
       );
       if (localMatch) {
@@ -974,12 +977,13 @@ export const LoyaltyService = {
 
         let { data, error } = await storeQuery.maybeSingle();
 
-        // بحث بديل بالاسم أو الدومين المخصص إن لم يتطابق الـ slug
+        // بحث بديل مرن بالاسم أو الـ slug أو الدومين المخصص إن لم يتطابق الـ slug بدقة
         if (!data && !isUUID(clean)) {
+          const rootSlug = cleanLower.replace(/[iy]$/, '');
           const fallbackRes = await supabase
             .from('stores')
             .select(await storeCols(supabase))
-            .or(`name.ilike.${clean},custom_domain.ilike.${clean}`)
+            .or(`slug.ilike.%${rootSlug}%,name.ilike.%${clean}%,custom_domain.ilike.%${clean}%`)
             .limit(1)
             .maybeSingle();
           if (fallbackRes.data) data = fallbackRes.data;
