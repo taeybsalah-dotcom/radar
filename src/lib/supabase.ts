@@ -651,21 +651,7 @@ export const LoyaltyService = {
         );
         if (!error && Array.isArray(data)) {
           const validStores = data.filter((s: any) => Boolean(s && s.id)).map((dbStore: any) => {
-            const localMatch = currentLocal.find((l) => l.id === dbStore.id || l.slug === dbStore.slug);
-            const normalized = normalizeStore({
-              ...mergeStoreAssets(dbStore),
-              ...(localMatch || {}),
-              subscription_active: localMatch?.subscription_active !== undefined ? localMatch.subscription_active : dbStore.subscription_active,
-              status: localMatch?.status || dbStore.status,
-              subscription_status: localMatch?.subscription_status || dbStore.subscription_status,
-              lifecycle_stage: localMatch?.lifecycle_stage || dbStore.lifecycle_stage,
-              subscription_plan: localMatch?.subscription_plan || dbStore.subscription_plan,
-              subscription_plan_id: localMatch?.subscription_plan_id || dbStore.subscription_plan_id,
-              plan_code: localMatch?.plan_code || dbStore.plan_code,
-              subscription_end_date: localMatch?.subscription_end_date || dbStore.subscription_end_date,
-              subscription_start_date: localMatch?.subscription_start_date || dbStore.subscription_start_date,
-              setup_fee_paid: localMatch?.setup_fee_paid !== undefined ? localMatch.setup_fee_paid : dbStore.setup_fee_paid,
-            });
+            const normalized = normalizeStore(mergeStoreAssets(dbStore));
 
             // 🛡️ Auto-repair legacy DB store rows that mistakenly have active/paid status or setup_fee_paid=true without paid invoice
             if (
@@ -732,21 +718,9 @@ export const LoyaltyService = {
         );
 
         if (!error && Array.isArray(data)) {
-          const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
           const validStores = (data as any[])
             .filter((s) => Boolean(s && s.id))
-            .map((dbStore) => {
-              const localMatch = localStores.find((ls) => ls.id === dbStore.id || (dbStore.slug && ls.slug === dbStore.slug));
-              const merged = {
-                ...mergeStoreAssets(dbStore),
-                subscription_active: localMatch?.subscription_active !== undefined ? localMatch.subscription_active : dbStore.subscription_active,
-                status: localMatch?.status || dbStore.status,
-                subscription_status: localMatch?.subscription_status || dbStore.subscription_status,
-                lifecycle_stage: localMatch?.lifecycle_stage || dbStore.lifecycle_stage,
-                subscription_end_date: localMatch?.subscription_end_date || dbStore.subscription_end_date,
-              };
-              return normalizeStore(merged);
-            }) as Store[];
+            .map((dbStore) => normalizeStore(mergeStoreAssets(dbStore))) as Store[];
           saveLocalData(STORAGE_KEYS.LOCAL_STORES, validStores);
 
           const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, INITIAL_CUSTOMERS);
@@ -934,35 +908,7 @@ export const LoyaltyService = {
 
     const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
 
-    // 1. فحص كاش الذاكرة اللحظي (إذا لم يكن هناك إجبار لتخطي الكاش)
-    if (!forceFresh) {
-      const cached = storeResolutionCache.get(cleanLower);
-      if (cached && Date.now() - cached.timestamp < 300000 && cached.store) {
-        return cached.store;
-      }
-
-      // 2. فحص كاش التخزين المحلي فورياً
-      const rootSlug = cleanLower.replace(/[iy]$/, '');
-      const localMatch = localStores.find(
-        (s) =>
-          s &&
-          (s.id === clean ||
-            s.slug?.toLowerCase() === cleanLower ||
-            (rootSlug.length > 3 && s.slug?.toLowerCase().startsWith(rootSlug)) ||
-            s.custom_domain?.toLowerCase() === cleanLower ||
-            s.name?.trim().toLowerCase() === clean.toLowerCase() ||
-            s.slug?.toLowerCase().replace(/[-_]/g, '') === cleanLower.replace(/[-_]/g, ''))
-      );
-      if (localMatch) {
-        const normalizedLocal = normalizeStore(localMatch);
-        storeResolutionCache.set(cleanLower, { store: normalizedLocal, timestamp: Date.now() });
-        if (normalizedLocal.slug) storeResolutionCache.set(normalizedLocal.slug.toLowerCase(), { store: normalizedLocal, timestamp: Date.now() });
-        if (normalizedLocal.id) storeResolutionCache.set(normalizedLocal.id.toLowerCase(), { store: normalizedLocal, timestamp: Date.now() });
-        return normalizedLocal;
-      }
-    }
-
-    // 3. استعلام Supabase مباشر ومفهرس سريع (Fast Indexed Query)
+    // 1. استعلام Supabase مباشر ومفهرس سريع كمصدر أساسي للحقيقة (Fast Single Source of Truth)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -6469,7 +6415,7 @@ export const LoyaltyService = {
         const affList = affRes?.data || [];
         const paList = paRes?.data || [];
 
-        if (affList.length > 0) {
+        if (!affRes?.error) {
           const combined = affList.map((aff: any) => {
             const pa = paList.find((p: any) => p.affiliate_id === aff.id);
             const rawNotes = aff.notes || '';
@@ -6492,26 +6438,12 @@ export const LoyaltyService = {
               affiliates: aff,
             };
 
-            const localMatch = existingLocal.find(
-              (lp) =>
-                lp.id === partnerObj.id ||
-                lp.affiliate_id === partnerObj.affiliate_id ||
-                (aff.phone && normalizePhone(lp.affiliates?.phone || lp.phone) === normalizePhone(aff.phone))
-            );
-
-            return sanitizePartner(partnerObj, localMatch);
+            return sanitizePartner(partnerObj);
           });
 
-          // Also include any local-only partners
-          const dbAffIds = new Set(affList.map((a: any) => a.id));
-          const localOnly = existingLocal
-            .filter((lp) => !dbAffIds.has(lp.affiliate_id) && !dbAffIds.has(lp.id))
-            .map((lp) => sanitizePartner(lp));
-
-          const all = [...combined, ...localOnly];
-          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, all);
-          partnersListCache = { data: all, timestamp: Date.now() };
-          return all;
+          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, combined);
+          partnersListCache = { data: combined, timestamp: Date.now() };
+          return combined;
         }
       } catch (e) {
         console.warn('Supabase getAllPartners fallback to local:', e);
