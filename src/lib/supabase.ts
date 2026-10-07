@@ -157,27 +157,33 @@ if (typeof window !== 'undefined') {
   } catch {}
 }
 
-const ENV_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://zagpvflyizbmzsbmhnts.supabase.co';
-const ENV_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
+const PROD_SUPABASE_URL = 'https://zagpvflyizbmzsbmhnts.supabase.co';
+const PROD_SUPABASE_ANON_KEY = 'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
+
+const STAGING_SUPABASE_URL = 'https://jipqqhtgfpgrurkozccl.supabase.co';
+const STAGING_SUPABASE_ANON_KEY = 'sb_publishable_NiNUdhILZLkMNGqpUUrfoA_eI_0-pSU';
 
 export function getSupabaseCredentials() {
-  const isStagingDomain =
+  const isStaging =
     typeof window !== 'undefined' &&
     (window.location.hostname.includes('staging') ||
       window.location.hostname.includes('workers.dev') ||
-      (import.meta as any).env?.VITE_ENVIRONMENT === 'staging');
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1');
 
-  if (isStagingDomain) {
-    const stagingUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://jipqqhtgfpgrurkozccl.supabase.co';
-    const stagingAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'sb_publishable_NiNUdhILZLkMNGqpUUrfoA_eI_0-pSU';
-    const url = localStorage.getItem('radar_staging_supabase_url') || stagingUrl;
-    const anonKey = localStorage.getItem('radar_staging_supabase_anon_key') || stagingAnonKey;
-    return { url, anonKey, isConfigured: Boolean(url && anonKey) };
+  if (isStaging) {
+    return {
+      url: STAGING_SUPABASE_URL,
+      anonKey: STAGING_SUPABASE_ANON_KEY,
+      isConfigured: true,
+    };
   }
 
-  const url = localStorage.getItem(STORAGE_KEYS.URL) || ENV_URL || '';
-  const anonKey = localStorage.getItem(STORAGE_KEYS.ANON_KEY) || ENV_ANON_KEY || '';
-  return { url, anonKey, isConfigured: Boolean(url && anonKey) };
+  return {
+    url: PROD_SUPABASE_URL,
+    anonKey: PROD_SUPABASE_ANON_KEY,
+    isConfigured: true,
+  };
 }
 
 export function saveSupabaseCredentials(url: string, anonKey: string) {
