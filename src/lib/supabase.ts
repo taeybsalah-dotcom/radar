@@ -6554,12 +6554,78 @@ export const LoyaltyService = {
     }
     const pinCode = (payload.pin_code || '1234').trim();
 
-    const partnerId = 'partner-' + Date.now();
-    const affiliateId = 'aff-' + Date.now();
+    // 🛡️ Pre-validation & Phone duplicate prevention:
+    const existingPartners = await this.getAllPartners(true);
+    const duplicatePhone = existingPartners.find(
+      (p: any) => normalizePhone(p.affiliates?.phone || p.phone) === normP
+    );
+    if (duplicatePhone) {
+      throw new Error(`رقم الجوال (${cleanPhone}) مسجل مسبقاً للشريك [${duplicatePhone.display_name || duplicatePhone.name}]، يرجى استخدام رقم آخر.`);
+    }
+
+    const duplicateCode = existingPartners.find(
+      (p: any) => (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim() === cleanCode
+    );
+    if (duplicateCode) {
+      throw new Error(`كود الإحالة (${cleanCode}) مستخدم مسبقاً للشريك [${duplicateCode.display_name || duplicateCode.name}]، يرجى اختيار كود آخر.`);
+    }
+
+    let realAffId = 'aff-' + Date.now();
+    let realPartnerId = 'partner-' + Date.now();
+
+    // 1. Sync to Supabase first as source of truth
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data: affData, error: affErr } = await supabase
+          .from('affiliates')
+          .insert([{
+            name: cleanName,
+            phone: cleanPhone,
+            referral_code: cleanCode,
+            status: 'ACTIVE',
+            notes: `PIN: ${pinCode}`
+          }])
+          .select('id')
+          .single();
+
+        if (affErr) {
+          if (affErr.code === '23505' || affErr.message.includes('unique') || affErr.message.includes('duplicate')) {
+            throw new Error(`رقم الجوال (${cleanPhone}) أو كود الإحالة (${cleanCode}) مسجل مسبقاً في قاعدة البيانات.`);
+          }
+          console.warn('Supabase affiliates insert error:', affErr);
+        }
+
+        if (affData?.id) {
+          realAffId = affData.id;
+        }
+
+        const { data: paData, error: paErr } = await supabase
+          .from('partner_accounts')
+          .insert([{
+            affiliate_id: realAffId,
+            display_name: cleanName,
+            slug: cleanSlug,
+            region: payload.region || null,
+            active: true
+          }])
+          .select('id')
+          .single();
+
+        if (paData?.id) {
+          realPartnerId = paData.id;
+        }
+      } catch (e: any) {
+        if (e.message && e.message.includes('مسجل مسبقاً')) {
+          throw e;
+        }
+        console.warn('Supabase sync partner error:', e);
+      }
+    }
 
     const newPartnerObj = {
-      id: partnerId,
-      affiliate_id: affiliateId,
+      id: realPartnerId,
+      affiliate_id: realAffId,
       display_name: cleanName,
       slug: cleanSlug,
       region: payload.region || '',
@@ -6571,7 +6637,7 @@ export const LoyaltyService = {
       active: true,
       created_at: new Date().toISOString(),
       affiliates: {
-        id: affiliateId,
+        id: realAffId,
         name: cleanName,
         phone: cleanPhone,
         referral_code: cleanCode,
@@ -6583,61 +6649,29 @@ export const LoyaltyService = {
       },
     };
 
-    // Save locally first
+    // 2. Save locally without duplicates
     const existing = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const updated = [newPartnerObj, ...existing.filter((p: any) => p.slug !== cleanSlug && p.id !== partnerId)];
+    const updated = [
+      newPartnerObj,
+      ...existing.filter((p: any) => {
+        const pPhone = normalizePhone(p.affiliates?.phone || p.phone);
+        const pCode = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim();
+        return pPhone !== normP && pCode !== cleanCode && p.id !== realPartnerId && p.affiliate_id !== realAffId;
+      })
+    ];
     saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updated);
 
-    // Save PIN override map
+    // 3. Save PIN override map
     const pinOverrides = getLocalData<Record<string, string>>(STORAGE_KEYS.LOCAL_PARTNER_PINS, {});
-    pinOverrides[partnerId] = pinCode;
-    pinOverrides[affiliateId] = pinCode;
+    pinOverrides[realPartnerId] = pinCode;
+    pinOverrides[realAffId] = pinCode;
     pinOverrides[cleanCode] = pinCode;
     pinOverrides[cleanSlug] = pinCode;
     if (normP) pinOverrides[normP] = pinCode;
     saveLocalData(STORAGE_KEYS.LOCAL_PARTNER_PINS, pinOverrides);
 
-    // Sync to Supabase in background
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data: affData, error: affErr } = await supabase
-          .from('affiliates')
-          .upsert([{
-            name: cleanName,
-            phone: cleanPhone,
-            referral_code: cleanCode,
-            status: 'ACTIVE',
-            notes: `PIN: ${pinCode}`
-          }], { onConflict: 'phone' })
-          .select('id')
-          .single();
-
-        if (affErr) {
-          console.warn('Supabase affiliates upsert error:', affErr);
-        }
-
-        const realAffId = affData?.id || affiliateId;
-
-        const { error: paErr } = await supabase
-          .from('partner_accounts')
-          .insert([{
-            affiliate_id: realAffId,
-            display_name: cleanName,
-            slug: cleanSlug,
-            region: payload.region || null,
-            active: true
-          }]);
-
-        if (paErr) {
-          console.warn('Supabase partner_accounts insert error:', paErr);
-        }
-      } catch (e) {
-        console.warn('Supabase sync partner error:', e);
-      }
-    }
-
     invalidatePartnersCache();
+    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     return newPartnerObj;
   },
 
