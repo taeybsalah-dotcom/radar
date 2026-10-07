@@ -6459,35 +6459,57 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await withTimeout(
-          supabase
-            .from('partner_accounts')
-            .select('id, affiliate_id, display_name, slug, region, active, created_at, affiliates(id, name, phone, referral_code, status, notes)')
-            .order('created_at', { ascending: false }),
-          1500
-        );
-        if (!error && data && data.length > 0) {
-          const sanitized = data.map((p: any) => {
+        const [affRes, paRes] = await Promise.all([
+          withTimeout(supabase.from('affiliates').select('*').order('created_at', { ascending: false }), 2000),
+          withTimeout(supabase.from('partner_accounts').select('*'), 2000).catch(() => ({ data: [] })),
+        ]);
+
+        const affList = affRes?.data || [];
+        const paList = paRes?.data || [];
+
+        if (affList.length > 0) {
+          const combined = affList.map((aff: any) => {
+            const pa = paList.find((p: any) => p.affiliate_id === aff.id);
+            const rawNotes = aff.notes || '';
+            const pinMatch = rawNotes.match(/PIN:\s*(\S+)/);
+            const pinCode = pinMatch ? pinMatch[1] : (pa?.pin_code || '1234');
+            const code = (aff.referral_code || 'r1001').toLowerCase();
+
+            const partnerObj = {
+              id: pa?.id || aff.id,
+              affiliate_id: aff.id,
+              display_name: aff.name,
+              name: aff.name,
+              slug: pa?.slug || code,
+              region: pa?.region || '',
+              phone: aff.phone,
+              referral_code: code,
+              pin_code: pinCode,
+              active: aff.status !== 'SUSPENDED' && pa?.active !== false,
+              created_at: aff.created_at,
+              affiliates: aff,
+            };
+
             const localMatch = existingLocal.find(
               (lp) =>
-                lp.id === p.id ||
-                lp.affiliate_id === p.affiliate_id ||
-                (p.affiliates?.phone && normalizePhone(lp.affiliates?.phone || lp.phone) === normalizePhone(p.affiliates.phone))
+                lp.id === partnerObj.id ||
+                lp.affiliate_id === partnerObj.affiliate_id ||
+                (aff.phone && normalizePhone(lp.affiliates?.phone || lp.phone) === normalizePhone(aff.phone))
             );
-            return sanitizePartner(p, localMatch);
+
+            return sanitizePartner(partnerObj, localMatch);
           });
 
-          // Merge any local-only partners that are not in Supabase yet
-          const dbIds = new Set(data.map((d: any) => d.id));
-          const dbAffIds = new Set(data.map((d: any) => d.affiliate_id));
+          // Also include any local-only partners
+          const dbAffIds = new Set(affList.map((a: any) => a.id));
           const localOnly = existingLocal
-            .filter((lp) => !dbIds.has(lp.id) && !dbAffIds.has(lp.affiliate_id))
+            .filter((lp) => !dbAffIds.has(lp.affiliate_id) && !dbAffIds.has(lp.id))
             .map((lp) => sanitizePartner(lp));
 
-          const combined = [...sanitized, ...localOnly];
-          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, combined);
-          partnersListCache = { data: combined, timestamp: Date.now() };
-          return combined;
+          const all = [...combined, ...localOnly];
+          saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, all);
+          partnersListCache = { data: all, timestamp: Date.now() };
+          return all;
         }
       } catch (e) {
         console.warn('Supabase getAllPartners fallback to local:', e);
