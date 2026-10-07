@@ -8173,62 +8173,7 @@ export const LoyaltyService = {
   },
 
   async getAllSubscriptionPlans(): Promise<BillingPlan[]> {
-    const currentLocal = this.getAllSubscriptionPlansSync();
-
-    // 1. استعلام نقطة النهاية السحابية مع مهلة سريعة (Fast 2.5s Timeout)
-    try {
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timeoutId = controller ? setTimeout(() => controller.abort(), 2500) : null;
-
-      const res = await fetch('/api/billing/plans', {
-        method: 'GET',
-        signal: controller?.signal,
-      });
-      if (timeoutId) clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && Array.isArray(json.plans) && json.plans.length > 0) {
-          const apiPlans: BillingPlan[] = json.plans.map((p: any) => ({
-            id: p.id || p.code,
-            code: p.code,
-            name: p.name,
-            description: p.description || '',
-            amount: Number(p.amount) || 0,
-            currency: p.currency || 'ر.س',
-            duration_months: p.duration_months ? Number(p.duration_months) : (p.billing_interval === 'YEARLY' ? 12 : 1),
-            billing_interval: p.billing_interval || (Number(p.duration_months) === 12 ? 'YEARLY' : 'MONTHLY'),
-            trial_days: p.trial_days ?? 7,
-            features: Array.isArray(p.features) ? p.features : [],
-            active: p.active !== false,
-            created_at: p.created_at,
-          }));
-
-          const mergedMap = new Map<string, BillingPlan>();
-          // إضافة باقات الـ API أولاً كقاعدة
-          apiPlans.forEach((ap) => {
-            const key = (ap.code || ap.id || '').toUpperCase();
-            if (key) mergedMap.set(key, ap);
-          });
-          // تطبيق الباقات والتعديلات المحلية للمالك فوقها لضمان عدم مسح أي تعديل للمشرف العام
-          currentLocal.forEach((lp) => {
-            const key = (lp.code || lp.id || '').toUpperCase();
-            if (key) {
-              const existingApi = mergedMap.get(key);
-              mergedMap.set(key, existingApi ? { ...existingApi, ...lp } : lp);
-            }
-          });
-
-          const merged = Array.from(mergedMap.values()).sort((a, b) => a.amount - b.amount);
-          saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, merged);
-          return merged;
-        }
-      }
-    } catch (apiErr) {
-      // ignore API failure and proceed
-    }
-
-    // 2. استعلام Supabase المباشر كاحتياطي إضافي
+    // 1. استعلام Supabase المباشر كمصدر وحيد للحقيقة (Single Source of Truth)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -8267,61 +8212,133 @@ export const LoyaltyService = {
             };
           });
 
-          const mergedMap = new Map<string, BillingPlan>();
-          formatted.forEach((fp) => {
-            const key = (fp.code || fp.id || '').toUpperCase();
-            if (key) mergedMap.set(key, fp);
-          });
-          currentLocal.forEach((lp) => {
-            const key = (lp.code || lp.id || '').toUpperCase();
-            if (key) {
-              const existingDb = mergedMap.get(key);
-              mergedMap.set(key, existingDb ? { ...existingDb, ...lp } : lp);
-            }
-          });
-
-          const merged = Array.from(mergedMap.values()).sort((a, b) => a.amount - b.amount);
-          saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, merged);
-          return merged;
+          // تحديث الذاكرة المحلية لتطابق قاعدة البيانات بدقة ومنع أي تعارض
+          saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, formatted);
+          return formatted;
         }
       } catch (e) {
-        console.warn('Supabase getAllSubscriptionPlans fallback:', e);
+        console.warn('Supabase getAllSubscriptionPlans error:', e);
       }
     }
 
-    return currentLocal;
+    // 2. استعلام نقطة النهاية السحابية كاحتياطي عند تعذر الاتصال المباشر
+    try {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? setTimeout(() => controller.abort(), 2500) : null;
+
+      const res = await fetch('/api/billing/plans', {
+        method: 'GET',
+        signal: controller?.signal,
+      });
+      if (timeoutId) clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.plans) && json.plans.length > 0) {
+          const apiPlans: BillingPlan[] = json.plans.map((p: any) => ({
+            id: p.id || p.code,
+            code: p.code,
+            name: p.name,
+            description: p.description || '',
+            amount: Number(p.amount) || 0,
+            currency: p.currency || 'ر.س',
+            duration_months: p.duration_months ? Number(p.duration_months) : (p.billing_interval === 'YEARLY' ? 12 : 1),
+            billing_interval: p.billing_interval || (Number(p.duration_months) === 12 ? 'YEARLY' : 'MONTHLY'),
+            trial_days: p.trial_days ?? 7,
+            features: Array.isArray(p.features) ? p.features : [],
+            active: p.active !== false,
+            created_at: p.created_at,
+          }));
+
+          saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, apiPlans);
+          return apiPlans;
+        }
+      }
+    } catch (apiErr) {
+      // ignore
+    }
+
+    return this.getAllSubscriptionPlansSync();
   },
 
   async addSubscriptionPlan(planData: Omit<BillingPlan, 'id'>): Promise<BillingPlan> {
-    const planId = 'plan-' + Date.now();
     const durationMonths = planData.duration_months && Number(planData.duration_months) > 0
       ? Number(planData.duration_months)
       : (planData.billing_interval === 'YEARLY' ? 12 : 1);
 
     const cleanCode = (planData.code || `PLAN_${Date.now()}`).toUpperCase().replace(/[^A-Z0-9_-]/g, '_').slice(0, 48);
 
-    const newPlan: BillingPlan = {
-      ...planData,
-      id: planId,
-      code: cleanCode,
-      duration_months: durationMonths,
-      billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
-      currency: planData.currency || 'ر.س',
-      features: planData.features || [],
-      active: planData.active !== false,
-      created_at: new Date().toISOString(),
-    };
+    const supabase = getSupabaseClient();
+    let newPlan: BillingPlan | null = null;
+
+    if (supabase) {
+      try {
+        const insertPayload: any = {
+          code: cleanCode,
+          name: planData.name.trim(),
+          description: planData.description || '',
+          amount: Number(planData.amount) || 0,
+          currency: planData.currency || 'SAR',
+          billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
+          trial_days: Number(planData.trial_days) ?? 7,
+          active: planData.active !== false,
+          metadata: {
+            features: planData.features || [],
+            duration_months: durationMonths,
+          },
+        };
+
+        const { data, error } = await supabase
+          .from('billing_plans')
+          .insert([insertPayload])
+          .select()
+          .maybeSingle();
+
+        if (!error && data) {
+          newPlan = {
+            id: data.id,
+            code: data.code,
+            name: data.name,
+            description: data.description || '',
+            amount: Number(data.amount) || 0,
+            currency: data.currency || 'ر.س',
+            duration_months: durationMonths,
+            billing_interval: data.billing_interval,
+            trial_days: Number(data.trial_days) ?? 7,
+            features: planData.features || [],
+            active: data.active !== false,
+            created_at: data.created_at,
+          };
+        }
+      } catch (err) {
+        console.warn('Supabase addSubscriptionPlan error:', err);
+      }
+    }
+
+    if (!newPlan) {
+      newPlan = {
+        ...planData,
+        id: 'plan-' + Date.now(),
+        code: cleanCode,
+        duration_months: durationMonths,
+        billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
+        currency: planData.currency || 'ر.س',
+        features: planData.features || [],
+        active: planData.active !== false,
+        created_at: new Date().toISOString(),
+      };
+    }
 
     const local = this.getAllSubscriptionPlansSync();
-    const updated = [...local.filter((p) => (p.code || p.id) !== cleanCode && p.id !== planId), newPlan];
+    const updated = [...local.filter((p) => (p.code || p.id) !== cleanCode && p.id !== newPlan!.id), newPlan];
     saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, updated);
 
-    // مزامنة السحابة
+    // مزامنة API كإجراء إضافي
     fetch('/api/billing/plans', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newPlan),
-    }).catch((err) => console.warn('[addSubscriptionPlan] API sync warning:', err));
+    }).catch(() => {});
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return newPlan;
@@ -8329,28 +8346,65 @@ export const LoyaltyService = {
 
   async updateSubscriptionPlan(planId: string, updates: Partial<BillingPlan>): Promise<BillingPlan> {
     const local = this.getAllSubscriptionPlansSync();
-    const idx = local.findIndex((p) => p.id === planId || p.code === planId);
-    if (idx === -1) throw new Error('الخطة غير موجودة');
+    const existing = local.find((p) => p.id === planId || p.code === planId);
 
     const durationMonths = updates.duration_months !== undefined
       ? (Number(updates.duration_months) > 0 ? Number(updates.duration_months) : 1)
-      : (local[idx].duration_months || (local[idx].billing_interval === 'YEARLY' ? 12 : 1));
+      : (existing?.duration_months || (updates.billing_interval === 'YEARLY' ? 12 : 1));
+
+    const isUuid = planId.includes('-') && planId.length > 30;
+    const supabase = getSupabaseClient();
+
+    if (supabase) {
+      try {
+        const updatePayload: any = {
+          updated_at: new Date().toISOString(),
+        };
+        if (updates.name !== undefined) updatePayload.name = updates.name.trim();
+        if (updates.description !== undefined) updatePayload.description = updates.description;
+        if (updates.amount !== undefined) updatePayload.amount = Number(updates.amount);
+        if (updates.currency !== undefined) updatePayload.currency = updates.currency;
+        if (updates.trial_days !== undefined) updatePayload.trial_days = Number(updates.trial_days);
+        if (updates.active !== undefined) updatePayload.active = Boolean(updates.active);
+        if (updates.duration_months !== undefined || updates.billing_interval !== undefined) {
+          updatePayload.billing_interval = durationMonths === 12 ? 'YEARLY' : 'MONTHLY';
+        }
+        if (updates.features !== undefined || updates.duration_months !== undefined) {
+          updatePayload.metadata = {
+            features: updates.features || existing?.features || [],
+            duration_months: durationMonths,
+          };
+        }
+
+        let query = supabase.from('billing_plans').update(updatePayload);
+        if (isUuid) {
+          query = query.eq('id', planId);
+        } else {
+          query = query.eq('code', planId);
+        }
+        await query;
+      } catch (err) {
+        console.warn('Supabase updateSubscriptionPlan error:', err);
+      }
+    }
 
     const updatedPlan: BillingPlan = {
-      ...local[idx],
+      ...(existing || {} as any),
       ...updates,
+      id: existing?.id || planId,
+      code: existing?.code || planId,
       duration_months: durationMonths,
       billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
     };
-    local[idx] = updatedPlan;
-    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, local);
 
-    // مزامنة السحابة
+    const updatedList = local.map((p) => (p.id === planId || p.code === planId ? updatedPlan : p));
+    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, updatedList);
+
     fetch('/api/billing/plans', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...updatedPlan, id: planId }),
-    }).catch((err) => console.warn('[updateSubscriptionPlan] API sync warning:', err));
+    }).catch(() => {});
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return updatedPlan;
@@ -8358,31 +8412,58 @@ export const LoyaltyService = {
 
   async toggleSubscriptionPlanActive(planId: string): Promise<boolean> {
     const local = this.getAllSubscriptionPlansSync();
-    const idx = local.findIndex((p) => p.id === planId || p.code === planId);
-    if (idx === -1) return false;
+    const existing = local.find((p) => p.id === planId || p.code === planId);
+    const nextActive = existing ? !existing.active : true;
 
-    const nextActive = !local[idx].active;
-    local[idx].active = nextActive;
-    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, local);
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const isUuid = planId.includes('-') && planId.length > 30;
+        let query = supabase.from('billing_plans').update({ active: nextActive, updated_at: new Date().toISOString() });
+        if (isUuid) query = query.eq('id', planId);
+        else query = query.eq('code', planId);
+        await query;
+      } catch (err) {
+        console.warn('Supabase toggleSubscriptionPlanActive error:', err);
+      }
+    }
+
+    if (existing) {
+      existing.active = nextActive;
+      saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, local);
+    }
 
     fetch('/api/billing/plans', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: planId, active: nextActive }),
-    }).catch((err) => console.warn('[toggleSubscriptionPlanActive] API sync warning:', err));
+    }).catch(() => {});
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return nextActive;
   },
 
   async deleteSubscriptionPlan(planId: string): Promise<boolean> {
-    const local = await this.getAllSubscriptionPlans();
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const isUuid = planId.includes('-') && planId.length > 30;
+        let query = supabase.from('billing_plans').delete();
+        if (isUuid) query = query.eq('id', planId);
+        else query = query.eq('code', planId);
+        await query;
+      } catch (err) {
+        console.warn('Supabase deleteSubscriptionPlan error:', err);
+      }
+    }
+
+    const local = this.getAllSubscriptionPlansSync();
     const filtered = local.filter((p) => p.id !== planId && p.code !== planId);
     saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, filtered);
 
     fetch(`/api/billing/plans?id=${encodeURIComponent(planId)}`, {
       method: 'DELETE',
-    }).catch((err) => console.warn('[deleteSubscriptionPlan] API sync warning:', err));
+    }).catch(() => {});
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return true;
