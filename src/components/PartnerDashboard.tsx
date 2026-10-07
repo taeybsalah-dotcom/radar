@@ -303,11 +303,12 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       try {
         const tok = sessionStorage.getItem('RADAR_PARTNER_AUTH_TOKEN');
         // Direct Supabase Hydration via LoyaltyService
-        const [summary, commList, bonusData, allLeads] = await Promise.all([
+        const [summary, commList, bonusData, allLeads, allStores] = await Promise.all([
             LoyaltyService.getPartnerFinancialSummary(partner.id, partner.affiliate_id),
             LoyaltyService.getPartnerCommissions(partner.id),
             LoyaltyService.getPartnerBonuses(partner.id, partner.affiliate_id),
             LoyaltyService.getAllLeads(),
+            LoyaltyService.getAllStores(),
           ]);
 
           const partnerRef = (partner.affiliates?.referral_code || partner.referral_code || '').toLowerCase().trim();
@@ -395,7 +396,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             const allLocalLeads = await LoyaltyService.getAllLeads();
             let normalized = (data as any[]).map((d) => {
               const localMatch = allLocalLeads.find((l) => l.id === d.id || (l.phone && d.phone && normalizePhone(l.phone) === normalizePhone(d.phone)));
-              return normalizeLead(localMatch || d);
+              return localMatch || normalizeLead(d);
             });
 
             if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
@@ -464,11 +465,12 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
     () =>
       debounce(async (pId: string) => {
         fetchLeads(1);
-        const [fin, comms, allLeads, bonusData] = await Promise.all([
+        const [fin, comms, allLeads, bonusData, allStores] = await Promise.all([
           LoyaltyService.getPartnerFinancialSummary(pId, partner?.affiliate_id),
           LoyaltyService.getPartnerCommissions(pId),
           LoyaltyService.getAllLeads(),
           LoyaltyService.getPartnerBonuses(pId, partner?.affiliate_id),
+          LoyaltyService.getAllStores(),
         ]);
 
         const partnerRef = (partner?.affiliates?.referral_code || partner?.referral_code || '').toLowerCase().trim();

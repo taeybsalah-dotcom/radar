@@ -454,9 +454,51 @@ export function normalizeLead(l: any): MerchantLead {
   let effectiveStatus = (l.status as LeadStatus) || 'NEW';
   let effectiveStage = l.lifecycle_stage;
 
+  // فحص ما إذا كان المتجر المرتبط مسدداً أو لديه عمولة معتمدة
+  let hasPaidStoreOrComm = effectiveStage === 'مشترك مدفوع';
+  if (!hasPaidStoreOrComm && typeof window !== 'undefined') {
+    try {
+      const rawStores = localStorage.getItem('radar_local_stores');
+      if (rawStores) {
+        const parsed = JSON.parse(rawStores);
+        if (Array.isArray(parsed)) {
+          const mStore = parsed.find(
+            (s: any) =>
+              (s.id && (s.id === l.converted_store_id || s.id === l.id)) ||
+              (s.manager_contact && l.phone && normalizePhone(s.manager_contact) === normalizePhone(l.phone)) ||
+              (s.name && l.store_name && s.name.trim().toLowerCase() === l.store_name.trim().toLowerCase())
+          );
+          if (mStore && (mStore.setup_fee_paid === true || mStore.status === 'active')) {
+            hasPaidStoreOrComm = true;
+          }
+        }
+      }
+      if (!hasPaidStoreOrComm) {
+        const rawComms = localStorage.getItem('radar_local_partner_commissions');
+        if (rawComms) {
+          const comms = JSON.parse(rawComms);
+          if (Array.isArray(comms)) {
+            const mComm = comms.find(
+              (c: any) =>
+                (c.merchant_lead_id && c.merchant_lead_id === l.id) ||
+                (c.store_id && c.store_id === l.converted_store_id) ||
+                (c.merchant_name && l.store_name && c.merchant_name.trim().toLowerCase() === l.store_name.trim().toLowerCase())
+            );
+            if (mComm && (mComm.status === 'EARNED' || mComm.status === 'AVAILABLE' || mComm.status === 'PAID')) {
+              hasPaidStoreOrComm = true;
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
   if (l.converted_store_id || l.status === 'CONVERTED' || l.status === 'APPROVED' || l.status === 'SETUP_COMPLETE' || l.status === 'تم التأسيس') {
     effectiveStatus = 'CONVERTED';
-    effectiveStage = 'تم التأسيس';
+    effectiveStage = hasPaidStoreOrComm ? 'مشترك مدفوع' : 'تم التأسيس';
+  } else if (hasPaidStoreOrComm) {
+    effectiveStatus = 'CONVERTED';
+    effectiveStage = 'مشترك مدفوع';
   }
 
   const stageInfo = resolveUnifiedStage({
@@ -6951,6 +6993,8 @@ export const LoyaltyService = {
 
     const supabase = getSupabaseClient();
     const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
+    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+
     const reconcileLead = (lead: any): MerchantLead => {
       const norm = normalizeLead(lead);
       const leadPhone = normalizePhone(norm.phone);
@@ -6960,13 +7004,21 @@ export const LoyaltyService = {
           (s.manager_contact && normalizePhone(s.manager_contact) === leadPhone) ||
           (s.name && s.name.trim().toLowerCase() === norm.store_name.trim().toLowerCase())
       );
-      if (matchingStore) {
-        const isPaidStore = matchingStore.setup_fee_paid === true && matchingStore.status !== 'trial';
+      const matchComm = localComms.find(
+        (c) =>
+          (c.merchant_lead_id && c.merchant_lead_id === norm.id) ||
+          (c.store_id && (c.store_id === norm.converted_store_id || (matchingStore && c.store_id === matchingStore.id))) ||
+          (c.merchant_name && norm.store_name && c.merchant_name.trim().toLowerCase() === norm.store_name.trim().toLowerCase())
+      );
+      const hasEarnedComm = matchComm && (matchComm.status === 'EARNED' || matchComm.status === 'AVAILABLE' || matchComm.status === 'PAID');
+      const isPaidStore = hasEarnedComm || (matchingStore && (matchingStore.setup_fee_paid === true || matchingStore.status === 'active') && matchingStore.status !== 'trial');
+
+      if (matchingStore || hasEarnedComm || norm.converted_store_id) {
         return {
           ...norm,
-          converted_store_id: matchingStore.id,
+          converted_store_id: matchingStore?.id || norm.converted_store_id,
           status: 'CONVERTED',
-          lifecycle_stage: isPaidStore ? 'مشترك مدفوع' : 'تم التأسيس',
+          lifecycle_stage: isPaidStore ? 'مشترك مدفوع' : norm.lifecycle_stage === 'مشترك مدفوع' ? 'مشترك مدفوع' : 'تم التأسيس',
         };
       }
       return norm;
@@ -7439,7 +7491,9 @@ export const LoyaltyService = {
           .order('created_at', { ascending: false });
 
         if (!error && Array.isArray(data)) {
-          return data.filter((c) => c.status !== 'PENDING').map(reconcileComm);
+          const reconciledList = data.filter((c) => c.status !== 'PENDING').map(reconcileComm);
+          saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, reconciledList);
+          return reconciledList;
         }
       } catch (e) {
         console.warn('Supabase getPartnerCommissions failed:', e);

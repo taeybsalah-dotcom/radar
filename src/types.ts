@@ -118,6 +118,17 @@ export function resolveUnifiedStage(
 
   const effectiveObj = matchedStore || it;
 
+  // 🛡️ إذا كانت المرحلة المحددة مسبقاً هي "مشترك مدفوع"، تُعتمد فوراً بدون أي تأخير أو تغيير
+  if (effectiveObj.lifecycle_stage === 'مشترك مدفوع' || it.lifecycle_stage === 'مشترك مدفوع') {
+    return {
+      key: 'PAID_ACTIVE',
+      label: 'مشترك مدفوع',
+      badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm',
+      icon: '👑',
+      isPaidActive: true,
+    };
+  }
+
   // فحص ما إذا كان المتجر أو الطلب مرتبطاً بعمولة مسوق معتمدة أو قيد مالي مدفوع
   let hasCommissionOrLedgerProof = false;
   if (typeof window !== 'undefined') {
@@ -129,9 +140,11 @@ export function resolveUnifiedStage(
           const cMatch = comms.find(
             (c: any) =>
               (c.store_id && (c.store_id === effectiveObj.id || c.store_id === it.converted_store_id)) ||
-              (c.merchant_lead_id && (c.merchant_lead_id === it.id || c.merchant_lead_id === effectiveObj.id))
+              (c.merchant_lead_id && (c.merchant_lead_id === it.id || c.merchant_lead_id === effectiveObj.id)) ||
+              (c.merchant_name && ((effectiveObj.name && c.merchant_name.trim().toLowerCase() === effectiveObj.name.trim().toLowerCase()) ||
+                                   (it.store_name && c.merchant_name.trim().toLowerCase() === it.store_name.trim().toLowerCase())))
           );
-          if (cMatch && (cMatch.status === 'EARNED' || cMatch.status === 'PAID')) {
+          if (cMatch && (cMatch.status === 'EARNED' || cMatch.status === 'AVAILABLE' || cMatch.status === 'PAID')) {
             hasCommissionOrLedgerProof = true;
           }
         }
