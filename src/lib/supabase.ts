@@ -404,7 +404,7 @@ export function normalizeStore(s: any): Store {
     status: isPaid ? (s.status === 'suspended' ? 'suspended' : 'active') : (s.status === 'suspended' ? 'suspended' : 'trial'),
     subscription_status: isPaid ? (s.subscription_status === 'suspended' ? 'suspended' : 'active') : (s.subscription_status === 'suspended' ? 'suspended' : 'trial'),
     lifecycle_stage: finalStage,
-    subscription_plan: isPaid ? (computedPlanName || 'الباقة الأساسية') : (s.subscription_plan && s.subscription_plan !== 'trial' && s.subscription_plan !== 'الباقة الأساسية' && s.subscription_plan !== 'pro' ? s.subscription_plan : 'فترة تجربة مجانية (7 أيام)'),
+    subscription_plan: isPaid ? (computedPlanName || 'الباقة الأساسية') : (s.subscription_plan && s.subscription_plan !== 'trial' && s.subscription_plan !== 'الباقة الأساسية' && s.subscription_plan !== 'pro' ? s.subscription_plan : 'فترة تجربة مجانية (14 يوم)'),
     subscription_plan_id: computedPlanId || (isPaid ? 'plan-3m' : undefined),
     plan_code: computedPlanCode || (isPaid ? 'PLAN_3M' : undefined),
     subscription_start_date: isPaid ? computedStartDate : trialStart,

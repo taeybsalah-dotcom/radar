@@ -2183,7 +2183,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         : subscriptionInfo?.requiresRenewal
         ? 'تجديد ⚠️'
         : subscriptionInfo?.status === 'trial'
-        ? `${subscriptionInfo.daysLeft} أيام`
+        ? `${Math.max(1, Math.ceil(subscriptionInfo.daysLeft))} ${Math.ceil(subscriptionInfo.daysLeft) === 1 ? 'يوم' : Math.ceil(subscriptionInfo.daysLeft) === 2 ? 'يومان' : 'أيام'}`
         : 'نشط ✅',
     },
   ];
@@ -5992,9 +5992,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
             {/* ⏱️ شريط عداد الأيام المتبقية وحالة الاشتراك المباشرة */}
             {(() => {
-              const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 7 : (currentPaidPlan?.duration_months ? currentPaidPlan.duration_months * 30 : 30))));
+              const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 14 : (currentPaidPlan?.duration_months ? currentPaidPlan.duration_months * 30 : 30))));
               const totalCycleDays = isTrial
-                ? 7
+                ? 14
                 : currentPaidPlan
                 ? Math.max(1, (currentPaidPlan.duration_months || (currentPaidPlan.billing_interval === 'YEARLY' ? 12 : 1)) * 30)
                 : 30;
