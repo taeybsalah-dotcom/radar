@@ -3523,11 +3523,22 @@ export const LoyaltyService = {
     if (supabase && isUUID(resolvedId)) {
       try {
         const cleanPhone = phone.trim();
+        const candidatePhones = Array.from(
+          new Set([
+            cleanPhone,
+            normInput,
+            `0${normInput}`,
+            `966${normInput}`,
+            `+966${normInput}`,
+            `00966${normInput}`,
+          ])
+        ).filter(Boolean);
+
         const { data, error } = await supabase
           .from('store_customers')
-          .select(await customerCols(supabase))
+          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at')
           .eq('store_id', resolvedId)
-          .or(`phone.eq.${cleanPhone},phone.eq.${normInput},phone.eq.0${normInput},phone.eq.+966${normInput},phone.eq.966${normInput}`)
+          .in('phone', candidatePhones)
           .limit(1)
           .maybeSingle();
 
@@ -3540,8 +3551,8 @@ export const LoyaltyService = {
             wallet_balance: Number(data.wallet_balance) || 0,
             lifetime_xp: Number(data.lifetime_xp) || 0,
             last_visit_date: data.last_visit_date ? data.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
-            is_active: data.is_active !== undefined ? data.is_active : true,
-            visits_count: data.visits_count || 1,
+            is_active: true,
+            visits_count: 1,
             created_at: data.created_at,
           } as Customer;
         }
@@ -3817,7 +3828,7 @@ export const LoyaltyService = {
         const { data, error } = await supabase
           .from('store_customers')
           .insert([dbPayload])
-          .select()
+          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at')
           .single();
         if (!error && data) {
           createdCust = {
@@ -3833,8 +3844,8 @@ export const LoyaltyService = {
             created_at: data.created_at,
           };
           const customers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
-          customers.unshift(createdCust);
-          saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, customers);
+          saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, [createdCust, ...customers.filter((c) => c.id !== createdCust.id)]);
+          LoyaltyEvents.emit({ type: 'CUSTOMER_UPDATED', storeId: resolvedStoreId, phone: data.phone });
         } else {
           console.warn('Supabase registerCustomer insert fallback:', error);
           createdCust = {
@@ -3844,8 +3855,8 @@ export const LoyaltyService = {
             visits_count: 1,
           };
           const customers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
-          customers.unshift(createdCust);
-          saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, customers);
+          saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, [createdCust, ...customers.filter((c) => c.id !== createdCust.id)]);
+          LoyaltyEvents.emit({ type: 'CUSTOMER_UPDATED', storeId: resolvedStoreId, phone: createdCust.phone });
         }
       } catch (e) {
         console.warn('Supabase registerCustomer failed', e);
@@ -3856,8 +3867,8 @@ export const LoyaltyService = {
           visits_count: 1,
         };
         const customers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
-        customers.unshift(createdCust);
-        saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, customers);
+        saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, [createdCust, ...customers.filter((c) => c.id !== createdCust.id)]);
+        LoyaltyEvents.emit({ type: 'CUSTOMER_UPDATED', storeId: resolvedStoreId, phone: createdCust.phone });
       }
     } else {
       createdCust = {
@@ -3867,8 +3878,8 @@ export const LoyaltyService = {
         visits_count: 1,
       };
       const customers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
-      customers.unshift(createdCust);
-      saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, customers);
+      saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, [createdCust, ...customers.filter((c) => c.id !== createdCust.id)]);
+      LoyaltyEvents.emit({ type: 'CUSTOMER_UPDATED', storeId: resolvedStoreId, phone: createdCust.phone });
     }
 
     // إذا كانت الهدية الترحيبية عبارة عن عرض أو تجربة مجانية (OFFER) -> إنشاء وإيداع الكوبون في محفظة العميل فوراً
