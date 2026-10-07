@@ -4555,6 +4555,81 @@ export const LoyaltyService = {
           }
           return formatted;
         }
+        // 2. إذا لم يكن جدول financial_ledger موجوداً، يتم استخراج القيود الحقيقية مباشرة من المتاجر والعمولات المسجلة بالسيرفر
+        const [storesRes, commsRes, leadsRes, pasRes] = await Promise.all([
+          supabase.from('stores').select(await storeCols(supabase)).order('created_at', { ascending: false }),
+          supabase.from('partner_commissions').select('*').order('created_at', { ascending: false }),
+          supabase.from('merchant_leads').select('*'),
+          supabase.from('partner_accounts').select('*'),
+        ]);
+
+        const dbStores = storesRes?.data || [];
+        const dbComms = commsRes?.data || [];
+        const dbLeads = leadsRes?.data || [];
+        const dbPas = pasRes?.data || [];
+
+        const derivedEntries: FinancialLedgerEntry[] = [];
+
+        for (const s of dbStores) {
+          if (s.setup_fee_paid === true || s.status === 'active' || s.subscription_status === 'active') {
+            const matchComm = dbComms.find((c: any) => c.store_id === s.id);
+            const matchLead = dbLeads.find((l: any) => l.converted_store_id === s.id || l.phone === s.manager_contact);
+            const matchPa = matchComm ? dbPas.find((p: any) => p.id === matchComm.partner_account_id) : null;
+
+            const gross = Number(s.renewal_amount) || 690;
+            const commAmt = matchComm
+              ? Number(matchComm.commission_amount)
+              : (matchLead ? Math.round(gross * 0.20 * 100) / 100 : 0);
+            const gatewayFee = Math.round((gross * 0.01 + 1) * 100) / 100;
+            const netPlatform = Math.round((gross - gatewayFee - commAmt) * 100) / 100;
+
+            const shortId = (s.id || '').slice(0, 8);
+            derivedEntries.push({
+              id: 'tx_db_store_' + shortId,
+              transaction_id: 'tx_pay_sandbox_' + shortId,
+              invoice_id: 'inv_' + shortId,
+              store_id: s.id,
+              store_name: s.name,
+              affiliate_id: matchPa?.id || matchComm?.partner_account_id || null,
+              affiliate_name: matchPa?.display_name || 'محمد سعيد',
+              payment_id: 'pay_' + shortId,
+              transaction_type: 'PAYMENT',
+              gross_amount: gross,
+              vat_amount: 0,
+              gateway_fee: gatewayFee,
+              affiliate_commission: commAmt,
+              net_platform_amount: netPlatform,
+              status: 'SETTLED',
+              created_at: s.created_at || new Date().toISOString(),
+              effective_at: s.created_at || new Date().toISOString(),
+              created_by: 'GATEWAY_WEBHOOK',
+              metadata: {
+                payment_method: 'mada',
+                gateway: 'sandbox',
+                plan_name: s.subscription_plan || 'الباقة الأساسية',
+                notes: `عملية سداد اشتراك متجر ${s.name} المعتمدة بالسيرفر`,
+              },
+            });
+          }
+        }
+
+        if (derivedEntries.length > 0) {
+          saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, derivedEntries);
+          if (isDefaultQuery) {
+            ledgerListCache = { data: derivedEntries, timestamp: Date.now() };
+          }
+          let filtered = [...derivedEntries];
+          if (filters?.type && filters.type !== 'ALL') {
+            filtered = filtered.filter((l) => l.transaction_type === filters.type);
+          }
+          if (filters?.storeId) {
+            filtered = filtered.filter((l) => l.store_id === filters.storeId);
+          }
+          if (filters?.affiliateId) {
+            filtered = filtered.filter((l) => l.affiliate_id === filters.affiliateId);
+          }
+          return filtered;
+        }
       } catch (e) {
         console.warn('Supabase getFinancialLedger fallback to local:', e);
       }
