@@ -456,10 +456,23 @@ export function normalizeStore(s: any): Store {
     }
   }
 
-  // إذا كان مشتركاً مدفوعاً ولم يحدد تاريخ نهاية، يتم منحه افتراضياً 90 يوماً
-  if (isPaid && !computedEndDate) {
+  // ضبط ومواءمة تاريخ نهاية الاشتراك التلقائي ليتطابق مع مدة الباقة النشطة (الأساسية: 90 يوم، المتقدمة: 180 يوم، الاحترافية: 365 يوم)
+  if (isPaid) {
     const startMs = new Date(computedStartDate).getTime();
-    computedEndDate = new Date(startMs + 90 * 86400000).toISOString();
+    let expectedPlanDays = 90;
+    if (computedPlanCode === 'PRO' || (computedPlanName && (computedPlanName.includes('الاحترافية') || computedPlanName.includes('سنوي') || computedPlanName.includes('12')))) {
+      expectedPlanDays = 365;
+    } else if (computedPlanCode === 'ADVANCED' || (computedPlanName && (computedPlanName.includes('المتقدمة') || computedPlanName.includes('6')))) {
+      expectedPlanDays = 180;
+    } else {
+      expectedPlanDays = 90;
+    }
+
+    const minEndMs = startMs + expectedPlanDays * 86400000;
+    const currentEndMs = computedEndDate ? new Date(computedEndDate).getTime() : 0;
+    if (!computedEndDate || currentEndMs < minEndMs) {
+      computedEndDate = new Date(minEndMs).toISOString();
+    }
   }
 
   // إذا لم يكن مشتركاً مدفوعاً، فهو في فترة التجربة المجانية (14 يوم)
@@ -4979,12 +4992,15 @@ export const LoyaltyService = {
       ? new Date(currentStore.subscription_end_date).getTime()
       : Date.now();
 
-    // عند الترقية (upgrade)، يتم تفعيل مميزات الباقة الجديدة لكامل الفترة الحالية مع الحفاظ على نهاية الدورة
+    // عند الترقية (upgrade)، يتم تمديد مدة الاشتراك لتشمل مدة الباقة الجديدة كاملة (مثلاً من 3 أشهر إلى 6 أشهر أو سنة)
     let nextEndIso: string;
     if (payload.invoiceType === 'upgrade') {
-      nextEndIso = currentStore.subscription_end_date && currentEndMs > Date.now()
-        ? currentStore.subscription_end_date
-        : new Date(Date.now() + durationMs).toISOString();
+      const startMs = currentStore.subscription_start_date
+        ? new Date(currentStore.subscription_start_date).getTime()
+        : Date.now();
+      // مدة الباقة الجديدة كاملة من تاريخ البدء، أو مدة الباقة كاملة من لحظة الترقية (أيهما أكبر لصالح التاجر)
+      const targetEndMs = Math.max(startMs + durationMs, Date.now() + durationMs);
+      nextEndIso = new Date(targetEndMs).toISOString();
     } else {
       const baseEndMs = payload.invoiceType === 'renewal' && currentStore.subscription_end_date
         ? Math.max(Date.now(), currentEndMs)
@@ -8289,7 +8305,7 @@ export const LoyaltyService = {
         description: 'برنامج الولاء الذكي المتكامل ونقاط المكافآت مع كاشير رقمي وبطاقة ولاء PWA',
         amount: 690,
         currency: 'ر.س',
-        duration_months: 1,
+        duration_months: 3,
         billing_interval: 'MONTHLY',
         trial_days: 7,
         features: [
@@ -8307,7 +8323,7 @@ export const LoyaltyService = {
         description: 'برنامج الولاء المتقدم مع المستويات Tiers والامتيازات المخصصة وحملات الواتساب واستعادة العملاء',
         amount: 1190,
         currency: 'ر.س',
-        duration_months: 1,
+        duration_months: 6,
         billing_interval: 'MONTHLY',
         trial_days: 7,
         features: [
@@ -8325,8 +8341,8 @@ export const LoyaltyService = {
         description: 'الحل الشامل لشبكات المتاجر والفروع مع تحليلات متقدمة، كوبونات ديناميكية وربط مخصص',
         amount: 1890,
         currency: 'ر.س',
-        duration_months: 1,
-        billing_interval: 'MONTHLY',
+        duration_months: 12,
+        billing_interval: 'YEARLY',
         trial_days: 7,
         features: [
           'كافة مميزات الباقة المتقدمة',
