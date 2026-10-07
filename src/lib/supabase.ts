@@ -7228,12 +7228,18 @@ export const LoyaltyService = {
     const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
     const lead = allLeads.find((l) => l.converted_store_id === storeId || l.store_name === store?.name);
 
-    // البحث عن الشريك عبر كود الإحالة أو المعرف المباشر
+    // البحث عن الشريك عبر كود الإحالة أو المعرف المباشر أو معرف المسوق
     const leadRef = (lead?.referral_code || '').toLowerCase().trim();
+    const leadAffId = lead?.affiliate_id;
     const partner = allPartners.find((p) => {
       const pRef = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim();
       const pSlug = (p.slug || '').toLowerCase().trim();
-      return (pRef && leadRef && pRef === leadRef) || (pSlug && leadRef && pSlug === leadRef) || p.id === lead?.affiliate_id;
+      return (
+        (pRef && leadRef && pRef === leadRef) ||
+        (pSlug && leadRef && pSlug === leadRef) ||
+        p.id === leadAffId ||
+        p.affiliate_id === leadAffId
+      );
     });
 
     if (!partner || partner.active === false) {
@@ -7264,7 +7270,7 @@ export const LoyaltyService = {
       basis_amount: basis,
       commission_rate: rate,
       commission_amount: commAmt,
-      status: 'AVAILABLE',
+      status: 'EARNED',
       qualifying_event: isAcquisition
         ? 'سداد اشتراك متجر جديد'
         : (commissionType === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد اشتراك المتجر الدوري'),
@@ -7421,7 +7427,7 @@ export const LoyaltyService = {
         const { data, error } = await supabase
           .from('partner_commissions')
           .select('*, merchant_leads(store_name)')
-          .eq('partner_account_id', resolvedPartnerId)
+          .or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`)
           .neq('status', 'PENDING')
           .order('created_at', { ascending: false });
 
