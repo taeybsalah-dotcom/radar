@@ -31,7 +31,9 @@ import {
   Coins,
   CreditCard,
   Sliders,
+  Bell,
 } from 'lucide-react';
+import { SendNotificationModal } from './SendNotificationModal';
 
 export const SuperAdminPartnersConsole: React.FC = () => {
   const [partners, setPartners] = useState<any[]>(() => {
@@ -83,6 +85,27 @@ export const SuperAdminPartnersConsole: React.FC = () => {
 
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
   const [copiedAction, setCopiedAction] = useState<{ id: string; type: 'affiliate' | 'merchant' } | null>(null);
+
+  // 🔔 Send Notification Modal State for Partner
+  const [notificationModalData, setNotificationModalData] = useState<{
+    isOpen: boolean;
+    targetType: 'partner';
+    targetName: string;
+    targetId?: string;
+  }>({
+    isOpen: false,
+    targetType: 'partner',
+    targetName: '',
+  });
+
+  const handleOpenPartnerNotification = (p: any) => {
+    setNotificationModalData({
+      isOpen: true,
+      targetType: 'partner',
+      targetName: p.display_name || p.name || 'المسوق',
+      targetId: p.id,
+    });
+  };
 
   const fetchPartners = useCallback(async () => {
     setError(null);
@@ -525,10 +548,23 @@ ${origin}/join?ref=${refCode}`;
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/40 transition">
                       <td className="py-4 px-4">
-                        <strong className="text-white block text-sm">{p.display_name}</strong>
-                        <span className="text-[11px] text-slate-400 font-mono" dir="ltr">
-                          📞 {phone}
-                        </span>
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <strong className="text-white block text-sm">{p.display_name}</strong>
+                            <span className="text-[11px] text-slate-400 font-mono" dir="ltr">
+                              📞 {phone}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPartnerNotification(p)}
+                            className="p-1.5 px-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-black border border-amber-500/30 transition text-[10px] font-bold flex items-center gap-1 shrink-0 shadow-sm"
+                            title="إرسال إشعار فوري مع نغمة صوتية لهذا المسوق"
+                          >
+                            <Bell className="w-3.5 h-3.5" />
+                            <span>إشعار 🔔</span>
+                          </button>
+                        </div>
                       </td>
 
                       <td className="py-4 px-4 font-mono font-bold text-amber-400">
@@ -1201,6 +1237,15 @@ ${origin}/join?ref=${refCode}`;
           </div>
         </div>
       )}
+
+      {/* 🔔 Send Notification Modal for Partner */}
+      <SendNotificationModal
+        isOpen={notificationModalData.isOpen}
+        onClose={() => setNotificationModalData((prev) => ({ ...prev, isOpen: false }))}
+        targetType="partner"
+        targetName={notificationModalData.targetName}
+        targetId={notificationModalData.targetId}
+      />
     </div>
   );
 };

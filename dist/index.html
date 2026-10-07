@@ -33,17 +33,21 @@
         }
       });
       
-      // Auto unregister any stale service workers
+      // Register Radar Web Push Service Worker
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-          for (var i = 0; i < registrations.length; i++) {
-            registrations[i].unregister();
-          }
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(function(reg) {
+              console.log('[Radar SW] Registered successfully with scope:', reg.scope);
+            })
+            .catch(function(err) {
+              console.warn('[Radar SW] Registration error:', err);
+            });
         });
       }
     </script>
-    <script type="module" crossorigin src="/assets/index-B1_qhVBE.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Buk90mUv.css">
+    <script type="module" crossorigin src="/assets/index-B474L1oz.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-ZK7MWTvb.css">
   </head>
   <body class="bg-[#0B0F17] text-slate-100 font-sans min-h-screen antialiased selection:bg-amber-500 selection:text-black">
     <div id="root">

@@ -45,11 +45,16 @@ import {
   Clock,
   Search,
   RefreshCw,
+  Bell,
+  Volume2,
+  Send,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
 import { SuperAdminPartnersConsole } from './SuperAdminPartnersConsole';
 import { SuperAdminBillingConsole } from './SuperAdminBillingConsole';
+import { SendNotificationModal } from './SendNotificationModal';
+import { playBeepSound } from '../lib/sound';
 
 interface SuperAdminDashboardProps {
   onSelectStore: (store: Store, targetTab?: 'cashier' | 'customer' | 'admin') => void;
@@ -215,6 +220,46 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     setOverrideErrorMessage(null);
     setOverrideSuccessMessage(null);
     setIsOverrideModalOpen(true);
+  };
+
+  // 🔔 Send Notification Modal State
+  const [notificationModalData, setNotificationModalData] = useState<{
+    isOpen: boolean;
+    targetType: 'store' | 'partner' | 'all_stores' | 'all_partners' | 'broadcast';
+    targetName: string;
+    targetId?: string;
+  }>({
+    isOpen: false,
+    targetType: 'broadcast',
+    targetName: 'جميع المشتركين',
+  });
+
+  const [isNotifMenuOpen, setIsNotifMenuOpen] = useState(false);
+  const [notifHistory, setNotifHistory] = useState<any[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem('radar_admin_notifications_history');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleOpenStoreNotification = (s: Store) => {
+    setNotificationModalData({
+      isOpen: true,
+      targetType: 'store',
+      targetName: s.name,
+      targetId: s.id,
+    });
+  };
+
+  const handleOpenBroadcastNotification = () => {
+    setNotificationModalData({
+      isOpen: true,
+      targetType: 'broadcast',
+      targetName: 'جميع المتاجر والشركاء (إرسال عام)',
+    });
   };
 
   const handleSubmitOverride = async (e: React.FormEvent) => {
@@ -947,6 +992,70 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 {realStores.filter((s) => s.subscription_active).length} / {realStores.length}
               </span>
             </div>
+            {/* 🔔 Notifications Center Bell Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setIsNotifMenuOpen(!isNotifMenuOpen)}
+                className="px-3.5 py-2.5 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1.5 shadow-sm relative"
+                title="مركز الإشعارات والتنبيهات الفورية"
+              >
+                <Bell className="w-3.5 h-3.5 text-amber-400" />
+                <span>الإشعارات 🔔</span>
+                {notifHistory.length > 0 && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 absolute top-1.5 right-1.5 animate-pulse"></span>
+                )}
+              </button>
+
+              {isNotifMenuOpen && (
+                <div className="absolute top-full left-0 sm:left-auto sm:right-0 mt-2 w-80 sm:w-96 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl p-4 z-50 animate-fade-in space-y-4 text-right">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <button
+                      type="button"
+                      onClick={() => playBeepSound('notification')}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 transition"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                      <span>تجربة النغمة 🔊</span>
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-black text-white">مركز التنبيهات الفورية</h4>
+                      <Bell className="w-4 h-4 text-amber-400" />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsNotifMenuOpen(false);
+                      handleOpenBroadcastNotification();
+                    }}
+                    className="w-full py-2.5 px-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition shadow flex items-center justify-center gap-2"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>إرسال إشعار عام للجميع 📢</span>
+                  </button>
+
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    <p className="text-[10px] font-bold text-slate-400">آخر الإشعارات المرسلة:</p>
+                    {notifHistory.length === 0 ? (
+                      <p className="text-xs text-slate-500 py-3 text-center">لا توجد إشعارات سابقة مسجلة</p>
+                    ) : (
+                      notifHistory.slice(0, 5).map((n: any, idx: number) => (
+                        <div key={idx} className="p-2.5 rounded-xl bg-slate-950 border border-slate-800/80 space-y-1 text-right">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-[10px] text-slate-500">{new Date(n.created_at).toLocaleTimeString('ar-SA')}</span>
+                            <strong className="text-amber-300">{n.title}</strong>
+                          </div>
+                          <p className="text-[11px] text-slate-300">{n.body}</p>
+                          <span className="text-[9px] text-slate-400 block font-mono">إلى: {n.targetName}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {stores.length > 0 && (
               <button
                 onClick={() => setIsResetPlatformModalOpen(true)}
@@ -1442,6 +1551,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           <option value="تحت المراجعة" className="bg-slate-900 text-white">تحت المراجعة ⏳</option>
                           <option value="مشترك مدفوع" className="bg-slate-900 text-white">مشترك مدفوع 👑</option>
                         </select>
+
+                        {/* 🔔 Send Instant Push Notification Button */}
+                        <button
+                          onClick={() => handleOpenStoreNotification(s)}
+                          className="px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-black border border-amber-500/30 transition text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse shadow-sm"
+                          title="إرسال إشعار فوري مع نغمة صوتية لمدير وكاشير هذا المتجر"
+                        >
+                          <Bell className="w-3.5 h-3.5" />
+                          <span>إشعار 🔔</span>
+                        </button>
 
                         {/* 🎁 Manual Extension Button */}
                         <button
@@ -2908,6 +3027,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
           </div>
         </div>
       )}
+
+      {/* 🔔 Send Notification Modal */}
+      <SendNotificationModal
+        isOpen={notificationModalData.isOpen}
+        onClose={() => setNotificationModalData((prev) => ({ ...prev, isOpen: false }))}
+        targetType={notificationModalData.targetType}
+        targetName={notificationModalData.targetName}
+        targetId={notificationModalData.targetId}
+        onSuccess={(notif) => {
+          setNotifHistory((prev) => [notif, ...prev]);
+        }}
+      />
 
     </div>
   );

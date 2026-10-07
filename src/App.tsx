@@ -9,6 +9,8 @@ import { INITIAL_DEMO_STORE, DEMO_STORE_SLUG } from './lib/demoStoreSeed';
 import { updateDynamicPWA } from './lib/pwa';
 import { useAuth } from './context/AuthContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
+import { registerRadarServiceWorker } from './lib/notifications';
 
 const SuperAdminDashboard = React.lazy(() =>
   import('./components/SuperAdminDashboard').then((m) => ({ default: m.SuperAdminDashboard }))
@@ -333,6 +335,7 @@ export function App() {
 
   useEffect(() => {
     loadInitialStore();
+    registerRadarServiceWorker().catch(() => {});
 
     const handleRouteChange = () => {
       loadInitialStore();
@@ -712,6 +715,22 @@ export function App() {
               </div>
             )}
         </React.Suspense>
+
+        {/* Global Lock-Screen Push & Notification Permission Banner */}
+        <NotificationPermissionBanner
+          portalName={
+            activeTab === 'partner'
+              ? 'بوابة الشريك والمسوق'
+              : activeTab === 'cashier'
+              ? 'بوابة الكاشير'
+              : activeTab === 'admin'
+              ? 'لوحة إدارة المتجر'
+              : activeTab === 'super-admin'
+              ? 'لوحة المالك (Super Admin)'
+              : store?.name || 'محفظة الولاء'
+          }
+          role={role || activeTab}
+        />
       </main>
 
       {/* SaaS Multi-Tenant Footer (Visible ONLY in Super Admin / Preview mode) */}

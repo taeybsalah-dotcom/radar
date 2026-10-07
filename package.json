@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build --mode production",
+    "build:staging": "tsc -b && vite build --mode staging",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy --env production",
-    "deploy:staging": "npm run build && wrangler deploy --env staging",
+    "deploy": "npm run build && npx wrangler deploy --env production",
+    "deploy:staging": "npm run build:staging && npx wrangler deploy --env staging",
     "migrate:logos": "node scripts/migrate-base64-logos.js"
   },
   "dependencies": {

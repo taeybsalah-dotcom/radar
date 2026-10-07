@@ -161,6 +161,20 @@ const ENV_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://zagpvfly
 const ENV_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
 
 export function getSupabaseCredentials() {
+  const isStagingDomain =
+    typeof window !== 'undefined' &&
+    (window.location.hostname.includes('staging') ||
+      window.location.hostname.includes('workers.dev') ||
+      (import.meta as any).env?.VITE_ENVIRONMENT === 'staging');
+
+  if (isStagingDomain) {
+    const stagingUrl = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://jipqqhtgfpgrurkozccl.supabase.co';
+    const stagingAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'sb_publishable_NiNUdhILZLkMNGqpUUrfoA_eI_0-pSU';
+    const url = localStorage.getItem('radar_staging_supabase_url') || stagingUrl;
+    const anonKey = localStorage.getItem('radar_staging_supabase_anon_key') || stagingAnonKey;
+    return { url, anonKey, isConfigured: Boolean(url && anonKey) };
+  }
+
   const url = localStorage.getItem(STORAGE_KEYS.URL) || ENV_URL || '';
   const anonKey = localStorage.getItem(STORAGE_KEYS.ANON_KEY) || ENV_ANON_KEY || '';
   return { url, anonKey, isConfigured: Boolean(url && anonKey) };

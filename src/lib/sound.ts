@@ -31,7 +31,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('touchstart', unlockAudio, { passive: true });
 }
 
-export function playBeepSound(type: 'success' | 'redeem' | 'error' = 'success') {
+export function playBeepSound(
+  type: 'success' | 'redeem' | 'error' | 'notification' | 'commission' = 'success'
+) {
   try {
     const ctx = getOrCreateAudioContext();
     if (!ctx) return;
@@ -41,7 +43,44 @@ export function playBeepSound(type: 'success' | 'redeem' | 'error' = 'success') 
 
     const t = ctx.currentTime;
 
-    if (type === 'success') {
+    if (type === 'notification') {
+      // 🔔 Modern Crisp Double Bell Notification (G5 -> C6)
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(784.0, t); // G5
+      gain1.gain.setValueAtTime(0.4, t);
+      gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      osc1.start(t);
+      osc1.stop(t + 0.15);
+
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(1046.5, t + 0.08); // C6
+      gain2.gain.setValueAtTime(0.45, t + 0.08);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      osc2.start(t + 0.08);
+      osc2.stop(t + 0.35);
+    } else if (type === 'commission') {
+      // 💰 Partner Commission / Cash Register Ka-Ching (E6 - G6 - B6 - E7)
+      [1318.5, 1567.98, 1975.5, 2637.0].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t + i * 0.05);
+        gain.gain.setValueAtTime(0.35, t + i * 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.05 + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t + i * 0.05);
+        osc.stop(t + i * 0.05 + 0.25);
+      });
+    } else if (type === 'success') {
       // 🟢 200 OK: Crisp High Dual-Tone POS Scan Chime (High Bell: 1975Hz -> 2637Hz)
       const osc1 = ctx.createOscillator();
       const gain1 = ctx.createGain();

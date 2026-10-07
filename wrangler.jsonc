@@ -8,5 +8,13 @@
   },
   "observability": {
     "enabled": true
+  },
+  "env": {
+    "production": {
+      "name": "radar"
+    },
+    "staging": {
+      "name": "radar-staging"
+    }
   }
 }

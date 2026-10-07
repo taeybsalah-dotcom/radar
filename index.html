@@ -33,12 +33,16 @@
         }
       });
       
-      // Auto unregister any stale service workers
+      // Register Radar Web Push Service Worker
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-          for (var i = 0; i < registrations.length; i++) {
-            registrations[i].unregister();
-          }
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(function(reg) {
+              console.log('[Radar SW] Registered successfully with scope:', reg.scope);
+            })
+            .catch(function(err) {
+              console.warn('[Radar SW] Registration error:', err);
+            });
         });
       }
     </script>
