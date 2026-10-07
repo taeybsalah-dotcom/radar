@@ -12,6 +12,7 @@ import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
 import { registerRadarServiceWorker, sendPortalNotification } from './lib/notifications';
 import { playBeepSound } from './lib/sound';
+import { Bell, Coins, X } from 'lucide-react';
 
 const SuperAdminDashboard = React.lazy(() =>
   import('./components/SuperAdminDashboard').then((m) => ({ default: m.SuperAdminDashboard }))
@@ -331,6 +332,12 @@ export function App() {
   const [loading, setLoading] = useState(true);
 
   const [isSuperAdminPreview, setIsSuperAdminPreview] = useState(initialConfig.isPreview);
+  const [incomingToast, setIncomingToast] = useState<{
+    id: string;
+    title: string;
+    message: string;
+    soundType?: string;
+  } | null>(null);
 
   const { role, isAuthenticated, isLoading: authLoading } = useAuth();
 
@@ -392,26 +399,39 @@ export function App() {
         const isTargetStore =
           event.targetType === 'all_stores' ||
           event.targetType === 'broadcast' ||
-          (store && (event.targetId === store.id || event.targetId === store.slug || event.storeId === store.id));
+          (event.targetType === 'store' &&
+            (!event.targetId ||
+              (store && (event.targetId === store.id || event.targetId === store.slug || event.storeId === store.id || event.storeId === store.slug)) ||
+              activeTab === 'admin' ||
+              activeTab === 'cashier')) ||
+          (store && (event.targetId === store.id || event.targetId === store.slug || event.storeId === store.id || event.storeId === store.slug));
 
         const isTargetPartner =
           event.targetType === 'all_partners' ||
           event.targetType === 'broadcast' ||
+          (event.targetType === 'partner' &&
+            (!event.targetId || (partnerSlug && event.targetId === partnerSlug) || activeTab === 'partner')) ||
           (partnerSlug && event.targetId === partnerSlug) ||
           activeTab === 'partner';
 
-        const isTargetCurrent = isTargetStore || isTargetPartner || activeTab === 'super-admin' || activeTab === 'cashier';
+        const isTargetCurrent = isTargetStore || isTargetPartner || activeTab === 'super-admin';
 
-        if (isTargetCurrent) {
+        if (isTargetCurrent && event.title && event.message) {
           playBeepSound(event.soundType || 'notification');
-          if (event.title && event.message) {
-            sendPortalNotification({
-              title: event.title,
-              body: event.message,
-              soundType: event.soundType || 'notification',
-              tag: `radar-notif-${Date.now()}`,
-            }).catch(() => {});
-          }
+
+          setIncomingToast({
+            id: 'toast-' + Date.now(),
+            title: event.title,
+            message: event.message,
+            soundType: event.soundType,
+          });
+
+          sendPortalNotification({
+            title: event.title,
+            body: event.message,
+            soundType: event.soundType || 'notification',
+            tag: `radar-notif-${Date.now()}`,
+          }).catch(() => {});
         }
       }
     });
@@ -421,6 +441,14 @@ export function App() {
       debouncedSyncAppStore.cancel();
     };
   }, [store?.id, store?.slug, partnerSlug, activeTab, debouncedSyncAppStore]);
+
+  useEffect(() => {
+    if (!incomingToast) return;
+    const timer = setTimeout(() => {
+      setIncomingToast(null);
+    }, 7000);
+    return () => clearTimeout(timer);
+  }, [incomingToast]);
 
   const loadInitialStore = async () => {
     try {
@@ -743,6 +771,38 @@ export function App() {
               </div>
             )}
         </React.Suspense>
+
+        {/* 🔔 Live Real-Time Incoming Notification Toast Popup */}
+        {incomingToast && (
+          <div className="fixed top-4 left-4 right-4 sm:left-1/2 sm:-translate-x-1/2 sm:w-full sm:max-w-md z-[9999] animate-bounce-subtle">
+            <div className="bg-slate-900/95 border-2 border-amber-500/80 rounded-2xl p-4 shadow-2xl backdrop-blur-xl flex items-start justify-between gap-3 text-right">
+              <div className="flex items-start space-x-3 rtl:space-x-reverse">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 mt-0.5 shadow-inner">
+                  {incomingToast.soundType === 'commission' ? (
+                    <Coins className="w-5 h-5 text-emerald-400" />
+                  ) : (
+                    <Bell className="w-5 h-5 animate-pulse text-amber-400" />
+                  )}
+                </div>
+                <div className="space-y-1 pr-1">
+                  <div className="flex items-center gap-2">
+                    <span className="px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black border border-amber-500/30">
+                      إشعار فوري جديد 🔔
+                    </span>
+                    <h4 className="text-xs font-black text-white">{incomingToast.title}</h4>
+                  </div>
+                  <p className="text-xs text-slate-200 leading-relaxed">{incomingToast.message}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIncomingToast(null)}
+                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Global Lock-Screen Push & Notification Permission Banner */}
         <NotificationPermissionBanner
