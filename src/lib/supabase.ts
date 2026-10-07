@@ -6462,7 +6462,7 @@ export const LoyaltyService = {
         const { data, error } = await withTimeout(
           supabase
             .from('partner_accounts')
-            .select('id, affiliate_id, display_name, slug, region, target_value, active, pin_code, created_at, affiliates(id, name, phone, referral_code, status, notes)')
+            .select('id, affiliate_id, display_name, slug, region, active, created_at, affiliates(id, name, phone, referral_code, status, notes)')
             .order('created_at', { ascending: false }),
           1500
         );
@@ -6604,10 +6604,6 @@ export const LoyaltyService = {
             display_name: cleanName,
             slug: cleanSlug,
             region: payload.region || null,
-            target_value: payload.target_value || 20,
-            commission_rate: commRate,
-            recurring_commission_rate: recurringRate,
-            pin_code: pinCode,
             active: true
           }]);
 
