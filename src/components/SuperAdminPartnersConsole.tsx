@@ -32,6 +32,7 @@ import {
   CreditCard,
   Sliders,
   Bell,
+  Trash2,
 } from 'lucide-react';
 import { SendNotificationModal } from './SendNotificationModal';
 
@@ -357,6 +358,19 @@ export const SuperAdminPartnersConsole: React.FC = () => {
       );
     } catch (err: any) {
       setError(err.message || 'فشل في تحديث حالة المسوق');
+    }
+  };
+
+  const handleDeletePartner = async (partnerId: string, affiliateId: string, partnerDisplayName: string) => {
+    if (!window.confirm(`هل أنت متأكد من رغبتك في حذف حساب المسوق (${partnerDisplayName}) نهائياً؟`)) {
+      return;
+    }
+    try {
+      await LoyaltyService.deletePartner(partnerId, affiliateId);
+      setPartners((prev) => prev.filter((p) => p.id !== partnerId && p.affiliate_id !== partnerId));
+      setSuccess(`تم حذف حساب المسوق (${partnerDisplayName}) بنجاح 🗑️`);
+    } catch (err: any) {
+      setError(err.message || 'فشل في حذف المسوق');
     }
   };
 
@@ -776,6 +790,15 @@ ${origin}/join?ref=${refCode}`;
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>
+
+                          {/* Delete Partner */}
+                          <button
+                            onClick={() => handleDeletePartner(p.id, p.affiliate_id, p.display_name)}
+                            className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition"
+                            title="حذف حساب المسوق نهائياً"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>

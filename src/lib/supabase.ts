@@ -6649,6 +6649,32 @@ export const LoyaltyService = {
     return nextActive;
   },
 
+  async deletePartner(partnerId: string, affiliateId?: string): Promise<{ success: boolean; error?: string }> {
+    const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+    const updated = local.filter(
+      (p: any) =>
+        p.id !== partnerId &&
+        p.affiliate_id !== partnerId &&
+        (!affiliateId || p.affiliate_id !== affiliateId)
+    );
+    saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, updated);
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.from('partner_commissions').delete().or(`partner_id.eq.${partnerId},partner_id.eq.${affiliateId || partnerId}`);
+        await supabase.from('partner_accounts').delete().or(`id.eq.${partnerId},affiliate_id.eq.${partnerId}`);
+        if (affiliateId) {
+          await supabase.from('affiliates').delete().eq('id', affiliateId);
+        }
+      } catch (e) {
+        console.warn('Supabase delete partner error:', e);
+      }
+    }
+    invalidatePartnersCache();
+    return { success: true };
+  },
+
   async updatePartnerPin(partnerId: string, currentPin: string, newPin: string): Promise<{ success: boolean; error?: string; partner?: any }> {
     const cleanCurrent = (currentPin || '').trim();
     const cleanNew = (newPin || '').trim();
