@@ -5970,18 +5970,26 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         </div>
       )}
 
-          {/* Sub-Section 2: Billing */}
-          {settingsSection === 'billing' && (() => {
+      {/* Sub-Section 2: Billing */}
+      {settingsSection === 'billing' && (() => {
         // 🛡️ During trial (setup_fee_paid === false), no paid plan is active (currentPaidPlan is null)
         const currentPaidPlan: BillingPlan | null =
           isPaidActive
             ? allPlans.find(
                 (p) =>
                   (p.id && (p.id === (store as any).subscription_plan_id || p.id === (store as any).plan_id)) ||
-                  (p.code && (p.code === (store as any).plan_code || p.code === (store as any).plan_id)) ||
-                  (p.name && (store as any).subscription_plan && (p.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(p.name) || p.name.includes((store as any).subscription_plan))) ||
-                  (p.amount && (store as any).renewal_amount && p.amount === (store as any).renewal_amount)
-              ) || (allPlans.length > 0 ? allPlans[0] : null)
+                  (p.code && (p.code === (store as any).plan_code || p.code === (store as any).plan_id))
+              ) ||
+              allPlans.find(
+                (p) =>
+                  p.name &&
+                  (store as any).subscription_plan &&
+                  p.name.trim().toLowerCase() === String((store as any).subscription_plan).trim().toLowerCase()
+              ) ||
+              allPlans.find(
+                (p) => p.amount && (store as any).renewal_amount && p.amount === (store as any).renewal_amount
+              ) ||
+              (allPlans.length > 0 ? allPlans[0] : null)
             : null;
 
         const activePlans = allPlans.filter((p) => p.active !== false);
@@ -6145,20 +6153,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     const isCurrent =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
-                      Boolean(
-                        currentPaidPlan &&
-                          ((plan.id && (plan.id === currentPaidPlan.id || plan.id === (store as any).subscription_plan_id)) ||
-                            (plan.code && (plan.code === currentPaidPlan.code || plan.code === (store as any).plan_code)) ||
-                            plan.name === currentPaidPlan.name ||
-                            (plan.name && (store as any).subscription_plan && (plan.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(plan.name) || plan.name.includes((store as any).subscription_plan))))
-                      );
+                      currentPaidPlan !== null &&
+                      (plan.id === currentPaidPlan.id || (Boolean(plan.code) && plan.code === currentPaidPlan.code));
 
                     const isLowerTier =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
                       currentPaidPlan !== null &&
                       !isCurrent &&
-                      plan.amount <= currentPaidPlan.amount;
+                      plan.amount < currentPaidPlan.amount;
 
                     const isHigherTier =
                       !isTrial &&

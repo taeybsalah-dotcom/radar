@@ -279,6 +279,18 @@ export function isUUID(str?: string | null): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
+export function toUUID(str?: string | null): string {
+  if (str && isUUID(str)) return str;
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export function normalizePhone(rawPhone?: string | null): string {
   if (!rawPhone) return '';
   // 1. تحويل الأرقام المكتوبة بالصيغة العربية (٠-٩) والفارسية (۰-۹) إلى أرقام قياسية (0-9)
@@ -370,12 +382,58 @@ export function normalizeStore(s: any): Store {
   const isExplicitTrial = !hasPaidProof && (s.status === 'trial' || s.subscription_status === 'trial' || s.setup_fee_paid === false);
   const isPaid = !isSuspended && hasPaidProof && !isExplicitTrial;
 
+  // 3. استرجاع المتجر المخزن محلياً للحفاظ على بيانات الباقة وتاريخ الصلاحية
+  let localExistingStore: Store | null = null;
+  try {
+    const allLocalStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
+    localExistingStore = allLocalStores.find((ls) => ls && (ls.id === s.id || (ls.slug && ls.slug === s.slug))) || null;
+  } catch {}
+
+  // 4. التحقق من وجود عمولة ترقية باقة للمتجر
+  let upgradedPlanFromComm: { name: string; code: string; id: string } | null = null;
+  try {
+    const allComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+    const upgComm = allComms.find(
+      (c) => c && c.store_id === s.id && c.commission_type === 'SUBSCRIPTION_UPGRADE' && (c.status === 'PAID' || c.status === 'EARNED')
+    );
+    if (upgComm) {
+      if (upgComm.basis_amount >= 1000 || (upgComm.qualifying_event && upgComm.qualifying_event.includes('الاحترافية'))) {
+        upgradedPlanFromComm = {
+          name: 'الباقة الاحترافية',
+          code: 'PRO',
+          id: 'a418c6e7-5749-4186-92ce-c46d721fe9ba',
+        };
+      } else if (upgComm.basis_amount >= 400 || (upgComm.qualifying_event && upgComm.qualifying_event.includes('المتقدمة'))) {
+        upgradedPlanFromComm = {
+          name: 'الباقة المتقدمة',
+          code: 'ADVANCED',
+          id: 'fad2e3cf-141c-4e0e-9432-194615a3ef37',
+        };
+      }
+    }
+  } catch {}
+
   // حساب باقة الاشتراك وتواريخ النهاية بذكاء
-  let computedPlanName = s.subscription_plan;
-  let computedPlanId = s.subscription_plan_id;
-  let computedPlanCode = s.plan_code;
-  let computedEndDate = s.subscription_end_date;
-  let computedStartDate = s.subscription_start_date || s.created_at || new Date().toISOString();
+  let computedPlanName =
+    s.subscription_plan ||
+    upgradedPlanFromComm?.name ||
+    localExistingStore?.subscription_plan;
+  let computedPlanId =
+    s.subscription_plan_id ||
+    upgradedPlanFromComm?.id ||
+    localExistingStore?.subscription_plan_id;
+  let computedPlanCode =
+    s.plan_code ||
+    upgradedPlanFromComm?.code ||
+    localExistingStore?.plan_code;
+  let computedEndDate =
+    s.subscription_end_date ||
+    localExistingStore?.subscription_end_date;
+  let computedStartDate =
+    s.subscription_start_date ||
+    localExistingStore?.subscription_start_date ||
+    s.created_at ||
+    new Date().toISOString();
 
   if (latestPaidInvoice) {
     if (latestPaidInvoice.plan_name) computedPlanName = latestPaidInvoice.plan_name;
@@ -4637,13 +4695,64 @@ export const LoyaltyService = {
             });
           }
         }
+        // 2.2 استخراج قيود ترقيات الباقات وتجديد الاشتراكات المسجلة بالسيرفر
+        for (const c of dbComms) {
+          if (c.commission_type === 'SUBSCRIPTION_UPGRADE' || c.commission_type === 'SUBSCRIPTION_RENEWAL') {
+            const matchStore = dbStores.find((s: any) => s.id === c.store_id);
+            const matchPa = dbPas.find((p: any) => p.id === c.partner_account_id);
+            const gross = Number(c.basis_amount) || 0;
+            const commAmt = Number(c.commission_amount) || 0;
+            const gatewayFee = Math.round((gross * 0.01 + 1) * 100) / 100;
+            const netPlatform = Math.round((gross - gatewayFee - commAmt) * 100) / 100;
+            const commShort = (c.id || '').slice(0, 8);
+
+            derivedEntries.push({
+              id: 'tx_comm_' + commShort,
+              transaction_id: 'tx_pay_' + (c.commission_type === 'SUBSCRIPTION_UPGRADE' ? 'upg_' : 'rnw_') + commShort,
+              invoice_id: 'inv_' + commShort,
+              store_id: c.store_id,
+              store_name: matchStore?.name || 'متجر معتمد',
+              affiliate_id: c.partner_account_id,
+              affiliate_name: matchPa?.display_name || 'محمد سعيد',
+              payment_id: 'pay_' + commShort,
+              transaction_type: 'PAYMENT',
+              gross_amount: gross,
+              vat_amount: 0,
+              gateway_fee: gatewayFee,
+              affiliate_commission: commAmt,
+              net_platform_amount: netPlatform,
+              status: 'SETTLED',
+              created_at: c.created_at || new Date().toISOString(),
+              effective_at: c.created_at || new Date().toISOString(),
+              created_by: 'GATEWAY_WEBHOOK',
+              metadata: {
+                payment_method: 'mada',
+                gateway: 'sandbox',
+                plan_name: c.qualifying_event || (c.commission_type === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد الاشتراك'),
+                commission_type: c.commission_type,
+                notes: c.qualifying_event ? `${c.qualifying_event} (${matchStore?.name || ''})` : `ترقية باقة ${matchStore?.name || ''}`,
+              },
+            });
+          }
+        }
 
         if (derivedEntries.length > 0) {
-          saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, derivedEntries);
-          if (isDefaultQuery) {
-            ledgerListCache = { data: derivedEntries, timestamp: Date.now() };
+          // دمج القيود المستخرجة مع القيود المحلية دون تكرار
+          const localLedgerExisting = getLocalData<FinancialLedgerEntry[]>(
+            STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER,
+            []
+          );
+          const combined = [...derivedEntries];
+          for (const loc of localLedgerExisting) {
+            if (!combined.some((d) => d.id === loc.id || d.transaction_id === loc.transaction_id || (d.payment_id && d.payment_id === loc.payment_id))) {
+              combined.push(loc);
+            }
           }
-          let filtered = [...derivedEntries];
+          saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, combined);
+          if (isDefaultQuery) {
+            ledgerListCache = { data: combined, timestamp: Date.now() };
+          }
+          let filtered = [...combined];
           if (filters?.type && filters.type !== 'ALL') {
             filtered = filtered.filter((l) => l.transaction_type === filters.type);
           }
@@ -4903,11 +5012,19 @@ export const LoyaltyService = {
       updated_at: now.toISOString(),
     };
 
+    const dbStorePayload = {
+      status: 'active',
+      subscription_status: 'active',
+      subscription_active: true,
+      setup_fee_paid: true,
+      updated_at: now.toISOString(),
+    };
+
     if (supabase && isUUID(payload.storeId)) {
       try {
         const { data: updatedData, error: updateError } = await supabase
           .from('stores')
-          .update(verifiedUpdatePayload)
+          .update(dbStorePayload)
           .eq('id', payload.storeId)
           .select(await storeCols(supabase))
           .maybeSingle();
@@ -4916,6 +5033,22 @@ export const LoyaltyService = {
           console.warn('[processSubscriptionPayment] Supabase stores update warning:', updateError.message);
         } else if (updatedData) {
           updatedStore = normalizeStore({ ...updatedData, logo_url: currentStore.logo_url, slider_images: currentStore.slider_images }) as Store;
+        }
+
+        if (matchingLead && isUUID(matchingLead.id)) {
+          await supabase
+            .from('merchant_leads')
+            .update({
+              notes: JSON.stringify({
+                plan_id: targetPlan?.id || payload.planId,
+                plan_code: targetPlan?.code,
+                plan_name: targetPlan?.name || computedPlanName,
+                end_date: nextEndIso,
+                updated_at: now.toISOString(),
+              }),
+              updated_at: now.toISOString(),
+            })
+            .eq('id', matchingLead.id);
         }
       } catch (e: any) {
         console.warn('Supabase processSubscriptionPayment DB commit exception:', e);
@@ -7290,7 +7423,7 @@ export const LoyaltyService = {
     // البحث عن الشريك عبر كود الإحالة أو المعرف المباشر أو معرف المسوق
     const leadRef = (lead?.referral_code || '').toLowerCase().trim();
     const leadAffId = lead?.affiliate_id;
-    const partner = allPartners.find((p) => {
+    let partner = allPartners.find((p) => {
       const pRef = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim();
       const pSlug = (p.slug || '').toLowerCase().trim();
       return (
@@ -7300,6 +7433,22 @@ export const LoyaltyService = {
         p.affiliate_id === leadAffId
       );
     });
+
+    if (!partner && supabase) {
+      try {
+        const { data: dbPa } = await supabase.from('partner_accounts').select('*');
+        if (dbPa && dbPa.length > 0) {
+          partner = dbPa.find((p: any) =>
+            p.id === leadAffId ||
+            p.affiliate_id === leadAffId ||
+            (p.slug && leadRef && p.slug.toLowerCase() === leadRef) ||
+            (p.referral_code && leadRef && p.referral_code.toLowerCase() === leadRef)
+          );
+        }
+      } catch (paErr) {
+        console.warn('Fallback partner lookup error:', paErr);
+      }
+    }
 
     if (!partner || partner.active === false) {
       return { success: true, unlockedCommissionsCount: 0 };
@@ -7318,10 +7467,14 @@ export const LoyaltyService = {
     }
 
     const commAmt = Math.round(basis * rate * 100) / 100;
+    const commId = toUUID(invoiceId || undefined);
     const idempotencyKey = `paid_comm_${invoiceNumber || invoiceId || storeId}_${Date.now()}`;
+    const qualifyingEventDesc = isAcquisition
+      ? 'سداد اشتراك متجر جديد'
+      : (commissionType === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد اشتراك المتجر الدوري');
 
     const newComm = {
-      id: 'comm-' + (invoiceNumber || Date.now()),
+      id: commId,
       partner_account_id: partner.id,
       merchant_lead_id: lead?.id || null,
       store_id: storeId,
@@ -7329,10 +7482,8 @@ export const LoyaltyService = {
       basis_amount: basis,
       commission_rate: rate,
       commission_amount: commAmt,
-      status: 'EARNED',
-      qualifying_event: isAcquisition
-        ? 'سداد اشتراك متجر جديد'
-        : (commissionType === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد اشتراك المتجر الدوري'),
+      status: 'PAID',
+      qualifying_event: qualifyingEventDesc,
       idempotency_key: idempotencyKey,
       merchant_name: store?.name || lead?.store_name || 'متجر معتمد',
       invoice_id: invoiceId,
@@ -7348,15 +7499,34 @@ export const LoyaltyService = {
 
     if (supabase) {
       try {
-        await supabase
-          .from('partner_commissions')
-          .delete()
-          .eq('store_id', storeId)
-          .eq('status', 'PENDING');
+        if (isAcquisition) {
+          await supabase
+            .from('partner_commissions')
+            .delete()
+            .eq('store_id', storeId)
+            .eq('status', 'PENDING');
+        }
+
+        // إرسال الحقول المعرفة فقط في مخطط الجدول بالسيرفر منعاً لأخطاء PGRST204
+        const dbCommPayload: Record<string, any> = {
+          id: commId,
+          partner_account_id: partner.id,
+          merchant_lead_id: (lead?.id && isUUID(lead.id)) ? lead.id : null,
+          store_id: (storeId && isUUID(storeId)) ? storeId : null,
+          commission_type: commissionType || 'STORE_ACQUISITION',
+          basis_amount: basis,
+          commission_rate: rate,
+          commission_amount: commAmt,
+          status: 'PAID',
+          qualifying_event: qualifyingEventDesc,
+          idempotency_key: idempotencyKey,
+          created_at: now,
+          updated_at: now,
+        };
 
         await supabase
           .from('partner_commissions')
-          .upsert([newComm], { onConflict: 'idempotency_key' });
+          .upsert([dbCommPayload], { onConflict: 'idempotency_key' });
       } catch (dbErr) {
         console.warn('Supabase unlockPaidStoreCommission warning:', dbErr);
       }
