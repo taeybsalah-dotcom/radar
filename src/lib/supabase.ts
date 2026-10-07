@@ -6082,6 +6082,7 @@ export const LoyaltyService = {
     const bookingNumber = 'BK-' + Math.floor(1000 + Math.random() * 9000);
     const newBooking: ServiceBooking = {
       ...booking,
+      service_id: booking.service_id || 'srv-main',
       store_id: resolvedStoreId,
       id: 'booking-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
       booking_number: bookingNumber,
