@@ -10,7 +10,8 @@ import { updateDynamicPWA } from './lib/pwa';
 import { useAuth } from './context/AuthContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
-import { registerRadarServiceWorker } from './lib/notifications';
+import { registerRadarServiceWorker, sendPortalNotification } from './lib/notifications';
+import { playBeepSound } from './lib/sound';
 
 const SuperAdminDashboard = React.lazy(() =>
   import('./components/SuperAdminDashboard').then((m) => ({ default: m.SuperAdminDashboard }))
@@ -386,13 +387,40 @@ export function App() {
       if (event.type === 'STORE_UPDATED') {
         debouncedSyncAppStore(store?.id, store?.slug);
       }
+
+      if (event.type === 'CUSTOM_NOTIFICATION') {
+        const isTargetStore =
+          event.targetType === 'all_stores' ||
+          event.targetType === 'broadcast' ||
+          (store && (event.targetId === store.id || event.targetId === store.slug || event.storeId === store.id));
+
+        const isTargetPartner =
+          event.targetType === 'all_partners' ||
+          event.targetType === 'broadcast' ||
+          (partnerSlug && event.targetId === partnerSlug) ||
+          activeTab === 'partner';
+
+        const isTargetCurrent = isTargetStore || isTargetPartner || activeTab === 'super-admin' || activeTab === 'cashier';
+
+        if (isTargetCurrent) {
+          playBeepSound(event.soundType || 'notification');
+          if (event.title && event.message) {
+            sendPortalNotification({
+              title: event.title,
+              body: event.message,
+              soundType: event.soundType || 'notification',
+              tag: `radar-notif-${Date.now()}`,
+            }).catch(() => {});
+          }
+        }
+      }
     });
 
     return () => {
       unsubscribe();
       debouncedSyncAppStore.cancel();
     };
-  }, [store?.id, store?.slug, debouncedSyncAppStore]);
+  }, [store?.id, store?.slug, partnerSlug, activeTab, debouncedSyncAppStore]);
 
   const loadInitialStore = async () => {
     try {

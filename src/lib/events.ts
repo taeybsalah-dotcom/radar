@@ -14,6 +14,7 @@ export type LoyaltyEventType =
   | 'PAYMENT_COMPLETED'
   | 'LEAD_UPDATED'
   | 'PARTNER_UPDATED'
+  | 'CUSTOM_NOTIFICATION'
   | 'SCAN_REJECTED';
 
 export interface LoyaltyEventPayload {
@@ -30,6 +31,11 @@ export interface LoyaltyEventPayload {
   couponCode?: string;
   staffId?: string;
   error?: string;
+  title?: string;
+  message?: string;
+  soundType?: 'notification' | 'commission' | 'redeem' | 'success';
+  targetType?: string;
+  targetId?: string;
 }
 
 const CLIENT_INSTANCE_ID =

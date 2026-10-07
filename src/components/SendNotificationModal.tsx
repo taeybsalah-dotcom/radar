@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { playBeepSound } from '../lib/sound';
 import { sendPortalNotification } from '../lib/notifications';
+import { LoyaltyEvents } from '../lib/events';
 
 interface SendNotificationModalProps {
   isOpen: boolean;
@@ -75,7 +76,18 @@ export const SendNotificationModal: React.FC<SendNotificationModalProps> = ({
     setErrorMsg(null);
 
     try {
-      // 1. Trigger Sound & Lock Screen Notification
+      // 1. Broadcast Realtime Notification Event across all devices and dashboards
+      LoyaltyEvents.emit({
+        type: 'CUSTOM_NOTIFICATION',
+        storeId: targetId || 'global',
+        title,
+        message: body,
+        soundType,
+        targetType,
+        targetId: targetId || undefined,
+      });
+
+      // 2. Trigger Local Sound & Lock Screen Notification for sender feedback
       await sendPortalNotification({
         title,
         body,
