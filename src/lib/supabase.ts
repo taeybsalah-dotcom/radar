@@ -582,7 +582,7 @@ const STAFF_COLS = 'id, store_id, user_id, name, phone, role, pin_code, is_activ
 const TIER_COLS = 'id, store_id, tier_name, required_xp, badge_color, icon, created_at';
 const PRIVILEGE_COLS = 'id, store_id, required_tier_id, title, description, image_url, cost_points, quantity_limit, per_customer_limit, redeemed_count, valid_start_time, valid_end_time, is_active, is_hidden, created_at';
 const LEDGER_COLS = 'id, ledger_id, transaction_id, invoice_id, store_id, store_name, affiliate_id, affiliate_name, payment_id, transaction_type, gross_amount, vat_amount, gateway_fee, affiliate_commission, net_platform_amount, status, created_at, effective_at, reversal_of, refund_of, created_by, metadata';
-const LEAD_COLS = 'id, store_name, manager_name, phone, city, business_type, attribution_source, referral_code, affiliate_id, status, lifecycle_stage, conversion_started_at, conversion_error, converted_store_id, notes, created_at, updated_at';
+const LEAD_COLS = 'id, store_name, manager_name, phone, normalized_phone, city, business_type, attribution_source, referral_code, affiliate_id, status, conversion_started_at, conversion_error, converted_store_id, notes, created_at, updated_at';
 const PLAN_COLS = 'id, code, name, description, amount, currency, duration_months, billing_interval, trial_days, features, active, created_at';
 const walletCols = (s: any) => probeCols(s, 'store_wallets', WALLET_COLS, '*');
 const staffCols = (s: any) => probeCols(s, 'store_staff', STAFF_COLS, '*');
@@ -7079,17 +7079,17 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        let partnerId: string | null = null;
+        let affiliateId: string | null = null;
         if (refCode) {
           try {
-            const { data: pData } = await supabase
-              .from('partners')
+            const { data: aData } = await supabase
+              .from('affiliates')
               .select('id')
-              .or(`referral_code.ilike.${refCode},slug.ilike.${refCode}`)
+              .ilike('referral_code', refCode)
               .limit(1)
               .maybeSingle();
-            if (pData?.id) {
-              partnerId = pData.id;
+            if (aData?.id) {
+              affiliateId = aData.id;
             }
           } catch {}
         }
@@ -7101,11 +7101,12 @@ export const LoyaltyService = {
               store_name: cleanStore,
               manager_name: cleanManager,
               phone: cleanPhone,
+              normalized_phone: normPhone,
               city: payload.city || null,
               business_type: payload.business_type || null,
               attribution_source: refCode ? 'REFERRAL' : 'DIRECT',
               referral_code: refCode,
-              partner_id: partnerId,
+              affiliate_id: affiliateId,
               status: 'NEW',
               notes: newLead.notes,
             },
@@ -7115,7 +7116,7 @@ export const LoyaltyService = {
 
         if (!error && data?.id) {
           newLead.id = data.id;
-          newLead.partner_id = partnerId;
+          newLead.partner_id = affiliateId;
           const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
           saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.id !== newLead.id)]);
           invalidateLeadsCache();
