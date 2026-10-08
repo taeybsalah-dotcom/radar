@@ -4690,119 +4690,132 @@ export const LoyaltyService = {
         const dbLeads = leadsRes?.data || [];
         const dbPas = pasRes?.data || [];
 
-        const derivedEntries: FinancialLedgerEntry[] = [];
+        const localLedgerExisting = getLocalData<FinancialLedgerEntry[]>(
+          STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER,
+          []
+        );
 
+        // تنظيف وحفظ القيود المحلية الأصلية مع منع التكرار تماماً
+        const uniqueLocalMap = new Map<string, FinancialLedgerEntry>();
+        for (const loc of localLedgerExisting) {
+          const key = loc.transaction_id || loc.id || `${loc.store_id}_${loc.gross_amount}`;
+          if (!uniqueLocalMap.has(key)) {
+            uniqueLocalMap.set(key, loc);
+          }
+        }
+        const combined: FinancialLedgerEntry[] = Array.from(uniqueLocalMap.values());
+
+        // إضافة القيود المستخرجة فقط للمتاجر والعمليات التي ليس لها أي قيد مسبق في السجل (منع التدبيل والتكرار الحتمي)
         for (const s of dbStores) {
           if (s.setup_fee_paid === true || s.status === 'active' || s.subscription_status === 'active') {
-            const matchComm = dbComms.find((c: any) => c.store_id === s.id);
-            const matchLead = dbLeads.find((l: any) => l.converted_store_id === s.id || l.phone === s.manager_contact);
-            const matchPa = matchComm ? dbPas.find((p: any) => p.id === matchComm.partner_account_id) : null;
+            const hasEntry = combined.some((l) => l.store_id === s.id);
+            if (!hasEntry) {
+              const matchComm = dbComms.find((c: any) => c.store_id === s.id);
+              const matchLead = dbLeads.find((l: any) => l.converted_store_id === s.id || l.phone === s.manager_contact);
+              const matchPa = matchComm ? dbPas.find((p: any) => p.id === matchComm.partner_account_id) : null;
 
-            const gross = Number(s.renewal_amount) || 690;
-            const commAmt = matchComm
-              ? Number(matchComm.commission_amount)
-              : (matchLead ? Math.round(gross * 0.20 * 100) / 100 : 0);
-            const gatewayFee = Math.round((gross * 0.01 + 1) * 100) / 100;
-            const netPlatform = Math.round((gross - gatewayFee - commAmt) * 100) / 100;
+              const gross = Number(s.renewal_amount) || 690;
+              const commAmt = matchComm
+                ? Number(matchComm.commission_amount)
+                : (matchLead ? Math.round(gross * 0.20 * 100) / 100 : 0);
+              const gatewayFee = Math.round((gross * 0.01 + 1) * 100) / 100;
+              const netPlatform = Math.round((gross - gatewayFee - commAmt) * 100) / 100;
 
-            const shortId = (s.id || '').slice(0, 8);
-            derivedEntries.push({
-              id: 'tx_db_store_' + shortId,
-              transaction_id: 'tx_pay_sandbox_' + shortId,
-              invoice_id: 'inv_' + shortId,
-              store_id: s.id,
-              store_name: s.name,
-              affiliate_id: matchPa?.id || matchComm?.partner_account_id || null,
-              affiliate_name: matchPa?.display_name || 'محمد سعيد',
-              payment_id: 'pay_' + shortId,
-              transaction_type: 'PAYMENT',
-              gross_amount: gross,
-              vat_amount: 0,
-              gateway_fee: gatewayFee,
-              affiliate_commission: commAmt,
-              net_platform_amount: netPlatform,
-              status: 'SETTLED',
-              created_at: s.created_at || new Date().toISOString(),
-              effective_at: s.created_at || new Date().toISOString(),
-              created_by: 'GATEWAY_WEBHOOK',
-              metadata: {
-                payment_method: 'mada',
-                gateway: 'sandbox',
-                plan_name: s.subscription_plan || 'الباقة الأساسية',
-                notes: `عملية سداد اشتراك متجر ${s.name} المعتمدة بالسيرفر`,
-              },
-            });
-          }
-        }
-        // 2.2 استخراج قيود ترقيات الباقات وتجديد الاشتراكات المسجلة بالسيرفر
-        for (const c of dbComms) {
-          if (c.commission_type === 'SUBSCRIPTION_UPGRADE' || c.commission_type === 'SUBSCRIPTION_RENEWAL') {
-            const matchStore = dbStores.find((s: any) => s.id === c.store_id);
-            const matchPa = dbPas.find((p: any) => p.id === c.partner_account_id);
-            const gross = Number(c.basis_amount) || 0;
-            const commAmt = Number(c.commission_amount) || 0;
-            const gatewayFee = Math.round((gross * 0.01 + 1) * 100) / 100;
-            const netPlatform = Math.round((gross - gatewayFee - commAmt) * 100) / 100;
-            const commShort = (c.id || '').slice(0, 8);
-
-            derivedEntries.push({
-              id: 'tx_comm_' + commShort,
-              transaction_id: 'tx_pay_' + (c.commission_type === 'SUBSCRIPTION_UPGRADE' ? 'upg_' : 'rnw_') + commShort,
-              invoice_id: 'inv_' + commShort,
-              store_id: c.store_id,
-              store_name: matchStore?.name || 'متجر معتمد',
-              affiliate_id: c.partner_account_id,
-              affiliate_name: matchPa?.display_name || 'محمد سعيد',
-              payment_id: 'pay_' + commShort,
-              transaction_type: 'PAYMENT',
-              gross_amount: gross,
-              vat_amount: 0,
-              gateway_fee: gatewayFee,
-              affiliate_commission: commAmt,
-              net_platform_amount: netPlatform,
-              status: 'SETTLED',
-              created_at: c.created_at || new Date().toISOString(),
-              effective_at: c.created_at || new Date().toISOString(),
-              created_by: 'GATEWAY_WEBHOOK',
-              metadata: {
-                payment_method: 'mada',
-                gateway: 'sandbox',
-                plan_name: c.qualifying_event || (c.commission_type === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد الاشتراك'),
-                commission_type: c.commission_type,
-                notes: c.qualifying_event ? `${c.qualifying_event} (${matchStore?.name || ''})` : `ترقية باقة ${matchStore?.name || ''}`,
-              },
-            });
-          }
-        }
-
-        if (derivedEntries.length > 0) {
-          // دمج القيود المستخرجة مع القيود المحلية دون تكرار
-          const localLedgerExisting = getLocalData<FinancialLedgerEntry[]>(
-            STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER,
-            []
-          );
-          const combined = [...derivedEntries];
-          for (const loc of localLedgerExisting) {
-            if (!combined.some((d) => d.id === loc.id || d.transaction_id === loc.transaction_id || (d.payment_id && d.payment_id === loc.payment_id))) {
-              combined.push(loc);
+              const shortId = (s.id || '').slice(0, 8);
+              combined.push({
+                id: 'tx_db_store_' + shortId,
+                transaction_id: 'tx_pay_sandbox_' + shortId,
+                invoice_id: 'inv_' + shortId,
+                store_id: s.id,
+                store_name: s.name,
+                affiliate_id: matchPa?.id || matchComm?.partner_account_id || null,
+                affiliate_name: matchPa?.display_name || 'محمد سعيد',
+                payment_id: 'pay_' + shortId,
+                transaction_type: 'PAYMENT',
+                gross_amount: gross,
+                vat_amount: 0,
+                gateway_fee: gatewayFee,
+                affiliate_commission: commAmt,
+                net_platform_amount: netPlatform,
+                status: 'SETTLED',
+                created_at: s.created_at || new Date().toISOString(),
+                effective_at: s.created_at || new Date().toISOString(),
+                created_by: 'GATEWAY_WEBHOOK',
+                metadata: {
+                  payment_method: 'mada',
+                  gateway: 'sandbox',
+                  plan_name: s.subscription_plan || 'الباقة الأساسية',
+                  notes: `عملية سداد اشتراك متجر ${s.name} المعتمدة بالسيرفر`,
+                },
+              });
             }
           }
-          saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, combined);
-          if (isDefaultQuery) {
-            ledgerListCache = { data: combined, timestamp: Date.now() };
-          }
-          let filtered = [...combined];
-          if (filters?.type && filters.type !== 'ALL') {
-            filtered = filtered.filter((l) => l.transaction_type === filters.type);
-          }
-          if (filters?.storeId) {
-            filtered = filtered.filter((l) => l.store_id === filters.storeId);
-          }
-          if (filters?.affiliateId) {
-            filtered = filtered.filter((l) => l.affiliate_id === filters.affiliateId);
-          }
-          return filtered;
         }
+        // 2.2 استخراج قيود ترقيات الباقات وتجديد الاشتراكات المسجلة بالسيرفر (بدون تكرار)
+        for (const c of dbComms) {
+          if (c.commission_type === 'SUBSCRIPTION_UPGRADE' || c.commission_type === 'SUBSCRIPTION_RENEWAL') {
+            const hasUpgEntry = combined.some(
+              (l) =>
+                (l.metadata?.commission_id && l.metadata.commission_id === c.id) ||
+                (l.invoice_id && l.invoice_id === c.invoice_id) ||
+                (l.store_id === c.store_id && l.transaction_type === 'PAYMENT' && Math.abs(l.gross_amount - Number(c.basis_amount)) < 1)
+            );
+            if (!hasUpgEntry) {
+              const matchStore = dbStores.find((s: any) => s.id === c.store_id);
+              const matchPa = dbPas.find((p: any) => p.id === c.partner_account_id);
+              const gross = Number(c.basis_amount) || 0;
+              const commAmt = Number(c.commission_amount) || 0;
+              const gatewayFee = Math.round((gross * 0.01 + 1) * 100) / 100;
+              const netPlatform = Math.round((gross - gatewayFee - commAmt) * 100) / 100;
+              const commShort = (c.id || '').slice(0, 8);
+
+              combined.push({
+                id: 'tx_comm_' + commShort,
+                transaction_id: 'tx_pay_' + (c.commission_type === 'SUBSCRIPTION_UPGRADE' ? 'upg_' : 'rnw_') + commShort,
+                invoice_id: 'inv_' + commShort,
+                store_id: c.store_id,
+                store_name: matchStore?.name || 'متجر معتمد',
+                affiliate_id: c.partner_account_id,
+                affiliate_name: matchPa?.display_name || 'محمد سعيد',
+                payment_id: 'pay_' + commShort,
+                transaction_type: 'PAYMENT',
+                gross_amount: gross,
+                vat_amount: 0,
+                gateway_fee: gatewayFee,
+                affiliate_commission: commAmt,
+                net_platform_amount: netPlatform,
+                status: 'SETTLED',
+                created_at: c.created_at || new Date().toISOString(),
+                effective_at: c.created_at || new Date().toISOString(),
+                created_by: 'GATEWAY_WEBHOOK',
+                metadata: {
+                  payment_method: 'mada',
+                  gateway: 'sandbox',
+                  commission_id: c.id,
+                  plan_name: c.qualifying_event || (c.commission_type === 'SUBSCRIPTION_UPGRADE' ? 'ترقية باقة المتجر' : 'تجديد الاشتراك'),
+                  commission_type: c.commission_type,
+                  notes: c.qualifying_event ? `${c.qualifying_event} (${matchStore?.name || ''})` : `ترقية باقة ${matchStore?.name || ''}`,
+                },
+              });
+            }
+          }
+        }
+
+        saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, combined);
+        if (isDefaultQuery) {
+          ledgerListCache = { data: combined, timestamp: Date.now() };
+        }
+        let filtered = [...combined];
+        if (filters?.type && filters.type !== 'ALL') {
+          filtered = filtered.filter((l) => l.transaction_type === filters.type);
+        }
+        if (filters?.storeId) {
+          filtered = filtered.filter((l) => l.store_id === filters.storeId);
+        }
+        if (filters?.affiliateId) {
+          filtered = filtered.filter((l) => l.affiliate_id === filters.affiliateId);
+        }
+        return filtered;
       } catch (e) {
         console.warn('Supabase getFinancialLedger fallback to local:', e);
       }
@@ -7528,7 +7541,7 @@ export const LoyaltyService = {
       basis_amount: basis,
       commission_rate: rate,
       commission_amount: commAmt,
-      status: 'PAID',
+      status: 'EARNED',
       qualifying_event: qualifyingEventDesc,
       idempotency_key: idempotencyKey,
       merchant_name: store?.name || lead?.store_name || 'متجر معتمد',
@@ -7563,7 +7576,7 @@ export const LoyaltyService = {
           basis_amount: basis,
           commission_rate: rate,
           commission_amount: commAmt,
-          status: 'PAID',
+          status: 'EARNED',
           qualifying_event: qualifyingEventDesc,
           idempotency_key: idempotencyKey,
           created_at: now,
