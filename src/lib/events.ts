@@ -1,4 +1,4 @@
-// Real-time Event Bus to sync Cashier Scan with Customer Wallet and Admin in real-time across all devices
+// Real-time Event Bus to sync Cashier Scan with Customer Wallet in real-time across devices
 export type LoyaltyEventType =
   | 'POINTS_ADDED'
   | 'REWARD_REDEEMED'
@@ -43,22 +43,37 @@ const CLIENT_INSTANCE_ID =
     ? crypto.randomUUID()
     : `client_${Math.random().toString(36).substring(2)}_${Date.now().toString(36)}`;
 
+// 🛡️ Whitelist of events that genuinely require cross-device Supabase Realtime broadcast (POS <-> Wallet)
+// Internal admin/metadata events (stores, subscriptions, leads, staff) NEVER pollute the WebSocket quota.
+const CROSS_DEVICE_REALTIME_EVENTS = new Set<LoyaltyEventType>([
+  'POINTS_ADDED',
+  'REWARD_REDEEMED',
+  'COUPON_REDEEMED',
+  'SCAN_REJECTED',
+  'CUSTOM_NOTIFICATION',
+]);
+
 const channelName = 'radar_loyalty_realtime_channel';
 let channel: BroadcastChannel | null = null;
 const listeners = new Set<(payload: LoyaltyEventPayload) => void>();
 let supabaseBroadcastChannel: any = null;
+let activeSupabaseClient: any = null;
+
+// Throttling map to strictly prevent broadcast spam and feedback loops
+const lastBroadcastTimestamps = new Map<string, number>();
+const BROADCAST_THROTTLE_MS = 1500;
 
 try {
   if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
     channel = new BroadcastChannel(channelName);
     channel.addEventListener('message', (event: MessageEvent<LoyaltyEventPayload>) => {
       if (event.data) {
-        // Prevent echo if sender is current client
+        // Prevent echo if sender is current client instance
         if (event.data.senderId && event.data.senderId === CLIENT_INSTANCE_ID) {
           return;
         }
         listeners.forEach((fn) => {
-          try { fn(event.data); } catch (err) { console.warn('Listener error:', err); }
+          try { fn(event.data); } catch (err) { console.warn('Local listener error:', err); }
         });
       }
     });
@@ -68,11 +83,13 @@ try {
 }
 
 export const LoyaltyEvents = {
-  // Connect to Supabase Realtime Channel for Cross-Device Web Broadcast and DB Changes
+  // Connect to Supabase Realtime Channel exclusively for targeted cross-device POS <-> Wallet interactions
   initRealtime(supabaseClient: any) {
     if (!supabaseClient || supabaseBroadcastChannel) return;
+    activeSupabaseClient = supabaseClient;
+
     try {
-      // 🛡️ Prevent echo chamber: self = false
+      // 🛡️ Explicit broadcast-only channel with self=false to prevent self-reflection
       supabaseBroadcastChannel = supabaseClient.channel('radar_realtime_broadcast', {
         config: { broadcast: { self: false } },
       });
@@ -90,56 +107,24 @@ export const LoyaltyEvents = {
           }
         })
         .subscribe();
-
-      // 🔄 Realtime Postgres Table Subscriptions for Cross-Dashboard Sync
-      // Rule: Exactly 1 consolidated event per database table change
-      supabaseClient
-        .channel('radar_postgres_sync')
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'stores' },
-          (payload: any) => {
-            const sId = payload.new?.id || payload.old?.id || '';
-            listeners.forEach((fn) => {
-              try {
-                fn({ type: 'STORE_UPDATED', storeId: sId, senderId: 'POSTGRES_CDC' });
-              } catch (err) {
-                console.warn('Postgres changes store listener error:', err);
-              }
-            });
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'merchant_leads' },
-          (payload: any) => {
-            const sId = payload.new?.converted_store_id || payload.old?.converted_store_id || '';
-            listeners.forEach((fn) => {
-              try {
-                fn({ type: 'LEAD_UPDATED', storeId: sId, senderId: 'POSTGRES_CDC' });
-              } catch (err) {
-                console.warn('Postgres changes lead listener error:', err);
-              }
-            });
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'store_invoices' },
-          (payload: any) => {
-            const sId = payload.new?.store_id || payload.old?.store_id || '';
-            listeners.forEach((fn) => {
-              try {
-                fn({ type: 'PAYMENT_COMPLETED', storeId: sId, senderId: 'POSTGRES_CDC' });
-              } catch (err) {
-                console.warn('Postgres changes invoice listener error:', err);
-              }
-            });
-          }
-        )
-        .subscribe();
     } catch (e) {
       console.warn('Supabase realtime broadcast init warning:', e);
+    }
+  },
+
+  // 🧹 Clean teardown of Realtime channels to prevent lingering connections and quota leaks
+  teardownRealtime() {
+    if (supabaseBroadcastChannel && activeSupabaseClient) {
+      try {
+        if (typeof activeSupabaseClient.removeChannel === 'function') {
+          activeSupabaseClient.removeChannel(supabaseBroadcastChannel);
+        } else if (typeof supabaseBroadcastChannel.unsubscribe === 'function') {
+          supabaseBroadcastChannel.unsubscribe();
+        }
+      } catch (err) {
+        console.warn('Failed to clean up Supabase Realtime channel:', err);
+      }
+      supabaseBroadcastChannel = null;
     }
   },
 
@@ -149,12 +134,12 @@ export const LoyaltyEvents = {
       senderId: payload.senderId || CLIENT_INSTANCE_ID,
     };
 
-    // 1. Notify local browser listeners once
+    // 1. Notify local browser listeners once (Instant UI update: 0ms, 0 network cost)
     listeners.forEach((fn) => {
       try { fn(eventWithSender); } catch {}
     });
 
-    // 2. Broadcast to other tabs on same device
+    // 2. Broadcast to other tabs on same device via native browser BroadcastChannel (0 network cost)
     if (channel) {
       try {
         channel.postMessage(eventWithSender);
@@ -163,8 +148,17 @@ export const LoyaltyEvents = {
       }
     }
 
-    // 3. Broadcast to other devices via Supabase Realtime (self is false)
-    if (supabaseBroadcastChannel) {
+    // 3. Broadcast to other physical devices via Supabase Realtime WebSocket ONLY if it is an essential user-facing event
+    if (supabaseBroadcastChannel && CROSS_DEVICE_REALTIME_EVENTS.has(payload.type)) {
+      // Throttle protection: prevent identical spam within 1.5s window
+      const throttleKey = `${payload.type}_${payload.storeId}_${payload.phone || payload.couponCode || ''}`;
+      const now = Date.now();
+      const lastSent = lastBroadcastTimestamps.get(throttleKey) || 0;
+      if (now - lastSent < BROADCAST_THROTTLE_MS) {
+        return;
+      }
+      lastBroadcastTimestamps.set(throttleKey, now);
+
       try {
         supabaseBroadcastChannel.send({
           type: 'broadcast',
@@ -184,3 +178,10 @@ export const LoyaltyEvents = {
     };
   },
 };
+
+// 🧹 Automatic cleanup on page unload to release Supabase connection immediately
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    LoyaltyEvents.teardownRealtime();
+  });
+}
