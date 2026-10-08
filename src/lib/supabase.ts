@@ -4766,8 +4766,40 @@ export const LoyaltyService = {
   // 17. إدارة الفواتير والسجل المالي العام (Immutable Master Financial Ledger & ZATCA)
   // ==============================================================================
 
-  // جلب كافة الفواتير لجميع المتاجر (Super Admin Financial Log)
+  // جلب كافة الفواتير لجميع المتاجر (Server-First Batch via get_all_store_invoices_batch)
   async getAllInvoices(): Promise<Record<string, StoreInvoice[]>> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('get_all_store_invoices_batch');
+        if (!error && data && typeof data === 'object') {
+          saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, data);
+          return data as Record<string, StoreInvoice[]>;
+        }
+      } catch (e) {
+        console.warn('[getAllInvoices] RPC get_all_store_invoices_batch error, trying direct query:', e);
+      }
+
+      try {
+        const { data: invRows, error: invErr } = await supabase
+          .from('store_invoices')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (!invErr && invRows && invRows.length > 0) {
+          const map: Record<string, StoreInvoice[]> = {};
+          for (const inv of invRows) {
+            const sId = inv.store_id;
+            if (!map[sId]) map[sId] = [];
+            map[sId].push(inv);
+          }
+          saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, map);
+          return map;
+        }
+      } catch (err) {
+        console.warn('[getAllInvoices] direct store_invoices fallback error:', err);
+      }
+    }
+
     const localInvoices = getLocalData<Record<string, StoreInvoice[]>>(
       STORAGE_KEYS.LOCAL_INVOICES,
       INITIAL_INVOICES
@@ -4775,8 +4807,24 @@ export const LoyaltyService = {
     return localInvoices || {};
   },
 
-  // جلب فواتير المتجر
+  // جلب فواتير المتجر (Server-First)
   async getStoreInvoices(storeId: string): Promise<StoreInvoice[]> {
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(storeId)) {
+      try {
+        const { data, error } = await supabase
+          .from('store_invoices')
+          .select('*')
+          .eq('store_id', storeId)
+          .order('created_at', { ascending: false });
+        if (!error && data && data.length > 0) {
+          return data as StoreInvoice[];
+        }
+      } catch (e) {
+        console.warn('[getStoreInvoices] store_invoices query error:', e);
+      }
+    }
+
     const localInvoices = getLocalData<Record<string, StoreInvoice[]>>(
       STORAGE_KEYS.LOCAL_INVOICES,
       INITIAL_INVOICES
@@ -4861,11 +4909,11 @@ export const LoyaltyService = {
       ? Math.round(((gross * gatewayRate) + fixedFee) * 100) / 100
       : 0;
 
-    // 🌟 Absolute Marketer Commission Base: Calculated strictly against the FULL Gross Total Amount (e.g. 520 SAR = 104 SAR fixed)
+    // 🌟 ZATCA-Compliant Marketer Commission Base: Calculated strictly against the Net Amount before VAT (Tax is non-commissionable)
     const cleanCommRate = Math.max(0, Math.min(1.0, Number(commissionRate) || 0.20));
-    const affiliateCommission = Math.round((gross * cleanCommRate) * 100) / 100;
+    const affiliateCommission = Math.round((netBeforeVat * cleanCommRate) * 100) / 100;
 
-    // 💰 Net Platform Revenue: Clean absorption of gateway fees without artificial negative glitching
+    // 💰 Net Platform Revenue: Strictly balanced with Ledger Invariant
     const netPlatformAmount = Math.max(0, Math.round((gross - vatAmount - gatewayFee - affiliateCommission) * 100) / 100);
 
     return {
@@ -5229,7 +5277,7 @@ export const LoyaltyService = {
     return newRecord;
   },
 
-  // معالجة الدفع والاشتراك مع تسجيل القيد المالي الدقيق والتحقق من التكرار (Idempotency)
+  // معالجة الدفع والاشتراك مع تسجيل القيد المالي الدقيق والتحقق من التكرار (Idempotency - Server First [FIN-01, FIN-02])
   async processSubscriptionPayment(payload: {
     storeId: string;
     invoiceType: 'setup' | 'renewal' | 'upgrade' | 'extra_cashier';
@@ -5242,39 +5290,12 @@ export const LoyaltyService = {
     const paymentMethod = payload.paymentMethod || 'mada';
     const gateway = payload.gateway || 'moyasar';
     const gatewayPaymentId = payload.gatewayPaymentId || `pay_${gateway}_${Date.now()}`;
-
-    // 1. فحص التكرار الحتمي (Idempotency Check)
-    const existingLedger = getLocalData<FinancialLedgerEntry[]>(
-      STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER,
-      INITIAL_FINANCIAL_LEDGER
-    );
-    const duplicateEntry = existingLedger.find(
-      (l) => l.payment_id === gatewayPaymentId && l.transaction_type === 'PAYMENT'
-    );
-    const existingInvoices = getLocalData<Record<string, StoreInvoice[]>>(
-      STORAGE_KEYS.LOCAL_INVOICES,
-      INITIAL_INVOICES
-    );
-    const storeInvoicesList = existingInvoices[payload.storeId] || [];
-    const duplicateInvoice = storeInvoicesList.find((i) => i.gateway_payment_id === gatewayPaymentId);
+    const supabase = getSupabaseClient();
+    const now = new Date();
 
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const storeIdx = stores.findIndex((s) => s.id === payload.storeId);
     let currentStore = storeIdx !== -1 ? stores[storeIdx] : INITIAL_STORE;
-
-    if (duplicateEntry && duplicateInvoice) {
-      console.warn('[Idempotency] Payment already processed:', gatewayPaymentId);
-      return {
-        success: true,
-        invoice: duplicateInvoice,
-        store: currentStore,
-        ledgerEntry: duplicateEntry,
-      };
-    }
-
-    const supabase = getSupabaseClient();
-    let updatedStore: Store | null = null;
-    let createdInvoice: StoreInvoice | null = null;
 
     // استخراج الخطة لمعرفة مدة الاشتراك بالأشهر (duration_months)
     const allBillingPlans = this.getAllSubscriptionPlansSync();
@@ -5301,204 +5322,117 @@ export const LoyaltyService = {
     const planTrialDays = targetPlan?.trial_days ? Number(targetPlan.trial_days) : 0;
     const durationDays = Math.max(1, planMonths * 30 + planTrialDays);
     const durationMs = durationDays * 86400000;
+    const computedPlanName = targetPlan?.name || currentStore.subscription_plan || (payload.invoiceType === 'setup' ? 'باقة تأسيس المتجر' : 'تجديد الاشتراك');
 
-    const now = new Date();
+    const breakdown = this.calculateBreakdown(payload.amount, paymentMethod);
+
+    // 🚀 التحصين المالي بالسيرفر [FIN-01, FIN-02]: استدعاء المعاملة الذرية process_store_payment_atomic
+    if (supabase && isUUID(payload.storeId)) {
+      try {
+        const { data: atomicRes, error: atomicErr } = await supabase.rpc('process_store_payment_atomic', {
+          p_store_id: payload.storeId,
+          p_invoice_type: payload.invoiceType,
+          p_amount: payload.amount,
+          p_payment_method: paymentMethod,
+          p_gateway: gateway,
+          p_gateway_payment_id: gatewayPaymentId,
+          p_plan_id: targetPlan?.id || payload.planId || null,
+          p_plan_code: targetPlan?.code || null,
+          p_plan_name: computedPlanName,
+          p_duration_months: planMonths,
+          p_vat_rate: breakdown.vatRate,
+          p_gateway_fee: breakdown.gatewayFee,
+        });
+
+        if (!atomicErr && atomicRes && atomicRes.success) {
+          const freshStore = await this.resolveStore(payload.storeId, true) || currentStore;
+          const serverInvoice: StoreInvoice = {
+            id: atomicRes.invoice_id || ('inv-' + Date.now()),
+            store_id: payload.storeId,
+            invoice_number: atomicRes.invoice_number,
+            invoice_type: payload.invoiceType,
+            amount: payload.amount,
+            vat_amount: atomicRes.vat_amount ?? breakdown.vatAmount,
+            net_amount: atomicRes.net_amount ?? breakdown.netBeforeVat,
+            currency: 'SAR',
+            status: 'paid',
+            payment_method: paymentMethod,
+            gateway: gateway,
+            gateway_payment_id: gatewayPaymentId,
+            plan_id: targetPlan?.id || currentStore.subscription_plan_id,
+            plan_name: computedPlanName,
+            paid_at: now.toISOString(),
+            created_at: now.toISOString(),
+          };
+
+          const atomicLedgerEntry: FinancialLedgerEntry = {
+            id: atomicRes.ledger_id || ('ledg-' + Date.now()),
+            transaction_id: `tx_${gatewayPaymentId}`,
+            invoice_id: atomicRes.invoice_number,
+            store_id: payload.storeId,
+            affiliate_id: atomicRes.partner_id || null,
+            payment_id: gatewayPaymentId,
+            transaction_type: 'PAYMENT',
+            gross_amount: atomicRes.gross_amount ?? breakdown.grossAmount,
+            vat_amount: atomicRes.vat_amount ?? breakdown.vatAmount,
+            gateway_fee: atomicRes.gateway_fee ?? breakdown.gatewayFee,
+            affiliate_commission: atomicRes.commission_amount ?? breakdown.affiliateCommission,
+            net_platform_amount: atomicRes.net_platform_amount ?? breakdown.netPlatformAmount,
+            status: 'SETTLED',
+            created_at: now.toISOString(),
+            effective_at: now.toISOString(),
+            created_by: 'GATEWAY_ATOMIC_RPC',
+            metadata: {
+              plan_name: computedPlanName,
+              payment_method: paymentMethod,
+              gateway,
+            },
+          };
+
+          storeResolutionCache.set(freshStore.id.toLowerCase(), { store: freshStore, timestamp: Date.now() });
+          if (freshStore.slug) storeResolutionCache.set(freshStore.slug.toLowerCase(), { store: freshStore, timestamp: Date.now() });
+
+          LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
+          LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
+          LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: payload.storeId });
+          LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+          invalidateAllServiceCaches();
+
+          return {
+            success: true,
+            invoice: serverInvoice,
+            store: freshStore,
+            ledgerEntry: atomicLedgerEntry,
+          };
+        } else if (atomicErr) {
+          console.warn('[processSubscriptionPayment] Atomic RPC warning:', atomicErr);
+        }
+      } catch (atomicExc) {
+        console.warn('[processSubscriptionPayment] Atomic RPC exception, using fallback:', atomicExc);
+      }
+    }
+
+    // احتياط التنفيذ المباشر الآمن إذا لم تتوفر الدالة الذرية بالسيرفر
     const invoiceNum = `INV-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
       now.getDate()
     ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-    let computedPlanName = targetPlan?.name || currentStore.subscription_plan || (payload.invoiceType === 'setup' ? 'باقة تأسيس المتجر' : 'تجديد الاشتراك');
-
-    // 2. البحث عن الشريك/المسوق وحساب العمولة المزدوجة (Acquisition vs. Recurring)
-    let partnerAccountId: string | null = null;
-    let partnerName: string | null = null;
-    let commissionRate = 0;
-    const isFirstAcquisition = payload.invoiceType === 'setup' || !currentStore.setup_fee_paid;
-    let commissionType: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE' | undefined = undefined;
-
-    let matchingLead: any = null;
-    let partner: any = null;
-
-    // 🌐 استعلام مباشر وقاطع من Supabase أولاً لضمان جلب الشريك حتى لو كان المتصفح جديداً أو بدون كاش
-    if (supabase) {
-      try {
-        const storePhoneNorm = normalizePhone(currentStore.manager_contact || '');
-        const { data: dbLeads } = await supabase
-          .from('merchant_leads')
-          .select('*')
-          .or(`converted_store_id.eq.${payload.storeId},phone.eq.${currentStore.manager_contact || ''},normalized_phone.eq.${storePhoneNorm}`);
-
-        if (dbLeads && dbLeads.length > 0) {
-          matchingLead = dbLeads.find((l: any) => l.converted_store_id === payload.storeId) || dbLeads[0];
-        }
-
-        if (matchingLead) {
-          const leadRef = (matchingLead.referral_code || '').trim().toLowerCase();
-          const leadAffId = matchingLead.affiliate_id;
-
-          const { data: dbPartners } = await supabase
-            .from('partner_accounts')
-            .select('*');
-
-          if (dbPartners && dbPartners.length > 0) {
-            partner = dbPartners.find((p: any) =>
-              (leadAffId && (p.id === leadAffId || p.affiliate_id === leadAffId)) ||
-              (leadRef && (p.slug?.toLowerCase() === leadRef || p.referral_code?.toLowerCase() === leadRef))
-            );
-          }
-        }
-      } catch (dbLeadErr) {
-        console.warn('[processSubscriptionPayment] DB lead/partner lookup exception:', dbLeadErr);
-      }
-    }
-
-    // احتياط الذاكرة المحلية إذا لم تتوفر قاعدة البيانات
-    if (!matchingLead) {
-      const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-      matchingLead = allLeads.find((l) => l.converted_store_id === payload.storeId || l.store_name === currentStore.name);
-    }
-    if (!partner && matchingLead && matchingLead.referral_code) {
-      const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-      partner = allPartners.find(
-        (p) =>
-          (p.referral_code || '').toLowerCase() === matchingLead.referral_code?.toLowerCase() ||
-          (p.slug || '').toLowerCase() === matchingLead.referral_code?.toLowerCase() ||
-          (matchingLead.affiliate_id && (p.id === matchingLead.affiliate_id || p.affiliate_id === matchingLead.affiliate_id))
-      );
-    }
-
-    // 🛡️ فحص حتمي: إذا كان الشريك نشطاً (active !== false) تُحسب عمولته، وإذا كان موقوفاً لا تُصرف أي عمولة إطلاقاً (0%)
-    if (partner && partner.active !== false) {
-      partnerAccountId = partner.id;
-      partnerName = partner.display_name;
-
-      // تطبيق النسبة بحسب نوع العملية (اشتراك جديد لأول مرة vs تجديد متكرر أو ترقية)
-      if (isFirstAcquisition) {
-        commissionRate = partner.acquisition_commission_rate ?? partner.commission_rate ?? 0.20;
-        commissionType = 'STORE_ACQUISITION';
-      } else {
-        commissionRate = partner.recurring_commission_rate ?? 0.10;
-        commissionType = payload.invoiceType === 'upgrade' ? 'SUBSCRIPTION_UPGRADE' : 'SUBSCRIPTION_RENEWAL';
-      }
-    } else if (partner) {
-      console.warn(`[Commission] Partner ${partner.display_name} is suspended/inactive. No commission awarded.`);
-    }
-
-    // 3. حساب التفكيك المالي الدقيق والضريبة
-    const breakdown = this.calculateBreakdown(payload.amount, paymentMethod, commissionRate);
-
     const currentEndMs = currentStore.subscription_end_date
       ? new Date(currentStore.subscription_end_date).getTime()
       : Date.now();
+    const baseEndMs = payload.invoiceType === 'renewal' && currentStore.subscription_end_date
+      ? Math.max(Date.now(), currentEndMs)
+      : Date.now();
+    const nextEndIso = new Date(baseEndMs + durationMs).toISOString();
 
-    // عند الترقية (upgrade)، يتم تمديد مدة الاشتراك لتشمل مدة الباقة الجديدة كاملة (مثلاً من 3 أشهر إلى 6 أشهر أو سنة)
-    let nextEndIso: string;
-    if (payload.invoiceType === 'upgrade') {
-      const startMs = currentStore.subscription_start_date
-        ? new Date(currentStore.subscription_start_date).getTime()
-        : Date.now();
-      // مدة الباقة الجديدة كاملة من تاريخ البدء، أو مدة الباقة كاملة من لحظة الترقية (أيهما أكبر لصالح التاجر)
-      const targetEndMs = Math.max(startMs + durationMs, Date.now() + durationMs);
-      nextEndIso = new Date(targetEndMs).toISOString();
-    } else {
-      const baseEndMs = payload.invoiceType === 'renewal' && currentStore.subscription_end_date
-        ? Math.max(Date.now(), currentEndMs)
-        : Date.now();
-      nextEndIso = new Date(baseEndMs + durationMs).toISOString();
-    }
-
-    if (payload.invoiceType === 'extra_cashier') {
-      await this.purchaseExtraCashier(payload.storeId);
-    }
-
-    // 4. تحديث المتجر في قاعدة البيانات والتأكد من نجاح الـ Commit
-    const verifiedUpdatePayload: Partial<Store> = {
-      status: 'active',
-      subscription_status: 'active' as StoreSubscriptionStatus,
-      subscription_active: true,
-      setup_fee_paid: true,
-      lifecycle_stage: 'مشترك مدفوع',
-      subscription_start_date: currentStore.subscription_start_date || now.toISOString(),
-      subscription_end_date: nextEndIso,
-      renewal_amount: targetPlan?.amount || currentStore.renewal_amount || 690,
-      subscription_plan_id: targetPlan?.id || payload.planId || currentStore.subscription_plan_id || 'plan-basic',
-      plan_code: targetPlan?.code || currentStore.plan_code || 'BASIC',
-      subscription_plan: targetPlan?.name || computedPlanName || 'الباقة الأساسية',
-      updated_at: now.toISOString(),
-    };
-
-    const dbStorePayload: Record<string, any> = {
-      status: 'active',
-      subscription_status: 'active',
-      subscription_active: true,
-      setup_fee_paid: true,
-      subscription_plan_id: targetPlan?.id || payload.planId || null,
-      subscription_start_date: currentStore.subscription_start_date || now.toISOString(),
-      subscription_end_date: nextEndIso,
-      updated_at: now.toISOString(),
-    };
-
-    if (supabase && isUUID(payload.storeId)) {
-      try {
-        const { data: updatedData, error: updateError } = await supabase
-          .from('stores')
-          .update(dbStorePayload)
-          .eq('id', payload.storeId)
-          .select(await storeCols(supabase))
-          .maybeSingle();
-
-        if (updateError) {
-          console.warn('[processSubscriptionPayment] Supabase stores update warning:', updateError.message);
-        } else if (updatedData) {
-          updatedStore = normalizeStore({ ...updatedData, logo_url: currentStore.logo_url, slider_images: currentStore.slider_images }) as Store;
-        }
-
-        if (matchingLead && isUUID(matchingLead.id)) {
-          await supabase
-            .from('merchant_leads')
-            .update({
-              notes: JSON.stringify({
-                plan_id: targetPlan?.id || payload.planId,
-                plan_code: targetPlan?.code,
-                plan_name: targetPlan?.name || computedPlanName,
-                end_date: nextEndIso,
-                updated_at: now.toISOString(),
-              }),
-              updated_at: now.toISOString(),
-            })
-            .eq('id', matchingLead.id);
-        }
-      } catch (e: any) {
-        console.warn('Supabase processSubscriptionPayment DB commit exception:', e);
-      }
-    }
-
-    currentStore = {
-      ...currentStore,
-      ...(updatedStore || {}),
-      ...verifiedUpdatePayload,
-    };
-
-    if (storeIdx !== -1) {
-      stores[storeIdx] = currentStore;
-    } else {
-      stores.unshift(currentStore);
-    }
-    saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
-
-    // تحديث فوري لكاش الذاكرة والتخزين المؤقت بالسجل المؤكد
-    storeResolutionCache.set(currentStore.id.toLowerCase(), { store: currentStore, timestamp: Date.now() });
-    if (currentStore.slug) {
-      storeResolutionCache.set(currentStore.slug.toLowerCase(), { store: currentStore, timestamp: Date.now() });
-    }
-
-    // 5. حفظ الفاتورة
-    createdInvoice = {
+    const createdInvoice: StoreInvoice = {
       id: 'inv-' + Date.now(),
       store_id: payload.storeId,
       invoice_number: invoiceNum,
       invoice_type: payload.invoiceType,
       amount: payload.amount,
+      vat_amount: breakdown.vatAmount,
+      net_amount: breakdown.netBeforeVat,
       currency: 'SAR',
       status: 'paid',
       payment_method: paymentMethod,
@@ -5510,24 +5444,27 @@ export const LoyaltyService = {
       created_at: now.toISOString(),
     };
 
-    const allInvoices = getLocalData<Record<string, StoreInvoice[]>>(
-      STORAGE_KEYS.LOCAL_INVOICES,
-      INITIAL_INVOICES
-    );
-    if (!allInvoices[payload.storeId]) {
-      allInvoices[payload.storeId] = [];
+    if (supabase && isUUID(payload.storeId)) {
+      try {
+        await supabase.from('store_invoices').insert([createdInvoice]);
+        await supabase.from('stores').update({
+          status: 'active',
+          subscription_status: 'active',
+          subscription_active: true,
+          setup_fee_paid: true,
+          subscription_end_date: nextEndIso,
+          updated_at: now.toISOString(),
+        }).eq('id', payload.storeId);
+      } catch (dbErr) {
+        console.warn('Fallback store_invoices insert error:', dbErr);
+      }
     }
-    allInvoices[payload.storeId].unshift(createdInvoice);
-    saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, allInvoices);
 
-    // 6. قيد السجل المالي العام الدائم (Master Financial Ledger Entry)
     const ledgerEntry = await this.recordFinancialLedgerEntry({
       transaction_id: `tx_${gatewayPaymentId}`,
-      invoice_id: createdInvoice.id,
+      invoice_id: invoiceNum,
       store_id: payload.storeId,
       store_name: currentStore.name,
-      affiliate_id: partnerAccountId,
-      affiliate_name: partnerName,
       payment_id: gatewayPaymentId,
       transaction_type: 'PAYMENT',
       gross_amount: breakdown.grossAmount,
@@ -5541,60 +5478,25 @@ export const LoyaltyService = {
         payment_method: paymentMethod,
         gateway,
         plan_name: computedPlanName,
-        plan_id: targetPlan?.id,
         tax_rate: breakdown.vatRate,
         base_amount: breakdown.netBeforeVat,
-        invoice_number: invoiceNum,
-        commission_type: commissionType,
-        notes: `عملية دفع ناجحة عبر ${paymentMethod} لـ ${computedPlanName} (${commissionType})`,
       },
     });
 
-    // 7. تحويل الـ Lead وتحديث عمولات المسوق إلى AVAILABLE / EARNED
-    try {
-      if (matchingLead && matchingLead.status !== 'CONVERTED') {
-        await this.convertLeadToStore(matchingLead.id, payload.storeId);
-      }
-    } catch (leadConvErr) {
-      console.warn('Non-blocking lead conversion on payment notice:', leadConvErr);
-    }
-
-    try {
-      if (payload.invoiceType === 'setup' || payload.invoiceType === 'renewal' || payload.invoiceType === 'upgrade') {
-        await this.unlockPaidStoreCommission(
-          payload.storeId,
-          breakdown.netBeforeVat,
-          commissionType,
-          createdInvoice.id,
-          invoiceNum
-        );
-      }
-    } catch (commUnlockErr) {
-      console.warn('Non-blocking commission unlock on payment error:', commUnlockErr);
-    }
-
-    // إطلاق الأحداث اللحظية لمزامنة كافة الشاشات واللوحات فوراً
     LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: payload.storeId });
-    LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: payload.storeId });
-    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: payload.storeId });
-    LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
-    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
-    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
-    LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: payload.storeId });
-
     invalidateAllServiceCaches();
 
     return {
       success: true,
       invoice: createdInvoice,
-      store: updatedStore || currentStore,
+      store: currentStore,
       ledgerEntry,
     };
   },
 
-  // 8. معالجة الإشعار الدائن والاسترداد المالي المتوافق مع ZATCA (Refund & Credit Note Engine)
+  // 8. معالجة الإشعار الدائن والاسترداد المالي واسترجاع العمولات المتوافق مع ZATCA [FIN-03]
   async processZatcaRefundAndCreditNote(payload: {
     invoiceId: string;
     storeId: string;
@@ -5603,6 +5505,77 @@ export const LoyaltyService = {
     adminUser: string;
     notes?: string;
   }): Promise<{ success: boolean; creditNote: CreditNote; ledgerEntry: FinancialLedgerEntry; error?: string }> {
+    const supabase = getSupabaseClient();
+    const now = new Date();
+
+    // 🚀 التحصين المالي بالسيرفر [FIN-03]: استدعاء المعاملة الذرية للاسترداد وعكس العمولات بالسيرفر
+    if (supabase) {
+      try {
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc('process_zatca_refund_and_clawback', {
+          p_invoice_number: payload.invoiceId,
+          p_refund_amount: payload.refundAmount || null,
+          p_reason: payload.reason,
+          p_admin_user: payload.adminUser || 'SUPER_ADMIN',
+          p_notes: payload.notes || null,
+        });
+
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          const creditNote: CreditNote = {
+            id: rpcRes.credit_note_id || ('cn-' + Date.now()),
+            credit_note_number: rpcRes.credit_note_number,
+            original_invoice_id: payload.invoiceId,
+            original_invoice_number: rpcRes.invoice_number || payload.invoiceId,
+            store_id: rpcRes.store_id || payload.storeId,
+            store_name: payload.storeId,
+            gross_refund_amount: rpcRes.gross_refund_amount,
+            vat_refund_amount: rpcRes.vat_refund_amount,
+            net_refund_amount: rpcRes.net_refund_amount,
+            clawback_commission: rpcRes.clawback_commission,
+            reason: payload.reason,
+            status: 'ISSUED',
+            issued_by: payload.adminUser || 'SUPER_ADMIN',
+            issued_at: now.toISOString(),
+            ledger_entry_id: rpcRes.ledger_id,
+            notes: payload.notes || '',
+          };
+
+          const ledgerEntry: FinancialLedgerEntry = {
+            id: rpcRes.ledger_id || ('ledg-' + Date.now()),
+            transaction_id: `tx_cn_${rpcRes.credit_note_number}`,
+            invoice_id: rpcRes.invoice_number || payload.invoiceId,
+            store_id: rpcRes.store_id || payload.storeId,
+            transaction_type: 'REFUND',
+            gross_amount: -rpcRes.gross_refund_amount,
+            vat_amount: -rpcRes.vat_refund_amount,
+            gateway_fee: 0,
+            affiliate_commission: -rpcRes.clawback_commission,
+            net_platform_amount: -(rpcRes.gross_refund_amount - rpcRes.vat_refund_amount - rpcRes.clawback_commission),
+            status: 'SETTLED',
+            refund_of: rpcRes.invoice_number || payload.invoiceId,
+            created_by: payload.adminUser || 'SUPER_ADMIN',
+            created_at: now.toISOString(),
+            effective_at: now.toISOString(),
+          };
+
+          invalidateAllServiceCaches();
+          LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: rpcRes.store_id || payload.storeId });
+          LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: rpcRes.store_id || payload.storeId });
+          LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+
+          return {
+            success: true,
+            creditNote,
+            ledgerEntry,
+          };
+        } else if (rpcErr) {
+          console.warn('[processZatcaRefundAndCreditNote] RPC warning:', rpcErr);
+        }
+      } catch (rpcExc) {
+        console.warn('[processZatcaRefundAndCreditNote] RPC exception, fallback:', rpcExc);
+      }
+    }
+
+    // احتياط التنفيذ المباشر إذا تعذر استدعاء الإجراء بالسيرفر
     const allInvoices = await this.getAllInvoices();
     let targetInvoice: StoreInvoice | null = null;
     let foundStoreId = payload.storeId;
@@ -5620,47 +5593,53 @@ export const LoyaltyService = {
       return { success: false, error: 'الفاتورة الأصلية غير موجودة' } as any;
     }
 
-    const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
-    const store = stores.find((s) => s.id === foundStoreId) || INITIAL_STORE;
-
     const refundGross = payload.refundAmount ? Number(payload.refundAmount) : targetInvoice.amount;
     const netRefund = Math.round((refundGross / 1.15) * 100) / 100;
     const vatRefund = Math.round((refundGross - netRefund) * 100) / 100;
 
-    // فحص عمولة المسوق لاستردادها (Clawback)
-    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
     let clawbackAmount = 0;
-    let affiliateIdForNote: string | null = null;
-
-    const updatedComms = localComms.map((c) => {
-      if (c.store_id === foundStoreId && (c.status === 'EARNED' || c.status === 'AVAILABLE' || c.status === 'PENDING')) {
-        clawbackAmount += Number(c.commission_amount) || 0;
-        affiliateIdForNote = c.partner_account_id;
-        return {
-          ...c,
-          status: 'REVERSED',
-          updated_at: new Date().toISOString(),
-          notes: `تم استرداد العمولة بناءً على استرداد الفاتورة ${targetInvoice?.invoice_number}`,
-        };
+    if (supabase) {
+      try {
+        const { data: comms } = await supabase
+          .from('partner_commissions')
+          .select('*')
+          .or(`invoice_number.eq.${targetInvoice.invoice_number},store_id.eq.${foundStoreId}`);
+        if (comms && comms.length > 0) {
+          for (const c of comms) {
+            if (c.status === 'EARNED' || c.status === 'PENDING') {
+              await supabase.from('partner_commissions').update({ status: 'REVERSED', updated_at: now.toISOString() }).eq('id', c.id);
+              clawbackAmount += Number(c.commission_amount) || 0;
+            } else if (c.status === 'PAID') {
+              await supabase.from('partner_commissions').insert([{
+                partner_account_id: c.partner_account_id,
+                store_id: foundStoreId,
+                commission_type: 'CLAWBACK_RECOVERY',
+                basis_amount: netRefund,
+                commission_rate: c.commission_rate,
+                commission_amount: -c.commission_amount,
+                status: 'EARNED',
+                idempotency_key: `clawback_${targetInvoice.invoice_number}_${c.id}`,
+                invoice_number: targetInvoice.invoice_number,
+                created_at: now.toISOString(),
+              }]);
+              clawbackAmount += Number(c.commission_amount) || 0;
+            }
+          }
+        }
+      } catch (cErr) {
+        console.warn('Fallback clawback error:', cErr);
       }
-      return c;
-    });
-    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
+    }
 
-    const now = new Date();
     const cnNumber = `CN-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
       now.getDate()
     ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-    // 1. تسجيل قيد الاسترداد في السجل المالي العام (Reverse Ledger Entry)
     const netPlatformReversal = -(refundGross - vatRefund - clawbackAmount);
     const ledgerEntry = await this.recordFinancialLedgerEntry({
       transaction_id: `tx_cn_${cnNumber}`,
-      invoice_id: targetInvoice.id,
+      invoice_id: targetInvoice.invoice_number || targetInvoice.id,
       store_id: foundStoreId,
-      store_name: store.name,
-      affiliate_id: affiliateIdForNote,
-      payment_id: targetInvoice.gateway_payment_id || null,
       transaction_type: 'REFUND',
       gross_amount: -refundGross,
       vat_amount: -vatRefund,
@@ -5670,29 +5649,18 @@ export const LoyaltyService = {
       status: 'SETTLED',
       refund_of: targetInvoice.invoice_number,
       created_by: payload.adminUser || 'SUPER_ADMIN',
-      metadata: {
-        credit_note_number: cnNumber,
-        original_invoice_number: targetInvoice.invoice_number,
-        reason: payload.reason,
-        admin_notes: payload.notes || '',
-        tax_rate: 0.15,
-        clawback_applied: clawbackAmount > 0,
-      },
     });
 
-    // 2. حفظ الإشعار الدائن (Credit Note)
     const creditNote: CreditNote = {
       id: 'cn-' + Date.now(),
       credit_note_number: cnNumber,
       original_invoice_id: targetInvoice.id,
       original_invoice_number: targetInvoice.invoice_number,
       store_id: foundStoreId,
-      store_name: store.name,
       gross_refund_amount: refundGross,
       vat_refund_amount: vatRefund,
       net_refund_amount: netRefund,
       clawback_commission: clawbackAmount,
-      affiliate_id: affiliateIdForNote,
       reason: payload.reason,
       status: 'ISSUED',
       issued_by: payload.adminUser || 'SUPER_ADMIN',
@@ -5701,27 +5669,19 @@ export const LoyaltyService = {
       notes: payload.notes || '',
     };
 
-    const localCreditNotes = getLocalData<CreditNote[]>(STORAGE_KEYS.LOCAL_CREDIT_NOTES, []);
-    saveLocalData(STORAGE_KEYS.LOCAL_CREDIT_NOTES, [creditNote, ...localCreditNotes]);
-
-    // 3. تحديث حالة الفاتورة والمتجر
-    targetInvoice.status = 'refunded';
-    saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, allInvoices);
-
-    const storeIdx = stores.findIndex((s) => s.id === foundStoreId);
-    if (storeIdx !== -1) {
-      stores[storeIdx] = {
-        ...stores[storeIdx],
-        setup_fee_paid: false,
-        subscription_status: 'trial',
-        status: 'trial',
-        updated_at: now.toISOString(),
-      };
-      saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
+    if (supabase) {
+      try {
+        await supabase.from('credit_notes').insert([creditNote]);
+        await supabase.from('store_invoices').update({ status: 'refunded' }).eq('id', targetInvoice.id);
+        await supabase.from('stores').update({ setup_fee_paid: false, subscription_status: 'trial', status: 'trial' }).eq('id', foundStoreId);
+      } catch (err) {
+        console.warn('Fallback credit_note insert error:', err);
+      }
     }
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: foundStoreId });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+    invalidateAllServiceCaches();
 
     return {
       success: true,
@@ -5821,8 +5781,23 @@ export const LoyaltyService = {
     };
   },
 
-  // 11. جلب كافة الإشعارات الدائنة
+  // 11. جلب كافة الإشعارات الدائنة (Server-First)
   async getAllCreditNotes(): Promise<CreditNote[]> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('credit_notes')
+          .select('*')
+          .order('issued_at', { ascending: false });
+        if (!error && data && data.length > 0) {
+          saveLocalData(STORAGE_KEYS.LOCAL_CREDIT_NOTES, data);
+          return data as CreditNote[];
+        }
+      } catch (err) {
+        console.warn('[getAllCreditNotes] Supabase credit_notes query warning:', err);
+      }
+    }
     const local = getLocalData<CreditNote[]>(STORAGE_KEYS.LOCAL_CREDIT_NOTES, []);
     return local || [];
   },

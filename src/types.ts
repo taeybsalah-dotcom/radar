@@ -275,6 +275,8 @@ export interface StoreInvoice {
   invoice_number: string;
   invoice_type: 'setup' | 'renewal' | 'upgrade' | 'extra_cashier';
   amount: number;
+  vat_amount?: number;
+  net_amount?: number;
   currency: string;
   status: 'pending' | 'paid' | 'failed' | 'refunded';
   payment_method?: string; // 'mada' | 'credit_card' | 'apple_pay' | 'stc_pay' | 'sandbox'
@@ -284,6 +286,7 @@ export interface StoreInvoice {
   plan_name?: string;
   paid_at?: string;
   created_at?: string;
+  metadata?: any;
 }
 
 export interface Store {
