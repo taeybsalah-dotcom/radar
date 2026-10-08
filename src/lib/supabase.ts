@@ -5028,7 +5028,9 @@ export const LoyaltyService = {
             transaction_id: d.transaction_id,
             invoice_id: d.invoice_id,
             store_id: d.store_id,
+            store_name: d.store_name || d.metadata?.store_name || null,
             affiliate_id: d.affiliate_id,
+            affiliate_name: d.affiliate_name || d.metadata?.affiliate_name || null,
             payment_id: d.payment_id,
             transaction_type: d.transaction_type,
             gross_amount: Number(d.gross_amount) || 0,
@@ -6030,7 +6032,7 @@ export const LoyaltyService = {
     const store = storeOverride || stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
 
     const isPaidActive = Boolean(
-      (store.has_paid_invoice === true || store.latest_paid_invoice) &&
+      (store.has_paid_invoice === true || store.latest_paid_invoice || (store.subscription_status === 'active' && store.lifecycle_stage === 'مشترك مدفوع')) &&
       store.subscription_status === 'active'
     );
 
