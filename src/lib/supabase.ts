@@ -8767,7 +8767,7 @@ export const LoyaltyService = {
   getAllSubscriptionPlansSync(): BillingPlan[] {
     const DEFAULT_PLANS: BillingPlan[] = [
       {
-        id: 'plan-basic',
+        id: '8371f0bb-b52e-4198-a5e9-bc51390174f0',
         code: 'BASIC',
         name: 'الباقة الأساسية',
         description: 'برنامج الولاء الذكي المتكامل ونقاط المكافآت مع كاشير رقمي وبطاقة ولاء PWA',
@@ -8785,7 +8785,7 @@ export const LoyaltyService = {
         active: true,
       },
       {
-        id: 'plan-advanced',
+        id: 'fad2e3cf-141c-4e0e-9432-194615a3ef37',
         code: 'ADVANCED',
         name: 'الباقة المتقدمة',
         description: 'برنامج الولاء المتقدم مع المستويات Tiers والامتيازات المخصصة وحملات الواتساب واستعادة العملاء',
@@ -8803,7 +8803,7 @@ export const LoyaltyService = {
         active: true,
       },
       {
-        id: 'plan-pro',
+        id: 'a418c6e7-5749-4186-92ce-c46d721fe9ba',
         code: 'PRO',
         name: 'الباقة الاحترافية',
         description: 'الحل الشامل لشبكات المتاجر والفروع مع تحليلات متقدمة، كوبونات ديناميكية وربط مخصص',
