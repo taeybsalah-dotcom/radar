@@ -544,19 +544,27 @@ export function normalizeLead(l: any): MerchantLead {
 
   // فحص ما إذا كان المتجر المرتبط مسدداً أو لديه عمولة معتمدة
   let hasPaidStoreOrComm = effectiveStage === 'مشترك مدفوع';
+  let mStore: any = null;
   if (!hasPaidStoreOrComm && typeof window !== 'undefined') {
     try {
       const rawStores = localStorage.getItem('radar_local_stores');
       if (rawStores) {
         const parsed = JSON.parse(rawStores);
         if (Array.isArray(parsed)) {
-          const mStore = parsed.find(
+          mStore = parsed.find(
             (s: any) =>
               (s.id && (s.id === l.converted_store_id || s.id === l.id)) ||
               (s.manager_contact && l.phone && normalizePhone(s.manager_contact) === normalizePhone(l.phone)) ||
               (s.name && l.store_name && s.name.trim().toLowerCase() === l.store_name.trim().toLowerCase())
           );
-          if (mStore && (mStore.setup_fee_paid === true || mStore.status === 'active')) {
+          if (
+            mStore &&
+            (
+              (mStore.setup_fee_paid === true && mStore.subscription_status === 'active') ||
+              mStore.has_paid_invoice === true
+            ) &&
+            mStore.subscription_status !== 'trial'
+          ) {
             hasPaidStoreOrComm = true;
           }
         }
@@ -581,9 +589,16 @@ export function normalizeLead(l: any): MerchantLead {
     } catch {}
   }
 
+  const isTrialStore = Boolean(
+    (mStore && (mStore.subscription_status === 'trial' || mStore.setup_fee_paid === false)) ||
+    l.subscription_status === 'trial' ||
+    l.setup_fee_paid === false ||
+    l.lifecycle_stage === 'فترة تجريبية'
+  );
+
   if (l.converted_store_id || l.status === 'CONVERTED' || l.status === 'APPROVED' || l.status === 'SETUP_COMPLETE' || l.status === 'تم التأسيس') {
     effectiveStatus = 'CONVERTED';
-    effectiveStage = hasPaidStoreOrComm ? 'مشترك مدفوع' : 'تم التأسيس';
+    effectiveStage = hasPaidStoreOrComm ? 'مشترك مدفوع' : (isTrialStore ? 'فترة تجريبية' : 'تم التأسيس');
   } else if (hasPaidStoreOrComm) {
     effectiveStatus = 'CONVERTED';
     effectiveStage = 'مشترك مدفوع';
@@ -7590,14 +7605,25 @@ export const LoyaltyService = {
           (c.merchant_name && norm.store_name && c.merchant_name.trim().toLowerCase() === norm.store_name.trim().toLowerCase())
       );
       const hasEarnedComm = matchComm && (matchComm.status === 'EARNED' || matchComm.status === 'AVAILABLE' || matchComm.status === 'PAID');
-      const isPaidStore = hasEarnedComm || (matchingStore && (matchingStore.setup_fee_paid === true || matchingStore.status === 'active') && matchingStore.status !== 'trial');
+      const isPaidStore = Boolean(
+        hasEarnedComm ||
+        (
+          matchingStore &&
+          matchingStore.setup_fee_paid === true &&
+          matchingStore.subscription_status === 'active'
+        )
+      );
+      const isTrialStore = Boolean(
+        matchingStore &&
+        (matchingStore.subscription_status === 'trial' || matchingStore.setup_fee_paid === false)
+      );
 
       if (matchingStore || hasEarnedComm || norm.converted_store_id) {
         return {
           ...norm,
           converted_store_id: matchingStore?.id || norm.converted_store_id,
           status: 'CONVERTED',
-          lifecycle_stage: isPaidStore ? 'مشترك مدفوع' : norm.lifecycle_stage === 'مشترك مدفوع' ? 'مشترك مدفوع' : 'تم التأسيس',
+          lifecycle_stage: isPaidStore ? 'مشترك مدفوع' : (isTrialStore ? 'فترة تجريبية' : 'تم التأسيس'),
         };
       }
       return norm;

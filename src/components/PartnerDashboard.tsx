@@ -50,11 +50,72 @@ import {
   KeyRound,
 } from 'lucide-react';
 
-export function getLeadStatusArabic(status?: string, lead?: any): { label: string; colorClass: string } {
-  const stage = resolveUnifiedStage(lead || { status });
+export function getLeadStatusArabic(status?: string, lead?: any): { label: string; colorClass: string; key: string } {
+  const store = lead?.store || lead?.stores;
+  const storeSubStatus = store?.subscription_status || lead?.subscription_status;
+  const storeSetupFeePaid = store?.setup_fee_paid ?? lead?.setup_fee_paid;
+  const storeStatus = store?.status || lead?.store_status;
+  const storeLifecycle = store?.lifecycle_stage || lead?.lifecycle_stage;
+  const hasPaidInvoice = Boolean(lead?.has_paid_invoice || store?.has_paid_invoice);
+  const hasCommission = Boolean(lead?.has_commission || lead?.has_earned_commission);
+
+  const isStoreConverted = Boolean(lead?.converted_store_id || lead?.status === 'CONVERTED' || store?.id);
+
+  // 1. المشترك المدفوع: يشترط صراحة أن يكون المتجر نشطاً وله فاتورة مسددة أو عمولة مكتسبة، وألا يكون في فترة تجريبية
+  const isTrulyPaid = Boolean(
+    isStoreConverted &&
+    (hasPaidInvoice || hasCommission || (storeSetupFeePaid === true && storeSubStatus === 'active')) &&
+    storeSubStatus !== 'trial' &&
+    storeStatus === 'active'
+  );
+
+  if (isTrulyPaid) {
+    return {
+      key: 'PAID_ACTIVE',
+      label: 'مشترك مدفوع 👑',
+      colorClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm font-bold',
+    };
+  }
+
+  // 2. تحت المراجعة أو معلق
+  if (storeStatus === 'suspended' || storeSubStatus === 'suspended' || storeLifecycle === 'تحت المراجعة' || status === 'UNDER_REVIEW') {
+    return {
+      key: 'UNDER_REVIEW',
+      label: 'تحت المراجعة ⏳',
+      colorClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30 font-bold',
+    };
+  }
+
+  // 3. متجر تم تحويله وتأسيسه ولكنه لم يسدد بعد (فترة تجريبية أو تم التأسيس)
+  if (isStoreConverted) {
+    if (storeSubStatus === 'trial' || storeLifecycle === 'فترة تجريبية' || storeSetupFeePaid === false || !hasPaidInvoice) {
+      return {
+        key: 'TRIAL',
+        label: 'فترة تجريبية ⏳',
+        colorClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30 font-bold',
+      };
+    }
+    return {
+      key: 'SETUP_COMPLETE',
+      label: 'تم التأسيس 🚀',
+      colorClass: 'bg-teal-500/15 text-teal-300 border-teal-500/30 font-bold',
+    };
+  }
+
+  // 4. جاري التأسيس
+  if (status === 'CONVERTING' || status === 'IN_SETUP' || storeLifecycle === 'جاري التأسيس') {
+    return {
+      key: 'IN_SETUP',
+      label: 'جاري التأسيس ⚙️',
+      colorClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30 font-bold',
+    };
+  }
+
+  // 5. الافتراضي: طلب جديد
   return {
-    label: `${stage.label} ${stage.icon}`,
-    colorClass: stage.badgeClass,
+    key: 'NEW',
+    label: 'طلب جديد 🆕',
+    colorClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30 font-bold',
   };
 }
 
@@ -78,6 +139,7 @@ const PARTNER_STATUS_FILTER_TABS = [
   { id: 'ALL', label: 'الكل' },
   { id: 'NEW', label: 'طلب جديد 🆕' },
   { id: 'IN_SETUP', label: 'جاري التأسيس ⚙️' },
+  { id: 'TRIAL', label: 'فترة تجريبية ⏳' },
   { id: 'SETUP_COMPLETE', label: 'تم التأسيس 🚀' },
   { id: 'UNDER_REVIEW', label: 'تحت المراجعة ⏳' },
   { id: 'PAID_ACTIVE', label: 'مشترك مدفوع 👑' },
@@ -393,20 +455,105 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           const { data, count, error } = await query.range(from, to).order('created_at', { ascending: false });
 
           if (!error && data && data.length > 0) {
+            // 🔄 JOIN / Enriched lookup with stores and invoices directly from Supabase
+            const convertedStoreIds = (data as any[]).map((d) => d.converted_store_id).filter(Boolean);
+            const leadIds = (data as any[]).map((d) => d.id).filter(Boolean);
+            
+            let storesMap: Record<string, any> = {};
+            let paidStoresSet = new Set<string>();
+            let paidLeadsSet = new Set<string>();
+
+            if (convertedStoreIds.length > 0) {
+              try {
+                const { data: storesList } = await client
+                  .from('stores')
+                  .select('id, name, status, subscription_status, lifecycle_stage, setup_fee_paid, subscription_plan, subscription_plan_id, subscription_end_date')
+                  .in('id', convertedStoreIds);
+                if (storesList) {
+                  storesList.forEach((s: any) => {
+                    storesMap[s.id] = s;
+                  });
+                }
+
+                // Check paid invoices in store_invoices
+                const { data: paidInvs } = await client
+                  .from('store_invoices')
+                  .select('store_id')
+                  .in('store_id', convertedStoreIds)
+                  .eq('status', 'paid');
+                if (paidInvs) {
+                  paidInvs.forEach((i: any) => paidStoresSet.add(i.store_id));
+                }
+              } catch (e) {
+                console.warn('[PartnerDashboard] Stores/Invoices lookup error:', e);
+              }
+            }
+
+            // Check paid / earned commissions for this partner
+            if (leadIds.length > 0 || convertedStoreIds.length > 0) {
+              try {
+                const commConds: string[] = [];
+                if (partner.id) commConds.push(`partner_account_id.eq.${partner.id}`);
+                if (partner.affiliate_id && partner.affiliate_id !== partner.id) commConds.push(`partner_account_id.eq.${partner.affiliate_id}`);
+                
+                if (commConds.length > 0) {
+                  const { data: commsList } = await client
+                    .from('partner_commissions')
+                    .select('merchant_lead_id, store_id, status')
+                    .in('status', ['EARNED', 'AVAILABLE', 'PAID'])
+                    .or(commConds.join(','));
+                  if (commsList) {
+                    commsList.forEach((c: any) => {
+                      if (c.merchant_lead_id) paidLeadsSet.add(c.merchant_lead_id);
+                      if (c.store_id) paidStoresSet.add(c.store_id);
+                    });
+                  }
+                }
+              } catch (e) {
+                console.warn('[PartnerDashboard] Commissions lookup error:', e);
+              }
+            }
+
             const allLocalLeads = await LoyaltyService.getAllLeads();
             let normalized = (data as any[]).map((d) => {
               const localMatch = allLocalLeads.find((l) => l.id === d.id || (l.phone && d.phone && normalizePhone(l.phone) === normalizePhone(d.phone)));
-              return localMatch || normalizeLead(d);
+              const baseLead = localMatch || normalizeLead(d);
+
+              // Enrich with real live store & invoice data from Supabase
+              const realStore = (d.converted_store_id && storesMap[d.converted_store_id]) || (baseLead as any).store;
+              const hasPaidInv = Boolean(
+                (d.converted_store_id && paidStoresSet.has(d.converted_store_id)) ||
+                paidLeadsSet.has(d.id)
+              );
+
+              const subStatus = realStore?.subscription_status || baseLead.subscription_status;
+              const isTrial = subStatus === 'trial' || realStore?.setup_fee_paid === false || !hasPaidInv;
+
+              return {
+                ...baseLead,
+                store: realStore,
+                subscription_status: subStatus,
+                setup_fee_paid: realStore ? realStore.setup_fee_paid : baseLead.setup_fee_paid,
+                store_status: realStore?.status || baseLead.status,
+                has_paid_invoice: hasPaidInv,
+                has_commission: paidLeadsSet.has(d.id) || (d.converted_store_id && paidStoresSet.has(d.converted_store_id)),
+                lifecycle_stage: (hasPaidInv && realStore?.status === 'active' && !isTrial)
+                  ? 'مشترك مدفوع'
+                  : (isTrial ? 'فترة تجريبية' : baseLead.lifecycle_stage),
+              };
             });
 
             if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
               normalized = normalized.filter((l) => {
+                const statusInfo = getLeadStatusArabic(l.status, l);
                 const stage = resolveUnifiedStage(l);
                 return (
+                  statusInfo.key === leadsStatusFilter ||
                   stage.key === leadsStatusFilter ||
                   stage.label === leadsStatusFilter ||
                   l.status === leadsStatusFilter ||
-                  l.lifecycle_stage === leadsStatusFilter
+                  l.lifecycle_stage === leadsStatusFilter ||
+                  (leadsStatusFilter === 'TRIAL' && (l.subscription_status === 'trial' || statusInfo.key === 'TRIAL'))
                 );
               });
             }
@@ -429,12 +576,15 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
         );
         if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
           matched = matched.filter((l) => {
+            const statusInfo = getLeadStatusArabic(l.status, l);
             const stage = resolveUnifiedStage(l);
             return (
+              statusInfo.key === leadsStatusFilter ||
               stage.key === leadsStatusFilter ||
               stage.label === leadsStatusFilter ||
               l.status === leadsStatusFilter ||
-              l.lifecycle_stage === leadsStatusFilter
+              l.lifecycle_stage === leadsStatusFilter ||
+              (leadsStatusFilter === 'TRIAL' && (l.subscription_status === 'trial' || statusInfo.key === 'TRIAL'))
             );
           });
         }

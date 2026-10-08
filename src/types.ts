@@ -57,8 +57,8 @@ export type UnifiedLifecycleStage =
   | 'مشترك مدفوع';
 
 export interface UnifiedStageInfo {
-  key: 'NEW' | 'IN_SETUP' | 'SETUP_COMPLETE' | 'UNDER_REVIEW' | 'PAID_ACTIVE';
-  label: UnifiedLifecycleStage;
+  key: 'NEW' | 'IN_SETUP' | 'SETUP_COMPLETE' | 'TRIAL' | 'UNDER_REVIEW' | 'PAID_ACTIVE';
+  label: UnifiedLifecycleStage | 'فترة تجريبية';
   badgeClass: string;
   icon: string;
   isPaidActive: boolean;
@@ -118,17 +118,6 @@ export function resolveUnifiedStage(
 
   const effectiveObj = matchedStore || it;
 
-  // 🛡️ إذا كانت المرحلة المحددة مسبقاً هي "مشترك مدفوع"، تُعتمد فوراً بدون أي تأخير أو تغيير
-  if (effectiveObj.lifecycle_stage === 'مشترك مدفوع' || it.lifecycle_stage === 'مشترك مدفوع') {
-    return {
-      key: 'PAID_ACTIVE',
-      label: 'مشترك مدفوع',
-      badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm',
-      icon: '👑',
-      isPaidActive: true,
-    };
-  }
-
   // فحص ما إذا كان المتجر أو الطلب مرتبطاً بعمولة مسوق معتمدة أو قيد مالي مدفوع
   let hasCommissionOrLedgerProof = false;
   if (typeof window !== 'undefined') {
@@ -157,29 +146,37 @@ export function resolveUnifiedStage(
     effectiveObj.status === 'UNDER_REVIEW' ||
     effectiveObj.status === 'suspended' ||
     effectiveObj.subscription_status === 'suspended' ||
-    effectiveObj.lifecycle_stage === 'تحت المراجعة';
+    effectiveObj.lifecycle_stage === 'تحت المراجعة' ||
+    it.status === 'UNDER_REVIEW' ||
+    it.lifecycle_stage === 'تحت المراجعة';
 
   const hasPaidPlan = Boolean(
-    effectiveObj.subscription_plan_id &&
+    (effectiveObj.subscription_plan_id &&
       effectiveObj.subscription_plan_id !== 'trial' &&
-      effectiveObj.subscription_plan_id !== 'plan-trial'
+      effectiveObj.subscription_plan_id !== 'plan-trial') ||
+    (it.subscription_plan_id &&
+      it.subscription_plan_id !== 'trial' &&
+      it.subscription_plan_id !== 'plan-trial')
   );
 
   const hasPaidProof = Boolean(
     hasCommissionOrLedgerProof ||
       effectiveObj.has_paid_invoice === true ||
       effectiveObj.latest_paid_invoice ||
-      hasPaidPlan ||
-      (effectiveObj.setup_fee_paid === true &&
-        (effectiveObj.status === 'مشترك مدفوع' ||
-          effectiveObj.status === 'PAID_ACTIVE' ||
-          effectiveObj.lifecycle_stage === 'مشترك مدفوع'))
+      it.has_paid_invoice === true ||
+      it.has_commission === true ||
+      (effectiveObj.setup_fee_paid === true && effectiveObj.subscription_status === 'active' && hasPaidPlan)
   );
 
   const isExplicitTrial =
     effectiveObj.subscription_status === 'trial' ||
     effectiveObj.status === 'trial' ||
+    effectiveObj.lifecycle_stage === 'فترة تجريبية' ||
     effectiveObj.setup_fee_paid === false ||
+    it.subscription_status === 'trial' ||
+    it.status === 'trial' ||
+    it.lifecycle_stage === 'فترة تجريبية' ||
+    it.setup_fee_paid === false ||
     !hasPaidProof;
 
   const isPaid = !isSuspended && !isExplicitTrial && hasPaidProof;
@@ -211,7 +208,9 @@ export function resolveUnifiedStage(
     effectiveObj.lifecycle_stage === 'جاري التأسيس' ||
     effectiveObj.status === 'جاري التأسيس' ||
     effectiveObj.status === 'IN_SETUP' ||
-    effectiveObj.status === 'CONVERTING'
+    effectiveObj.status === 'CONVERTING' ||
+    it.status === 'CONVERTING' ||
+    it.lifecycle_stage === 'جاري التأسيس'
   ) {
     return {
       key: 'IN_SETUP',
@@ -226,7 +225,8 @@ export function resolveUnifiedStage(
   if (
     effectiveObj.lifecycle_stage === 'طلب جديد' ||
     effectiveObj.status === 'طلب جديد' ||
-    effectiveObj.status === 'NEW'
+    effectiveObj.status === 'NEW' ||
+    it.status === 'NEW'
   ) {
     return {
       key: 'NEW',
@@ -237,7 +237,25 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 5. تم التأسيس (Setup Complete / Trial / Converted to Store)
+  // 5. فترة تجريبية أو تم التأسيس (Setup Complete / Trial / Converted to Store)
+  const isTrial =
+    effectiveObj.subscription_status === 'trial' ||
+    effectiveObj.lifecycle_stage === 'فترة تجريبية' ||
+    it.subscription_status === 'trial' ||
+    it.lifecycle_stage === 'فترة تجريبية' ||
+    effectiveObj.setup_fee_paid === false ||
+    it.setup_fee_paid === false;
+
+  if (isTrial) {
+    return {
+      key: 'TRIAL',
+      label: 'فترة تجريبية',
+      badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+      icon: '⏳',
+      isPaidActive: false,
+    };
+  }
+
   return {
     key: 'SETUP_COMPLETE',
     label: 'تم التأسيس',
@@ -266,7 +284,9 @@ export function getStoreUnifiedStage(
     | null
     | undefined
 ): UnifiedLifecycleStage {
-  return resolveUnifiedStage(store).label;
+  const lbl = resolveUnifiedStage(store).label;
+  if (lbl === 'فترة تجريبية') return 'تم التأسيس';
+  return lbl as UnifiedLifecycleStage;
 }
 
 export interface StoreInvoice {
@@ -642,11 +662,17 @@ export interface MerchantLead {
   affiliate_id?: string | null;
   partner_id?: string | null;
   status: LeadStatus;
-  lifecycle_stage?: UnifiedLifecycleStage;
+  lifecycle_stage?: UnifiedLifecycleStage | 'فترة تجريبية';
   is_demo?: boolean;
   conversion_started_at?: string | null;
   conversion_error?: string | null;
   converted_store_id?: string | null;
+  store?: any;
+  subscription_status?: string | null;
+  setup_fee_paid?: boolean | null;
+  store_status?: string | null;
+  has_paid_invoice?: boolean | null;
+  has_commission?: boolean | null;
   notes?: string | null;
   created_at: string;
   updated_at: string;
