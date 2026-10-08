@@ -205,13 +205,14 @@ export const SuperAdminBillingConsole: React.FC = () => {
         if (freshPlans && freshPlans.length > 0) setPlans(freshPlans);
       }).catch((e) => console.warn('Plans fetch error:', e));
 
-      const [ledgerRes, creditNotesRes, payoutsRes, storesRes, partnersRes, invoicesRes] = await Promise.allSettled([
+      const [ledgerRes, creditNotesRes, payoutsRes, storesRes, partnersRes, invoicesRes, summariesRes] = await Promise.allSettled([
         LoyaltyService.getFinancialLedger(),
         LoyaltyService.getAllCreditNotes(),
         LoyaltyService.getAllAffiliatePayouts(),
         LoyaltyService.getSuperAdminStoresSummary(),
         LoyaltyService.getAllPartners(),
         LoyaltyService.getAllInvoices(),
+        LoyaltyService.getAllPartnerFinancialSummaries(),
       ]);
 
       const freshLedger = ledgerRes.status === 'fulfilled' ? ledgerRes.value : ledgerEntries;
@@ -224,14 +225,9 @@ export const SuperAdminBillingConsole: React.FC = () => {
       if (partnersRes.status === 'fulfilled') {
         const loadedPartners = partnersRes.value || [];
         setPartners(loadedPartners);
-        const summariesMap: Record<string, any> = {};
-        await Promise.all(
-          loadedPartners.map(async (p) => {
-            const summary = await LoyaltyService.getPartnerFinancialSummary(p.id, p.affiliate_id);
-            summariesMap[p.id] = summary;
-          })
-        );
-        setPartnerSummaries(summariesMap);
+      }
+      if (summariesRes.status === 'fulfilled' && summariesRes.value) {
+        setPartnerSummaries(summariesRes.value);
       }
       if (invoicesRes.status === 'fulfilled') setAllInvoices(invoicesRes.value || {});
 

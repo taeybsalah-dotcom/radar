@@ -616,6 +616,8 @@ export function normalizeLead(l: any): MerchantLead {
 }
 
 const storeResolutionCache = new Map<string, { store: Store | null; timestamp: number }>();
+const storeResolutionInFlight = new Map<string, Promise<Store | null>>();
+const STORE_RESOLUTION_TTL = 30000; // 30s in-memory cache
 const scanDebounceCache = new Map<string, { timestamp: number; promise: Promise<any> }>();
 
 // ⚡ كاش ذاكرة فائق السرعة لعمليات منصة Radar (0ms Instant In-Memory Cache)
@@ -916,6 +918,97 @@ export const LoyaltyService = {
     }
   },
 
+  // 1.2 جلب جميع ملخصات الشركاء المالية المجمعة بالسيرفر بطلب واحد (Single Batch Aggregation RPC)
+  async getAllPartnerFinancialSummaries(forceFresh: boolean = false): Promise<Record<string, {
+    pending_commissions: number;
+    earned_commissions: number;
+    paid_commissions: number;
+    bonuses_earned: number;
+    bonuses_paid: number;
+    total_payable: number;
+    currency: string;
+  }>> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('get_all_partner_financial_summaries');
+        if (!error && data && typeof data === 'object') {
+          return data;
+        }
+      } catch (err) {
+        console.warn('[LoyaltyService] RPC get_all_partner_financial_summaries failed, falling back:', err);
+      }
+    }
+
+    // Dynamic Fallback: Batch load commissions and bonuses in 2 bulk requests instead of N loops
+    try {
+      const allPartners = await this.getAllPartners();
+      const summariesMap: Record<string, any> = {};
+
+      let allComms: any[] = [];
+      let allAwards: any[] = [];
+
+      if (supabase) {
+        const [cRes, aRes] = await Promise.all([
+          supabase.from('partner_commissions').select('*').neq('status', 'PENDING'),
+          Promise.resolve(supabase.from('partner_bonus_awards').select('*')).catch(() => ({ data: [] as any })),
+        ]);
+        if (cRes.data) allComms = cRes.data;
+        if (aRes.data) allAwards = aRes.data;
+      }
+
+      if (allComms.length === 0) {
+        allComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
+      }
+      if (allAwards.length === 0) {
+        allAwards = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
+      }
+
+      allPartners.forEach((p) => {
+        let earned_commissions = 0;
+        let paid_commissions = 0;
+        let bonuses_earned = 0;
+        let bonuses_paid = 0;
+
+        allComms.forEach((c) => {
+          const match = c.partner_account_id === p.id || (p.affiliate_id && c.partner_account_id === p.affiliate_id);
+          if (match) {
+            const amt = Number(c.commission_amount) || 0;
+            if (c.status === 'PAID') paid_commissions += amt;
+            else if (c.status === 'EARNED' || c.status === 'AVAILABLE') earned_commissions += amt;
+          }
+        });
+
+        allAwards.forEach((a) => {
+          const match = a.partner_account_id === p.id || (p.affiliate_id && a.partner_account_id === p.affiliate_id);
+          if (match) {
+            const amt = Number(a.bonus_amount) || 0;
+            if (a.status === 'ACHIEVED') bonuses_earned += amt;
+            else if (a.status === 'AWARDED' || a.status === 'PAID') bonuses_paid += amt;
+          }
+        });
+
+        const total_payable = Math.round((earned_commissions + bonuses_earned) * 100) / 100;
+        const total_paid = Math.round((paid_commissions + bonuses_paid) * 100) / 100;
+
+        summariesMap[p.id] = {
+          pending_commissions: 0,
+          earned_commissions: Math.round(earned_commissions * 100) / 100,
+          paid_commissions: total_paid,
+          bonuses_earned: Math.round(bonuses_earned * 100) / 100,
+          bonuses_paid: Math.round(bonuses_paid * 100) / 100,
+          total_payable,
+          currency: 'SAR',
+        };
+      });
+
+      return summariesMap;
+    } catch (fallbackErr) {
+      console.error('[LoyaltyService] getAllPartnerFinancialSummaries fallback error:', fallbackErr);
+      return {};
+    }
+  },
+
 
   // 1.1 جلب ملخص المتاجر المجمّع للـ Super Admin في طلب خادم فائق السرعة Server-First
   async getSuperAdminStoresSummary(forceFresh: boolean = true): Promise<{
@@ -1128,91 +1221,116 @@ export const LoyaltyService = {
       return demoStore;
     }
 
-    const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
+    // 1. فحص كاش الذاكرة اللحظي (0ms Instant Memory Cache)
+    if (!forceFresh) {
+      const cached = storeResolutionCache.get(cleanLower) || storeResolutionCache.get(clean);
+      if (cached && (Date.now() - cached.timestamp < STORE_RESOLUTION_TTL) && cached.store) {
+        return cached.store;
+      }
 
-    // 1. استعلام Supabase مباشر ومفهرس سريع كمصدر أساسي للحقيقة (Fast Single Source of Truth)
-    const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        let storeQuery = supabase.from('stores').select(await storeCols(supabase));
-        if (isUUID(clean)) {
-          storeQuery = storeQuery.eq('id', clean);
-        } else {
-          storeQuery = storeQuery.eq('slug', cleanLower);
-        }
-
-        let { data, error } = await storeQuery.maybeSingle();
-
-        // بحث بديل مرن بالاسم أو الـ slug أو الدومين المخصص إن لم يتطابق الـ slug بدقة
-        if (!data && !isUUID(clean)) {
-          const rootSlug = cleanLower.replace(/[iy]$/, '');
-          const fallbackRes = await supabase
-            .from('stores')
-            .select(await storeCols(supabase))
-            .or(`slug.ilike.%${rootSlug}%,name.ilike.%${clean}%,custom_domain.ilike.%${clean}%`)
-            .limit(1)
-            .maybeSingle();
-          if (fallbackRes.data) data = fallbackRes.data;
-        }
-
-        if (!error && data && data.id) {
-          const resolved = normalizeStore(await attachStoreAssets(supabase, data)) as Store;
-
-          storeResolutionCache.set(cleanLower, { store: resolved, timestamp: Date.now() });
-          storeResolutionCache.set(resolved.id.toLowerCase(), { store: resolved, timestamp: Date.now() });
-          if (resolved.slug) storeResolutionCache.set(resolved.slug.toLowerCase(), { store: resolved, timestamp: Date.now() });
-          if (resolved.custom_domain) storeResolutionCache.set(resolved.custom_domain.toLowerCase(), { store: resolved, timestamp: Date.now() });
-
-          // تحديث الكاش المحلي
-          const existingIdx = localStores.findIndex((s) => s.id === resolved.id);
-          if (existingIdx !== -1) {
-            localStores[existingIdx] = resolved;
-          } else {
-            localStores.unshift(resolved);
-          }
-          saveLocalData(STORAGE_KEYS.LOCAL_STORES, localStores);
-          return resolved;
-        }
-      } catch (e) {
-        console.warn('Supabase resolveStore failed', e);
+      // 2. فحص الطلبات أثناء الطيران لمنع تكرار الاتصال المتزامن (In-Flight Request Coalescing)
+      const pending = storeResolutionInFlight.get(cleanLower) || storeResolutionInFlight.get(clean);
+      if (pending) {
+        return await pending;
       }
     }
 
-    const stores = await this.getAllStores();
-    const found = (
-      stores.find(
-        (s) =>
-          s &&
-          (s.id === clean ||
-            (s.slug && s.slug.toLowerCase() === cleanLower) ||
-            (s.custom_domain && s.custom_domain.toLowerCase() === cleanLower) ||
-            (s.slug && s.slug.toLowerCase().replace(/[-_]/g, '') === cleanLower.replace(/[-_]/g, '')))
-      ) || null
-    );
+    const resolutionPromise = (async () => {
+      try {
+        const localStores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, []);
 
-    if (found) {
-      const normalizedFound = normalizeStore(found);
-      storeResolutionCache.set(cleanLower, { store: normalizedFound, timestamp: Date.now() });
-      if (normalizedFound.slug) storeResolutionCache.set(normalizedFound.slug.toLowerCase(), { store: normalizedFound, timestamp: Date.now() });
-      if (normalizedFound.custom_domain) storeResolutionCache.set(normalizedFound.custom_domain.toLowerCase(), { store: normalizedFound, timestamp: Date.now() });
-      return normalizedFound;
-    }
+        // 3. استعلام Supabase مباشر ومفهرس سريع كمصدر أساسي للحقيقة (Fast Single Source of Truth)
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          try {
+            let storeQuery = supabase.from('stores').select(await storeCols(supabase));
+            if (isUUID(clean)) {
+              storeQuery = storeQuery.eq('id', clean);
+            } else {
+              storeQuery = storeQuery.eq('slug', cleanLower);
+            }
 
-    // فحص المتاجر النموذجية والتجريبية (Demo & Sandbox Stores)
-    const demoFound = INITIAL_STORES.find(
-      (s) =>
-        s &&
-        (s.id === clean ||
-          s.slug?.toLowerCase() === clean.toLowerCase() ||
-          s.slug?.toLowerCase().replace(/[-_]/g, '') === clean.toLowerCase().replace(/[-_]/g, ''))
-    );
-    if (demoFound) {
-      const normalizedDemo = normalizeStore(demoFound);
-      storeResolutionCache.set(clean.toLowerCase(), { store: normalizedDemo, timestamp: Date.now() });
-      return normalizedDemo;
-    }
+            let { data, error } = await storeQuery.maybeSingle();
 
-    return null;
+            // بحث بديل مرن بالاسم أو الـ slug أو الدومين المخصص إن لم يتطابق الـ slug بدقة
+            if (!data && !isUUID(clean)) {
+              const rootSlug = cleanLower.replace(/[iy]$/, '');
+              const fallbackRes = await supabase
+                .from('stores')
+                .select(await storeCols(supabase))
+                .or(`slug.ilike.%${rootSlug}%,name.ilike.%${clean}%,custom_domain.ilike.%${clean}%`)
+                .limit(1)
+                .maybeSingle();
+              if (fallbackRes.data) data = fallbackRes.data;
+            }
+
+            if (!error && data && data.id) {
+              const resolved = normalizeStore(await attachStoreAssets(supabase, data)) as Store;
+
+              storeResolutionCache.set(cleanLower, { store: resolved, timestamp: Date.now() });
+              storeResolutionCache.set(resolved.id.toLowerCase(), { store: resolved, timestamp: Date.now() });
+              if (resolved.slug) storeResolutionCache.set(resolved.slug.toLowerCase(), { store: resolved, timestamp: Date.now() });
+              if (resolved.custom_domain) storeResolutionCache.set(resolved.custom_domain.toLowerCase(), { store: resolved, timestamp: Date.now() });
+
+              // تحديث الكاش المحلي
+              const existingIdx = localStores.findIndex((s) => s.id === resolved.id);
+              if (existingIdx !== -1) {
+                localStores[existingIdx] = resolved;
+              } else {
+                localStores.unshift(resolved);
+              }
+              saveLocalData(STORAGE_KEYS.LOCAL_STORES, localStores);
+              return resolved;
+            }
+          } catch (e) {
+            console.warn('Supabase resolveStore failed', e);
+          }
+        }
+
+        const stores = await this.getAllStores();
+        const found = (
+          stores.find(
+            (s) =>
+              s &&
+              (s.id === clean ||
+                (s.slug && s.slug.toLowerCase() === cleanLower) ||
+                (s.custom_domain && s.custom_domain.toLowerCase() === cleanLower) ||
+                (s.slug && s.slug.toLowerCase().replace(/[-_]/g, '') === cleanLower.replace(/[-_]/g, '')))
+          ) || null
+        );
+
+        if (found) {
+          const normalizedFound = normalizeStore(found);
+          storeResolutionCache.set(cleanLower, { store: normalizedFound, timestamp: Date.now() });
+          if (normalizedFound.slug) storeResolutionCache.set(normalizedFound.slug.toLowerCase(), { store: normalizedFound, timestamp: Date.now() });
+          if (normalizedFound.custom_domain) storeResolutionCache.set(normalizedFound.custom_domain.toLowerCase(), { store: normalizedFound, timestamp: Date.now() });
+          return normalizedFound;
+        }
+
+        // فحص المتاجر النموذجية والتجريبية (Demo & Sandbox Stores)
+        const demoFound = INITIAL_STORES.find(
+          (s) =>
+            s &&
+            (s.id === clean ||
+              s.slug?.toLowerCase() === clean.toLowerCase() ||
+              s.slug?.toLowerCase().replace(/[-_]/g, '') === clean.toLowerCase().replace(/[-_]/g, ''))
+        );
+        if (demoFound) {
+          const normalizedDemo = normalizeStore(demoFound);
+          storeResolutionCache.set(clean.toLowerCase(), { store: normalizedDemo, timestamp: Date.now() });
+          return normalizedDemo;
+        }
+
+        return null;
+      } finally {
+        storeResolutionInFlight.delete(cleanLower);
+        storeResolutionInFlight.delete(clean);
+      }
+    })();
+
+    storeResolutionInFlight.set(cleanLower, resolutionPromise);
+    storeResolutionInFlight.set(clean, resolutionPromise);
+    return await resolutionPromise;
   },
 
   // 2.1 جلب متجر محدد بالـ Slug

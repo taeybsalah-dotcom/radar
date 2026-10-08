@@ -566,10 +566,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     }).catch(() => {});
 
     try {
-      const [s, c, a, t, staff, p, cpn, wallet, invs, subInfo, cat, specs, cats, mods, bks] = await Promise.all([
+      // 🚀 المرحلة 1: التحميل الفوري للوحة التحكم الأساسية (Core Dashboard Tier)
+      const [s, c, t, staff, p, cpn, wallet, invs, subInfo] = await Promise.all([
         LoyaltyService.resolveStore(currentStore.id),
         LoyaltyService.getAllCustomers(currentStore.id),
-        LoyaltyService.getAuditLogs(currentStore.id),
         LoyaltyService.getTiers(currentStore.id),
         LoyaltyService.getStoreStaff(currentStore.id),
         LoyaltyService.getPrivileges(currentStore.id),
@@ -577,18 +577,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         LoyaltyService.getStoreWallet(currentStore.id),
         LoyaltyService.getStoreInvoices(currentStore.id),
         LoyaltyService.checkAndUpdateStoreSubscription(currentStore.id),
-        LoyaltyService.getCatalogItems(currentStore.id),
-        LoyaltyService.getStoreSpecialists(currentStore.id),
-        LoyaltyService.getGlobalCategories(currentStore.id),
-        LoyaltyService.getGlobalModifierGroups(currentStore.id),
-        LoyaltyService.getStoreBookings(currentStore.id),
       ]);
       const activeStore = normalizeStore(s || currentStore);
       setStore(activeStore);
-      setSpecialists(specs || []);
-      setGlobalCategories(cats || []);
-      setGlobalModifierGroups(mods || []);
-      setBookings(bks || []);
       setStoreName(activeStore.name || '');
       setStoreSlug(activeStore.slug || '');
       setCustomDomain(activeStore.custom_domain || '');
@@ -612,9 +603,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setDeliveryFee(activeStore.fulfillment_settings.delivery_fee ?? 15);
         setAllowServiceBooking(activeStore.fulfillment_settings.allow_service_booking ?? true);
       }
-      setCatalogItems(cat || []);
       setCustomers(c);
-      setAuditLogs(a);
       setTiers(t.sort((t1, t2) => t1.required_xp - t2.required_xp));
       setStaffList(staff);
       setPrivileges(p);
@@ -628,6 +617,28 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setMetaWabaId(wallet.meta_waba_id || '');
         setMetaAccessToken(wallet.meta_access_token || '');
       }
+
+      // إيقاف شاشة التحميل فوراً ليتمكن التاجر من استخدام المنصة فوراً
+      setLoading(false);
+
+      // 🔄 المرحلة 2: التحميل المتأخر الذكي في الخلفية بدون تجميد الشاشة (Background / Deferred Tier)
+      Promise.all([
+        LoyaltyService.getAuditLogs(currentStore.id),
+        LoyaltyService.getCatalogItems(currentStore.id),
+        LoyaltyService.getStoreSpecialists(currentStore.id),
+        LoyaltyService.getGlobalCategories(currentStore.id),
+        LoyaltyService.getGlobalModifierGroups(currentStore.id),
+        LoyaltyService.getStoreBookings(currentStore.id),
+      ]).then(([a, cat, specs, cats, mods, bks]) => {
+        setAuditLogs(a || []);
+        setCatalogItems(cat || []);
+        setSpecialists(specs || []);
+        setGlobalCategories(cats || []);
+        setGlobalModifierGroups(mods || []);
+        setBookings(bks || []);
+      }).catch((deferredErr) => {
+        console.warn('[StoreAdmin] Deferred load warning:', deferredErr);
+      });
     } catch (e) {
       console.error(e);
     } finally {
