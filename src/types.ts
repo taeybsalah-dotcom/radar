@@ -150,22 +150,12 @@ export function resolveUnifiedStage(
     it.status === 'UNDER_REVIEW' ||
     it.lifecycle_stage === 'تحت المراجعة';
 
-  const hasPaidPlan = Boolean(
-    (effectiveObj.subscription_plan_id &&
-      effectiveObj.subscription_plan_id !== 'trial' &&
-      effectiveObj.subscription_plan_id !== 'plan-trial') ||
-    (it.subscription_plan_id &&
-      it.subscription_plan_id !== 'trial' &&
-      it.subscription_plan_id !== 'plan-trial')
-  );
-
   const hasPaidProof = Boolean(
     hasCommissionOrLedgerProof ||
       effectiveObj.has_paid_invoice === true ||
-      effectiveObj.latest_paid_invoice ||
+      Boolean(effectiveObj.latest_paid_invoice) ||
       it.has_paid_invoice === true ||
-      it.has_commission === true ||
-      (effectiveObj.setup_fee_paid === true && effectiveObj.subscription_status === 'active' && hasPaidPlan)
+      it.has_commission === true
   );
 
   const isExplicitTrial =
@@ -330,6 +320,8 @@ export interface Store {
   subscription_start_date?: string;
   subscription_end_date?: string; // تاريخ انتهاء الاشتراك الشهري
   setup_fee_paid?: boolean; // هل تم سداد رسوم التأسيس (500 ريال) لمرة واحدة؟
+  has_paid_invoice?: boolean; // هل يملك المتجر فاتورة مسددة فعلياً؟
+  latest_paid_invoice?: StoreInvoice | null; // آخر فاتورة مسددة للمتجر
   renewal_amount?: number; // قيمة التجديد الشهري (195 ريال)
   payment_gateway?: 'moyasar' | 'tap' | 'sandbox';
   gateway_customer_id?: string;

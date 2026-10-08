@@ -328,19 +328,18 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
     setSaving(true);
     setErrorMsg(null);
     try {
-      // حماية الحالة النشطة والمدفوعة من التراجع إلى تجريبي (trial)
-      const isAlreadyActive =
-        store.status === 'active' ||
-        store.setup_fee_paid === true ||
-        initialStore.status === 'active' ||
-        initialStore.setup_fee_paid === true;
+      // التحقق الصارم مما إذا كان المتجر مسدداً فعلياً
+      const isAlreadyPaid = Boolean(
+        store.has_paid_invoice ||
+        initialStore.has_paid_invoice
+      );
 
       await LoyaltyService.updateStoreSettings(initialStore.id, {
-        status: isAlreadyActive ? 'active' : 'trial',
-        setup_fee_paid: isAlreadyActive ? true : (store.setup_fee_paid ?? initialStore.setup_fee_paid ?? false),
+        status: isAlreadyPaid ? 'active' : (store.status || 'trial'),
+        setup_fee_paid: isAlreadyPaid,
       });
 
-      if (isAlreadyActive) {
+      if (isAlreadyPaid) {
         initialStore.status = 'active';
         initialStore.setup_fee_paid = true;
       }

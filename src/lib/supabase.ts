@@ -367,25 +367,13 @@ export function normalizeStore(s: any): Store {
   } catch {}
 
   // 2. التحقق الحتمي من حالة الاشتراك المدفوع (Paid Active)
-  // لا يمكن للمتجر أن يعامل كتجربة إذا سدد رسوم التأسيس (setup_fee_paid === true) أو كان اشتراكه مفعلاً
+  // لا يعتبر المتجر مشتركاً مدفوعاً إلا إذا وُجدت فاتورة مسددة فعلياً أو عمولة معتمدة
   const isSuspended = s.status === 'suspended' || s.subscription_status === 'suspended';
-  const hasPaidPlan = Boolean(
-    s.subscription_plan_id &&
-      s.subscription_plan_id !== 'trial' &&
-      s.subscription_plan_id !== 'plan-trial'
-  );
-  const hasPaidProof = Boolean(
-    hasPaidInvoice ||
-      hasCommissionProof ||
-      hasPaidPlan ||
-      (s.setup_fee_paid === true &&
-        (s.lifecycle_stage === 'مشترك مدفوع' || s.status === 'مشترك مدفوع' || s.status === 'PAID_ACTIVE'))
-  );
+  const hasPaidProof = Boolean(hasPaidInvoice || hasCommissionProof);
 
   const isExplicitTrial =
     s.status === 'trial' ||
     s.subscription_status === 'trial' ||
-    s.setup_fee_paid === false ||
     !hasPaidProof;
   const isPaid = !isSuspended && !isExplicitTrial && hasPaidProof;
 
@@ -506,9 +494,9 @@ export function normalizeStore(s: any): Store {
 
   return {
     ...s,
-    setup_fee_paid: isPaid || s.setup_fee_paid === true,
-    status: isSuspended ? 'suspended' : isPaid ? 'active' : (s.status || 'trial'),
-    subscription_status: isSuspended ? 'suspended' : isPaid ? 'active' : (s.subscription_status || 'trial'),
+    setup_fee_paid: isPaid,
+    status: isSuspended ? 'suspended' : (s.status || 'active'),
+    subscription_status: isSuspended ? 'suspended' : isPaid ? 'active' : 'trial',
     lifecycle_stage: finalStage,
     subscription_plan: isPaid
       ? (computedPlanName && computedPlanName !== 'trial' && computedPlanName !== 'فترة تجربة مجانية (14 يوم)' ? computedPlanName : 'الباقة الأساسية')
@@ -544,7 +532,7 @@ export function normalizeLead(l: any): MerchantLead {
   let effectiveStage = l.lifecycle_stage;
 
   // فحص ما إذا كان المتجر المرتبط مسدداً أو لديه عمولة معتمدة
-  let hasPaidStoreOrComm = effectiveStage === 'مشترك مدفوع';
+  let hasPaidStoreOrComm = false;
   let mStore: any = null;
   if (!hasPaidStoreOrComm && typeof window !== 'undefined') {
     try {
@@ -560,10 +548,7 @@ export function normalizeLead(l: any): MerchantLead {
           );
           if (
             mStore &&
-            (
-              (mStore.setup_fee_paid === true && mStore.subscription_status === 'active') ||
-              mStore.has_paid_invoice === true
-            ) &&
+            (mStore.has_paid_invoice === true || mStore.latest_paid_invoice) &&
             mStore.subscription_status !== 'trial'
           ) {
             hasPaidStoreOrComm = true;
@@ -6037,11 +6022,8 @@ export const LoyaltyService = {
     const store = storeOverride || stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
 
     const isPaidActive = Boolean(
-      store.setup_fee_paid === true ||
-        store.subscription_status === 'active' ||
-        store.status === 'active' ||
-        (store as any).status === 'مشترك مدفوع' ||
-        (store as any).lifecycle_stage === 'مشترك مدفوع'
+      (store.has_paid_invoice === true || store.latest_paid_invoice) &&
+      store.subscription_status === 'active'
     );
 
     const supabase = getSupabaseClient();
@@ -7612,19 +7594,10 @@ export const LoyaltyService = {
           (c.store_id && (c.store_id === norm.converted_store_id || (matchingStore && c.store_id === matchingStore.id))) ||
           (c.merchant_name && norm.store_name && c.merchant_name.trim().toLowerCase() === norm.store_name.trim().toLowerCase())
       );
-      const hasEarnedComm = matchComm && (matchComm.status === 'EARNED' || matchComm.status === 'AVAILABLE' || matchComm.status === 'PAID');
-      const isPaidStore = Boolean(
-        hasEarnedComm ||
-        (
-          matchingStore &&
-          matchingStore.setup_fee_paid === true &&
-          matchingStore.subscription_status === 'active'
-        )
-      );
-      const isTrialStore = Boolean(
-        matchingStore &&
-        (matchingStore.subscription_status === 'trial' || matchingStore.setup_fee_paid === false)
-      );
+      const hasEarnedComm = Boolean(matchComm && (matchComm.status === 'EARNED' || matchComm.status === 'AVAILABLE' || matchComm.status === 'PAID'));
+      const hasPaidInv = Boolean(matchingStore && (matchingStore.has_paid_invoice === true || (matchingStore as any).latest_paid_invoice));
+      const isPaidStore = Boolean(hasEarnedComm || hasPaidInv);
+      const isTrialStore = !isPaidStore;
 
       if (matchingStore || hasEarnedComm || norm.converted_store_id) {
         return {

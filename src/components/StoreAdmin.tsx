@@ -391,8 +391,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const stageInfo = resolveUnifiedStage(store);
   const isPaidActive = Boolean(
     stageInfo.isPaidActive ||
-      unifiedStage === 'مشترك مدفوع' ||
-      (store.subscription_plan_id && store.subscription_plan_id !== 'trial' && store.setup_fee_paid === true)
+      unifiedStage === 'مشترك مدفوع'
   );
 
   const isStoreSuspended =

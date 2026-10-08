@@ -51,71 +51,13 @@ import {
 } from 'lucide-react';
 
 export function getLeadStatusArabic(status?: string, lead?: any): { label: string; colorClass: string; key: string } {
-  const store = lead?.store || lead?.stores;
-  const storeSubStatus = store?.subscription_status || lead?.subscription_status;
-  const storeSetupFeePaid = store?.setup_fee_paid ?? lead?.setup_fee_paid;
-  const storeStatus = store?.status || lead?.store_status;
-  const storeLifecycle = store?.lifecycle_stage || lead?.lifecycle_stage;
-  const hasPaidInvoice = Boolean(lead?.has_paid_invoice || store?.has_paid_invoice);
-  const hasCommission = Boolean(lead?.has_commission || lead?.has_earned_commission);
-
-  const isStoreConverted = Boolean(lead?.converted_store_id || lead?.status === 'CONVERTED' || store?.id);
-
-  // 1. المشترك المدفوع: يشترط صراحة أن يكون المتجر نشطاً وله فاتورة مسددة أو عمولة مكتسبة، وألا يكون في فترة تجريبية
-  const isTrulyPaid = Boolean(
-    isStoreConverted &&
-    (hasPaidInvoice || hasCommission || (storeSetupFeePaid === true && storeSubStatus === 'active')) &&
-    storeSubStatus !== 'trial' &&
-    storeStatus === 'active'
-  );
-
-  if (isTrulyPaid) {
-    return {
-      key: 'PAID_ACTIVE',
-      label: 'مشترك مدفوع 👑',
-      colorClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm font-bold',
-    };
-  }
-
-  // 2. تحت المراجعة أو معلق
-  if (storeStatus === 'suspended' || storeSubStatus === 'suspended' || storeLifecycle === 'تحت المراجعة' || status === 'UNDER_REVIEW') {
-    return {
-      key: 'UNDER_REVIEW',
-      label: 'تحت المراجعة ⏳',
-      colorClass: 'bg-purple-500/15 text-purple-300 border-purple-500/30 font-bold',
-    };
-  }
-
-  // 3. متجر تم تحويله وتأسيسه ولكنه لم يسدد بعد (فترة تجريبية أو تم التأسيس)
-  if (isStoreConverted) {
-    if (storeSubStatus === 'trial' || storeLifecycle === 'فترة تجريبية' || storeSetupFeePaid === false || !hasPaidInvoice) {
-      return {
-        key: 'TRIAL',
-        label: 'فترة تجريبية ⏳',
-        colorClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30 font-bold',
-      };
-    }
-    return {
-      key: 'SETUP_COMPLETE',
-      label: 'تم التأسيس 🚀',
-      colorClass: 'bg-teal-500/15 text-teal-300 border-teal-500/30 font-bold',
-    };
-  }
-
-  // 4. جاري التأسيس
-  if (status === 'CONVERTING' || status === 'IN_SETUP' || storeLifecycle === 'جاري التأسيس') {
-    return {
-      key: 'IN_SETUP',
-      label: 'جاري التأسيس ⚙️',
-      colorClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30 font-bold',
-    };
-  }
-
-  // 5. الافتراضي: طلب جديد
+  const target = lead || { status };
+  const stage = resolveUnifiedStage(target);
+  const labelWithIcon = stage.label === 'مشترك مدفوع' ? 'مشترك مدفوع 👑' : `${stage.label} ${stage.icon}`;
   return {
-    key: 'NEW',
-    label: 'طلب جديد 🆕',
-    colorClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30 font-bold',
+    key: stage.key,
+    label: labelWithIcon,
+    colorClass: `${stage.badgeClass} font-bold`,
   };
 }
 
@@ -525,21 +467,23 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                 (d.converted_store_id && paidStoresSet.has(d.converted_store_id)) ||
                 paidLeadsSet.has(d.id)
               );
+              const hasComm = Boolean(
+                paidLeadsSet.has(d.id) ||
+                (d.converted_store_id && paidStoresSet.has(d.converted_store_id))
+              );
 
-              const subStatus = realStore?.subscription_status || baseLead.subscription_status;
-              const isTrial = subStatus === 'trial' || realStore?.setup_fee_paid === false || !hasPaidInv;
+              const subStatus = realStore?.subscription_status || baseLead.subscription_status || 'trial';
+              const isTrulyPaid = Boolean((hasPaidInv || hasComm) && subStatus !== 'trial');
 
               return {
                 ...baseLead,
                 store: realStore,
-                subscription_status: subStatus,
-                setup_fee_paid: realStore ? realStore.setup_fee_paid : baseLead.setup_fee_paid,
+                subscription_status: isTrulyPaid ? 'active' : subStatus,
+                setup_fee_paid: isTrulyPaid,
                 store_status: realStore?.status || baseLead.status,
                 has_paid_invoice: hasPaidInv,
-                has_commission: paidLeadsSet.has(d.id) || (d.converted_store_id && paidStoresSet.has(d.converted_store_id)),
-                lifecycle_stage: (hasPaidInv && realStore?.status === 'active' && !isTrial)
-                  ? 'مشترك مدفوع'
-                  : (isTrial ? 'فترة تجريبية' : baseLead.lifecycle_stage),
+                has_commission: hasComm,
+                lifecycle_stage: isTrulyPaid ? 'مشترك مدفوع' : (subStatus === 'trial' ? 'فترة تجريبية' : baseLead.lifecycle_stage),
               };
             });
 
