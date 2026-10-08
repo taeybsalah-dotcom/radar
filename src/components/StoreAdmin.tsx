@@ -747,16 +747,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         planId: sandboxPaymentConfig.planId,
       });
 
+      if (!res.success) {
+        throw new Error(res.error || 'فشلت معالجة عملية السداد في السيرفر');
+      }
+
       // 1. مزامنة الحالة المعتمدة مباشرة بالسطر المؤكد من قاعدة البيانات
-      setStore(res.store);
+      if (res.store) {
+        setStore(res.store);
+      }
       setSandboxPaymentConfig(null);
-      setPaymentSuccessModal(res.invoice);
+      if (res.invoice) {
+        setPaymentSuccessModal(res.invoice);
+      }
 
       // 2. تحديث مؤشرات الاشتراك استناداً للسجل المؤكد
-      const sub = await LoyaltyService.checkAndUpdateStoreSubscription(res.store.id, res.store);
+      const targetStore = res.store || store;
+      const sub = await LoyaltyService.checkAndUpdateStoreSubscription(targetStore.id, targetStore);
       setSubscriptionInfo(sub);
 
-      const invs = await LoyaltyService.getStoreInvoices(res.store.id);
+      const invs = await LoyaltyService.getStoreInvoices(targetStore.id);
       setInvoices(invs);
 
       // 3. إعادة تحميل البيانات الشاملة من قاعدة البيانات للتحقق التام

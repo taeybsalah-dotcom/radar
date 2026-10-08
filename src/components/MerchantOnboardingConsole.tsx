@@ -295,13 +295,28 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
         paymentMethod: details.paymentMethod,
         gateway: 'sandbox',
       });
-      setStore((prev) => ({ ...prev, ...res.store }));
+
+      if (!res.success) {
+        throw new Error(res.error || 'فشلت معالجة عملية السداد في السيرفر');
+      }
+
+      // تحديث الحالة على الكائن المحلي لمنع الرجوع لـ trial
+      initialStore.setup_fee_paid = true;
+      initialStore.status = 'active';
+      if (res.store) {
+        Object.assign(initialStore, res.store);
+        setStore((prev) => ({ ...prev, ...res.store, setup_fee_paid: true, status: 'active' }));
+      } else {
+        setStore((prev) => ({ ...prev, setup_fee_paid: true, status: 'active' }));
+      }
+
       setIsSandboxModalOpen(false);
       setSuccessMsg('🎉 تم سداد رسوم التأسيس وتفعيل المتجر واشتراك الشهر الأول بنجاح!');
       await fetchOnboardingState();
       setCurrentStep('REVIEW');
     } catch (err: any) {
       console.error('Onboarding payment failed:', err);
+      setErrorMsg(err?.message || 'حدث خطأ أثناء معالجة عملية الدفع');
       throw err;
     } finally {
       setSaving(false);
@@ -313,9 +328,23 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
     setSaving(true);
     setErrorMsg(null);
     try {
+      // حماية الحالة النشطة والمدفوعة من التراجع إلى تجريبي (trial)
+      const isAlreadyActive =
+        store.status === 'active' ||
+        store.setup_fee_paid === true ||
+        initialStore.status === 'active' ||
+        initialStore.setup_fee_paid === true;
+
       await LoyaltyService.updateStoreSettings(initialStore.id, {
-        status: initialStore.status === 'active' ? 'active' : 'trial',
+        status: isAlreadyActive ? 'active' : 'trial',
+        setup_fee_paid: isAlreadyActive ? true : (store.setup_fee_paid ?? initialStore.setup_fee_paid ?? false),
       });
+
+      if (isAlreadyActive) {
+        initialStore.status = 'active';
+        initialStore.setup_fee_paid = true;
+      }
+
       localStorage.removeItem(`radar_onboarding_step_${initialStore.id}`);
       setStatus('COMPLETED');
       setSuccessMsg('تهانينا! اكتملت تهيئة المتجر بنجاح.');

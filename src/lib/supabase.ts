@@ -5289,7 +5289,7 @@ export const LoyaltyService = {
     gateway?: 'moyasar' | 'tap' | 'sandbox';
     gatewayPaymentId?: string;
     planId?: string;
-  }): Promise<{ success: boolean; invoice: StoreInvoice; store: Store; ledgerEntry?: FinancialLedgerEntry }> {
+  }): Promise<{ success: boolean; invoice?: StoreInvoice; store?: Store; ledgerEntry?: FinancialLedgerEntry; error?: string }> {
     const paymentMethod = payload.paymentMethod || 'mada';
     const gateway = payload.gateway || 'moyasar';
     const gatewayPaymentId = payload.gatewayPaymentId || `pay_${gateway}_${Date.now()}`;
@@ -5347,8 +5347,32 @@ export const LoyaltyService = {
           p_gateway_fee: breakdown.gatewayFee,
         });
 
-        if (!atomicErr && atomicRes && atomicRes.success) {
-          const freshStore = await this.resolveStore(payload.storeId, true) || currentStore;
+        if (atomicErr) {
+          console.error('[processSubscriptionPayment] Atomic RPC error:', atomicErr);
+          return {
+            success: false,
+            error: atomicErr.message || 'فشلت معالجة عملية السداد في السيرفر (RPC Error)',
+            store: currentStore,
+          };
+        }
+
+        if (atomicRes && !atomicRes.success) {
+          console.error('[processSubscriptionPayment] Atomic RPC returned error:', atomicRes);
+          return {
+            success: false,
+            error: atomicRes.error || atomicRes.message || 'فشلت معالجة عملية السداد في السيرفر',
+            store: currentStore,
+          };
+        }
+
+        if (atomicRes && atomicRes.success) {
+          const freshStore = (await this.resolveStore(payload.storeId, true)) || {
+            ...currentStore,
+            status: 'active',
+            subscription_status: 'active',
+            subscription_active: true,
+            setup_fee_paid: true,
+          };
           const serverInvoice: StoreInvoice = {
             id: atomicRes.invoice_id || ('inv-' + Date.now()),
             store_id: payload.storeId,
@@ -5407,15 +5431,24 @@ export const LoyaltyService = {
             store: freshStore,
             ledgerEntry: atomicLedgerEntry,
           };
-        } else if (atomicErr) {
-          console.warn('[processSubscriptionPayment] Atomic RPC warning:', atomicErr);
         }
-      } catch (atomicExc) {
-        console.warn('[processSubscriptionPayment] Atomic RPC exception, using fallback:', atomicExc);
+
+        return {
+          success: false,
+          error: 'لم تتم استعادة نتيجة مؤكدة من المعاملة الذرية بالسيرفر',
+          store: currentStore,
+        };
+      } catch (atomicExc: any) {
+        console.error('[processSubscriptionPayment] Atomic RPC exception:', atomicExc);
+        return {
+          success: false,
+          error: atomicExc?.message || 'حدث استثناء أثناء معالجة الدفع بالسيرفر',
+          store: currentStore,
+        };
       }
     }
 
-    // احتياط التنفيذ المباشر الآمن إذا لم تتوفر الدالة الذرية بالسيرفر
+    // احتياط التنفيذ المباشر للوضع المحلي دون سيرفر (Offline / Mock Store Testing)
     const invoiceNum = `INV-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
       now.getDate()
     ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
@@ -5447,27 +5480,26 @@ export const LoyaltyService = {
       created_at: now.toISOString(),
     };
 
-    if (supabase && isUUID(payload.storeId)) {
-      try {
-        await supabase.from('store_invoices').insert([createdInvoice]);
-        await supabase.from('stores').update({
-          status: 'active',
-          subscription_status: 'active',
-          subscription_active: true,
-          setup_fee_paid: true,
-          subscription_end_date: nextEndIso,
-          updated_at: now.toISOString(),
-        }).eq('id', payload.storeId);
-      } catch (dbErr) {
-        console.warn('Fallback store_invoices insert error:', dbErr);
-      }
+    const updatedMockStore: Store = {
+      ...currentStore,
+      status: 'active',
+      subscription_status: 'active',
+      subscription_active: true,
+      setup_fee_paid: true,
+      subscription_end_date: nextEndIso,
+      updated_at: now.toISOString(),
+    };
+
+    if (storeIdx !== -1) {
+      stores[storeIdx] = updatedMockStore;
+      saveLocalData(STORAGE_KEYS.LOCAL_STORES, stores);
     }
 
     const ledgerEntry = await this.recordFinancialLedgerEntry({
       transaction_id: `tx_${gatewayPaymentId}`,
       invoice_id: invoiceNum,
       store_id: payload.storeId,
-      store_name: currentStore.name,
+      store_name: updatedMockStore.name,
       payment_id: gatewayPaymentId,
       transaction_type: 'PAYMENT',
       gross_amount: breakdown.grossAmount,
@@ -5494,7 +5526,7 @@ export const LoyaltyService = {
     return {
       success: true,
       invoice: createdInvoice,
-      store: currentStore,
+      store: updatedMockStore,
       ledgerEntry,
     };
   },
@@ -9025,7 +9057,7 @@ export const LoyaltyService = {
     storeId: string,
     plan: BillingPlan,
     paymentMethod: string = 'mada'
-  ): Promise<{ success: boolean; store: Store; invoice: StoreInvoice; prorated: ProratedUpgradeCalculation }> {
+  ): Promise<{ success: boolean; store?: Store; invoice?: StoreInvoice; prorated: ProratedUpgradeCalculation; error?: string }> {
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const store = stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
     const allPlans = await this.getAllSubscriptionPlans();
@@ -9044,9 +9076,10 @@ export const LoyaltyService = {
 
     return {
       success: paymentResult.success,
-      store: paymentResult.store,
+      store: paymentResult.store || store,
       invoice: paymentResult.invoice,
       prorated,
+      error: paymentResult.error,
     };
   },
 };
