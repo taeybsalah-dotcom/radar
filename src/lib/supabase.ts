@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '../types/database.types';
 import {
   Customer,
   Store,
@@ -181,15 +182,15 @@ export function clearSupabaseCredentials() {
   localStorage.removeItem(STORAGE_KEYS.ANON_KEY);
 }
 
-let supabaseInstance: SupabaseClient | null = null;
+let supabaseInstance: SupabaseClient<Database> | null = null;
 
-export function getSupabaseClient(): SupabaseClient | null {
+export function getSupabaseClient(): SupabaseClient<Database> | null {
   const { url, anonKey, isConfigured } = getSupabaseCredentials();
   if (!isConfigured) return null;
   if (!supabaseInstance) {
     try {
-      supabaseInstance = createClient(url, anonKey);
-      LoyaltyEvents.initRealtime(supabaseInstance);
+      supabaseInstance = createClient<Database>(url, anonKey);
+      LoyaltyEvents.initRealtime(supabaseInstance as any);
     } catch (e) {
       console.error('Failed to initialize Supabase client:', e);
       return null;
@@ -714,7 +715,7 @@ function probeCols(supabase: any, table: string, full: string, safe: string): Pr
   if (!p) {
     p = (async () => {
       try {
-        const r: any = await supabase.from(table).select(full).limit(0);
+        const r: any = await (supabase.from as any)(table).select(full).limit(0);
         if (!r.error) return full as unknown as '*';
         if (!/column|42703|PGRST204/i.test(String(r.error.code || '') + String(r.error.message || ''))) {
           colProbeCache.delete(table); // transient error — retry next time
@@ -1403,7 +1404,7 @@ export const LoyaltyService = {
 
         for (const tbl of childTables) {
           try {
-            await supabase.from(tbl).delete().eq('store_id', resolvedId);
+            await (supabase.from as any)(tbl).delete().eq('store_id', resolvedId);
           } catch (err) {
             console.warn(`Failed to delete from ${tbl}`, err);
           }
@@ -1472,7 +1473,7 @@ export const LoyaltyService = {
         ];
         for (const tbl of childTables) {
           try {
-            await supabase.from(tbl).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+            await (supabase.from as any)(tbl).delete().neq('id', '00000000-0000-0000-0000-000000000000');
           } catch {}
         }
         await supabase.from('stores').delete().neq('id', '00000000-0000-0000-0000-000000000000');
@@ -1552,9 +1553,9 @@ export const LoyaltyService = {
         const nowIso = new Date().toISOString();
         const trialEndIso = new Date(Date.now() + 14 * 86400000).toISOString();
 
-        if (!error && data && data.success) {
-          createdStore = data.store as Store;
-          createdManager = data.manager as StoreStaff;
+        if (!error && data && (data as any).success) {
+          createdStore = (data as any).store as unknown as Store;
+          createdManager = (data as any).manager as unknown as StoreStaff;
         } else {
           console.warn('RPC create_store_concierge_onboarding failed, trying direct table insert', error);
           const { data: storeData, error: sErr } = await supabase
@@ -1580,7 +1581,7 @@ export const LoyaltyService = {
             .single();
 
           if (!sErr && storeData) {
-            createdStore = storeData as Store;
+            createdStore = storeData as unknown as Store;
             const { data: staffData } = await supabase
               .from('store_staff')
               .insert([
@@ -1597,7 +1598,7 @@ export const LoyaltyService = {
               .select()
               .single();
 
-            createdManager = staffData as StoreStaff;
+            createdManager = staffData as unknown as StoreStaff;
 
             // Default Tiers
             await supabase.from('tiers').insert([
@@ -1633,7 +1634,7 @@ export const LoyaltyService = {
                   setup_fee_paid: false,
                   subscription_plan_id: null,
                   subscription_start_date: null,
-                  subscription_end_date: null,
+                  subscription_end_date: createdStore.trial_end_date || trialEndIso,
                   trial_start_date: createdStore.trial_start_date || nowIso,
                   trial_end_date: createdStore.trial_end_date || trialEndIso,
                 })
@@ -2117,10 +2118,10 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('store_staff')
-          .insert([staffData])
+          .insert([staffData as any])
           .select()
           .single();
-        if (!error && data) createdStaff = data as StoreStaff;
+        if (!error && data) createdStaff = data as unknown as StoreStaff;
       } catch (e) {
         console.warn('Supabase addStoreStaff failed', e);
       }
@@ -2283,8 +2284,9 @@ export const LoyaltyService = {
         });
 
         if (!error && data) {
-          if (data.success && data.staff) {
-            const returnedStaff = data.staff;
+          const res = data as any;
+          if (res.success && res.staff) {
+            const returnedStaff = res.staff;
             return {
               success: true,
               staff: {
@@ -2301,8 +2303,8 @@ export const LoyaltyService = {
           } else {
             return {
               success: false,
-              error: data.error || 'INVALID_CREDENTIALS',
-              message: data.message || 'رقم الجوال أو الرمز السري (PIN) غير صحيح',
+              error: res.error || 'INVALID_CREDENTIALS',
+              message: res.message || 'رقم الجوال أو الرمز السري (PIN) غير صحيح',
             };
           }
         }
@@ -2575,14 +2577,14 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('tiers')
-          .insert([tierData])
+          .insert([tierData as any])
           .select()
           .single();
         if (!error && data) {
           const tiers = getLocalData<Tier[]>(STORAGE_KEYS.LOCAL_TIERS, INITIAL_TIERS);
-          tiers.push(data as Tier);
+          tiers.push(data as unknown as Tier);
           saveLocalData(STORAGE_KEYS.LOCAL_TIERS, tiers);
-          result = data as Tier;
+          result = data as unknown as Tier;
           LoyaltyEvents.emit({ type: 'TIERS_UPDATED', storeId: tierData.store_id });
           return result;
         }
@@ -2609,7 +2611,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('tiers')
-          .update(updates)
+          .update(updates as any)
           .eq('id', tierId)
           .select()
           .single();
@@ -2700,11 +2702,11 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('privileges')
-          .insert([stripDataUrls({ ...privilegeData })])
+          .insert([stripDataUrls({ ...privilegeData }) as any])
           .select(`${await privilegeCols(supabase)}, tiers(tier_name)` as unknown as '*')
           .single();
         if (!error && data) {
-          result = { ...data, tier_name: (data as any).tiers?.tier_name } as Privilege;
+          result = { ...data, tier_name: (data as any).tiers?.tier_name } as unknown as Privilege;
           const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
           privs.unshift(result);
           saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, privs);
@@ -2735,12 +2737,12 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('privileges')
-          .update(stripDataUrls({ ...updates }))
+          .update(stripDataUrls({ ...updates }) as any)
           .eq('id', privilegeId)
           .select(`${await privilegeCols(supabase)}, tiers(tier_name)` as unknown as '*')
           .single();
         if (!error && data) {
-          const updated = { ...data, tier_name: (data as any).tiers?.tier_name } as Privilege;
+          const updated = { ...data, tier_name: (data as any).tiers?.tier_name } as unknown as Privilege;
           const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
           const idx = privs.findIndex((p) => p.id === privilegeId);
           if (idx !== -1) {
@@ -3030,14 +3032,14 @@ export const LoyaltyService = {
             last_visit_date: custRes.data.last_visit_date
               ? custRes.data.last_visit_date.split('T')[0]
               : new Date().toISOString().split('T')[0],
-            is_active: custRes.data.is_active !== undefined ? custRes.data.is_active : true,
-            visits_count: custRes.data.visits_count || 1,
+            is_active: (custRes.data as any).is_active !== undefined ? (custRes.data as any).is_active : true,
+            visits_count: (custRes.data as any).visits_count || 1,
             created_at: custRes.data.created_at,
           };
         }
 
         if (!privRes.error && privRes.data) {
-          privilege = privRes.data as Privilege;
+          privilege = privRes.data as unknown as Privilege;
         }
 
         userPurchasedCount = quotaRes.count || 0;
@@ -4116,8 +4118,8 @@ export const LoyaltyService = {
             last_visit_date: data.last_visit_date
               ? data.last_visit_date.split('T')[0]
               : new Date().toISOString().split('T')[0],
-            is_active: data.is_active !== undefined ? data.is_active : true,
-            visits_count: data.visits_count || 1,
+            is_active: (data as any).is_active !== undefined ? (data as any).is_active : true,
+            visits_count: (data as any).visits_count || 1,
             created_at: data.created_at,
           };
         }
@@ -4495,7 +4497,7 @@ export const LoyaltyService = {
               name: insertedData.name || globalName,
               wallet_balance: Number(insertedData.wallet_balance) || 0,
               lifetime_xp: Number(insertedData.lifetime_xp) || 0,
-              last_visit_date: insertedData.last_visit_date,
+              last_visit_date: insertedData.last_visit_date || new Date().toISOString(),
               is_active: true,
               visits_count: 1,
               created_at: insertedData.created_at,
@@ -4808,7 +4810,7 @@ export const LoyaltyService = {
         const { data, error } = await supabase.rpc('get_all_store_invoices_batch');
         if (!error && data && typeof data === 'object') {
           saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, data);
-          return data as Record<string, StoreInvoice[]>;
+          return data as unknown as Record<string, StoreInvoice[]>;
         }
       } catch (e) {
         console.warn('[getAllInvoices] RPC get_all_store_invoices_batch error, trying direct query:', e);
@@ -4824,7 +4826,7 @@ export const LoyaltyService = {
           for (const inv of invRows) {
             const sId = inv.store_id;
             if (!map[sId]) map[sId] = [];
-            map[sId].push(inv);
+            map[sId].push(inv as unknown as StoreInvoice);
           }
           saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, map);
           return map;
@@ -5407,7 +5409,7 @@ export const LoyaltyService = {
           const serverInvoice: StoreInvoice = {
             id: atomicRes.invoice_id || ('inv-' + Date.now()),
             store_id: payload.storeId,
-            invoice_number: atomicRes.invoice_number,
+            invoice_number: atomicRes.invoice_number || ('INV-' + Date.now()),
             invoice_type: payload.invoiceType,
             amount: payload.amount,
             vat_amount: atomicRes.vat_amount ?? breakdown.vatAmount,
@@ -5586,17 +5588,23 @@ export const LoyaltyService = {
         });
 
         if (!rpcErr && rpcRes && rpcRes.success) {
+          const grossRef = Number(rpcRes.gross_refund_amount) || 0;
+          const vatRef = Number(rpcRes.vat_refund_amount) || 0;
+          const netRef = Number(rpcRes.net_refund_amount) || 0;
+          const clawback = Number(rpcRes.clawback_commission) || 0;
+          const cnNum = rpcRes.credit_note_number || ('CN-' + Date.now());
+
           const creditNote: CreditNote = {
             id: rpcRes.credit_note_id || ('cn-' + Date.now()),
-            credit_note_number: rpcRes.credit_note_number,
+            credit_note_number: cnNum,
             original_invoice_id: payload.invoiceId,
             original_invoice_number: rpcRes.invoice_number || payload.invoiceId,
             store_id: rpcRes.store_id || payload.storeId,
             store_name: payload.storeId,
-            gross_refund_amount: rpcRes.gross_refund_amount,
-            vat_refund_amount: rpcRes.vat_refund_amount,
-            net_refund_amount: rpcRes.net_refund_amount,
-            clawback_commission: rpcRes.clawback_commission,
+            gross_refund_amount: grossRef,
+            vat_refund_amount: vatRef,
+            net_refund_amount: netRef,
+            clawback_commission: clawback,
             reason: payload.reason,
             status: 'ISSUED',
             issued_by: payload.adminUser || 'SUPER_ADMIN',
@@ -5607,15 +5615,15 @@ export const LoyaltyService = {
 
           const ledgerEntry: FinancialLedgerEntry = {
             id: rpcRes.ledger_id || ('ledg-' + Date.now()),
-            transaction_id: `tx_cn_${rpcRes.credit_note_number}`,
+            transaction_id: `tx_cn_${cnNum}`,
             invoice_id: rpcRes.invoice_number || payload.invoiceId,
             store_id: rpcRes.store_id || payload.storeId,
             transaction_type: 'REFUND',
-            gross_amount: -rpcRes.gross_refund_amount,
-            vat_amount: -rpcRes.vat_refund_amount,
+            gross_amount: -grossRef,
+            vat_amount: -vatRef,
             gateway_fee: 0,
-            affiliate_commission: -rpcRes.clawback_commission,
-            net_platform_amount: -(rpcRes.gross_refund_amount - rpcRes.vat_refund_amount - rpcRes.clawback_commission),
+            affiliate_commission: -clawback,
+            net_platform_amount: -(grossRef - vatRef - clawback),
             status: 'SETTLED',
             refund_of: rpcRes.invoice_number || payload.invoiceId,
             created_by: payload.adminUser || 'SUPER_ADMIN',
@@ -5737,7 +5745,7 @@ export const LoyaltyService = {
 
     if (supabase) {
       try {
-        await supabase.from('credit_notes').insert([creditNote]);
+        await supabase.from('credit_notes').insert([creditNote as any]);
         await supabase.from('store_invoices').update({ status: 'refunded' }).eq('id', targetInvoice.id);
         await supabase.from('stores').update({ setup_fee_paid: false, subscription_status: 'trial', status: 'trial' }).eq('id', foundStoreId);
       } catch (err) {
@@ -5858,7 +5866,7 @@ export const LoyaltyService = {
           .order('issued_at', { ascending: false });
         if (!error && data && data.length > 0) {
           saveLocalData(STORAGE_KEYS.LOCAL_CREDIT_NOTES, data);
-          return data as CreditNote[];
+          return data as unknown as CreditNote[];
         }
       } catch (err) {
         console.warn('[getAllCreditNotes] Supabase credit_notes query warning:', err);
@@ -6058,9 +6066,9 @@ export const LoyaltyService = {
 
           return {
             status: statusFinal,
-            daysLeft: Number(data.days_left),
-            subscriptionEndDate: data.subscription_end_date,
-            trialEndDate: data.trial_end_date,
+            daysLeft: Number(data.days_left || 0),
+            subscriptionEndDate: data.subscription_end_date || store.subscription_end_date || new Date().toISOString(),
+            trialEndDate: data.trial_end_date || store.trial_end_date || new Date().toISOString(),
             isSuspended: isSuspendedFinal,
             requiresSetup: !isPaidActive,
             requiresRenewal: Boolean(data.requires_renewal),
@@ -6407,14 +6415,14 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase.from('catalog_items').insert([stripDataUrls({ ...newItem })]).select().single();
+        const { data, error } = await supabase.from('catalog_items').insert([stripDataUrls({ ...newItem }) as any]).select().single();
         if (!error && data) {
           // مزامنة محلياً أيضاً
           const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
-          localList.unshift(data);
+          localList.unshift(data as unknown as CatalogItem);
           saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, localList);
           LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: item.store_id });
-          return data;
+          return data as unknown as CatalogItem;
         }
       } catch (e) {
         console.warn('Supabase addCatalogItem fallback to local', e);
@@ -6442,9 +6450,9 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase.from('catalog_items').update(stripDataUrls({ ...updates })).eq('id', id).select().single();
+        const { data, error } = await supabase.from('catalog_items').update(stripDataUrls({ ...updates }) as any).eq('id', id).select().single();
         if (!error && data) {
-          updatedItem = data;
+          updatedItem = data as unknown as CatalogItem;
         }
       } catch (e) {
         console.warn('Supabase updateCatalogItem fallback', e);
@@ -6593,13 +6601,13 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data: created, error } = await supabase.from('store_specialists').insert([stripDataUrls({ ...newSpec })]).select().single();
+        const { data: created, error } = await supabase.from('store_specialists').insert([stripDataUrls({ ...newSpec }) as any]).select().single();
         if (!error && created) {
           const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
-          list.unshift(created);
+          list.unshift(created as unknown as StoreSpecialist);
           saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, list);
           LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: data.store_id });
-          return created;
+          return created as unknown as StoreSpecialist;
         }
       } catch (e) {
         console.warn('Supabase addStoreSpecialist fallback', e);
@@ -6627,8 +6635,8 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data: remoteUpdated } = await supabase.from('store_specialists').update(stripDataUrls({ ...updates })).eq('id', id).select().single();
-        if (remoteUpdated) updatedSpec = remoteUpdated;
+        const { data: remoteUpdated } = await supabase.from('store_specialists').update(stripDataUrls({ ...updates }) as any).eq('id', id).select().single();
+        if (remoteUpdated) updatedSpec = remoteUpdated as unknown as StoreSpecialist;
       } catch (e) {
         console.warn('Supabase updateStoreSpecialist fallback', e);
       }
@@ -6788,12 +6796,12 @@ export const LoyaltyService = {
       try {
         const { data: created } = await supabase
           .from('service_bookings')
-          .insert([newBooking])
+          .insert([newBooking as any])
           .select()
           .single();
         if (created) {
           const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
-          list.unshift(created);
+          list.unshift(created as unknown as ServiceBooking);
           saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, list);
         }
       } catch (e) {
@@ -6875,7 +6883,7 @@ export const LoyaltyService = {
           .eq('id', bookingId)
           .select()
           .single();
-        if (remoteUpdated) updatedBooking = remoteUpdated;
+        if (remoteUpdated) updatedBooking = remoteUpdated as unknown as ServiceBooking;
       } catch (e) {
         console.warn('Supabase updateServiceBookingStatus fallback', e);
       }
@@ -7908,7 +7916,7 @@ export const LoyaltyService = {
       try {
         if (!store) {
           const { data: dbStore } = await supabase.from('stores').select('*').eq('id', storeId).maybeSingle();
-          if (dbStore) store = dbStore;
+          if (dbStore) store = dbStore as unknown as Store;
         }
         if (!lead) {
           const storePhoneNorm = store ? normalizePhone(store.manager_contact || '') : '';
@@ -7917,7 +7925,7 @@ export const LoyaltyService = {
             .select('*')
             .or(`converted_store_id.eq.${storeId}${store?.manager_contact ? `,phone.eq.${store.manager_contact}` : ''}${storePhoneNorm ? `,normalized_phone.eq.${storePhoneNorm}` : ''}`);
           if (dbLeads && dbLeads.length > 0) {
-            lead = dbLeads.find((l: any) => l.converted_store_id === storeId) || dbLeads[0];
+            lead = normalizeLead(dbLeads.find((l: any) => l.converted_store_id === storeId) || dbLeads[0]);
           }
         }
       } catch (dbErr) {
@@ -7946,7 +7954,7 @@ export const LoyaltyService = {
           partner = dbPa.find((p: any) =>
             (leadAffId && (p.id === leadAffId || p.affiliate_id === leadAffId)) ||
             (leadRef && (p.slug?.toLowerCase() === leadRef || p.referral_code?.toLowerCase() === leadRef))
-          );
+          ) as unknown as PartnerAccount;
         }
       } catch (paErr) {
         console.warn('Fallback partner lookup error:', paErr);
@@ -8011,7 +8019,7 @@ export const LoyaltyService = {
         }
 
         // إرسال الحقول المعرفة فقط في مخطط الجدول بالسيرفر منعاً لأخطاء PGRST204
-        const dbCommPayload: Record<string, any> = {
+        const dbCommPayload: Database['public']['Tables']['partner_commissions']['Insert'] = {
           id: commId,
           partner_account_id: partner.id,
           merchant_lead_id: (lead?.id && isUUID(lead.id)) ? lead.id : null,
@@ -8623,7 +8631,7 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const updateObj: Record<string, any> = {
+        const updateObj: Database['public']['Tables']['partner_accounts']['Update'] = {
           commission_rate: cleanRate,
         };
         if (cleanRecurringRate !== undefined) {
@@ -8938,7 +8946,7 @@ export const LoyaltyService = {
             amount: Number(data.amount) || 0,
             currency: data.currency || 'ر.س',
             duration_months: durationMonths,
-            billing_interval: data.billing_interval,
+            billing_interval: (data.billing_interval as 'MONTHLY' | 'YEARLY' | 'CUSTOM') || 'MONTHLY',
             trial_days: Number(data.trial_days) ?? 7,
             features: planData.features || [],
             active: data.active !== false,
