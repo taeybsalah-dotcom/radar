@@ -630,7 +630,7 @@ let storesListCache: { data: Store[]; timestamp: number } | null = null;
 let partnersListCache: { data: any[]; timestamp: number } | null = null;
 let leadsListCache: { data: MerchantLead[]; timestamp: number } | null = null;
 let ledgerListCache: { data: FinancialLedgerEntry[]; timestamp: number } | null = null;
-const SERVICE_CACHE_TTL = 300000; // 5 min TTL — cut Supabase egress (stores rows carry large image payloads)
+const SERVICE_CACHE_TTL = 0; // ⚡ Server-First / No-Store Policy: All dashboards, commissions, and users fetch directly from backend
 
 export const invalidateAdminStoresCache = () => {
   adminStoresSummaryCache = null;
@@ -656,6 +656,24 @@ export const invalidateAllServiceCaches = () => {
   leadsListCache = null;
   ledgerListCache = null;
 };
+
+// 🔄 ربط الإلغاء الفوري التلقائي للكاش مع أي حدث نظام لحظي (Auto-Invalidate on Any Event)
+try {
+  if (typeof window !== 'undefined') {
+    LoyaltyEvents.listen((event) => {
+      if (
+        event.type === 'STORE_UPDATED' ||
+        event.type === 'SUBSCRIPTION_UPDATED' ||
+        event.type === 'PAYMENT_COMPLETED' ||
+        event.type === 'LEAD_UPDATED' ||
+        event.type === 'PARTNER_UPDATED' ||
+        event.type === 'STAFF_UPDATED'
+      ) {
+        invalidateAllServiceCaches();
+      }
+    });
+  }
+} catch {}
 
 // ==============================================================================
 // 🛡️ EGRESS GUARD — explicit column lists (never select('*') on heavy tables)
@@ -790,8 +808,8 @@ const couponImageCache = new Map<string, string>(); // privilege_id -> image (lo
 const couponImagesLoaded = new Set<string>();
 
 export const LoyaltyService = {
-  // 1. جلب جميع المتاجر (من Supabase مباشرة مع كاش محلي فائق السرعة)
-  async getAllStores(forceFresh: boolean = false): Promise<Store[]> {
+  // 1. جلب جميع المتاجر (من Supabase مباشرة Server-First)
+  async getAllStores(forceFresh: boolean = true): Promise<Store[]> {
     if (!forceFresh && storesListCache && (Date.now() - storesListCache.timestamp < SERVICE_CACHE_TTL)) {
       return storesListCache.data;
     }
@@ -806,7 +824,7 @@ export const LoyaltyService = {
             .from('stores')
             .select(await storeCols(supabase))
             .order('created_at', { ascending: false }),
-          2000
+          3500
         );
         if (!error && Array.isArray(data)) {
           const validStores = data.filter((s: any) => Boolean(s && s.id)).map((dbStore: any) => {
@@ -830,8 +848,8 @@ export const LoyaltyService = {
     return [];
   },
 
-  // 1.1 جلب ملخص المتاجر المجمّع للـ Super Admin في طلب خادم فائق السرعة وبدون بطء
-  async getSuperAdminStoresSummary(forceFresh: boolean = false): Promise<{
+  // 1.1 جلب ملخص المتاجر المجمّع للـ Super Admin في طلب خادم فائق السرعة Server-First
+  async getSuperAdminStoresSummary(forceFresh: boolean = true): Promise<{
     stores: Store[];
     analytics: Record<string, { customerCount: number; totalSales: number; totalPoints: number; staffCount: number }>;
   }> {
@@ -4630,12 +4648,12 @@ export const LoyaltyService = {
     };
   },
 
-  // جلب السجل المالي العام غير القابل للتعديل (Master Financial Ledger مع كاش فائق السرعة)
+  // جلب السجل المالي العام غير القابل للتعديل (Master Financial Ledger - Server-First)
   async getFinancialLedger(filters?: {
     type?: string;
     storeId?: string;
     affiliateId?: string;
-  }, forceFresh: boolean = false): Promise<FinancialLedgerEntry[]> {
+  }, forceFresh: boolean = true): Promise<FinancialLedgerEntry[]> {
     const isDefaultQuery = !filters || (!filters.type || filters.type === 'ALL') && !filters.storeId && !filters.affiliateId;
     if (!forceFresh && isDefaultQuery && ledgerListCache && (Date.now() - ledgerListCache.timestamp < SERVICE_CACHE_TTL)) {
       return ledgerListCache.data;
@@ -4659,7 +4677,7 @@ export const LoyaltyService = {
           query = query.eq('affiliate_id', filters.affiliateId);
         }
 
-        const { data, error } = await withTimeout(query, 1500);
+        const { data, error } = await withTimeout(query, 3500);
         if (!error && data && data.length > 0) {
           const formatted: FinancialLedgerEntry[] = data.map((d: any) => ({
             id: d.id,
@@ -4940,6 +4958,7 @@ export const LoyaltyService = {
     }
 
     LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: newRecord.store_id || 'global' });
+    invalidateAllServiceCaches();
     return newRecord;
   },
 
@@ -5297,6 +5316,8 @@ export const LoyaltyService = {
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
     LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: payload.storeId });
+
+    invalidateAllServiceCaches();
 
     return {
       success: true,
@@ -6678,7 +6699,7 @@ export const LoyaltyService = {
     return `https://wa.me/${intlPhone}?text=${encoded}`;
   },
 
-  async getAllPartners(forceFresh: boolean = false): Promise<any[]> {
+  async getAllPartners(forceFresh: boolean = true): Promise<any[]> {
     if (!forceFresh && partnersListCache && (Date.now() - partnersListCache.timestamp < SERVICE_CACHE_TTL)) {
       return partnersListCache.data;
     }
@@ -7249,9 +7270,9 @@ export const LoyaltyService = {
   },
 
   // ==============================================================================
-  // 📋 إدارة طلبات انضمام التجار (Merchant Leads Management)
+  // 📋 إدارة طلبات انضمام التجار (Merchant Leads Management - Server-First)
   // ==============================================================================
-  async getAllLeads(forceFresh: boolean = false): Promise<MerchantLead[]> {
+  async getAllLeads(forceFresh: boolean = true): Promise<MerchantLead[]> {
     if (!forceFresh && leadsListCache && (Date.now() - leadsListCache.timestamp < SERVICE_CACHE_TTL)) {
       return leadsListCache.data;
     }
@@ -7516,6 +7537,7 @@ export const LoyaltyService = {
     LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: storeId || 'global' });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: storeId || 'global' });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: storeId || 'global' });
+    invalidateAllServiceCaches();
 
     return { success: true };
   },
@@ -7691,6 +7713,7 @@ export const LoyaltyService = {
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+    invalidateAllServiceCaches();
 
     return { success: true, unlockedCommissionsCount: 1 };
   },
@@ -8218,8 +8241,7 @@ export const LoyaltyService = {
     const localPayouts = getLocalData<AffiliatePayoutRecord[]>(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, []);
     saveLocalData(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, [payoutRecord, ...localPayouts.filter((p) => p.id !== payoutRecord.id)]);
 
-    invalidatePartnersCache();
-    invalidateLedgerCache();
+    invalidateAllServiceCaches();
     LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
 
