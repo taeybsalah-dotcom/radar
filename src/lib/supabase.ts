@@ -4735,14 +4735,22 @@ export const LoyaltyService = {
           if (s.setup_fee_paid === true || s.status === 'active' || s.subscription_status === 'active') {
             const hasEntry = combined.some((l) => l.store_id === s.id);
             if (!hasEntry) {
-              const matchComm = dbComms.find((c: any) => c.store_id === s.id);
-              const matchLead = dbLeads.find((l: any) => l.converted_store_id === s.id || l.phone === s.manager_contact);
-              const matchPa = matchComm ? dbPas.find((p: any) => p.id === matchComm.partner_account_id) : null;
+              const matchComm = dbComms.find((c: any) => c.store_id === s.id && (c.commission_type === 'STORE_ACQUISITION' || c.commission_type === 'STORE_CONVERSION'));
+              const matchLead = dbLeads.find((l: any) => l.converted_store_id === s.id || (s.manager_contact && l.phone === s.manager_contact));
+              let matchPa = matchComm ? dbPas.find((p: any) => p.id === matchComm.partner_account_id) : null;
+              if (!matchPa && matchLead) {
+                const leadAffId = matchLead.affiliate_id;
+                const leadRef = (matchLead.referral_code || '').trim().toLowerCase();
+                matchPa = dbPas.find((p: any) =>
+                  (leadAffId && (p.id === leadAffId || p.affiliate_id === leadAffId)) ||
+                  (leadRef && (p.slug?.toLowerCase() === leadRef || p.referral_code?.toLowerCase() === leadRef))
+                );
+              }
 
-              const gross = Number(s.renewal_amount) || 690;
+              const gross = matchComm ? Number(matchComm.basis_amount) : (Number(s.renewal_amount) || 690);
               const commAmt = matchComm
                 ? Number(matchComm.commission_amount)
-                : (matchLead ? Math.round(gross * 0.20 * 100) / 100 : 0);
+                : (matchPa ? Math.round(gross * (matchPa.acquisition_commission_rate ?? matchPa.commission_rate ?? 0.20) * 100) / 100 : 0);
               const gatewayFee = Math.round((gross * 0.01 + 1) * 100) / 100;
               const netPlatform = Math.round((gross - gatewayFee - commAmt) * 100) / 100;
 
@@ -4754,7 +4762,7 @@ export const LoyaltyService = {
                 store_id: s.id,
                 store_name: s.name,
                 affiliate_id: matchPa?.id || matchComm?.partner_account_id || null,
-                affiliate_name: matchPa?.display_name || 'محمد سعيد',
+                affiliate_name: matchPa?.display_name || (matchComm?.partner_account_id ? 'شريك رادار' : null),
                 payment_id: 'pay_' + shortId,
                 transaction_type: 'PAYMENT',
                 gross_amount: gross,
@@ -4769,7 +4777,7 @@ export const LoyaltyService = {
                 metadata: {
                   payment_method: 'mada',
                   gateway: 'sandbox',
-                  plan_name: s.subscription_plan || 'الباقة الأساسية',
+                  plan_name: s.subscription_plan || (gross >= 1800 ? 'الباقة الاحترافية' : 'الباقة الأساسية'),
                   notes: `عملية سداد اشتراك متجر ${s.name} المعتمدة بالسيرفر`,
                 },
               });
@@ -4801,7 +4809,7 @@ export const LoyaltyService = {
                 store_id: c.store_id,
                 store_name: matchStore?.name || 'متجر معتمد',
                 affiliate_id: c.partner_account_id,
-                affiliate_name: matchPa?.display_name || 'محمد سعيد',
+                affiliate_name: matchPa?.display_name || (c.partner_account_id ? 'شريك رادار' : null),
                 payment_id: 'pay_' + commShort,
                 transaction_type: 'PAYMENT',
                 gross_amount: gross,
@@ -5022,32 +5030,72 @@ export const LoyaltyService = {
     const isFirstAcquisition = payload.invoiceType === 'setup' || !currentStore.setup_fee_paid;
     let commissionType: 'STORE_ACQUISITION' | 'STORE_CONVERSION' | 'SUBSCRIPTION_RENEWAL' | 'SUBSCRIPTION_UPGRADE' | undefined = undefined;
 
-    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-    const matchingLead = allLeads.find((l) => l.converted_store_id === payload.storeId || l.store_name === currentStore.name);
-    if (matchingLead && matchingLead.referral_code) {
-      const partner = allPartners.find(
+    let matchingLead: any = null;
+    let partner: any = null;
+
+    // 🌐 استعلام مباشر وقاطع من Supabase أولاً لضمان جلب الشريك حتى لو كان المتصفح جديداً أو بدون كاش
+    if (supabase) {
+      try {
+        const storePhoneNorm = normalizePhone(currentStore.manager_contact || '');
+        const { data: dbLeads } = await supabase
+          .from('merchant_leads')
+          .select('*')
+          .or(`converted_store_id.eq.${payload.storeId},phone.eq.${currentStore.manager_contact || ''},normalized_phone.eq.${storePhoneNorm}`);
+
+        if (dbLeads && dbLeads.length > 0) {
+          matchingLead = dbLeads.find((l: any) => l.converted_store_id === payload.storeId) || dbLeads[0];
+        }
+
+        if (matchingLead) {
+          const leadRef = (matchingLead.referral_code || '').trim().toLowerCase();
+          const leadAffId = matchingLead.affiliate_id;
+
+          const { data: dbPartners } = await supabase
+            .from('partner_accounts')
+            .select('*');
+
+          if (dbPartners && dbPartners.length > 0) {
+            partner = dbPartners.find((p: any) =>
+              (leadAffId && (p.id === leadAffId || p.affiliate_id === leadAffId)) ||
+              (leadRef && (p.slug?.toLowerCase() === leadRef || p.referral_code?.toLowerCase() === leadRef))
+            );
+          }
+        }
+      } catch (dbLeadErr) {
+        console.warn('[processSubscriptionPayment] DB lead/partner lookup exception:', dbLeadErr);
+      }
+    }
+
+    // احتياط الذاكرة المحلية إذا لم تتوفر قاعدة البيانات
+    if (!matchingLead) {
+      const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+      matchingLead = allLeads.find((l) => l.converted_store_id === payload.storeId || l.store_name === currentStore.name);
+    }
+    if (!partner && matchingLead && matchingLead.referral_code) {
+      const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
+      partner = allPartners.find(
         (p) =>
           (p.referral_code || '').toLowerCase() === matchingLead.referral_code?.toLowerCase() ||
-          (p.slug || '').toLowerCase() === matchingLead.referral_code?.toLowerCase()
+          (p.slug || '').toLowerCase() === matchingLead.referral_code?.toLowerCase() ||
+          (matchingLead.affiliate_id && (p.id === matchingLead.affiliate_id || p.affiliate_id === matchingLead.affiliate_id))
       );
+    }
 
-      // 🛡️ فحص حتمي: إذا كان الشريك نشطاً (active !== false) تُحسب عمولته، وإذا كان موقوفاً لا تُصرف أي عمولة إطلاقاً (0%)
-      if (partner && partner.active !== false) {
-        partnerAccountId = partner.id;
-        partnerName = partner.display_name;
+    // 🛡️ فحص حتمي: إذا كان الشريك نشطاً (active !== false) تُحسب عمولته، وإذا كان موقوفاً لا تُصرف أي عمولة إطلاقاً (0%)
+    if (partner && partner.active !== false) {
+      partnerAccountId = partner.id;
+      partnerName = partner.display_name;
 
-        // تطبيق النسبة بحسب نوع العملية (اشتراك جديد لأول مرة vs تجديد متكرر)
-        if (isFirstAcquisition) {
-          commissionRate = partner.acquisition_commission_rate ?? partner.commission_rate ?? 0.20;
-          commissionType = 'STORE_ACQUISITION';
-        } else {
-          commissionRate = partner.recurring_commission_rate ?? 0.10;
-          commissionType = payload.invoiceType === 'upgrade' ? 'SUBSCRIPTION_UPGRADE' : 'SUBSCRIPTION_RENEWAL';
-        }
-      } else if (partner) {
-        console.warn(`[Commission] Partner ${partner.display_name} is suspended/inactive. No commission awarded.`);
+      // تطبيق النسبة بحسب نوع العملية (اشتراك جديد لأول مرة vs تجديد متكرر أو ترقية)
+      if (isFirstAcquisition) {
+        commissionRate = partner.acquisition_commission_rate ?? partner.commission_rate ?? 0.20;
+        commissionType = 'STORE_ACQUISITION';
+      } else {
+        commissionRate = partner.recurring_commission_rate ?? 0.10;
+        commissionType = payload.invoiceType === 'upgrade' ? 'SUBSCRIPTION_UPGRADE' : 'SUBSCRIPTION_RENEWAL';
       }
+    } else if (partner) {
+      console.warn(`[Commission] Partner ${partner.display_name} is suspended/inactive. No commission awarded.`);
     }
 
     // 3. حساب التفكيك المالي الدقيق والضريبة
@@ -7500,9 +7548,31 @@ export const LoyaltyService = {
     const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
     const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
-    const store = stores.find((s) => s.id === storeId || s.slug === storeId);
+    let store = stores.find((s) => s.id === storeId || s.slug === storeId);
     const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
-    const lead = allLeads.find((l) => l.converted_store_id === storeId || l.store_name === store?.name);
+    let lead = allLeads.find((l) => l.converted_store_id === storeId || l.store_name === store?.name);
+
+    // 🌐 استعلام مباشر وقاطع من Supabase أولاً لضمان جلب المتجر والطلب والشريك بدقة
+    if (supabase) {
+      try {
+        if (!store) {
+          const { data: dbStore } = await supabase.from('stores').select('*').eq('id', storeId).maybeSingle();
+          if (dbStore) store = dbStore;
+        }
+        if (!lead) {
+          const storePhoneNorm = store ? normalizePhone(store.manager_contact || '') : '';
+          const { data: dbLeads } = await supabase
+            .from('merchant_leads')
+            .select('*')
+            .or(`converted_store_id.eq.${storeId}${store?.manager_contact ? `,phone.eq.${store.manager_contact}` : ''}${storePhoneNorm ? `,normalized_phone.eq.${storePhoneNorm}` : ''}`);
+          if (dbLeads && dbLeads.length > 0) {
+            lead = dbLeads.find((l: any) => l.converted_store_id === storeId) || dbLeads[0];
+          }
+        }
+      } catch (dbErr) {
+        console.warn('[unlockPaidStoreCommission] DB lookup error:', dbErr);
+      }
+    }
 
     // البحث عن الشريك عبر كود الإحالة أو المعرف المباشر أو معرف المسوق
     const leadRef = (lead?.referral_code || '').toLowerCase().trim();
@@ -7518,15 +7588,13 @@ export const LoyaltyService = {
       );
     });
 
-    if (!partner && supabase) {
+    if (!partner && supabase && (leadAffId || leadRef)) {
       try {
         const { data: dbPa } = await supabase.from('partner_accounts').select('*');
         if (dbPa && dbPa.length > 0) {
           partner = dbPa.find((p: any) =>
-            p.id === leadAffId ||
-            p.affiliate_id === leadAffId ||
-            (p.slug && leadRef && p.slug.toLowerCase() === leadRef) ||
-            (p.referral_code && leadRef && p.referral_code.toLowerCase() === leadRef)
+            (leadAffId && (p.id === leadAffId || p.affiliate_id === leadAffId)) ||
+            (leadRef && (p.slug?.toLowerCase() === leadRef || p.referral_code?.toLowerCase() === leadRef))
           );
         }
       } catch (paErr) {

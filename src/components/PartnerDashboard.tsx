@@ -311,9 +311,11 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             LoyaltyService.getAllStores(),
           ]);
 
-          const partnerRef = (partner.affiliates?.referral_code || partner.referral_code || '').toLowerCase().trim();
+          const partnerRef = (partner.affiliates?.referral_code || partner.referral_code || partner.slug || '').toLowerCase().trim();
           const matchedLeads = allLeads.filter(
-            (l) => (l.referral_code || '').toLowerCase().trim() === partnerRef
+            (l) =>
+              (partnerRef && (l.referral_code || '').toLowerCase().trim() === partnerRef) ||
+              (l.affiliate_id && (l.affiliate_id === partner.id || l.affiliate_id === partner.affiliate_id))
           );
           const paidMerchants = matchedLeads.filter((l) => resolveUnifiedStage(l).isPaidActive);
           const paidCount = bonusData?.paidCount ?? paidMerchants.length;
@@ -370,7 +372,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
       try {
         const client = getSupabaseClient();
-        const refCode = partner.affiliates?.referral_code || partner.referral_code;
+        const refCode = partner.affiliates?.referral_code || partner.referral_code || partner.slug;
         
         if (client) {
           let query = client.from('merchant_leads').select('*', { count: 'exact' });
@@ -421,9 +423,11 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
         // Fallback: search local leads
         const allLocalLeads = await LoyaltyService.getAllLeads();
-        const partnerRef = (partner.affiliates?.referral_code || partner.referral_code || '').toLowerCase().trim();
+        const partnerRef = (partner.affiliates?.referral_code || partner.referral_code || partner.slug || '').toLowerCase().trim();
         let matched = allLocalLeads.filter(
-          (l) => (l.referral_code || '').toLowerCase().trim() === partnerRef
+          (l) =>
+            (partnerRef && (l.referral_code || '').toLowerCase().trim() === partnerRef) ||
+            (l.affiliate_id && (l.affiliate_id === partner.id || l.affiliate_id === partner.affiliate_id))
         );
         if (leadsStatusFilter && leadsStatusFilter !== 'ALL') {
           matched = matched.filter((l) => {
@@ -473,8 +477,12 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           LoyaltyService.getAllStores(),
         ]);
 
-        const partnerRef = (partner?.affiliates?.referral_code || partner?.referral_code || '').toLowerCase().trim();
-        const matched = allLeads.filter((l) => (l.referral_code || '').toLowerCase().trim() === partnerRef);
+        const partnerRef = (partner?.affiliates?.referral_code || partner?.referral_code || partner?.slug || '').toLowerCase().trim();
+        const matched = allLeads.filter(
+          (l) =>
+            (partnerRef && (l.referral_code || '').toLowerCase().trim() === partnerRef) ||
+            (l.affiliate_id && (l.affiliate_id === partner?.id || l.affiliate_id === partner?.affiliate_id))
+        );
         const paidMerchants = matched.filter((l) => resolveUnifiedStage(l).isPaidActive);
         const paidCount = bonusData?.paidCount ?? paidMerchants.length;
         const targetVal = partner?.target_value || 20;
