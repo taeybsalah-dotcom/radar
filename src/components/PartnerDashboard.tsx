@@ -376,14 +376,12 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
         
         if (client) {
           let query = client.from('merchant_leads').select('*', { count: 'exact' });
-          if (partner.affiliate_id && refCode) {
-            query = query.or(`affiliate_id.eq.${partner.affiliate_id},partner_id.eq.${partner.id},referral_code.eq.${refCode}`);
-          } else if (partner.affiliate_id) {
-            query = query.or(`affiliate_id.eq.${partner.affiliate_id},partner_id.eq.${partner.id}`);
-          } else if (refCode) {
-            query = query.or(`partner_id.eq.${partner.id},referral_code.eq.${refCode}`);
-          } else {
-            query = query.eq('partner_id', partner.id);
+          const conditions: string[] = [];
+          if (partner.id) conditions.push(`affiliate_id.eq.${partner.id}`);
+          if (partner.affiliate_id && partner.affiliate_id !== partner.id) conditions.push(`affiliate_id.eq.${partner.affiliate_id}`);
+          if (refCode) conditions.push(`referral_code.ilike.${refCode}`);
+          if (conditions.length > 0) {
+            query = query.or(conditions.join(','));
           }
 
           if (leadsSearch.trim()) {

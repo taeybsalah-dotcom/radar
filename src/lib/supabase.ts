@@ -1707,19 +1707,35 @@ export const LoyaltyService = {
     try {
       const allLeads = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
       const targetPhone = normalizePhone(payload.manager_contact);
-      const matchingLead = allLeads.find(
+      let matchingLead = allLeads.find(
         (l) =>
           (l.phone && normalizePhone(l.phone) === targetPhone) ||
           (l.store_name && l.store_name.trim().toLowerCase() === payload.name.trim().toLowerCase())
       );
+
+      const supabase = getSupabaseClient();
+      if (!matchingLead && supabase) {
+        try {
+          const { data: dbLeads } = await supabase
+            .from('merchant_leads')
+            .select('*')
+            .or(`phone.eq.${payload.manager_contact},normalized_phone.eq.${targetPhone},store_name.ilike.${payload.name.trim()}`)
+            .limit(1);
+          if (dbLeads && dbLeads.length > 0) {
+            matchingLead = normalizeLead(dbLeads[0]);
+          }
+        } catch (dbLeadErr) {
+          console.warn('[createStoreConcierge] db lead lookup warning:', dbLeadErr);
+        }
+      }
+
       if (matchingLead) {
         matchingLead.status = 'CONVERTED';
         matchingLead.converted_store_id = newStore.id;
         matchingLead.lifecycle_stage = 'تم التأسيس';
         matchingLead.updated_at = new Date().toISOString();
-        saveLocalData(STORAGE_KEYS.LOCAL_LEADS, allLeads);
+        saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [matchingLead, ...allLeads.filter((l) => l.id !== matchingLead!.id)]);
 
-        const supabase = getSupabaseClient();
         if (supabase) {
           Promise.resolve(
             supabase
@@ -7672,16 +7688,18 @@ export const LoyaltyService = {
         let affiliateId: string | null = null;
         if (refCode) {
           try {
-            const { data: aData } = await supabase
-              .from('affiliates')
-              .select('id')
-              .ilike('referral_code', refCode)
+            const { data: pData } = await supabase
+              .from('partner_accounts')
+              .select('id, affiliate_id')
+              .or(`referral_code.ilike.${refCode},slug.ilike.${refCode}`)
               .limit(1)
               .maybeSingle();
-            if (aData?.id) {
-              affiliateId = aData.id;
+            if (pData) {
+              affiliateId = pData.id || pData.affiliate_id;
             }
-          } catch {}
+          } catch (pErr) {
+            console.warn('[submitLead] Partner account lookup warning:', pErr);
+          }
         }
 
         const { data, error } = await supabase
@@ -7715,10 +7733,18 @@ export const LoyaltyService = {
           LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
           return { success: true, lead_id: data.id };
         } else if (error) {
-          console.warn('Supabase direct insert merchant_leads error details:', error);
+          console.error('Supabase direct insert merchant_leads error details:', error);
+          return {
+            success: false,
+            error: error.message || 'فشل حفظ طلب الانضمام في قاعدة البيانات',
+          };
         }
-      } catch (dbErr) {
-        console.warn('Supabase direct insert merchant_leads error:', dbErr);
+      } catch (dbErr: any) {
+        console.error('Supabase direct insert merchant_leads error:', dbErr);
+        return {
+          success: false,
+          error: dbErr?.message || 'حدث خطأ أثناء معالجة طلب الانضمام في السيرفر',
+        };
       }
     }
 
