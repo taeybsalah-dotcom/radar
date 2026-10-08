@@ -6006,12 +6006,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
             {/* ⏱️ شريط عداد الأيام المتبقية وحالة الاشتراك المباشرة */}
             {(() => {
-              const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 14 : (currentPaidPlan?.duration_months ? currentPaidPlan.duration_months * 30 : 30))));
+              const planTrialDays = Number(currentPaidPlan?.trial_days) || 0;
               const totalCycleDays = isTrial
                 ? 14
                 : currentPaidPlan
-                ? Math.max(1, (currentPaidPlan.duration_months || (currentPaidPlan.billing_interval === 'YEARLY' ? 12 : 1)) * 30)
+                ? Math.max(1, (currentPaidPlan.duration_months || (currentPaidPlan.billing_interval === 'YEARLY' ? 12 : 1)) * 30 + planTrialDays)
                 : 30;
+              const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 14 : totalCycleDays)));
               const progressPercent = Math.min(100, Math.max(0, Math.round((daysLeft / totalCycleDays) * 100)));
 
               return (

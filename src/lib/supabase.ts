@@ -647,7 +647,7 @@ export const invalidateAllServiceCaches = () => {
 // polling queries and fetched once per hour per client via attachStoreAssets().
 // ==============================================================================
 const STORE_SAFE_COLS =
-  'id, slug, name, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, setup_fee_paid, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, telegram_chat_id, telegram_notifications_enabled, created_at, updated_at';
+  'id, slug, name, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, setup_fee_paid, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, telegram_chat_id, telegram_notifications_enabled, trial_start_date, trial_end_date, subscription_plan_id, subscription_start_date, subscription_end_date, created_at, updated_at';
 const STORE_FULL_COLS = STORE_SAFE_COLS;
 const CUSTOMER_SAFE_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at';
 const CUSTOMER_FULL_COLS = CUSTOMER_SAFE_COLS;
@@ -4940,7 +4940,8 @@ export const LoyaltyService = {
       null;
 
     const planMonths = targetPlan?.duration_months ?? (targetPlan?.billing_interval === 'YEARLY' ? 12 : 1);
-    const durationDays = Math.max(1, planMonths * 30);
+    const planTrialDays = targetPlan?.trial_days ? Number(targetPlan.trial_days) : 0;
+    const durationDays = Math.max(1, planMonths * 30 + planTrialDays);
     const durationMs = durationDays * 86400000;
 
     const now = new Date();
@@ -5028,11 +5029,14 @@ export const LoyaltyService = {
       updated_at: now.toISOString(),
     };
 
-    const dbStorePayload = {
+    const dbStorePayload: Record<string, any> = {
       status: 'active',
       subscription_status: 'active',
       subscription_active: true,
       setup_fee_paid: true,
+      subscription_plan_id: targetPlan?.id || payload.planId || null,
+      subscription_start_date: currentStore.subscription_start_date || now.toISOString(),
+      subscription_end_date: nextEndIso,
       updated_at: now.toISOString(),
     };
 
