@@ -368,14 +368,19 @@ export function normalizeStore(s: any): Store {
 
   // 2. التحقق الحتمي من حالة الاشتراك المدفوع (Paid Active)
   // لا يعتبر المتجر مشتركاً مدفوعاً إلا إذا وُجدت فاتورة مسددة فعلياً أو عمولة معتمدة
+  // **تحديث**: إذا كانت قاعدة البيانات تقول بشكل صريح أنه نشط ومدفوع، نثق بها لأن الفواتير قد لا تكون محملة
+  const dbSaysIsPaid = s.subscription_status === 'active' && s.lifecycle_stage === 'مشترك مدفوع';
+  
   const isSuspended = s.status === 'suspended' || s.subscription_status === 'suspended';
-  const hasPaidProof = Boolean(hasPaidInvoice || hasCommissionProof);
+  const hasPaidProof = Boolean(hasPaidInvoice || hasCommissionProof || dbSaysIsPaid);
 
-  const isExplicitTrial =
+  const isExplicitTrial = !dbSaysIsPaid && (
     s.status === 'trial' ||
     s.subscription_status === 'trial' ||
-    !hasPaidProof;
+    !hasPaidProof
+  );
   const isPaid = !isSuspended && !isExplicitTrial && hasPaidProof;
+
 
   // 3. استرجاع المتجر المخزن محلياً للحفاظ على بيانات الباقة وتاريخ الصلاحية
   let localExistingStore: Store | null = null;
@@ -548,7 +553,7 @@ export function normalizeLead(l: any): MerchantLead {
           );
           if (
             mStore &&
-            (mStore.has_paid_invoice === true || mStore.latest_paid_invoice) &&
+            (mStore.has_paid_invoice === true || mStore.latest_paid_invoice || (mStore.subscription_status === 'active' && mStore.lifecycle_stage === 'مشترك مدفوع')) &&
             mStore.subscription_status !== 'trial'
           ) {
             hasPaidStoreOrComm = true;
@@ -575,7 +580,10 @@ export function normalizeLead(l: any): MerchantLead {
     } catch {}
   }
 
-  const isTrialStore = Boolean(
+  const dbSaysIsPaid = (mStore && mStore.subscription_status === 'active' && mStore.lifecycle_stage === 'مشترك مدفوع') ||
+                       (l.subscription_status === 'active' && l.lifecycle_stage === 'مشترك مدفوع');
+
+  const isTrialStore = !dbSaysIsPaid && Boolean(
     (mStore && (mStore.subscription_status === 'trial' || mStore.setup_fee_paid === false)) ||
     l.subscription_status === 'trial' ||
     l.setup_fee_paid === false ||

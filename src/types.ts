@@ -150,15 +150,19 @@ export function resolveUnifiedStage(
     it.status === 'UNDER_REVIEW' ||
     it.lifecycle_stage === 'تحت المراجعة';
 
+  const dbSaysIsPaid = (effectiveObj.subscription_status === 'active' && effectiveObj.lifecycle_stage === 'مشترك مدفوع') || 
+                       (it.subscription_status === 'active' && it.lifecycle_stage === 'مشترك مدفوع');
+
   const hasPaidProof = Boolean(
     hasCommissionOrLedgerProof ||
       effectiveObj.has_paid_invoice === true ||
       Boolean(effectiveObj.latest_paid_invoice) ||
       it.has_paid_invoice === true ||
-      it.has_commission === true
+      it.has_commission === true ||
+      dbSaysIsPaid
   );
 
-  const isExplicitTrial =
+  const isExplicitTrial = !dbSaysIsPaid && (
     effectiveObj.subscription_status === 'trial' ||
     effectiveObj.status === 'trial' ||
     effectiveObj.lifecycle_stage === 'فترة تجريبية' ||
@@ -167,7 +171,8 @@ export function resolveUnifiedStage(
     it.status === 'trial' ||
     it.lifecycle_stage === 'فترة تجريبية' ||
     it.setup_fee_paid === false ||
-    !hasPaidProof;
+    !hasPaidProof
+  );
 
   const isPaid = !isSuspended && !isExplicitTrial && hasPaidProof;
 
