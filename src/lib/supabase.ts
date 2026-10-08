@@ -368,19 +368,25 @@ export function normalizeStore(s: any): Store {
   // 2. التحقق الحتمي من حالة الاشتراك المدفوع (Paid Active)
   // لا يمكن للمتجر أن يعامل كتجربة إذا سدد رسوم التأسيس (setup_fee_paid === true) أو كان اشتراكه مفعلاً
   const isSuspended = s.status === 'suspended' || s.subscription_status === 'suspended';
+  const hasPaidPlan = Boolean(
+    s.subscription_plan_id &&
+      s.subscription_plan_id !== 'trial' &&
+      s.subscription_plan_id !== 'plan-trial'
+  );
   const hasPaidProof = Boolean(
     hasPaidInvoice ||
       hasCommissionProof ||
-      s.setup_fee_paid === true ||
-      s.lifecycle_stage === 'مشترك مدفوع' ||
-      s.status === 'مشترك مدفوع' ||
-      s.status === 'PAID_ACTIVE' ||
-      (s.status === 'active' && s.subscription_status === 'active' && s.setup_fee_paid !== false) ||
-      (s.setup_fee_paid === true && s.status === 'active')
+      hasPaidPlan ||
+      (s.setup_fee_paid === true &&
+        (s.lifecycle_stage === 'مشترك مدفوع' || s.status === 'مشترك مدفوع' || s.status === 'PAID_ACTIVE'))
   );
 
-  const isExplicitTrial = !hasPaidProof && (s.status === 'trial' || s.subscription_status === 'trial' || s.setup_fee_paid === false);
-  const isPaid = !isSuspended && hasPaidProof && !isExplicitTrial;
+  const isExplicitTrial =
+    s.status === 'trial' ||
+    s.subscription_status === 'trial' ||
+    s.setup_fee_paid === false ||
+    !hasPaidProof;
+  const isPaid = !isSuspended && !isExplicitTrial && hasPaidProof;
 
   // 3. استرجاع المتجر المخزن محلياً للحفاظ على بيانات الباقة وتاريخ الصلاحية
   let localExistingStore: Store | null = null;
@@ -1382,6 +1388,26 @@ export const LoyaltyService = {
             trial_end_date: createdStore.trial_end_date || trialEndIso,
             subscription_end_date: createdStore.trial_end_date || trialEndIso,
           };
+
+          if (supabase && isUUID(createdStore.id)) {
+            try {
+              await supabase
+                .from('stores')
+                .update({
+                  status: 'trial',
+                  subscription_status: 'trial',
+                  setup_fee_paid: false,
+                  subscription_plan_id: null,
+                  subscription_start_date: null,
+                  subscription_end_date: null,
+                  trial_start_date: createdStore.trial_start_date || nowIso,
+                  trial_end_date: createdStore.trial_end_date || trialEndIso,
+                })
+                .eq('id', createdStore.id);
+            } catch (uErr) {
+              console.warn('[createStoreConcierge] DB trial sync warning:', uErr);
+            }
+          }
         }
       } catch (e) {
         console.warn('Supabase createStoreConcierge exception', e);

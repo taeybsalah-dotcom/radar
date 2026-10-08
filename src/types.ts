@@ -159,25 +159,30 @@ export function resolveUnifiedStage(
     effectiveObj.subscription_status === 'suspended' ||
     effectiveObj.lifecycle_stage === 'تحت المراجعة';
 
+  const hasPaidPlan = Boolean(
+    effectiveObj.subscription_plan_id &&
+      effectiveObj.subscription_plan_id !== 'trial' &&
+      effectiveObj.subscription_plan_id !== 'plan-trial'
+  );
+
   const hasPaidProof = Boolean(
     hasCommissionOrLedgerProof ||
       effectiveObj.has_paid_invoice === true ||
       effectiveObj.latest_paid_invoice ||
-      effectiveObj.setup_fee_paid === true ||
-      effectiveObj.status === 'مشترك مدفوع' ||
-      effectiveObj.status === 'PAID_ACTIVE' ||
-      effectiveObj.lifecycle_stage === 'مشترك مدفوع' ||
-      (effectiveObj.subscription_status === 'active' && effectiveObj.setup_fee_paid !== false) ||
-      (effectiveObj.status === 'active' && effectiveObj.setup_fee_paid !== false)
+      hasPaidPlan ||
+      (effectiveObj.setup_fee_paid === true &&
+        (effectiveObj.status === 'مشترك مدفوع' ||
+          effectiveObj.status === 'PAID_ACTIVE' ||
+          effectiveObj.lifecycle_stage === 'مشترك مدفوع'))
   );
 
   const isExplicitTrial =
-    !hasPaidProof &&
-    (effectiveObj.subscription_status === 'trial' ||
-      effectiveObj.status === 'trial' ||
-      effectiveObj.setup_fee_paid === false);
+    effectiveObj.subscription_status === 'trial' ||
+    effectiveObj.status === 'trial' ||
+    effectiveObj.setup_fee_paid === false ||
+    !hasPaidProof;
 
-  const isPaid = !isSuspended && hasPaidProof && !isExplicitTrial;
+  const isPaid = !isSuspended && !isExplicitTrial && hasPaidProof;
 
   // 1. المشترك المدفوع (Paid Subscriber) - أولوية مطلقة فور سداد الرسوم أو وجود العمولة
   if (isPaid) {
