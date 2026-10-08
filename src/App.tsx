@@ -305,18 +305,11 @@ function parseRouteParams() {
     if (rawAuth) {
       const parsed = JSON.parse(rawAuth);
       if (parsed.role === 'partner') { resolvedRolePortal = 'partner'; hasSession = true; }
-      else if (parsed.role === 'super_admin') { resolvedRolePortal = 'super-admin'; hasSession = true; }
       else if (parsed.role === 'merchant') { resolvedRolePortal = 'admin'; hasSession = true; }
       else if (parsed.role === 'cashier') { resolvedRolePortal = 'cashier'; hasSession = true; }
       else if (parsed.role === 'customer') { resolvedRolePortal = 'customer'; hasSession = true; }
     } else if (localStorage.getItem('radar_partner_session')) {
       resolvedRolePortal = 'partner';
-      hasSession = true;
-    } else if (
-      localStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true' ||
-      sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true'
-    ) {
-      resolvedRolePortal = 'super-admin';
       hasSession = true;
     }
   } catch {}

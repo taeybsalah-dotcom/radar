@@ -1,10 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { UserRole, AuthUser, AuthSessionState } from '../types';
 import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
 
 interface AuthContextValue extends AuthSessionState {
   login: (role: UserRole, userDetails: Partial<AuthUser>) => void;
-  logout: (role?: UserRole) => void;
+  logout: (role?: UserRole) => Promise<void>;
   hasRole: (allowedRoles: UserRole[]) => boolean;
   refreshSession: () => Promise<void>;
 }
@@ -14,9 +14,26 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const UNIFIED_AUTH_KEY = 'radar_unified_auth_user';
 const SUPER_ADMIN_AUTH_KEY = 'RADAR_SUPER_ADMIN_AUTH';
 
+function isSuperAdminPortalRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.location.pathname.includes('super-admin') ||
+    window.location.pathname.includes('superadmin') ||
+    window.location.search.includes('super-admin') ||
+    window.location.search.includes('superadmin') ||
+    window.location.hash.includes('super-admin') ||
+    window.location.hash.includes('superadmin')
+  );
+}
+
 function getInitialAuthSync(): { user: AuthUser | null; role: UserRole | null; isAuthenticated: boolean } {
   if (typeof window === 'undefined') return { user: null, role: null, isAuthenticated: false };
   try {
+    // 🛡️ Do NOT read localStorage auth if currently on super-admin portal route
+    if (isSuperAdminPortalRoute()) {
+      return { user: null, role: null, isAuthenticated: false };
+    }
+
     // 1. Check Unified Auth Store (Only for non-super_admin accounts)
     const savedUnified = localStorage.getItem(UNIFIED_AUTH_KEY);
     if (savedUnified) {
@@ -55,9 +72,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<UserRole | null>(initialAuth.role);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(initialAuth.isAuthenticated);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const isLoggingOutRef = useRef<boolean>(false);
 
   // 🔍 Synchronous and Asynchronous Session Resolver
   const resolveSession = useCallback(async () => {
+    if (isLoggingOutRef.current) return;
     try {
       // 1. First, check official Supabase Auth session for super_admin
       const superAdminCheck = await LoyaltyService.verifySuperAdminSession();
@@ -71,6 +90,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(superAdminUser);
         setRole('super_admin');
         setIsAuthenticated(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // 🛡️ If on super-admin portal route and Supabase verification failed: stay strictly logged out!
+      if (isSuperAdminPortalRoute()) {
+        setUser(null);
+        setRole(null);
+        setIsAuthenticated(false);
         setIsLoading(false);
         return;
       }
@@ -96,25 +124,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const logout = useCallback((specificRole?: UserRole) => {
+  const logout = useCallback(async (specificRole?: UserRole): Promise<void> => {
+    if (isLoggingOutRef.current) return;
+    isLoggingOutRef.current = true;
+
+    // 1. Instantly reset React state
     setUser(null);
     setRole(null);
     setIsAuthenticated(false);
 
     try {
+      // 2. Clean up storage tokens
       localStorage.removeItem(UNIFIED_AUTH_KEY);
       localStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
       sessionStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
 
-      if (!specificRole || specificRole === 'super_admin') {
-        LoyaltyService.superAdminSignOut();
-      }
       if (!specificRole || specificRole === 'partner') {
         LoyaltyService.clearPartnerSession();
         sessionStorage.removeItem('RADAR_PARTNER_AUTH_TOKEN');
       }
+
+      if (!specificRole || specificRole === 'super_admin') {
+        await LoyaltyService.superAdminSignOut();
+      }
     } catch (err) {
       console.warn('[AuthContext] Error during logout cleanup:', err);
+    } finally {
+      // Release lock after allowing asynchronous auth events to settle
+      setTimeout(() => {
+        isLoggingOutRef.current = false;
+      }, 400);
     }
   }, []);
 
@@ -124,13 +163,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const supabase = getSupabaseClient();
     let authSub: any;
     if (supabase) {
-      const { data } = supabase.auth.onAuthStateChange((event) => {
+      const { data } = supabase.auth.onAuthStateChange((event, session) => {
+        // 🛡️ If active logout is in progress, ignore events to break any recursion loops
+        if (isLoggingOutRef.current) return;
+
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          resolveSession();
-        } else if (event === 'SIGNED_OUT') {
-          if (role === 'super_admin') {
-            logout('super_admin');
+          if (session) {
+            resolveSession();
           }
+        } else if (event === 'SIGNED_OUT') {
+          // Server confirmed sign-out: cleanly reset state WITHOUT re-calling signOut()
+          setUser(null);
+          setRole(null);
+          setIsAuthenticated(false);
+          try {
+            localStorage.removeItem(UNIFIED_AUTH_KEY);
+            localStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
+            sessionStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
+          } catch {}
         }
       });
       authSub = data.subscription;
@@ -139,7 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       if (authSub) authSub.unsubscribe();
     };
-  }, [resolveSession, role, logout]);
+  }, [resolveSession]);
 
   const login = useCallback((newRole: UserRole, userDetails: Partial<AuthUser>) => {
     const authUser: AuthUser = {

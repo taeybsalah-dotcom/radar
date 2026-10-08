@@ -910,11 +910,14 @@ export const LoyaltyService = {
   },
 
   async superAdminSignOut(): Promise<void> {
+    invalidateAllServiceCaches();
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
         await supabase.auth.signOut();
-      } catch {}
+      } catch (err) {
+        console.warn('[superAdminSignOut] signOut warning:', err);
+      }
     }
   },
 

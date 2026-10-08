@@ -334,13 +334,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   useEffect(() => {
     let isMounted = true;
     const verifyAuth = async () => {
+      if (role !== 'super_admin') {
+        if (isMounted) setIsAuthenticated(false);
+        return;
+      }
       const check = await LoyaltyService.verifySuperAdminSession();
       if (isMounted) {
-        if (check.is_super_admin) {
-          setIsAuthenticated(true);
-        } else if (role !== 'super_admin') {
-          setIsAuthenticated(false);
-        }
+        setIsAuthenticated(Boolean(check.is_super_admin));
       }
     };
     verifyAuth();
@@ -378,11 +378,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   };
 
   const handleMasterLogout = async () => {
-    await LoyaltyService.superAdminSignOut();
-    authLogout('super_admin');
     setIsAuthenticated(false);
     setAdminEmail('');
     setAdminPassword('');
+    await authLogout('super_admin');
   };
 
   const handleConfirmDeleteStore = async () => {
