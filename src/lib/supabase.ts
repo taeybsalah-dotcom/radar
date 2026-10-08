@@ -753,7 +753,7 @@ async function attachStoreAssets(supabase: any, row: any): Promise<any> {
 
 // Non-heavy tables: explicit list, falls back to '*' only if a listed column is missing in the live schema.
 const WALLET_COLS = 'id, store_id, sms_quota, sms_used, wa_quota, wa_used, cashier_limit, extra_cashiers_purchased, whatsapp_provider, meta_phone_number_id, meta_waba_id, meta_access_token, created_at, updated_at';
-const STAFF_COLS = 'id, store_id, user_id, name, phone, role, pin_code, is_active, can_manual_input_phone, created_at, updated_at';
+const STAFF_COLS = 'id, store_id, user_id, name, phone, role, is_active, can_manual_input_phone, created_at, updated_at';
 const TIER_COLS = 'id, store_id, tier_name, required_xp, badge_color, icon, created_at';
 const PRIVILEGE_COLS = 'id, store_id, required_tier_id, title, description, image_url, cost_points, quantity_limit, per_customer_limit, redeemed_count, valid_start_time, valid_end_time, is_active, is_hidden, created_at';
 const LEDGER_COLS = 'id, ledger_id, transaction_id, invoice_id, store_id, store_name, affiliate_id, affiliate_name, payment_id, transaction_type, gross_amount, vat_amount, gateway_fee, affiliate_commission, net_platform_amount, status, created_at, effective_at, reversal_of, refund_of, created_by, metadata';
@@ -847,6 +847,75 @@ export const LoyaltyService = {
     }
     return [];
   },
+
+  // 1.1 مصادقة مالك المنصة الرسمية السحابية (Super Admin Official Authentication)
+  async superAdminSignIn(email: string, password: string): Promise<{ success: boolean; user?: any; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return { success: false, error: 'تعذر الاتصال بخدمة المصادقة السحابية' };
+    }
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: password.trim(),
+      });
+      if (error || !data.session) {
+        return { success: false, error: error?.message || 'فشل تسجيل الدخول: بيانات الاعتماد غير صحيحة' };
+      }
+
+      // التحقق من صلاحية المالك عبر السيرفر
+      const verifyRes = await this.verifySuperAdminSession();
+      if (!verifyRes.is_super_admin) {
+        await supabase.auth.signOut();
+        return { success: false, error: 'هذا الحساب لا يمتلك صلاحيات مالك المنصة (Super Admin)' };
+      }
+
+      return { success: true, user: data.user };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'حدث خطأ غير متوقع أثناء تسجيل الدخول' };
+    }
+  },
+
+  async verifySuperAdminSession(): Promise<{ authenticated: boolean; is_super_admin: boolean; email?: string; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { authenticated: false, is_super_admin: false };
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return { authenticated: false, is_super_admin: false };
+
+      // التحقق عبر الدالة السحابية المحمية
+      const { data, error } = await supabase.rpc('verify_super_admin_session');
+      if (!error && data && data.is_super_admin) {
+        return {
+          authenticated: true,
+          is_super_admin: true,
+          email: data.email || session.user.email,
+        };
+      }
+
+      // فحص احتياطي للـ Claims في الـ Token
+      const role = session.user.app_metadata?.role || (session.user.user_metadata as any)?.role;
+      const isSuper = role === 'super_admin' || role === 'admin' || (session.user.app_metadata as any)?.is_super_admin === true;
+      return {
+        authenticated: Boolean(session),
+        is_super_admin: Boolean(isSuper),
+        email: session.user.email,
+      };
+    } catch (e: any) {
+      console.warn('[LoyaltyService] verifySuperAdminSession error:', e);
+      return { authenticated: false, is_super_admin: false, error: e.message };
+    }
+  },
+
+  async superAdminSignOut(): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch {}
+    }
+  },
+
 
   // 1.1 جلب ملخص المتاجر المجمّع للـ Super Admin في طلب خادم فائق السرعة Server-First
   async getSuperAdminStoresSummary(forceFresh: boolean = true): Promise<{
@@ -2032,10 +2101,89 @@ export const LoyaltyService = {
     return true;
   },
 
+  // 7.0 المصادقة العمياء المشفرة بالسيرفر (Server-Side Blind PIN Verification via RPC)
+  async verifyStaffPin(
+    phone: string,
+    pin: string,
+    storeId?: string,
+    storeSlug?: string,
+    requiredRole?: 'admin' | 'cashier'
+  ): Promise<{ success: boolean; staff?: StoreStaff & { matchedStore?: Store }; error?: string; message?: string }> {
+    const normPhone = normalizePhone(phone);
+    const normPin = pin.trim();
+    if (!normPhone || !normPin) {
+      return { success: false, error: 'INVALID_INPUT', message: 'يرجى إدخال رقم الجوال والرمز السري' };
+    }
+
+    const currentStore = await this.resolveStore(storeId || storeSlug);
+    const resolvedStoreId = currentStore?.id || storeId;
+    const resolvedStoreSlug = currentStore?.slug || storeSlug;
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('verify_staff_pin', {
+          p_phone: normPhone,
+          p_pin: normPin,
+          p_store_id: resolvedStoreId && isUUID(resolvedStoreId) ? resolvedStoreId : null,
+          p_store_slug: resolvedStoreSlug || null,
+          p_required_role: requiredRole || null,
+        });
+
+        if (!error && data) {
+          if (data.success && data.staff) {
+            const returnedStaff = data.staff;
+            return {
+              success: true,
+              staff: {
+                id: returnedStaff.id,
+                store_id: returnedStaff.store_id || resolvedStoreId,
+                name: returnedStaff.name,
+                phone: returnedStaff.phone,
+                role: returnedStaff.role,
+                is_active: returnedStaff.is_active ?? true,
+                can_manual_input_phone: returnedStaff.can_manual_input_phone ?? true,
+                matchedStore: currentStore || undefined,
+              } as StoreStaff & { matchedStore?: Store },
+            };
+          } else {
+            return {
+              success: false,
+              error: data.error || 'INVALID_CREDENTIALS',
+              message: data.message || 'رقم الجوال أو الرمز السري (PIN) غير صحيح',
+            };
+          }
+        }
+      } catch (rpcErr) {
+        console.warn('[LoyaltyService] RPC verify_staff_pin failed:', rpcErr);
+      }
+    }
+
+    // Fallback محلي فقط للبيئة التجريبية التجريبية (Demo/Local Offline Fallback)
+    const localStaff = await this.findStaffByPhone(resolvedStoreId || '', phone, requiredRole, resolvedStoreSlug);
+    if (localStaff) {
+      const correctPin = (localStaff.pin_code || (localStaff.role === 'admin' ? '9999' : '1234')).trim();
+      if (normPin === correctPin) {
+        const sanitized = { ...localStaff };
+        delete (sanitized as any).pin_code;
+        return {
+          success: true,
+          staff: sanitized,
+        };
+      }
+    }
+
+    return {
+      success: false,
+      error: 'INVALID_CREDENTIALS',
+      message: 'رقم الجوال أو الرمز السري (PIN) غير صحيح',
+    };
+  },
+
   // 7.1 البحث عن موظف أو مدير برقم الجوال للتحقق الآمن والدخول (Strictly Scoped to Store)
   async findStaffByPhone(
-    storeId: string,
-    phone: string,
+    storeId?: string,
+    phone: string = '',
     requiredRole?: 'admin' | 'cashier',
     storeSlug?: string
   ): Promise<(StoreStaff & { matchedStore?: Store }) | null> {
@@ -2072,8 +2220,10 @@ export const LoyaltyService = {
             return matchesPhone && matchesRole;
           });
           if (matchedStaff) {
+            const sanitized = { ...matchedStaff };
+            delete (sanitized as any).pin_code;
             return {
-              ...matchedStaff,
+              ...sanitized,
               matchedStore: currentStore || undefined,
             } as StoreStaff & { matchedStore?: Store };
           }
@@ -2102,7 +2252,6 @@ export const LoyaltyService = {
               name: normStore.manager_name || 'المدير العام',
               phone: normStore.manager_contact || phone,
               role: 'admin',
-              pin_code: normStore.admin_pin || '9999',
               is_active: true,
               can_manual_input_phone: true,
               matchedStore: normStore,

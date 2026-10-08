@@ -82,30 +82,22 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
     setErrorMessage(null);
 
     try {
-      const staff = await LoyaltyService.findStaffByPhone(
-        store.id,
+      const authRes = await LoyaltyService.verifyStaffPin(
         normPhone,
-        requiredRole,
-        store.slug
+        normPin,
+        store.id,
+        store.slug,
+        requiredRole
       );
 
-      if (!staff) {
+      if (!authRes.success || !authRes.staff) {
         setErrorMessage(
-          `❌ رقم الجوال (${normPhone}) غير مسجل كـ ${
-            requiredRole === 'admin' ? 'مدير' : 'كاشير'
-          } في هذا المتجر.`
+          authRes.message || '❌ رقم الجوال أو الرقم السري (PIN) غير صحيح! يرجى التأكد وإعادة المحاولة.'
         );
         return;
       }
 
-      // مطابقة الرقم السري (PIN) بدقة للموظف أو المدير
-      const correctPin = (staff.pin_code || (staff.role === 'admin' ? '9999' : '1234')).trim();
-      const isMatch = normPin === correctPin;
-
-      if (!isMatch) {
-        setErrorMessage('❌ الرقم السري (PIN) غير صحيح! يرجى التأكد وإعادة المحاولة.');
-        return;
-      }
+      const staff = authRes.staff;
 
       // تسجيل دخول ناجح للمتجر الحالي حصراً
       LoyaltyService.saveStaffSession(store.id, staff, store.slug);

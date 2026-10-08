@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { UserRole, AuthUser, AuthSessionState } from '../types';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
 
 interface AuthContextValue extends AuthSessionState {
   login: (role: UserRole, userDetails: Partial<AuthUser>) => void;
@@ -17,31 +17,21 @@ const SUPER_ADMIN_AUTH_KEY = 'RADAR_SUPER_ADMIN_AUTH';
 function getInitialAuthSync(): { user: AuthUser | null; role: UserRole | null; isAuthenticated: boolean } {
   if (typeof window === 'undefined') return { user: null, role: null, isAuthenticated: false };
   try {
-    // 1. Check Unified Auth Store
+    // 1. Check Unified Auth Store (Only for non-super_admin accounts)
     const savedUnified = localStorage.getItem(UNIFIED_AUTH_KEY);
     if (savedUnified) {
       try {
         const parsed = JSON.parse(savedUnified) as AuthUser;
         if (parsed && parsed.role && parsed.id) {
-          return { user: parsed, role: parsed.role, isAuthenticated: true };
+          // 🛡️ SECURITY GATE: Super Admin role CANNOT be established from localStorage!
+          if (parsed.role !== 'super_admin') {
+            return { user: parsed, role: parsed.role, isAuthenticated: true };
+          }
         }
       } catch {}
     }
 
-    // 2. Check Super Admin Persistent Auth
-    const isSuperAdmin =
-      localStorage.getItem(SUPER_ADMIN_AUTH_KEY) === 'true' ||
-      sessionStorage.getItem(SUPER_ADMIN_AUTH_KEY) === 'true';
-    if (isSuperAdmin) {
-      const superAdminUser: AuthUser = {
-        id: 'super_admin_session',
-        role: 'super_admin',
-        name: 'مالك المنصة (Super Admin)',
-      };
-      return { user: superAdminUser, role: 'super_admin', isAuthenticated: true };
-    }
-
-    // 3. Check Partner Session
+    // 2. Check Partner Session
     const partnerSession = LoyaltyService.getPartnerSession();
     if (partnerSession && partnerSession.id) {
       const partnerUser: AuthUser = {
@@ -69,12 +59,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 🔍 Synchronous and Asynchronous Session Resolver
   const resolveSession = useCallback(async () => {
     try {
+      // 1. First, check official Supabase Auth session for super_admin
+      const superAdminCheck = await LoyaltyService.verifySuperAdminSession();
+      if (superAdminCheck.is_super_admin) {
+        const superAdminUser: AuthUser = {
+          id: 'super_admin_session',
+          role: 'super_admin',
+          name: 'مالك المنصة (Super Admin)',
+          phone: superAdminCheck.email,
+        };
+        setUser(superAdminUser);
+        setRole('super_admin');
+        setIsAuthenticated(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Otherwise resolve non-super_admin session
       const fresh = getInitialAuthSync();
-      setUser(fresh.user);
-      setRole(fresh.role);
-      setIsAuthenticated(fresh.isAuthenticated);
-      if (fresh.user) {
-        localStorage.setItem(UNIFIED_AUTH_KEY, JSON.stringify(fresh.user));
+      if (fresh.role === 'super_admin') {
+        setUser(null);
+        setRole(null);
+        setIsAuthenticated(false);
+      } else {
+        setUser(fresh.user);
+        setRole(fresh.role);
+        setIsAuthenticated(fresh.isAuthenticated);
+        if (fresh.user) {
+          localStorage.setItem(UNIFIED_AUTH_KEY, JSON.stringify(fresh.user));
+        }
       }
     } catch (e) {
       console.warn('[AuthContext] Failed to resolve auth session:', e);
@@ -83,9 +96,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const logout = useCallback((specificRole?: UserRole) => {
+    setUser(null);
+    setRole(null);
+    setIsAuthenticated(false);
+
+    try {
+      localStorage.removeItem(UNIFIED_AUTH_KEY);
+      localStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
+      sessionStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
+
+      if (!specificRole || specificRole === 'super_admin') {
+        LoyaltyService.superAdminSignOut();
+      }
+      if (!specificRole || specificRole === 'partner') {
+        LoyaltyService.clearPartnerSession();
+        sessionStorage.removeItem('RADAR_PARTNER_AUTH_TOKEN');
+      }
+    } catch (err) {
+      console.warn('[AuthContext] Error during logout cleanup:', err);
+    }
+  }, []);
+
   useEffect(() => {
     resolveSession();
-  }, [resolveSession]);
+
+    const supabase = getSupabaseClient();
+    let authSub: any;
+    if (supabase) {
+      const { data } = supabase.auth.onAuthStateChange((event) => {
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          resolveSession();
+        } else if (event === 'SIGNED_OUT') {
+          if (role === 'super_admin') {
+            logout('super_admin');
+          }
+        }
+      });
+      authSub = data.subscription;
+    }
+
+    return () => {
+      if (authSub) authSub.unsubscribe();
+    };
+  }, [resolveSession, role, logout]);
 
   const login = useCallback((newRole: UserRole, userDetails: Partial<AuthUser>) => {
     const authUser: AuthUser = {
@@ -107,38 +161,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(false);
 
     try {
-      localStorage.setItem(UNIFIED_AUTH_KEY, JSON.stringify(authUser));
+      if (newRole !== 'super_admin') {
+        localStorage.setItem(UNIFIED_AUTH_KEY, JSON.stringify(authUser));
+      } else {
+        localStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
+        sessionStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
+      }
 
-      // Synchronize role-specific legacy session keys for deep backward compatibility
-      if (newRole === 'super_admin') {
-        localStorage.setItem(SUPER_ADMIN_AUTH_KEY, 'true');
-        sessionStorage.setItem(SUPER_ADMIN_AUTH_KEY, 'true');
-      } else if (newRole === 'partner' && userDetails.metadata) {
+      if (newRole === 'partner' && userDetails.metadata) {
         localStorage.setItem('radar_partner_session', JSON.stringify(userDetails.metadata));
       }
     } catch (err) {
       console.warn('[AuthContext] Error storing auth session:', err);
-    }
-  }, []);
-
-  const logout = useCallback((specificRole?: UserRole) => {
-    setUser(null);
-    setRole(null);
-    setIsAuthenticated(false);
-
-    try {
-      localStorage.removeItem(UNIFIED_AUTH_KEY);
-
-      if (!specificRole || specificRole === 'super_admin') {
-        localStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
-        sessionStorage.removeItem(SUPER_ADMIN_AUTH_KEY);
-      }
-      if (!specificRole || specificRole === 'partner') {
-        LoyaltyService.clearPartnerSession();
-        sessionStorage.removeItem('RADAR_PARTNER_AUTH_TOKEN');
-      }
-    } catch (err) {
-      console.warn('[AuthContext] Error during logout cleanup:', err);
     }
   }, []);
 

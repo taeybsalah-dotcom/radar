@@ -320,23 +320,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
   const { role, login: authLogin, logout: authLogout } = useAuth();
 
-  // Master Security Gate State (🔒 حماية بوابة المالك برمز رئيسي مع استمرارية الجلسة عند التحديث)
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      const rawAuth = localStorage.getItem('radar_unified_auth_user');
-      if (rawAuth) {
-        const parsed = JSON.parse(rawAuth);
-        if (parsed?.role === 'super_admin') return true;
-      }
-    } catch {}
-    return (
-      role === 'super_admin' ||
-      localStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true' ||
-      sessionStorage.getItem('RADAR_SUPER_ADMIN_AUTH') === 'true'
-    );
-  });
-  const [masterPinInput, setMasterPinInput] = useState('');
+  // Master Security Gate State (🔒 حماية بوابة المالك بجلسة مشفرة من السيرفر)
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -344,34 +332,57 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   }, []);
 
   useEffect(() => {
-    if (role === 'super_admin' && !isAuthenticated) {
-      setIsAuthenticated(true);
-    }
-  }, [role, isAuthenticated]);
+    let isMounted = true;
+    const verifyAuth = async () => {
+      const check = await LoyaltyService.verifySuperAdminSession();
+      if (isMounted) {
+        if (check.is_super_admin) {
+          setIsAuthenticated(true);
+        } else if (role !== 'super_admin') {
+          setIsAuthenticated(false);
+        }
+      }
+    };
+    verifyAuth();
+    return () => { isMounted = false; };
+  }, [role]);
 
-  const handleMasterLogin = (e: React.FormEvent) => {
+  const handleMasterLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const correctPin = '2026';
-    if (masterPinInput.trim() === correctPin) {
-      localStorage.setItem('RADAR_SUPER_ADMIN_AUTH', 'true');
-      sessionStorage.setItem('RADAR_SUPER_ADMIN_AUTH', 'true');
-      authLogin('super_admin', {
-        id: 'super_admin_1',
-        name: 'مالك المنصة (Super Admin)',
-      });
-      setIsAuthenticated(true);
-      setPinError(null);
-    } else {
-      setPinError('رمز المرور الرئيسي غير صحيح (Master PIN)');
+    if (!adminEmail.trim() || !adminPassword.trim()) {
+      setPinError('يرجى إدخال البريد الإلكتروني وكلمة المرور');
+      return;
+    }
+
+    setIsAuthenticating(true);
+    setPinError(null);
+
+    try {
+      const res = await LoyaltyService.superAdminSignIn(adminEmail, adminPassword);
+      if (res.success) {
+        authLogin('super_admin', {
+          id: res.user?.id || 'super_admin_session',
+          name: 'مالك المنصة (Super Admin)',
+          phone: res.user?.email || adminEmail,
+        });
+        setIsAuthenticated(true);
+        setPinError(null);
+      } else {
+        setPinError(res.error || 'بيانات الدخول غير صحيحة');
+      }
+    } catch (err: any) {
+      setPinError(err.message || 'حدث خطأ أثناء تسجيل الدخول');
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
-  const handleMasterLogout = () => {
+  const handleMasterLogout = async () => {
+    await LoyaltyService.superAdminSignOut();
     authLogout('super_admin');
-    localStorage.removeItem('RADAR_SUPER_ADMIN_AUTH');
-    sessionStorage.removeItem('RADAR_SUPER_ADMIN_AUTH');
     setIsAuthenticated(false);
-    setMasterPinInput('');
+    setAdminEmail('');
+    setAdminPassword('');
   };
 
   const handleConfirmDeleteStore = async () => {
@@ -899,24 +910,39 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
           <div className="space-y-2">
             <h2 className="text-xl font-black text-white">بوابة مالك المنصة (Super Admin)</h2>
             <p className="text-xs text-slate-400 leading-relaxed">
-              هذه المنطقة مخصصة لإدارة المنصة والمتاجر. يرجى إدخال رمز المرور الرئيسي (Master PIN) للمتابعة.
+              هذه المنطقة مخصصة لإدارة المنصة والمتاجر. يرجى تسجيل الدخول بحساب المالك المعتمد للمتابعة.
             </p>
           </div>
 
           <form onSubmit={handleMasterLogin} className="space-y-4">
             <div className="space-y-1.5 text-right">
-              <label className="text-xs font-bold text-slate-300 block">رمز المرور الرئيسي (PIN)</label>
+              <label className="text-xs font-bold text-slate-300 block">البريد الإلكتروني للمسؤول</label>
               <input
-                type="password"
-                maxLength={8}
-                value={masterPinInput}
+                type="email"
+                value={adminEmail}
                 onChange={(e) => {
-                  setMasterPinInput(e.target.value);
+                  setAdminEmail(e.target.value);
                   setPinError(null);
                 }}
-                placeholder="••••"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3.5 text-center text-lg text-amber-400 font-mono font-bold tracking-widest outline-none transition"
+                placeholder="admin@radar-loyalty.com"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3.5 text-right text-sm text-amber-400 font-mono outline-none transition"
                 autoFocus
+                required
+              />
+            </div>
+
+            <div className="space-y-1.5 text-right">
+              <label className="text-xs font-bold text-slate-300 block">كلمة المرور</label>
+              <input
+                type="password"
+                value={adminPassword}
+                onChange={(e) => {
+                  setAdminPassword(e.target.value);
+                  setPinError(null);
+                }}
+                placeholder="••••••••••••"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3.5 text-right text-sm text-amber-400 font-mono outline-none transition"
+                required
               />
             </div>
 
@@ -928,15 +954,22 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
             <button
               type="submit"
-              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2"
+              disabled={isAuthenticating}
+              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              <Crown className="w-4 h-4" />
-              <span>تسجيل الدخول للمنصة</span>
+              {isAuthenticating ? (
+                <span>جارٍ التحقق من الهوية السحابية...</span>
+              ) : (
+                <>
+                  <Crown className="w-4 h-4" />
+                  <span>تسجيل الدخول للمنصة</span>
+                </>
+              )}
             </button>
           </form>
 
           <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-500 font-mono">
-            Radar Multi-Tenant Engine • Secured
+            Radar Multi-Tenant Engine • Server-Verified Session
           </div>
         </div>
       </div>
