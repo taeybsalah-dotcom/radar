@@ -6035,7 +6035,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                   : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                               }`}
                             >
-                              {!isTrial && currentPaidPlan ? `🟢 باقة ${currentPaidPlan.name}` : '🎁 فترة التجربة المجانية (14 يوم)'}
+                              {!isTrial && currentPaidPlan ? `🟢 ${currentPaidPlan.name.startsWith('باقة') || currentPaidPlan.name.startsWith('الباقة') ? currentPaidPlan.name : `باقة ${currentPaidPlan.name}`}` : '🎁 فترة التجربة المجانية (14 يوم)'}
                             </span>
                           </div>
                           <p className="text-xs text-slate-400 mt-0.5">
@@ -6151,7 +6151,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
                       currentPaidPlan !== null &&
-                      (plan.id === currentPaidPlan.id || (Boolean(plan.code) && plan.code === currentPaidPlan.code));
+                      (plan.id === currentPaidPlan.id || (Boolean(plan.code) && plan.code === currentPaidPlan.code) || plan.name === currentPaidPlan.name);
 
                     const isLowerTier =
                       !isTrial &&

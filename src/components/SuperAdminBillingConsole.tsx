@@ -269,6 +269,10 @@ export const SuperAdminBillingConsole: React.FC = () => {
     []
   );
 
+  const pendingPayoutPartnersCount = useMemo(() => {
+    return partners.filter((p) => (partnerSummaries[p.id]?.total_payable || 0) > 0).length;
+  }, [partners, partnerSummaries]);
+
   useEffect(() => {
     loadAllFinancialData();
 
@@ -669,7 +673,7 @@ export const SuperAdminBillingConsole: React.FC = () => {
           }`}
         >
           <Send className="w-4 h-4" />
-          <span>صرف مستحقات المسوقين ({payouts.length}) 💸</span>
+          <span>صرف مستحقات المسوقين ({pendingPayoutPartnersCount > 0 ? pendingPayoutPartnersCount : payouts.length}) 💸</span>
         </button>
 
         <button

@@ -395,71 +395,81 @@ export function normalizeStore(s: any): Store {
     localExistingStore = allLocalStores.find((ls) => ls && (ls.id === s.id || (ls.slug && ls.slug === s.slug))) || null;
   } catch {}
 
-  // 4. التحقق من وجود عمولة ترقية باقة للمتجر
-  let upgradedPlanFromComm: { name: string; code: string; id: string } | null = null;
-  try {
-    const allComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    const upgComm = allComms.find(
-      (c) => c && c.store_id === s.id && c.commission_type === 'SUBSCRIPTION_UPGRADE' && (c.status === 'PAID' || c.status === 'EARNED')
-    );
-    if (upgComm) {
-      if (upgComm.basis_amount >= 1000 || (upgComm.qualifying_event && upgComm.qualifying_event.includes('الاحترافية'))) {
-        upgradedPlanFromComm = {
-          name: 'الباقة الاحترافية',
-          code: 'PRO',
-          id: 'a418c6e7-5749-4186-92ce-c46d721fe9ba',
-        };
-      } else if (upgComm.basis_amount >= 400 || (upgComm.qualifying_event && upgComm.qualifying_event.includes('المتقدمة'))) {
-        upgradedPlanFromComm = {
-          name: 'الباقة المتقدمة',
-          code: 'ADVANCED',
-          id: 'fad2e3cf-141c-4e0e-9432-194615a3ef37',
-        };
-      }
-    }
-  } catch {}
+  // 4. استخراج الخطة الحقيقية من المعرف الأساسي في قاعدة البيانات (subscription_plan_id)
+  let computedPlanId = s.subscription_plan_id || localExistingStore?.subscription_plan_id || latestPaidInvoice?.plan_id;
+  let computedPlanName = s.subscription_plan || localExistingStore?.subscription_plan || latestPaidInvoice?.plan_name;
+  let computedPlanCode = s.plan_code || localExistingStore?.plan_code;
 
-  // حساب باقة الاشتراك وتواريخ النهاية بذكاء
-  let computedPlanName =
-    s.subscription_plan ||
-    upgradedPlanFromComm?.name ||
-    localExistingStore?.subscription_plan;
-  let computedPlanId =
-    s.subscription_plan_id ||
-    upgradedPlanFromComm?.id ||
-    localExistingStore?.subscription_plan_id;
-  let computedPlanCode =
-    s.plan_code ||
-    upgradedPlanFromComm?.code ||
-    localExistingStore?.plan_code;
+  if (computedPlanId) {
+    if (computedPlanId === 'a418c6e7-5749-4186-92ce-c46d721fe9ba' || computedPlanId === 'plan-pro' || computedPlanId === 'PRO' || (computedPlanName && (computedPlanName.includes('الاحترافية') || computedPlanName.includes('PRO')))) {
+      computedPlanId = 'a418c6e7-5749-4186-92ce-c46d721fe9ba';
+      computedPlanName = 'الباقة الاحترافية';
+      computedPlanCode = 'PRO';
+    } else if (computedPlanId === 'fad2e3cf-141c-4e0e-9432-194615a3ef37' || computedPlanId === 'plan-advanced' || computedPlanId === 'ADVANCED' || (computedPlanName && (computedPlanName.includes('المتقدمة') || computedPlanName.includes('ADVANCED')))) {
+      computedPlanId = 'fad2e3cf-141c-4e0e-9432-194615a3ef37';
+      computedPlanName = 'الباقة المتقدمة';
+      computedPlanCode = 'ADVANCED';
+    } else if (computedPlanId === '8371f0bb-b52e-4198-a5e9-bc51390174f0' || computedPlanId === 'plan-basic' || computedPlanId === 'BASIC' || (computedPlanName && (computedPlanName.includes('الأساسية') || computedPlanName.includes('BASIC')))) {
+      computedPlanId = '8371f0bb-b52e-4198-a5e9-bc51390174f0';
+      computedPlanName = 'الباقة الأساسية';
+      computedPlanCode = 'BASIC';
+    } else {
+      try {
+        const allBillingPlans = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, []);
+        const matched = allBillingPlans.find((p) => p.id === computedPlanId || p.code === computedPlanId);
+        if (matched) {
+          computedPlanName = matched.name;
+          computedPlanCode = matched.code;
+        }
+      } catch {}
+    }
+  } else if (computedPlanName) {
+    if (computedPlanName.includes('الاحترافية') || computedPlanName.includes('PRO') || computedPlanName.includes('Pro')) {
+      computedPlanId = 'a418c6e7-5749-4186-92ce-c46d721fe9ba';
+      computedPlanName = 'الباقة الاحترافية';
+      computedPlanCode = 'PRO';
+    } else if (computedPlanName.includes('المتقدمة') || computedPlanName.includes('ADVANCED') || computedPlanName.includes('Advanced')) {
+      computedPlanId = 'fad2e3cf-141c-4e0e-9432-194615a3ef37';
+      computedPlanName = 'الباقة المتقدمة';
+      computedPlanCode = 'ADVANCED';
+    } else if (computedPlanName.includes('الأساسية') || computedPlanName.includes('BASIC') || computedPlanName.includes('Basic')) {
+      computedPlanId = '8371f0bb-b52e-4198-a5e9-bc51390174f0';
+      computedPlanName = 'الباقة الأساسية';
+      computedPlanCode = 'BASIC';
+    }
+  }
+
+  let computedRenewalAmount = Number(s.renewal_amount) || Number(localExistingStore?.renewal_amount);
+  if (computedPlanCode === 'PRO' || computedPlanId === 'a418c6e7-5749-4186-92ce-c46d721fe9ba') {
+    computedRenewalAmount = 1890;
+  } else if (computedPlanCode === 'ADVANCED' || computedPlanId === 'fad2e3cf-141c-4e0e-9432-194615a3ef37') {
+    computedRenewalAmount = 1190;
+  } else if (computedPlanCode === 'BASIC' || computedPlanId === '8371f0bb-b52e-4198-a5e9-bc51390174f0') {
+    computedRenewalAmount = 690;
+  }
+
   let computedEndDate =
     s.subscription_end_date ||
     localExistingStore?.subscription_end_date;
   let computedStartDate =
     s.subscription_start_date ||
     localExistingStore?.subscription_start_date ||
+    latestPaidInvoice?.paid_at ||
     s.created_at ||
     new Date().toISOString();
 
-  if (latestPaidInvoice) {
-    if (latestPaidInvoice.plan_name) computedPlanName = latestPaidInvoice.plan_name;
-    if (latestPaidInvoice.plan_id) computedPlanId = latestPaidInvoice.plan_id;
-    if (latestPaidInvoice.paid_at) computedStartDate = latestPaidInvoice.paid_at;
-
-    // حساب مدة الباقة من قيمة الفاتورة أو اسم الباقة
-    if (!computedEndDate) {
-      const invAmount = Number(latestPaidInvoice.amount) || 195;
-      const startMs = new Date(computedStartDate).getTime();
-      let durationDays = 30;
-      if (invAmount >= 1000 || (computedPlanName && computedPlanName.includes('6'))) {
-        durationDays = 180;
-      } else if (invAmount >= 500 || (computedPlanName && (computedPlanName.includes('3') || computedPlanName.includes('الأساسية')))) {
-        durationDays = 90;
-      } else if (invAmount >= 1800 || (computedPlanName && computedPlanName.includes('سنوي'))) {
-        durationDays = 365;
-      }
-      computedEndDate = new Date(startMs + durationDays * 86400000).toISOString();
+  if (latestPaidInvoice && !computedEndDate) {
+    const invAmount = Number(latestPaidInvoice.amount) || 195;
+    const startMs = new Date(computedStartDate).getTime();
+    let durationDays = 30;
+    if (invAmount >= 1000 || (computedPlanName && computedPlanName.includes('6'))) {
+      durationDays = 180;
+    } else if (invAmount >= 500 || (computedPlanName && (computedPlanName.includes('3') || computedPlanName.includes('الأساسية')))) {
+      durationDays = 90;
+    } else if (invAmount >= 1800 || (computedPlanName && (computedPlanName.includes('سنوي') || computedPlanName.includes('الاحترافية')))) {
+      durationDays = 365;
     }
+    computedEndDate = new Date(startMs + durationDays * 86400000).toISOString();
   }
 
   // ضبط ومواءمة تاريخ نهاية الاشتراك التلقائي ليتطابق مع مدة الباقة النشطة (الأساسية: 90 يوم، المتقدمة: 180 يوم، الاحترافية: 365 يوم)
@@ -504,6 +514,7 @@ export function normalizeStore(s: any): Store {
       : (s.subscription_plan && s.subscription_plan !== 'trial' && s.subscription_plan !== 'الباقة الأساسية' && s.subscription_plan !== 'pro' ? s.subscription_plan : 'فترة تجربة مجانية (14 يوم)'),
     subscription_plan_id: computedPlanId || (isPaid ? 'plan-basic' : undefined),
     plan_code: computedPlanCode || (isPaid ? 'BASIC' : undefined),
+    renewal_amount: computedRenewalAmount || 690,
     subscription_start_date: isPaid ? computedStartDate : trialStart,
     subscription_end_date: isPaid ? (computedEndDate || new Date(Date.now() + 90 * 86400000).toISOString()) : trialEnd,
     trial_start_date: trialStart,
@@ -4695,9 +4706,23 @@ export const LoyaltyService = {
           []
         );
 
-        // تنظيف وحفظ القيود المحلية الأصلية مع منع التكرار تماماً
+        // تنظيف وحفظ القيود المحلية الأصلية مع منع التكرار تماماً واستبعاد القيود المصطنعة إذا وُجد قيد سداد حقيقي لنفس المتجر والمبلغ
+        const cleanedExisting = localLedgerExisting.filter((loc) => {
+          if (loc.id?.startsWith('tx_db_store_') || (loc.transaction_id && loc.transaction_id.startsWith('tx_pay_sandbox_' + (loc.store_id || '').slice(0, 8)))) {
+            const hasReal = localLedgerExisting.some(
+              (other) =>
+                other !== loc &&
+                other.store_id === loc.store_id &&
+                other.gross_amount === loc.gross_amount &&
+                !other.id?.startsWith('tx_db_store_')
+            );
+            if (hasReal) return false;
+          }
+          return true;
+        });
+
         const uniqueLocalMap = new Map<string, FinancialLedgerEntry>();
-        for (const loc of localLedgerExisting) {
+        for (const loc of cleanedExisting) {
           const key = loc.transaction_id || loc.id || `${loc.store_id}_${loc.gross_amount}`;
           if (!uniqueLocalMap.has(key)) {
             uniqueLocalMap.set(key, loc);
