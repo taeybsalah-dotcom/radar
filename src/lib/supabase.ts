@@ -7690,8 +7690,8 @@ export const LoyaltyService = {
           try {
             const { data: pData } = await supabase
               .from('partner_accounts')
-              .select('id, affiliate_id')
-              .or(`referral_code.ilike.${refCode},slug.ilike.${refCode}`)
+              .select('id, affiliate_id, slug')
+              .ilike('slug', refCode)
               .limit(1)
               .maybeSingle();
             if (pData) {
