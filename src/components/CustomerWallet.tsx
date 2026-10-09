@@ -4387,34 +4387,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </button>
               </div>
 
-              <div className="p-2 bg-slate-950/80 border-b border-slate-800 grid grid-cols-2 gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setPastModalTab('orders')}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                    pastModalTab === 'orders'
-                      ? 'bg-blue-600 text-white shadow-md'
-                      : 'bg-slate-900 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <ShoppingCart className="w-3.5 h-3.5" />
-                  <span>طلبات المنيو ({pastOrders.length})</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPastModalTab('bookings')}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
-                    pastModalTab === 'bookings'
-                      ? 'bg-blue-600 text-white shadow-md'
-                      : 'bg-slate-900 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>حجوزات الخدمات ({customerServiceBookings.length})</span>
-                </button>
-              </div>
-
               <div className="p-4 overflow-y-auto space-y-3.5 flex-1 text-right">
                 {pastModalTab === 'orders' && (
                   <>
