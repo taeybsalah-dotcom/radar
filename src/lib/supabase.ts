@@ -7019,7 +7019,7 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
   async updateServiceBookingStatus(
     bookingId: string,
-    status: 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   ): Promise<ServiceBooking> {
     const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, INITIAL_BOOKINGS);
     const idx = list.findIndex((b) => b.id === bookingId);

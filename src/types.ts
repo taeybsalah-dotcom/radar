@@ -625,7 +625,7 @@ export interface ServiceBooking {
   specialist_name?: string | null;
   booking_date: string; // YYYY-MM-DD
   booking_time: string; // HH:mm (مثال: '16:00')
-  status: 'confirmed' | 'completed' | 'cancelled' | 'no_show';
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
   customer_notes?: string;
   notes?: string;
   loyalty_points_earned?: number;

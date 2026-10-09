@@ -168,7 +168,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     }
   };
 
-  const updateBookingStatus = async (bookingId: string, status: 'completed' | 'cancelled' | 'confirmed' | 'no_show') => {
+  const updateBookingStatus = async (bookingId: string, status: 'pending' | 'completed' | 'cancelled' | 'confirmed' | 'no_show') => {
     try {
       setOrderActionError(null);
       await LoyaltyService.updateServiceBookingStatus(bookingId, status);

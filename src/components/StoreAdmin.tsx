@@ -237,7 +237,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [bookingActionSuccess, setBookingActionSuccess] = useState<string | null>(null);
   const [statusNotifyBooking, setStatusNotifyBooking] = useState<{
     booking: ServiceBooking;
-    newStatus: 'confirmed' | 'completed' | 'cancelled' | 'no_show';
+    newStatus: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
   } | null>(null);
 
   // Fulfillment & Ordering Configuration State
@@ -1467,7 +1467,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   // ==========================================
   const handleUpdateBookingStatus = async (
     bookingId: string,
-    newStatus: 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    newStatus: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   ) => {
     try {
       const updated = await LoyaltyService.updateServiceBookingStatus(bookingId, newStatus);

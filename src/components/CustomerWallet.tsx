@@ -1031,7 +1031,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         specialist_name: selectedBookingSpecialist?.name,
         booking_date: selectedBookingDate,
         booking_time: selectedBookingTime,
-        status: 'confirmed',
+        status: 'pending',
         points_to_earn: Math.floor(finalPrice * (store.points_per_riyal || 1)),
         notes: bookingNotes.trim() || undefined,
       });
@@ -1047,8 +1047,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         spread: 90,
         origin: { y: 0.5 },
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Booking creation error:', err);
+      alert(err.message || 'فشل تسجيل الحجز، يرجى المحاولة مرة أخرى.');
     } finally {
       setBookingSubmitting(false);
     }
