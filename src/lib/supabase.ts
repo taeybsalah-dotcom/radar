@@ -6673,6 +6673,26 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     return data;
   },
 
+    async getLiveStoreBookings(storeId: string): Promise<any[]> {
+    const currentStore = await this.resolveStore(storeId);
+    const resolvedStoreId = currentStore?.id || storeId;
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        const { data, error } = await (supabase as any).from('service_bookings')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .in('status', ['pending', 'confirmed'])
+          .order('booking_date', { ascending: true })
+          .order('booking_time', { ascending: true });
+        if (!error && data) return data as any;
+      } catch (e) {
+        console.warn('Supabase getLiveStoreBookings failed', e);
+      }
+    }
+    return [];
+  },
+
   async getLiveStoreOrders(storeId: string): Promise<any[]> {
     const currentStore = await this.resolveStore(storeId);
     const resolvedStoreId = currentStore?.id || storeId;
