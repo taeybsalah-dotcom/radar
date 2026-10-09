@@ -7103,7 +7103,7 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
   formatMerchantBookingStatusWhatsApp(
     booking: ServiceBooking,
     storeName: string,
-    statusOverride?: 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    statusOverride?: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   ): string {
     const status = statusOverride || booking.status || 'confirmed';
     const store = storeName || booking.store_name || 'متجر رادار';
@@ -7163,7 +7163,7 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
   generateMerchantBookingStatusWhatsAppUrl(
     booking: ServiceBooking,
     storeName: string,
-    statusOverride?: 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    statusOverride?: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   ): string {
     const rawText = this.formatMerchantBookingStatusWhatsApp(booking, storeName, statusOverride);
     const cleanPhone = (booking.customer_phone || '').replace(/\D/g, '');

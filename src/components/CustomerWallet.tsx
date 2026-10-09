@@ -2105,18 +2105,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
 
               <div className="space-y-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const merchantPhone = store.manager_contact || '0577371780';
-                    const url = LoyaltyService.generateWhatsAppBookingUrl(merchantPhone, bookingSuccessData);
-                    window.open(url, '_blank');
-                  }}
-                  className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  <span>فتح محادثة الواتساب مع المتجر 💬</span>
-                </button>
+                
 
                 <button
                   type="button"
@@ -4447,10 +4436,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   setOrderSuccessPayload(null);
                   setShowPastOrdersModal(true);
                 }}
-                className="w-full py-3.5 rounded-2xl font-black text-xs sm:text-sm text-white bg-emerald-600 hover:bg-emerald-500 shadow-xl flex items-center justify-center gap-2 transition"
+                className="w-full py-3.5 rounded-2xl font-black text-xs sm:text-sm text-white bg-blue-600 hover:bg-blue-500 shadow-xl flex items-center justify-center gap-2 transition"
               >
                 <MessageCircle className="w-4 h-4 fill-current" />
-                <span>إعادة فتح المحادثة على الواتساب 💬</span>
+                <span>تتبع حالة الطلب 📋</span>
               </button>
               <button
                 type="button"
