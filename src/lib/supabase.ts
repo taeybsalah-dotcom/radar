@@ -6686,8 +6686,9 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
           .order('booking_date', { ascending: true })
           .order('booking_time', { ascending: true });
         if (!error && data) return data as any;
-      } catch (e) {
+      } catch (e: any) {
         console.warn('Supabase getLiveStoreBookings failed', e);
+        alert('Get Bookings Error: ' + e.message);
       }
     }
     return [];

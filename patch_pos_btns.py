@@ -3,7 +3,6 @@
 with open('src/components/CashierPOS.tsx', 'r', encoding='utf-8') as f:
     code = f.read()
 
-# Replace the buttons in CashierPOS for liveBookings
 old_buttons = """                <div className="flex gap-2 border-t border-slate-800 pt-3">
                   <button
                     onClick={() => updateBookingStatus(bk.id, 'completed')}
