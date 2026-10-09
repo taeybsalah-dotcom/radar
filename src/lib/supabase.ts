@@ -6949,22 +6949,26 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     };
 
     const supabase = getSupabaseClient();
-    if (supabase && isUUID(resolvedStoreId)) {
-      try {
-        const { data: created } = await supabase
+          if (supabase && isUUID(resolvedStoreId)) {
+        const { data: created, error } = await supabase
           .from('service_bookings')
           .insert([newBooking as any])
           .select()
           .single();
+          
+        if (error) {
+          console.error('Supabase createServiceBooking error', error);
+          throw new Error('فشل إرسال الحجز للسيرفر: ' + error.message);
+        }
+        
         if (created) {
           const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
           list.unshift(created as unknown as ServiceBooking);
           saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, list);
         }
-      } catch (e) {
-        console.warn('Supabase createServiceBooking fallback', e);
+      } else {
+        throw new Error('قاعدة البيانات غير متصلة.');
       }
-    }
 
     const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, INITIAL_BOOKINGS);
     if (!list.some((b) => b.id === newBooking.id)) {

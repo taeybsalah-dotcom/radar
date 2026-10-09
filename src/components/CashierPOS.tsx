@@ -130,25 +130,44 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
     const channel = supabase
       .channel('live-orders-' + store.id)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'store_orders',
-          filter: `store_id=eq.${store.id}`
-        },
-        (payload: any) => {
-          if (payload.eventType === 'INSERT') {
-            setLiveOrders(prev => [...prev, payload.new]);
-            try { playBeepSound('success'); } catch(e){}
-          } else if (payload.eventType === 'UPDATE') {
-            setLiveOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
-          } else if (payload.eventType === 'DELETE') {
-            setLiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
+              .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'store_orders',
+            filter: `store_id=eq.${store.id}`
+          },
+          (payload: any) => {
+            if (payload.eventType === 'INSERT') {
+              setLiveOrders(prev => [...prev, payload.new]);
+              try { playBeepSound('success'); } catch(e){}
+            } else if (payload.eventType === 'UPDATE') {
+              setLiveOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+            } else if (payload.eventType === 'DELETE') {
+              setLiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
+            }
           }
-        }
-      )
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'service_bookings',
+            filter: `store_id=eq.${store.id}`
+          },
+          (payload: any) => {
+            if (payload.eventType === 'INSERT') {
+              setLiveBookings(prev => [...prev, payload.new]);
+              try { playBeepSound('success'); } catch(e){}
+            } else if (payload.eventType === 'UPDATE') {
+              setLiveBookings(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+            } else if (payload.eventType === 'DELETE') {
+              setLiveBookings(prev => prev.filter(o => o.id !== payload.old.id));
+            }
+          }
+        )
       .subscribe();
 
     return () => {
