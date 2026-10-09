@@ -633,20 +633,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     }, 0);
   }, [realStores, storesAnalytics]);
 
-  // Total platform sales across REAL stores only + paid subscription revenue
+  // Total platform sales across REAL stores only
   const totalPlatformSales = useMemo(() => {
-    const storeSales = realStores.reduce((sum, s) => {
+    return realStores.reduce((sum, s) => {
       const analytics = storesAnalytics[s.id];
       return sum + (analytics?.totalSales || 0);
     }, 0);
-    const paidInvoicesTotal = Object.entries(allInvoices)
-      .filter(([sId]) => !isDemoStoreSlug(sId) && sId !== 'demo-cafe-store-uuid')
-      .map(([, invList]) => invList)
-      .flat()
-      .filter((i) => i.status === 'paid')
-      .reduce((sum, i) => sum + (i.amount || 0), 0);
-    return storeSales + paidInvoicesTotal;
-  }, [realStores, storesAnalytics, allInvoices]);
+  }, [realStores, storesAnalytics]);
 
   // Unconverted Leads (leads that have not yet been registered as a store and are not demo)
   const unconvertedLeads = useMemo(() => {
@@ -1239,19 +1232,19 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
             <span className="text-[10px] text-sky-400/80 block truncate">إجمالي الزبائن والعملاء</span>
           </div>
 
-          {/* 7. إجمالي مبيعات واشتراكات المنصة (مطلب إضافي من المستخدم) */}
+          {/* 7. إجمالي مبيعات المتاجر النشطة */}
           <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-950/40 to-slate-900/90 border border-amber-500/40 hover:border-amber-400 transition space-y-1.5 shadow-xl relative overflow-hidden group">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
                 <DollarSign className="w-3.5 h-3.5 text-amber-400" />
-                <span>إجمالي المبالغ</span>
+                <span>إجمالي مبيعات المتاجر</span>
               </span>
               <span className="text-base">💰</span>
             </div>
             <span className="text-xl sm:text-2xl font-black text-amber-300 font-mono block truncate">
               {totalPlatformSales.toLocaleString()} <span className="text-xs text-amber-400/80 font-normal">ر.س</span>
             </span>
-            <span className="text-[10px] text-amber-400/80 block truncate">مبيعات واشتراكات المنصة</span>
+            <span className="text-[10px] text-amber-400/80 block truncate">إجمالي إيرادات المتاجر النشطة</span>
           </div>
         </div>
 

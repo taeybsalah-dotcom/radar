@@ -233,6 +233,19 @@ export const SuperAdminBillingConsole: React.FC = () => {
 
       // Instant in-memory metric computation without redundant network queries
       const computedMetrics = LoyaltyService.calculateMetricsFromLedger(freshLedger, freshCreditNotes);
+      
+      // Override affiliate metrics directly from Server Summaries to fix LocalStorage desync
+      if (summariesRes.status === 'fulfilled' && summariesRes.value) {
+        let realTotalPayable = 0;
+        let realTotalPaid = 0;
+        Object.values(summariesRes.value).forEach((s: any) => {
+          realTotalPayable += (s.total_payable || 0);
+          realTotalPaid += (s.paid_commissions || 0) + (s.bonuses_paid || 0);
+        });
+        computedMetrics.totalAffiliatePayable = realTotalPayable;
+        computedMetrics.totalAffiliatePaid = realTotalPaid;
+      }
+      
       setMetrics(computedMetrics);
     } catch (err) {
       console.error('[SuperAdminBillingConsole] Load error:', err);
@@ -2051,3 +2064,4 @@ export const SuperAdminBillingConsole: React.FC = () => {
     </div>
   );
 };
+

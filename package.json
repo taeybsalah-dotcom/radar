@@ -22,7 +22,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sharp": "^0.35.4",
-    "tailwind-merge": "^3.0.1"
+    "tailwind-merge": "^3.0.1",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@rollup/wasm-node": "^4.63.5",

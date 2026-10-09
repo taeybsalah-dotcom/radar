@@ -190,6 +190,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [catModifierGroups, setCatModifierGroups] = useState<CatalogModifierGroup[]>([]);
   const [catIsAvailable, setCatIsAvailable] = useState(true);
   const [catalogActionSuccess, setCatalogActionSuccess] = useState<string | null>(null);
+  const [catalogActionError, setCatalogActionError] = useState<string | null>(null);
   const [isCatImageCompressing, setIsCatImageCompressing] = useState(false);
   const catFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -798,7 +799,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       };
       setSimulationNotice(`تم تحويل حالة المتجر بنجاح إلى: [${stateLabels[state]}]`);
       setTimeout(() => setSimulationNotice(null), 4500);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     } finally {
       setIsSimulatingState(false);
@@ -814,7 +815,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       const result = await compressImage(file, 400, 400, 0.8);
       setStoreLogoUrl(result.dataUrl);
       setLogoStats(result);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to compress image:', err);
     } finally {
       setIsCompressing(false);
@@ -829,7 +830,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     try {
       const result = await compressImage(file, 600, 600, 0.85);
       setNewSlideImageUrl(result.dataUrl);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to compress slide image:', err);
     } finally {
       setIsSlideCompressing(false);
@@ -858,7 +859,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         slider_images: updatedList,
       });
       LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: store.id });
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to auto-save slide addition:', err);
     }
   };
@@ -873,7 +874,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         slider_images: updatedList,
       });
       LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: store.id });
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Failed to auto-save slide deletion:', err);
     }
   };
@@ -928,7 +929,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         `تم بنجاح حفظ وتحديث هوية وإعدادات المتجر والدومين (${updated.name})`
       );
       setTimeout(() => setSettingsSavedMessage(null), 4500);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     } finally {
       setUpdatingSettings(false);
@@ -1059,8 +1060,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
       setIsProductModalOpen(false);
       setTimeout(() => setCatalogActionSuccess(null), 3500);
-    } catch (err) {
-      console.error('Failed to save product:', err);
+    } catch (err: any) {
+      setCatalogActionError(err.message || 'حدث خطأ أثناء حفظ المنتج'); setTimeout(() => setCatalogActionError(null), 5000);
     }
   };
 
@@ -1101,8 +1102,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
       setIsServiceModalOpen(false);
       setTimeout(() => setCatalogActionSuccess(null), 3500);
-    } catch (err) {
-      console.error('Failed to save service:', err);
+    } catch (err: any) {
+      setCatalogActionError(err.message || 'حدث خطأ أثناء حفظ الخدمة'); setTimeout(() => setCatalogActionError(null), 5000);
     }
   };
 
@@ -1113,7 +1114,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setCatalogItems(catalogItems.filter((it) => it.id !== itemId));
         setCatalogActionSuccess(`تم حذف (${name}) بنجاح`);
         setTimeout(() => setCatalogActionSuccess(null), 3000);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to delete catalog item:', err);
       }
     }
@@ -1124,7 +1125,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       const newStatus = !item.is_available;
       const updated = await LoyaltyService.updateCatalogItem(item.id, { is_available: newStatus });
       setCatalogItems(catalogItems.map((it) => (it.id === item.id ? updated : it)));
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to toggle availability:', err);
     }
   };
@@ -1137,7 +1138,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     try {
       const result = await compressImage(file, 500, 500, 0.82);
       setCatImageUrlInput(result.dataUrl);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to compress catalog image:', err);
     } finally {
       setIsCatImageCompressing(false);
@@ -1222,7 +1223,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     try {
       const result = await compressImage(file, 400, 400, 0.82);
       setSpecAvatarUrlInput(result.dataUrl);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to compress specialist avatar image:', err);
     } finally {
       setIsSpecImageCompressing(false);
@@ -1291,7 +1292,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
       setIsSpecialistModalOpen(false);
       setTimeout(() => setSpecialistActionSuccess(null), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -1303,7 +1304,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setSpecialists(specialists.filter((s) => s.id !== specId));
         setSpecialistActionSuccess(`تم حذف المختص: "${name}"`);
         setTimeout(() => setSpecialistActionSuccess(null), 3000);
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
       }
     }
@@ -1313,7 +1314,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     try {
       const updated = await LoyaltyService.updateStoreSpecialist(spec.id, { is_active: !spec.is_active });
       setSpecialists(specialists.map((s) => (s.id === spec.id ? updated : s)));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -1359,7 +1360,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
       setIsCategoryModalOpen(false);
       setTimeout(() => setCategoryActionSuccess(null), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -1371,7 +1372,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setGlobalCategories(globalCategories.filter((c) => c.id !== catId));
         setCategoryActionSuccess(`تم حذف القسم: "${name}"`);
         setTimeout(() => setCategoryActionSuccess(null), 3000);
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
       }
     }
@@ -1432,7 +1433,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
       setIsModifierGroupModalOpen(false);
       setTimeout(() => setModifierActionSuccess(null), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -1444,7 +1445,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setGlobalModifierGroups(globalModifierGroups.filter((g) => g.id !== groupId));
         setModifierActionSuccess(`تم حذف مجموعة الإضافات: "${name}"`);
         setTimeout(() => setModifierActionSuccess(null), 3000);
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
       }
     }
@@ -1480,7 +1481,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       };
       setBookingActionSuccess(`تم تغيير حالة الحجز #${updated.booking_number} إلى (${statusLabels[newStatus] || newStatus}) بنجاح`);
       setTimeout(() => setBookingActionSuccess(null), 5000);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -1573,7 +1574,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       const result = await compressImage(file, 500, 500, 0.82);
       setPrivImageUrl(result.dataUrl);
       setPrivLogoStats(result);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to compress privilege image:', err);
     } finally {
       setIsPrivCompressing(false);
@@ -1656,7 +1657,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
       setIsPrivilegeModalOpen(false);
       setTimeout(() => setPrivActionSuccess(null), 4000);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -1668,7 +1669,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setPrivileges(privileges.filter((p) => p.id !== id));
         setPrivActionSuccess(`تم حذف الامتياز: "${title}"`);
         setTimeout(() => setPrivActionSuccess(null), 3500);
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
       }
     }
@@ -1680,7 +1681,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setPrivileges(privileges.map((item) => (item.id === p.id ? { ...item, is_active: newStatus } : item)));
       setPrivActionSuccess(newStatus ? `تم تفعيل "${p.title}"` : `تم إيقاف "${p.title}"`);
       setTimeout(() => setPrivActionSuccess(null), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -1691,7 +1692,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setPrivileges(privileges.map((item) => (item.id === p.id ? { ...item, is_hidden: newHidden } : item)));
       setPrivActionSuccess(newHidden ? `تم إخفاء "${p.title}" عن العملاء` : `تم إظهار "${p.title}" للعملاء`);
       setTimeout(() => setPrivActionSuccess(null), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -1904,7 +1905,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setNewStaffCanManual(false);
       setStaffActionSuccess(`تم إضافة الموظف: "${created.name}"`);
       setTimeout(() => setStaffActionSuccess(null), 4000);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -2009,7 +2010,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setIsEditStaffPinModalOpen(false);
       setEditingStaffForPin(null);
       setTimeout(() => setStaffActionSuccess(null), 3500);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to update staff PIN:', err);
     }
   };
@@ -2110,7 +2111,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setStoreWallet(updated);
       setMetaSavedMessage('تم حفظ وتحديث إعدادات ربط WhatsApp بنجاح ✅');
       setTimeout(() => setMetaSavedMessage(null), 4000);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
     }
   };
@@ -4154,7 +4155,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             </div>
           </div>
 
-          {catalogActionSuccess && (
+          {catalogActionError && (
+              <div className="p-3 rounded-xl bg-slate-950 border border-rose-500/30 text-rose-300 text-xs font-semibold animate-fade-in flex items-center space-x-2 rtl:space-x-reverse">
+                <AlertCircle className="w-4 h-4 text-rose-400" />
+                <span>{catalogActionError}</span>
+              </div>
+            )}
+            {catalogActionSuccess && (
             <div className="p-3 rounded-xl bg-slate-950 border border-emerald-500/30 text-emerald-300 text-xs font-semibold animate-fade-in flex items-center space-x-2 rtl:space-x-reverse">
               <CheckCircle className="w-4 h-4 text-emerald-400" />
               <span>{catalogActionSuccess}</span>

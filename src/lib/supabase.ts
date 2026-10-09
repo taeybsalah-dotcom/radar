@@ -693,9 +693,9 @@ try {
 // polling queries and fetched once per hour per client via attachStoreAssets().
 // ==============================================================================
 const STORE_SAFE_COLS =
-  'id, slug, name, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, setup_fee_paid, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, telegram_chat_id, telegram_notifications_enabled, trial_start_date, trial_end_date, subscription_plan_id, subscription_start_date, subscription_end_date, created_at, updated_at';
+  'id, slug, name, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, lifecycle_stage, setup_fee_paid, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, telegram_chat_id, telegram_notifications_enabled, trial_start_date, trial_end_date, subscription_plan_id, subscription_plan, plan_code, renewal_amount, subscription_start_date, subscription_end_date, created_at, updated_at';
 const STORE_FULL_COLS = STORE_SAFE_COLS;
-const CUSTOMER_SAFE_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at';
+const CUSTOMER_SAFE_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at';
 const CUSTOMER_FULL_COLS = CUSTOMER_SAFE_COLS;
 const COUPON_SAFE_COLS =
   'id, coupon_code, store_id, customer_id, customer_phone, customer_name, privilege_id, privilege_title, cost_points, status, valid_start_time, valid_end_time, purchased_at';
@@ -945,7 +945,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase.rpc('get_all_partner_financial_summaries');
         if (!error && data && typeof data === 'object') {
-          return data;
+          return data as any;
         }
       } catch (err) {
         console.warn('[LoyaltyService] RPC get_all_partner_financial_summaries failed, falling back:', err);
@@ -3931,7 +3931,7 @@ export const LoyaltyService = {
 
         const { data, error } = await supabase
           .from('store_customers')
-          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at')
+          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at')
           .eq('store_id', resolvedId)
           .in('phone', candidatePhones)
           .limit(1)
@@ -3975,7 +3975,7 @@ export const LoyaltyService = {
       try {
         const { data, error } = await supabase
           .from('store_customers')
-          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at')
+          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at')
           .eq('store_id', resolvedId)
           .order('last_visit_date', { ascending: false });
         if (!error && Array.isArray(data)) {
@@ -4223,7 +4223,7 @@ export const LoyaltyService = {
         const { data, error } = await supabase
           .from('store_customers')
           .insert([dbPayload])
-          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, is_demo, created_at, updated_at')
+          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at')
           .single();
         if (!error && data) {
           createdCust = {
@@ -4241,6 +4241,39 @@ export const LoyaltyService = {
           const customers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
           saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, [createdCust, ...customers.filter((c) => c.id !== createdCust.id)]);
           LoyaltyEvents.emit({ type: 'CUSTOMER_UPDATED', storeId: resolvedStoreId, phone: data.phone });
+          if (welcomePoints > 0) {
+            supabase.from('audit_logs').insert([{
+              store_id: resolvedStoreId,
+              customer_id: createdCust.id,
+              customer_phone: createdCust.phone,
+              customer_name: createdCust.name || 'عميل مميز',
+              action: 'ADJUSTMENT',
+              purchase_amount: 0,
+              points_changed: welcomePoints,
+              entry_method: 'manual',
+              metadata: {
+                note: 'نقاط تسجيل وترحيب بالعميل',
+                cashier_name: 'النظام الآلي',
+                customer_name: createdCust.name || 'عميل مميز'
+              }
+            }]).then();
+            
+            const logs = getLocalData<any[]>(STORAGE_KEYS.LOCAL_LOGS, []);
+            logs.unshift({
+              id: 'log-' + Date.now(),
+              store_id: resolvedStoreId,
+              customer_id: createdCust.id,
+              customer_phone: createdCust.phone,
+              customer_name: createdCust.name || 'عميل مميز',
+              action: 'ADJUSTMENT',
+              purchase_amount: 0,
+              points_changed: welcomePoints,
+              entry_method: 'manual',
+              metadata: { note: 'نقاط تسجيل وترحيب بالعميل', cashier_name: 'النظام الآلي' },
+              created_at: new Date().toISOString()
+            });
+            saveLocalData(STORAGE_KEYS.LOCAL_LOGS, logs);
+          }
         } else {
           console.warn('Supabase registerCustomer insert fallback:', error);
           createdCust = {
@@ -5023,14 +5056,17 @@ export const LoyaltyService = {
 
         const { data, error } = await withTimeout(query, 3500);
         if (!error && data && data.length > 0) {
-          const formatted: FinancialLedgerEntry[] = data.map((d: any) => ({
+          const partnersList = await this.getAllPartners();
+          const formatted: FinancialLedgerEntry[] = data.map((d: any) => {
+            const partner = partnersList.find((p) => p.id === d.affiliate_id || p.affiliate_id === d.affiliate_id);
+            return {
             id: d.id,
             transaction_id: d.transaction_id,
             invoice_id: d.invoice_id,
             store_id: d.store_id,
             store_name: d.store_name || d.metadata?.store_name || null,
             affiliate_id: d.affiliate_id,
-            affiliate_name: d.affiliate_name || d.metadata?.affiliate_name || null,
+            affiliate_name: d.affiliate_name || d.metadata?.affiliate_name || partner?.full_name || partner?.display_name || null,
             payment_id: d.payment_id,
             transaction_type: d.transaction_type,
             gross_amount: Number(d.gross_amount) || 0,
@@ -5045,7 +5081,8 @@ export const LoyaltyService = {
             refund_of: d.refund_of,
             created_by: d.created_by || 'SYSTEM',
             metadata: d.metadata || {},
-          }));
+            };
+          });
           saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_LEDGER, formatted);
           if (isDefaultQuery) {
             ledgerListCache = { data: formatted, timestamp: Date.now() };
@@ -5637,7 +5674,8 @@ export const LoyaltyService = {
             ledgerEntry,
           };
         } else if (rpcErr) {
-          console.warn('[processZatcaRefundAndCreditNote] RPC warning:', rpcErr);
+          console.error('[processZatcaRefundAndCreditNote] RPC error:', rpcErr);
+          return { success: false, error: rpcErr.message || 'فشلت عملية الاسترداد من السيرفر' } as any;
         }
       } catch (rpcExc) {
         console.warn('[processZatcaRefundAndCreditNote] RPC exception, fallback:', rpcExc);
@@ -6393,11 +6431,10 @@ export const LoyaltyService = {
   // ==========================================
 
   async getCatalogItems(storeId: string): Promise<CatalogItem[]> {
-    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
-    return localList.filter((item) => item.store_id === storeId);
+    const supabase = getSupabaseClient(); if (supabase) { try { const { data, error } = await supabase.from('catalog_items').select('*').eq('store_id', storeId).order('created_at', { ascending: false }); if (!error && data) return data as any; } catch(e){} } const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []); return localList.filter((item) => item.store_id === storeId);
   },
 
-  async addCatalogItem(item: Omit<CatalogItem, 'id' | 'created_at'>): Promise<CatalogItem> {
+    async addCatalogItem(item: Omit<CatalogItem, 'id' | 'created_at'>): Promise<CatalogItem> {
     const newItem: CatalogItem = {
       ...item,
       id: 'cat-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5),
@@ -6405,30 +6442,23 @@ export const LoyaltyService = {
     };
 
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.from('catalog_items').insert([stripDataUrls({ ...newItem }) as any]).select().single();
-        if (!error && data) {
-          // مزامنة محلياً أيضاً
-          const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
-          localList.unshift(data as unknown as CatalogItem);
-          saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, localList);
-          LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: item.store_id });
-          return data as unknown as CatalogItem;
-        }
-      } catch (e) {
-        console.warn('Supabase addCatalogItem fallback to local', e);
-      }
-    }
+    if (!supabase) throw new Error('لا يوجد اتصال بقاعدة البيانات');
 
-    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
-    localList.unshift(newItem);
-    saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, localList);
+    const { data, error } = await supabase.from('catalog_items').insert([stripDataUrls({ ...newItem }) as any]).select().single();
+    if (error) {
+      console.error('Insert error:', error);
+      throw new Error(error.message);
+    }
+    
+    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + item.store_id, getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []));
+    localList.unshift(data as unknown as CatalogItem);
+    saveLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + item.store_id, localList);
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: item.store_id });
-    return newItem;
+    
+    return data as unknown as CatalogItem;
   },
 
-  async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<CatalogItem> {
+async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<CatalogItem> {
     const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
     const idx = localList.findIndex((item) => item.id === id);
     let updatedItem: CatalogItem | null = null;
@@ -6575,6 +6605,105 @@ export const LoyaltyService = {
   },
 
   // ==========================================
+  // ==========================================
+  // 🛒 Live Store Orders (Dine-in / Takeaway / Delivery)
+  // ==========================================
+
+  async createStoreOrder(
+    payload: any
+  ): Promise<any> {
+    const currentStore = await this.resolveStore(payload.store_id);
+    const resolvedStoreId = currentStore?.id || payload.store_id;
+    const supabase = getSupabaseClient();
+    
+    const orderNumber = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
+    const dbPayload = {
+      store_id: resolvedStoreId,
+      order_number: orderNumber,
+      customer_name: payload.customer_name || 'عميل مميز',
+      customer_phone: payload.customer_phone || '',
+      order_type: payload.fulfillment_type === 'dine_in' ? 'dine_in' : payload.fulfillment_type === 'takeaway' ? 'takeaway' : 'delivery',
+      table_number: payload.fulfillment_details?.table_number || null,
+      items: payload.items || [],
+      total_price: payload.total_price || 0,
+      loyalty_points_earned: payload.loyalty_points_earned || 0,
+      status: 'pending',
+      payment_status: 'unpaid',
+      notes: payload.notes || ''
+    };
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        const { data, error } = await (supabase as any).from('store_orders')
+          .insert([dbPayload])
+          .select()
+          .single();
+          
+        if (error) throw error;
+        if (data) {
+          return {
+            ...payload,
+            id: data.id,
+            order_id: data.order_number,
+          };
+        }
+      } catch (e: any) {
+        console.warn('Supabase createStoreOrder failed:', e);
+        throw new Error(e.message || 'فشل في إرسال الطلب، الرجاء المحاولة مرة أخرى.');
+      }
+    }
+    
+    throw new Error('قاعدة البيانات غير متصلة.');
+  },
+
+  async getLiveStoreOrders(storeId: string): Promise<any[]> {
+    const currentStore = await this.resolveStore(storeId);
+    const resolvedStoreId = currentStore?.id || storeId;
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        const { data, error } = await (supabase as any).from('store_orders')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .in('status', ['pending', 'accepted', 'preparing', 'ready'])
+          .order('created_at', { ascending: true });
+        if (!error && data) return data as any;
+      } catch (e) {
+        console.warn('Supabase getLiveStoreOrders failed', e);
+      }
+    }
+    return [];
+  },
+  
+    async getCustomerOrders(storeId: string, phone: string): Promise<any[]> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    try {
+      const { data, error } = await (supabase as any).from('store_orders')
+        .select('*')
+        .eq('store_id', storeId)
+        .eq('customer_phone', phone)
+        .order('created_at', { ascending: false });
+      if (!error && data) return data;
+    } catch(e) {}
+    return [];
+  },
+
+  async updateOrderStatus(orderId: string, status: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { error } = await (supabase as any).from('store_orders')
+          .update({ status, updated_at: new Date().toISOString() })
+          .eq('id', orderId);
+        if (!error) return true;
+      } catch (e) {
+        console.warn('updateOrderStatus failed', e);
+      }
+    }
+    return false;
+  },
+
   // 💇‍♂️ Specialists & Staff Roster Methods
   // ==========================================
 
@@ -8387,190 +8516,43 @@ export const LoyaltyService = {
       adminUser?: string;
       notes?: string;
     }
-  ): Promise<{ success: boolean; total_amount?: number; payout?: AffiliatePayoutRecord; ledgerEntry?: FinancialLedgerEntry; error?: string }> {
-    const now = new Date();
-    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const partner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId || p.slug === partnerId);
-    const resolvedPartnerId = partner?.id || partnerId;
-    const resolvedAffiliateId = partner?.affiliate_id || partnerId;
-    const partnerName = partner?.display_name || partner?.affiliates?.name || 'الشريك المعتمد';
-
-    const isMatchingComm = (c: any) => {
-      const pId = c.partner_account_id || c.affiliate_id;
-      return (
-        (pId === resolvedPartnerId || pId === resolvedAffiliateId || (partner && (pId === partner.id || pId === partner.affiliate_id))) &&
-        (c.status === 'AVAILABLE' || c.status === 'EARNED')
-      );
-    };
-
-    const isMatchingBonus = (b: any) => {
-      const pId = b.partner_account_id;
-      return (
-        (pId === resolvedPartnerId || pId === resolvedAffiliateId || (partner && (pId === partner.id || pId === partner.affiliate_id))) &&
-        (b.status === 'ACHIEVED' || b.status === 'AWARDED')
-      );
-    };
-
-    const localComms = getLocalData<any[]>(STORAGE_KEYS.LOCAL_COMMISSIONS, []);
-    let localBonuses = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BONUS_AWARDS, []);
-
-    // 🌟 ضمان توثيق جميع مكافآت التارقت المحققة للشريك قبل الصرف
-    const bonusesData = await this.getPartnerBonuses(resolvedPartnerId, resolvedAffiliateId);
-    bonusesData.milestones.forEach((m) => {
-      if (m.status === 'ACHIEVED' && !m.is_paid) {
-        const awardKey = `bonus_${resolvedPartnerId}_${m.milestone}`;
-        const existingIdx = localBonuses.findIndex(
-          (b) =>
-            b.idempotency_key === awardKey ||
-            ((b.partner_account_id === resolvedPartnerId || b.partner_account_id === resolvedAffiliateId) &&
-              Number(b.milestone) === m.milestone)
-        );
-        if (existingIdx === -1) {
-          localBonuses.push({
-            id: `award-${Date.now()}-${m.milestone}`,
-            partner_account_id: resolvedPartnerId,
-            bonus_rule_id: m.id,
-            milestone: m.milestone,
-            bonus_amount: m.bonus_amount,
-            status: 'ACHIEVED',
-            idempotency_key: awardKey,
-            awarded_at: now.toISOString(),
-            created_at: now.toISOString(),
-          });
-        }
-      }
-    });
-
-    let settledCommsAmt = 0;
-    const commIds: string[] = [];
-
-    const payoutNumber = `PAY-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
-      now.getDate()
-    ).padStart(2, '0')}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    const payoutRef = reference?.trim() || `PAYOUT-${now.toISOString().substring(0, 10)}-${partner?.slug || resolvedPartnerId}`;
-
-    const updatedComms = localComms.map((c) => {
-      if (isMatchingComm(c)) {
-        const amt = Number(c.commission_amount) || 0;
-        settledCommsAmt += amt;
-        commIds.push(c.id);
-        return {
-          ...c,
-          status: 'PAID',
-          payout_reference: payoutRef,
-          payout_number: payoutNumber,
-          paid_at: now.toISOString(),
-          updated_at: now.toISOString(),
-        };
-      }
-      return c;
-    });
-
-    let settledBonusesAmt = 0;
-    const updatedBonuses = localBonuses.map((b) => {
-      if (isMatchingBonus(b)) {
-        const amt = Number(b.bonus_amount) || 0;
-        settledBonusesAmt += amt;
-        return {
-          ...b,
-          status: 'PAID',
-          payout_reference: payoutRef,
-          payout_number: payoutNumber,
-          paid_at: now.toISOString(),
-          updated_at: now.toISOString(),
-        };
-      }
-      return b;
-    });
-
-    const totalSettledAmt = Math.round((settledCommsAmt + settledBonusesAmt) * 100) / 100;
-
-    if (totalSettledAmt <= 0) {
-      return { success: false, error: 'لا توجد أي عمولات أو مكافآت مستحقة للصرف حالياً لهذا الشريك' };
-    }
-
-    // 1. حفظ الحركات المحدثة محلياً فورياً
-    saveLocalData(STORAGE_KEYS.LOCAL_COMMISSIONS, updatedComms);
-    saveLocalData(STORAGE_KEYS.LOCAL_BONUS_AWARDS, updatedBonuses);
-
-    // 2. مزامنة Supabase إن وجدت
+  ): Promise<{ success: boolean; total_amount?: number; payout?: any; ledgerEntry?: any; error?: string }> {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        if (commIds.length > 0) {
-          await supabase
-            .from('partner_commissions')
-            .update({ status: 'PAID', updated_at: now.toISOString() })
-            .in('id', commIds);
-        }
-        await supabase
-          .from('partner_bonus_awards')
-          .update({ status: 'PAID' })
-          .or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`)
-          .in('status', ['ACHIEVED', 'AWARDED']);
-      } catch (dbErr) {
-        console.warn('Supabase settlePartnerCommissions sync warning:', dbErr);
+    if (!supabase) return { success: false, error: 'تعذر الاتصال بقاعدة البيانات' };
+
+    try {
+      // @ts-ignore
+      const { data, error } = await supabase.rpc('process_affiliate_payout_atomic', {
+        p_partner_id: partnerId,
+        p_admin_user: options?.adminUser || 'Super Admin (المالك)',
+        p_transfer_ref: reference || 'PAYOUT-' + Date.now(),
+        p_bank_name: options?.bankName || 'تحويل بنكي مباشر',
+        p_iban: options?.iban || 'N/A',
+        p_notes: options?.notes || 'صرف وتصفية العمولات والمكافآت المستحقة'
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
       }
+
+      if (data && (data as any).success) {
+        // تحديث الكاش وإبلاغ الواجهة بالتغييرات الجذرية
+        invalidateAllServiceCaches();
+        LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+        LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
+        LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: 'global' }); // لدفع التحديثات
+        return {
+          success: true,
+          total_amount: (data as any).total_amount,
+          payout: data,
+          ledgerEntry: data
+        };
+      } else {
+        return { success: false, error: (data as any)?.error || 'فشلت عملية الصرف لأسباب غير معروفة' };
+      }
+    } catch (e: any) {
+      return { success: false, error: e.message || 'حدث خطأ في الاتصال بالسيرفر' };
     }
-
-    // 3. تسجيل قيد الصرف في السجل المالي العام (خصم من إيرادات وسيولة المنصة في دفتر الأستاذ)
-    const ledgerEntry = await this.recordFinancialLedgerEntry({
-      transaction_id: `tx_payout_${payoutNumber}_${Date.now()}`,
-      affiliate_id: resolvedPartnerId,
-      affiliate_name: partnerName,
-      transaction_type: 'PAYOUT',
-      gross_amount: -totalSettledAmt,
-      vat_amount: 0.00,
-      gateway_fee: 0.00,
-      affiliate_commission: -totalSettledAmt,
-      net_platform_amount: -totalSettledAmt,
-      status: 'SETTLED',
-      created_by: options?.adminUser || 'Super Admin (المالك)',
-      metadata: {
-        payout_number: payoutNumber,
-        transfer_reference: payoutRef,
-        iban: options?.iban || (partner as any)?.iban || 'حوالة بنكية مباشرة',
-        bank_name: options?.bankName || 'تحويل بنكي فوري',
-        commissions_count: commIds.length,
-        bonuses_count: localBonuses.filter(isMatchingBonus).length,
-        admin_notes: options?.notes || `صرف وتسوية عمولات الشريك [${partnerName}] بموجب الحوالة ${payoutRef}`,
-        settled_at: now.toISOString(),
-      },
-    });
-
-    // 4. تسجيل وتوثيق عملية الصرف في سجل الحوالات (Affiliate Payouts Audit)
-    const payoutRecord: AffiliatePayoutRecord = {
-      id: 'payout-' + Date.now(),
-      payout_number: payoutNumber,
-      affiliate_id: resolvedPartnerId,
-      partner_name: partnerName,
-      iban: options?.iban || (partner as any)?.iban || 'حوالة بنكية مباشرة',
-      bank_name: options?.bankName || 'تحويل بنكي فوري',
-      transfer_reference: payoutRef,
-      amount: totalSettledAmt,
-      commissions_count: commIds.length,
-      commission_ids: commIds,
-      status: 'COMPLETED',
-      disbursed_by: options?.adminUser || 'Super Admin (المالك)',
-      disbursed_at: now.toISOString(),
-      ledger_entry_id: ledgerEntry.id,
-      notes: options?.notes || `صرف وتسوية عمولات الشريك [${partnerName}] بموجب الحوالة ${payoutRef}`,
-    };
-
-    const localPayouts = getLocalData<AffiliatePayoutRecord[]>(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, []);
-    saveLocalData(STORAGE_KEYS.LOCAL_AFFILIATE_PAYOUTS, [payoutRecord, ...localPayouts.filter((p) => p.id !== payoutRecord.id)]);
-
-    invalidateAllServiceCaches();
-    LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
-    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
-
-    return {
-      success: true,
-      total_amount: totalSettledAmt,
-      payout: payoutRecord,
-      ledgerEntry,
-    };
   },
 
   async updatePartnerCommissionRate(
@@ -9126,5 +9108,12 @@ export const LoyaltyService = {
     };
   },
 };
+
+
+
+
+
+
+
 
 
