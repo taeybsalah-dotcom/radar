@@ -1039,8 +1039,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       setStoreBookings((prev) => [createdBooking, ...prev]);
       setBookingSuccessData(createdBooking);
 
-      const whatsappUrl = LoyaltyService.generateWhatsAppBookingUrl(merchantPhone, createdBooking);
-      window.open(whatsappUrl, '_blank');
+      
 
       playBeepSound('success');
       confetti({
@@ -1284,8 +1283,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     };
 
     const merchantPhone = store.manager_contact || '0577371780';
-    const whatsappUrl = LoyaltyService.generateWhatsAppOrderUrl(merchantPhone, payload);
-    window.open(whatsappUrl, '_blank');
+    
 
     try {
       const existingOrders = JSON.parse(localStorage.getItem('radar_local_whatsapp_orders') || '[]');
@@ -2743,7 +2741,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition disabled:opacity-50"
                       >
                         <MessageCircle className="w-4 h-4" />
-                        <span>{bookingSubmitting ? 'جاري تسجيل الموعد...' : 'تأكيد الحجز والإرسال عبر واتساب 💬'}</span>
+                        <span>{bookingSubmitting ? 'جاري تسجيل الموعد...' : 'تأكيد الحجز المباشر ✅'}</span>
                       </button>
 
                       <button
