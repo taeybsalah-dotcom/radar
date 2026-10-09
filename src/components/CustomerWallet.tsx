@@ -1800,7 +1800,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   style={{ color: brandSecondary }}
                   className="font-black hover:underline flex items-center gap-1 text-[11px] bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-800"
                 >
-                  <span>إعادة الطلب 🔁</span>
+                  <span>طلباتي 📋</span>
                 </button>
               </div>
             )}
@@ -4541,15 +4541,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
         <button
           type="button"
-          onClick={() => handleReOrder(order)}
+          onClick={() => !isLive && handleReOrder(order)}
+          disabled={isLive}
           style={{
-            backgroundColor: brandSecondary,
-            color: '#000000',
+            backgroundColor: isLive ? '#334155' : brandSecondary,
+            color: isLive ? '#94a3b8' : '#000000',
+            cursor: isLive ? 'not-allowed' : 'pointer',
+            opacity: isLive ? 0.7 : 1
           }}
-          className="px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-lg hover:brightness-110 transition active:scale-95"
+          className={`px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-lg transition ${isLive ? '' : 'hover:brightness-110 active:scale-95'}`}
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          <span>إعادة الطلب 🔁</span>
+          <span>{isLive ? 'قيد التنفيذ ⏳' : 'إعادة الطلب 🔁'}</span>
         </button>
       </div>
     </div>
