@@ -4370,10 +4370,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </div>
                   <div>
                     <h3 className="text-sm sm:text-base font-black text-white">
-                      سجل طلباتي وحجوزاتي السابقة
+                      سجل طلباتي السابقة
                     </h3>
                     <p className="text-[11px] text-slate-400">
-                      إعادة الطلب والحجز بضغطة زر واحدة
+                      تتبع الطلب الحالي أو إعادة الطلب بضغطة زر
                     </p>
                   </div>
                 </div>

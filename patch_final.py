@@ -3,6 +3,49 @@
 with open('src/components/CustomerWallet.tsx', 'r', encoding='utf-8') as f:
     code = f.read()
 
+# 1. imports
+code = re.sub(r"import \{ LoyaltyService, normalizePhone \} from '\.\.\/lib\/supabase';", "import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';", code)
+
+# 2. useEffect
+injection = """  useEffect(() => {
+    if (!store?.id || !customer?.phone) return;
+    
+    // Fetch initial
+    LoyaltyService.getCustomerOrders(store.id, customer.phone).then(orders => {
+      setPastOrders(orders);
+    });
+
+    // Listen to live changes
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    const channel = supabase.channel('customer-orders-' + customer.phone)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'store_orders', filter: 'store_id=eq.' + store.id }, () => {
+        LoyaltyService.getCustomerOrders(store.id, customer.phone).then(orders => {
+          setPastOrders(orders);
+        });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [store?.id, customer?.phone, isCartModalOpen, orderSuccessPayload]);"""
+
+code = re.sub(r"useEffect\(\(\) => \{\s*try \{\s*const stored = JSON\.parse\(localStorage\.getItem\('radar_local_whatsapp_orders'\) \|\| '\[\]'\);\s*if \(Array\.isArray\(stored\)\) \{\s*const matching = stored\.filter\(\s*\(o: any\) =>\s*o\.store_id === store\.id &&\s*\(!customer\?\.phone \|\| normalizePhone\(o\.customer_phone\) === normalizePhone\(customer\.phone\)\)\s*\);\s*setPastOrders\(matching\);\s*\}\s*\} catch \{\s*setPastOrders\(\[\]\);\s*\}\s*\}, \[store\?\.id, customer\?\.phone, isCartModalOpen, orderSuccessPayload\]\);", injection, code)
+
+# 3. Track button redirect to modal instead of whatsapp
+btnOld = """                onClick={() => {
+                  const merchantPhone = store.manager_contact || '0577371780';
+                  const whatsappUrl = LoyaltyService.generateWhatsAppOrderUrl(merchantPhone, orderSuccessPayload);
+                  window.open(whatsappUrl, '_blank');
+                }}"""
+btnNew = """                onClick={() => {
+                  setOrderSuccessPayload(null);
+                  setShowPastOrdersModal(true);
+                }}"""
+code = code.replace(btnOld, btnNew)
+
+# 4. Progress bar replacement
 replacement = r'''pastOrders.map((order: any) => {
   const fulfillmentType = order.order_type || order.fulfillment_type || 'takeaway';
   const orderNumber = order.order_number || order.order_id || String(order.id).substring(0, 5);
@@ -120,42 +163,70 @@ replacement = r'''pastOrders.map((order: any) => {
 
         <button
           type="button"
-          onClick={() => handleReOrder(order)}
+          onClick={() => !isLive && handleReOrder(order)}
+          disabled={isLive}
           style={{
-            backgroundColor: brandSecondary,
-            color: '#000000',
+            backgroundColor: isLive ? '#334155' : brandSecondary,
+            color: isLive ? '#94a3b8' : '#000000',
+            cursor: isLive ? 'not-allowed' : 'pointer',
+            opacity: isLive ? 0.7 : 1
           }}
-          className="px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-lg hover:brightness-110 transition active:scale-95"
+          className={`px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-lg transition ${isLive ? '' : 'hover:brightness-110 active:scale-95'}`}
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          <span>إعادة الطلب 🔁</span>
+          <span>{isLive ? 'قيد التنفيذ ⏳' : 'إعادة الطلب 🔁'}</span>
         </button>
       </div>
     </div>
   );
 })'''
 
-start_str = "pastOrders.map((order: any) => {"
-# The file contains my broken replacement, so I will search for the broken python string!
-# Wait, I did `git checkout` earlier. The file is cleanly restored!
 start_str = "pastOrders.map((order) => {"
 end_str = "<span>إعادة الطلب 🔁</span>\n                                </button>\n                              </div>\n                            </div>\n                          );\n                        })"
 
 start_idx = code.find(start_str)
-if start_idx == -1:
-    # Try finding the mangled version
-    start_str = "pastOrders.map((order: any) => {\n  const fulfillmentType ="
-    start_idx = code.find(start_str)
-
 if start_idx != -1:
     match = re.search(r'<span>إعادة الطلب 🔁</span>\s*</button>\s*</div>\s*</div>\s*\);\s*\}\)', code[start_idx:])
     if match:
         end_idx = start_idx + match.end()
-        new_code = code[:start_idx] + replacement + code[end_idx:]
-        with open('src/components/CustomerWallet.tsx', 'w', encoding='utf-8') as f:
-            f.write(new_code)
-        print("SUCCESS REPLACED")
-    else:
-        print("COULD NOT FIND END")
-else:
-    print("COULD NOT FIND START")
+        code = code[:start_idx] + replacement + code[end_idx:]
+
+# 5. Rename small modal trigger
+code = code.replace("<span>إعادة الطلب 🔁</span>\n                  </button>\n                </div>\n              )}", "<span>طلباتي 📋</span>\n                  </button>\n                </div>\n              )}")
+
+code = code.replace("سجل طلباتي وحجوزاتي السابقة", "سجل طلباتي السابقة")
+code = code.replace("إعادة الطلب والحجز بضغطة زر واحدة", "تتبع الطلب الحالي أو إعادة الطلب بضغطة زر")
+
+# 6. Remove Tabs "Orders" vs "Bookings"
+tab_wrapper = """<div className="p-2 bg-slate-950/80 border-b border-slate-800 grid grid-cols-2 gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setPastModalTab('orders')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                      pastModalTab === 'orders'
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'bg-slate-900 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                    <span>الطلبات ({pastOrders.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPastModalTab('bookings')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                      pastModalTab === 'bookings'
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'bg-slate-900 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>حجوزات الخدمات ({customerServiceBookings.length})</span>
+                  </button>
+                </div>"""
+code = code.replace(tab_wrapper, "")
+
+with open('src/components/CustomerWallet.tsx', 'w', encoding='utf-8') as f:
+    f.write(code)
+print("SUCCESS TABS")

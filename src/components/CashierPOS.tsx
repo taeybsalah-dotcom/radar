@@ -114,6 +114,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
   // 🛒 Live Orders State
   const [liveOrders, setLiveOrders] = useState<any[]>([]);
+  const [orderActionError, setOrderActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!store?.id) return;
@@ -154,8 +155,16 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   }, [store?.id]);
 
   const updateOrderStatus = async (orderId: string, status: string) => {
-    await LoyaltyService.updateOrderStatus(orderId, status);
-    setLiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+    try {
+      setOrderActionError(null);
+      await LoyaltyService.updateOrderStatus(orderId, status);
+      setLiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+    } catch (e: any) {
+      setOrderActionError(e.message || 'حدث خطأ أثناء تحديث الحالة.');
+      console.error(e);
+      // Revert status by re-fetching live orders to be safe
+      LoyaltyService.getLiveStoreOrders(store!.id).then(setLiveOrders);
+    }
   };
 
   useEffect(() => {
