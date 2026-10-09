@@ -6940,20 +6940,26 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     const resolvedStoreId = currentStore?.id || booking.store_id;
 
     const bookingNumber = 'BK-' + Math.floor(1000 + Math.random() * 9000);
-    const newBooking: ServiceBooking = {
-      ...booking,
-      service_id: booking.service_id || 'srv-main',
-      store_id: resolvedStoreId,
-      id: 'booking-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
-      booking_number: bookingNumber,
-      created_at: new Date().toISOString(),
-    };
+          const newBooking: ServiceBooking = {
+        ...booking,
+        service_id: booking.service_id || 'srv-main',
+        store_id: resolvedStoreId,
+        id: 'booking-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+        booking_number: bookingNumber,
+        created_at: new Date().toISOString(),
+      };
+      
+      // Clean up fields that might not exist in the database schema
+      const dbPayload = { ...newBooking } as any;
+      delete dbPayload.duration_minutes; // Database uses service_duration_minutes
+      delete dbPayload.store_name; // Store name shouldn't be in the booking row
+      
 
     const supabase = getSupabaseClient();
           if (supabase && isUUID(resolvedStoreId)) {
         const { data: created, error } = await supabase
           .from('service_bookings')
-          .insert([newBooking as any])
+          .insert([dbPayload])
           .select()
           .single();
           
