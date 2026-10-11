@@ -7,6 +7,15 @@
 -- 0. Ensure pgcrypto extension for secure Bcrypt PIN hashing
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- التأكد من وجود كافة الأعمدة المطلوبة مسبقاً لمنع أي خطأ 42703 (Missing Columns)
+ALTER TABLE IF EXISTS public.partner_accounts ADD COLUMN IF NOT EXISTS pin_code VARCHAR(100) DEFAULT '1234';
+ALTER TABLE IF EXISTS public.partner_accounts ADD COLUMN IF NOT EXISTS referral_code VARCHAR(50);
+ALTER TABLE IF EXISTS public.partner_accounts ADD COLUMN IF NOT EXISTS commission_rate NUMERIC(5, 4) DEFAULT 0.2000;
+ALTER TABLE IF EXISTS public.partner_accounts ALTER COLUMN pin_code TYPE VARCHAR(100);
+
+ALTER TABLE IF EXISTS public.affiliates ADD COLUMN IF NOT EXISTS commission_rate NUMERIC(5, 4) DEFAULT 0.2000;
+ALTER TABLE IF EXISTS public.partner_commissions ADD COLUMN IF NOT EXISTS affiliate_id UUID REFERENCES public.affiliates(id) ON DELETE SET NULL;
+
 -- ==============================================================================
 -- 1. BILLING PLANS (باقات وخطط الأسعار)
 -- ==============================================================================
@@ -192,9 +201,6 @@ GRANT EXECUTE ON FUNCTION public.check_referral_code(text) TO anon, authenticate
 -- ==============================================================================
 ALTER TABLE IF EXISTS public.partner_accounts ENABLE ROW LEVEL SECURITY;
 
--- توسيع حجم عمود الـ PIN ليتسع لتجزئة Bcrypt (60 حرفاً)
-ALTER TABLE public.partner_accounts ALTER COLUMN pin_code TYPE VARCHAR(100);
-
 -- تشفير أي رموز سرية غير مشفرة حالياً بـ Bcrypt
 UPDATE public.partner_accounts
 SET pin_code = crypt(trim(pin_code), gen_salt('bf', 8))
@@ -245,13 +251,14 @@ BEGIN
 
     -- البحث إما برقم الجوال، كود الإحالة، الـ slug، أو المعرّف
     SELECT pa.id, pa.affiliate_id, pa.display_name, pa.slug, pa.region, pa.active, pa.pin_code,
-           a.name, a.phone, a.referral_code, a.status, a.commission_rate
+           a.name, a.phone, a.referral_code, a.status,
+           COALESCE(pa.commission_rate, 0.2000) as commission_rate
     INTO v_partner
     FROM public.partner_accounts pa
     JOIN public.affiliates a ON a.id = pa.affiliate_id
-    WHERE lower(trim(a.referral_code)) = v_clean_input
-       OR lower(trim(pa.slug)) = v_clean_input
-       OR regexp_replace(a.phone, '\D', '', 'g') = regexp_replace(p_login_input, '\D', '', 'g')
+    WHERE lower(trim(COALESCE(a.referral_code, ''))) = v_clean_input
+       OR lower(trim(COALESCE(pa.slug, ''))) = v_clean_input
+       OR regexp_replace(COALESCE(a.phone, ''), '\D', '', 'g') = regexp_replace(p_login_input, '\D', '', 'g')
     LIMIT 1;
 
     IF v_partner IS NULL THEN
