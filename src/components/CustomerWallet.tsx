@@ -550,7 +550,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       }
     };
 
-    const lightInterval = setInterval(runLightSync, 60000); // 🚀 Reduced polling to save Log Ingestion
+    const lightInterval = setInterval(() => {
+      // 🛡️ Fail-safe backup query every 60s ONLY if page is in foreground and screen is unlocked
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        runLightSync();
+      }
+    }, 60000);
 
     const onVisibilityOrFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
@@ -644,6 +649,21 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       .on('postgres_changes', { event: '*', schema: 'public', table: 'service_bookings', filter: 'store_id=eq.' + store.id }, () => {
         LoyaltyService.getStoreBookings(store.id).then(bks => {
           setStoreBookings(bks);
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'store_customers', filter: 'phone=eq.' + customer.phone }, () => {
+        // ⚡ Instant push update when cashier adds points or edits customer
+        LoyaltyService.getCustomer(store.id, customer.phone).then(fresh => {
+          if (fresh) {
+            setCustomer(fresh);
+            lastPointsRef.current = fresh.wallet_balance;
+          }
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_coupons', filter: 'customer_phone=eq.' + customer.phone }, () => {
+        // ⚡ Instant push update when a coupon is redeemed or added
+        LoyaltyService.getCustomerCoupons(customer.id, store.id, customer.phone).then(freshCoupons => {
+          if (freshCoupons) setCustomerCoupons(freshCoupons);
         });
       })
       .subscribe();
