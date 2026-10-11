@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bell,
   X,
@@ -97,7 +98,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
     return <Bell className="w-5 h-5 text-amber-400" />;
   };
 
-  return (
+  const modalContent = (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center sm:justify-end p-0 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in">
       <div className="bg-slate-900 border border-slate-800 sm:rounded-3xl w-full sm:max-w-md h-full sm:h-[90vh] flex flex-col shadow-2xl overflow-hidden text-right">
         {/* Header */}
@@ -275,4 +276,6 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
       </div>
     </div>
   );
+
+  return createPortal(modalContent, document.body);
 };

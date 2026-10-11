@@ -75,18 +75,48 @@ export const CustomerLoginGate: React.FC<CustomerLoginGateProps> = ({
   };
 
   // 2. إرسال الكود للواتساب
-  const handleSendWhatsAppOTP = () => {
+  const handleSendWhatsAppOTP = async () => {
     const cleanDigits = phone.replace(/\D/g, '');
     const norm = cleanDigits.startsWith('0') ? cleanDigits.substring(1) : cleanDigits;
     const intlPhone = norm.startsWith('966') ? norm : '966' + norm;
     const name = foundCustomer?.name || 'عميلنا العزيز';
-    const msg = `مرحباً ${name} 🌟%0Aكود التحقق الخاص بدخول محفظة ${store.name} هو: *${generatedOTP}*`;
-    window.open(`https://wa.me/${intlPhone}?text=${msg}`, '_blank');
-    setIsOtpSent(true);
+    
+    try {
+        setIsOtpSent(true);
+        // 1. Fetch wallet to know provider
+        const wallet = await LoyaltyService.getStoreWallet(store.id);
+        
+        if (wallet?.whatsapp_provider === 'qr') {
+            const msg = `مرحباً ${name} 🌟\nكود التحقق الخاص بدخول محفظة ${store.name} هو: *${generatedOTP}*`;
+            const res = await fetch('https://radar-wa-salah.loca.lt/api/whatsapp/send', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Bypass-Tunnel-Reminder': 'true'
+                },
+                body: JSON.stringify({
+                    storeId: store.id,
+                    phone: intlPhone,
+                    message: msg
+                })
+            });
+            const data = await res.json();
+            if (!data.success) {
+               console.error('Server error:', data.error);
+               alert('حدث خطأ في سيرفر الواتساب: ' + data.error);
+            }
+        } else {
+            // No valid provider selected
+            alert('عذراً، لم يقم المتجر بتفعيل خدمة الواتساب بشكل صحيح. يرجى مراجعة الإعدادات وحفظها.');
+        }
+    } catch (err: any) {
+        console.error(err);
+        alert('حدث خطأ في الاتصال بسيرفر الواتساب. تأكد أن السيرفر يعمل. ' + err.message);
+    }
   };
 
   // 3. تأكيد رمز الدخول (OTP)
-  const handleVerifyOTP = (e: React.FormEvent) => {
+  const handleVerifyOTP = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!foundCustomer) return;
 
@@ -97,20 +127,38 @@ export const CustomerLoginGate: React.FC<CustomerLoginGateProps> = ({
 
     // السماح بالكود المولد أو كود التجربة 1234
     if (trimmedInput === generatedOTP || trimmedInput === '1234') {
-      LoyaltyService.saveCustomerSession(store.id, foundCustomer.phone, store.slug);
-      confetti({
-        particleCount: 75,
-        spread: 60,
-        origin: { y: 0.6 },
-        colors: [store.secondary_color || '#d4af37', '#10B981', '#FFFFFF'],
-      });
-      onAuthenticated(foundCustomer);
+      try {
+        let finalCustomer = foundCustomer;
+        
+        // إذا كان عميل جديد (قيد الانتظار)، نقوم بتسجيله الآن في قاعدة البيانات
+        if (foundCustomer.id === 'pending') {
+          setLoading(true);
+          finalCustomer = await LoyaltyService.registerCustomer(
+            store.id,
+            foundCustomer.phone,
+            foundCustomer.name || 'عميل جديد'
+          );
+          setLoading(false);
+        }
+
+        LoyaltyService.saveCustomerSession(store.id, finalCustomer.phone, store.slug);
+        confetti({
+          particleCount: 75,
+          spread: 60,
+          origin: { y: 0.6 },
+          colors: [store.secondary_color || '#d4af37', '#10B981', '#FFFFFF'],
+        });
+        onAuthenticated(finalCustomer);
+      } catch (err: any) {
+        setLoading(false);
+        setErrorMessage(err.message || 'فشل في إنشاء الحساب بعد التحقق');
+      }
     } else {
-      setErrorMessage('❌ كود التحقق غير صحيح! يرجى إدخال الكود الموضح أو تجربة 1234');
+      setErrorMessage('❌ كود التحقق غير صحيح! يرجى المحاولة مرة أخرى');
     }
   };
 
-  // 4. تسجيل عميل جديد بالاسم ومنحه الهدية المحددة من التاجر
+  // 4. تسجيل عميل جديد بالاسم - الخطوة الأولى: إرسال OTP
   const handleRegisterNewCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName.trim()) {
@@ -122,22 +170,24 @@ export const CustomerLoginGate: React.FC<CustomerLoginGateProps> = ({
     setErrorMessage(null);
 
     try {
-      const newCust = await LoyaltyService.registerCustomer(
-        store.id,
-        phone.trim(),
-        customerName.trim()
-      );
-
-      LoyaltyService.saveCustomerSession(store.id, newCust.phone, store.slug);
-      confetti({
-        particleCount: 100,
-        spread: 70,
-        origin: { y: 0.5 },
-        colors: [store.secondary_color || '#d4af37', '#10B981', '#EAB308', '#38BDF8'],
+      // بدلاً من التسجيل المباشر، نولد كود وننتقل لشاشة التأكيد
+      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      setGeneratedOTP(otp);
+      // ننشئ حساب وهمي مؤقت في الـ state عشان شاشة الـ OTP تتعرف عليه
+      setFoundCustomer({
+        id: 'pending',
+        store_id: store.id,
+        phone: phone.trim(),
+        name: customerName.trim(),
+        lifetime_xp: 0,
+        wallet_balance: 0,
+        visits_count: 0,
+        last_visit_date: new Date().toISOString()
       });
-      onAuthenticated(newCust);
+      setStep('OTP');
+      setEnteredCode('');
     } catch (err: any) {
-      setErrorMessage(err.message || 'فشل في إنشاء الحساب، يرجى المحاولة ثانية');
+      setErrorMessage(err.message || 'حدث خطأ غير متوقع');
     } finally {
       setLoading(false);
     }
@@ -293,7 +343,6 @@ export const CustomerLoginGate: React.FC<CustomerLoginGateProps> = ({
               </button>
             </div>
 
-            {/* OTP Display Box */}
             <div
               className="p-4 rounded-2xl border space-y-3 text-center"
               style={{
@@ -301,23 +350,17 @@ export const CustomerLoginGate: React.FC<CustomerLoginGateProps> = ({
                 borderColor: `${store.secondary_color || '#d4af37'}30`,
               }}
             >
-              <div className="text-xs font-bold text-slate-300">
-                كود التحقق الخاص بك للدخول:
+              <div className="text-xs font-bold text-slate-300 mb-2">
+                تم إنشاء كود تحقق، يرجى إرساله إلى رقمك:
               </div>
-              <div
-                className="text-3xl font-black text-white font-mono tracking-widest bg-slate-950 py-2.5 rounded-xl border select-all"
-                style={{ borderColor: `${store.secondary_color || '#d4af37'}40` }}
-              >
-                {generatedOTP}
-              </div>
-
               <button
                 type="button"
                 onClick={handleSendWhatsAppOTP}
-                className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center space-x-1.5 rtl:space-x-reverse transition shadow"
+                disabled={isOtpSent}
+                className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 disabled:opacity-70 text-white font-bold text-sm flex items-center justify-center space-x-1.5 rtl:space-x-reverse transition shadow"
               >
-                <Send className="w-3.5 h-3.5" />
-                <span>{isOtpSent ? 'تم فتح الواتساب بنجاح ✅' : 'إرسال الرمز للواتساب 💬'}</span>
+                <Send className="w-4 h-4" />
+                <span>{isOtpSent ? 'تم إرسال الكود للواتساب ✅' : 'إرسال الرمز للواتساب 💬'}</span>
               </button>
             </div>
 

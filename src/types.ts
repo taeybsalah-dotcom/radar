@@ -38,7 +38,7 @@ export interface StoreWallet {
   wa_used: number; // المستخدم
   cashier_limit: number; // الحد الأقصى الافتراضي لحسابات الكاشير (2)
   extra_cashiers_purchased: number; // عدد الكاشيرات الإضافية المشتراة (200 ريال لكل كاشير)
-  whatsapp_provider?: 'meta' | 'direct'; // نوع الربط: عبر Meta Cloud API أو الإرسال المباشر wa.me
+  whatsapp_provider?: 'meta' | 'direct' | 'qr'; // نوع الربط: عبر Meta Cloud API أو الإرسال المباشر wa.me أو باركود مجاني
   meta_phone_number_id?: string;
   meta_waba_id?: string;
   meta_access_token?: string;
@@ -334,6 +334,8 @@ export interface Store {
   manager_name?: string | null;
   manager_contact?: string | null;
   custom_domain?: string | null; // الدومين المخصص مثل vip.batates.com أو loyalty.mybrand.sa
+  telegram_chat_id?: string | null;
+  telegram_notifications_enabled?: boolean;
   slider_images?: StoreBanner[]; // صور معرض وسلايدر واجهة العميل
   welcome_gift_type?: 'POINTS' | 'OFFER' | 'NONE'; // نوع الهدية الترحيبية للعميل الجديد
   welcome_points?: number; // عدد النقاط إذا كانت الهدية نقاطاً (مثال: 50)
@@ -461,12 +463,14 @@ export interface Customer {
   store_id: string;
   phone: string;
   name: string | null;
+  special_date?: string | null; // MM-DD
+  special_date_type?: string | null; // نوع المناسبة (ميلاد، زواج، الخ)
   lifetime_xp: number;
   wallet_balance: number;
   last_visit_date: string;
   is_demo?: boolean;
-  is_active?: boolean; // حالة تنشيط أو إيقاف العميل
-  visits_count?: number; // عدد الزيارات
+  is_active?: boolean;
+  visits_count?: number;
   created_at?: string;
 }
 

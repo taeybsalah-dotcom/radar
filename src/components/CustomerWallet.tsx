@@ -90,6 +90,29 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [loading, setLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState<'pass' | 'menu' | 'services' | 'perks' | 'tickets' | 'tiers'>('pass');
+  const [specialDateMonth, setSpecialDateMonth] = useState('1');
+  const [specialDateDay, setSpecialDateDay] = useState('1');
+  const [specialDateType, setSpecialDateType] = useState('يوم ميلادي');
+  const [specialDateTypeOther, setSpecialDateTypeOther] = useState('');
+  const [isSubmittingSpecialDate, setIsSubmittingSpecialDate] = useState(false);
+  const [showSpecialDateForm, setShowSpecialDateForm] = useState(true);
+
+  const handleSaveSpecialDate = async () => {
+    if (!customer) return;
+    setIsSubmittingSpecialDate(true);
+    try {
+      const finalType = specialDateType === 'أخرى' ? specialDateTypeOther.trim() : specialDateType;
+      if (!finalType) throw new Error('يرجى تحديد نوع المناسبة');
+      const dateStr = `${specialDateMonth.padStart(2, '0')}-${specialDateDay.padStart(2, '0')}`;
+      const updated = await LoyaltyService.updateCustomerSpecialDate(customer.id, dateStr, finalType);
+      setCustomer(updated);
+      setShowSpecialDateForm(false);
+      alert('تم حفظ يومك المميز بنجاح! شكراً لك 🎉');
+    } catch (e: any) {
+      alert(e.message || 'حدث خطأ أثناء الحفظ');
+    }
+    setIsSubmittingSpecialDate(false);
+  };
 
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -452,6 +475,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     let isSubscribed = true;
 
     const runLightSync = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       if (!isSubscribed) return;
       try {
         const [freshCust, freshCoupons] = await Promise.all([
@@ -526,7 +550,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       }
     };
 
-    const lightInterval = setInterval(runLightSync, 5000);
+    const lightInterval = setInterval(runLightSync, 60000); // 🚀 Reduced polling to save Log Ingestion
 
     const onVisibilityOrFocus = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
@@ -596,21 +620,30 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     return () => clearInterval(timer);
   }, [customer?.id, currentQRToken?.token_id, selectedRewardPass, selectedCouponForQR]);
 
-    useEffect(() => {
+  useEffect(() => {
     if (!store?.id || !customer?.phone) return;
     
-    // Fetch initial
+    // Fetch initial orders & bookings directly from live Supabase
     LoyaltyService.getCustomerOrders(store.id, customer.phone).then(orders => {
       setPastOrders(orders);
+    });
+
+    LoyaltyService.getStoreBookings(store.id).then(bks => {
+      setStoreBookings(bks);
     });
 
     // Listen to live changes
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    const channel = supabase.channel('customer-orders-' + customer.phone)
+    const channel = supabase.channel('customer-live-' + customer.phone)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'store_orders', filter: 'store_id=eq.' + store.id }, () => {
         LoyaltyService.getCustomerOrders(store.id, customer.phone).then(orders => {
           setPastOrders(orders);
+        });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_bookings', filter: 'store_id=eq.' + store.id }, () => {
+        LoyaltyService.getStoreBookings(store.id).then(bks => {
+          setStoreBookings(bks);
         });
       })
       .subscribe();
@@ -618,15 +651,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [store?.id, customer?.phone, isCartModalOpen, orderSuccessPayload]);
+  }, [store?.id, customer?.phone, isCartModalOpen, orderSuccessPayload, bookingSuccessData]);
 
   const handleCustomerAuthenticated = async (authCustomer: Customer) => {
     setCustomer(authCustomer);
     lastPointsRef.current = authCustomer.wallet_balance;
     regenerateToken(authCustomer, null);
     try {
-      const cpns = await LoyaltyService.getCustomerCoupons(authCustomer.id, store.id, authCustomer.phone);
+      const [cpns, bks] = await Promise.all([
+        LoyaltyService.getCustomerCoupons(authCustomer.id, store.id, authCustomer.phone),
+        LoyaltyService.getStoreBookings(store.id),
+      ]);
       setCustomerCoupons(cpns);
+      if (bks) setStoreBookings(bks);
     } catch (e) {
       console.error(e);
     }
@@ -1026,7 +1063,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         selected_modifiers: flatModifiers,
         total_price: finalPrice,
         service_duration_minutes: selectedBookingService.duration_minutes || 30,
-        duration_minutes: selectedBookingService.duration_minutes || 30,
         specialist_id: selectedBookingSpecialist?.id,
         specialist_name: selectedBookingSpecialist?.name,
         booking_date: selectedBookingDate,
@@ -1250,11 +1286,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
   };
 
-  const handleSendWhatsAppOrder = () => {
+  const handleSubmitOrder = async () => {
     if (cartItems.length === 0) return;
 
     const orderId = Math.random().toString(36).substring(2, 7).toUpperCase();
-    const payload: WhatsAppOrderPayload = {
+    const payload: any = {
       order_id: orderId,
       store_id: store.id,
       store_name: store.name,
@@ -1277,22 +1313,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       subtotal: cartSubtotal,
       delivery_fee: deliveryFee,
       total_amount: cartGrandTotal,
+      total_price: cartGrandTotal, // For backend compatibility
+      notes: generalOrderNotes.trim(), // For backend compatibility
       loyalty_points_earned: estimatedLoyaltyPoints,
       status: 'pending',
       points_awarded: false,
       created_at: new Date().toISOString(),
     };
 
-    const merchantPhone = store.manager_contact || '0577371780';
-    
-
     try {
-      const existingOrders = JSON.parse(localStorage.getItem('radar_local_whatsapp_orders') || '[]');
-      existingOrders.unshift(payload);
-      localStorage.setItem('radar_local_whatsapp_orders', JSON.stringify(existingOrders));
-      window.dispatchEvent(new Event('radar_orders_updated'));
+      await LoyaltyService.createStoreOrder(payload);
+      // Refresh local past orders
+      const updatedOrders = await LoyaltyService.getCustomerOrders(store.id, customer?.phone || '');
+      setPastOrders(updatedOrders);
     } catch (e) {
-      console.warn('Could not save local order history', e);
+      console.error('Could not submit order to server', e);
+      alert('حدث خطأ أثناء إرسال الطلب. يرجى المحاولة مرة أخرى.');
+      return;
     }
 
     setCartItems([]);
@@ -1367,26 +1404,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
 
         <div className="flex items-center space-x-2 rtl:space-x-reverse">
-          <div
-            className="px-3 py-1.5 rounded-xl border flex items-center space-x-1.5 rtl:space-x-reverse shadow-inner"
-            style={{
-              backgroundColor: `${brandSecondary}15`,
-              borderColor: `${brandSecondary}30`,
-            }}
-          >
-            <span
-              className="text-xs font-black font-mono"
-              style={{ color: brandSecondary }}
-            >
-              {customer?.wallet_balance ?? 0}
-            </span>
-            <span className="text-[10px] text-slate-400 font-bold">نقطة</span>
-          </div>
-
           <NotificationBell
             portalName={store.name || 'محفظة العميل'}
             portalFilter="customer"
-            className="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-slate-300 hover:text-white"
+            buttonClassName="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-slate-300 hover:text-white p-0"
           />
 
           <button
@@ -2485,6 +2506,22 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     }
                     return { isBooked: false, label: 'متاح ✨', canBook: true };
                   } else {
+                    if (specialists.length === 0) {
+                      const bookedCount = storeBookings.filter(
+                        (b) =>
+                          b.status !== 'cancelled' &&
+                          b.booking_date === selectedBookingDate &&
+                          b.booking_time === slot
+                      ).length;
+                      const maxConcurrent = 5;
+                      const isBooked = bookedCount >= maxConcurrent;
+                      return {
+                        isBooked,
+                        label: isBooked ? 'مكتمل 🔒' : 'متاح ✨',
+                        canBook: !isBooked,
+                      };
+                    }
+
                     const activeWorkingSpecs = specialists.filter(
                       (s) =>
                         s.is_active !== false &&
@@ -2492,7 +2529,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     );
 
                     if (activeWorkingSpecs.length === 0) {
-                      return { isBooked: true, label: 'لا مختصين', canBook: false };
+                      return { isBooked: true, label: 'إجازة 🏖️', canBook: false };
                     }
 
                     const bookedCount = storeBookings.filter(
@@ -2887,6 +2924,92 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               {privileges.filter((p) => p.is_active && !p.is_hidden).length} عروض
             </span>
           </div>
+
+          
+          {!customer?.special_date && showSpecialDateForm && (
+            <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-5 sm:p-6 mb-6 shadow-2xl relative overflow-hidden">
+              <div className="absolute -top-10 -right-10 w-32 h-32 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
+              
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-2xl flex-shrink-0 shadow-inner" style={{ color: brandSecondary }}>
+                  🌟
+                </div>
+                <div className="flex-1">
+                  <h4 className="text-white font-black text-sm sm:text-base">وثّق يومك المفضل!</h4>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                    شاركنا أفضل أيام السنة بالنسبة لك (ميلادك، زواجك، أو أي مناسبة)، وخلي هديتك في يومك المميز علينا! 🎁
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 pr-1">الشهر</label>
+                    <select
+                      value={specialDateMonth}
+                      onChange={(e) => setSpecialDateMonth(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 outline-none appearance-none"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 pr-1">اليوم</label>
+                    <select
+                      value={specialDateDay}
+                      onChange={(e) => setSpecialDateDay(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 outline-none appearance-none"
+                    >
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 pr-1">المناسبة</label>
+                  <select
+                    value={specialDateType}
+                    onChange={(e) => setSpecialDateType(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 outline-none appearance-none"
+                  >
+                    <option value="يوم ميلادي">يوم ميلادي 🎂</option>
+                    <option value="يوم زواجي">يوم زواجي 💍</option>
+                    <option value="يوم الأم">يوم الأم 👩‍👧</option>
+                    <option value="يوم التخرج">يوم التخرج 🎓</option>
+                    <option value="أفضل يوم بحياتي">أفضل يوم بحياتي ✨</option>
+                    <option value="أخرى">أخرى (كتابة يدوية) ✍️</option>
+                  </select>
+                </div>
+
+                {specialDateType === 'أخرى' && (
+                  <div className="space-y-1 animate-fade-in">
+                    <label className="text-[10px] font-bold text-slate-500 pr-1">اكتب اسم المناسبة</label>
+                    <input
+                      type="text"
+                      value={specialDateTypeOther}
+                      onChange={(e) => setSpecialDateTypeOther(e.target.value)}
+                      placeholder="مثال: ذكرى تأسيس مشروعي"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 outline-none"
+                    />
+                  </div>
+                )}
+
+                <button
+                  onClick={handleSaveSpecialDate}
+                  disabled={isSubmittingSpecialDate || (specialDateType === 'أخرى' && !specialDateTypeOther.trim())}
+                  className="w-full mt-2 py-3 rounded-xl font-black text-black text-xs transition-all shadow-lg hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:hover:scale-100"
+                  style={{ backgroundColor: brandSecondary }}
+                >
+                  {isSubmittingSpecialDate ? 'جاري الحفظ...' : 'اعتماد وحفظ المناسبة'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {privileges.filter((p) => p.is_active && !p.is_hidden).length === 0 ? (
             <div className="rounded-3xl p-8 border border-slate-800/80 bg-slate-900/40 backdrop-blur-xl text-center space-y-3 shadow-xl">
@@ -3328,7 +3451,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       )}
 
       <div className="fixed bottom-3 left-3 right-3 max-w-md mx-auto z-40">
-        <nav className="glass-dock rounded-full p-1.5 flex items-center justify-around shadow-2xl bg-slate-950/90 backdrop-blur-2xl border border-slate-800">
+        <nav className="glass-dock rounded-3xl p-1.5 flex items-center justify-around shadow-[0_-8px_30px_rgba(0,0,0,0.4)] bg-slate-950/95 backdrop-blur-3xl border border-slate-800">
           
           <button
             onClick={() => setActiveTab('pass')}
@@ -3340,13 +3463,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
                 : undefined
             }
-            className={`flex-1 py-2 px-1 rounded-full text-[10px] sm:text-[11px] font-black flex flex-col items-center gap-0.5 transition ${
+            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 ${
               activeTab === 'pass'
-                ? 'shadow-lg'
-                : 'text-slate-400 hover:text-white'
+                ? 'font-black shadow-lg scale-105'
+                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
             }`}
           >
-            <QrCode className="w-4 h-4" />
+            <QrCode className="w-4 h-4 sm:w-5 sm:h-5" />
             <span>بطاقتي</span>
           </button>
 
@@ -3360,17 +3483,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
                 : undefined
             }
-            className={`flex-1 py-2 px-1 rounded-full text-[10px] sm:text-[11px] font-black flex flex-col items-center gap-0.5 transition relative ${
+            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
               activeTab === 'menu'
-                ? 'shadow-lg'
-                : 'text-slate-400 hover:text-white'
+                ? 'font-black shadow-lg scale-105'
+                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
             }`}
           >
-            <ShoppingBag className="w-4 h-4" />
+            <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5" />
             <span>المنيو</span>
             {cartItems.length > 0 && (
               <span
-                className="absolute top-1 right-1.5 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm"
+                className="absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm"
                 style={{ backgroundColor: brandSecondary }}
               >
                 {cartItems.reduce((sum, item) => sum + item.quantity, 0)}
@@ -3388,13 +3511,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
                 : undefined
             }
-            className={`flex-1 py-2 px-1 rounded-full text-[10px] sm:text-[11px] font-black flex flex-col items-center gap-0.5 transition ${
+            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 ${
               activeTab === 'services'
-                ? 'shadow-lg'
-                : 'text-slate-400 hover:text-white'
+                ? 'font-black shadow-lg scale-105'
+                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
             }`}
           >
-            <Calendar className="w-4 h-4" />
+            <Calendar className="w-4 h-4 sm:w-5 sm:h-5" />
             <span>حجز موعد</span>
           </button>
 
@@ -3408,13 +3531,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
                 : undefined
             }
-            className={`flex-1 py-2 px-1 rounded-full text-[10px] sm:text-[11px] font-black flex flex-col items-center gap-0.5 transition ${
+            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 ${
               activeTab === 'perks'
-                ? 'shadow-lg'
-                : 'text-slate-400 hover:text-white'
+                ? 'font-black shadow-lg scale-105'
+                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
             }`}
           >
-            <Gift className="w-4 h-4" />
+            <Gift className="w-4 h-4 sm:w-5 sm:h-5" />
             <span>حصرياتك</span>
           </button>
 
@@ -3428,17 +3551,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
                 : undefined
             }
-            className={`flex-1 py-2 px-1 rounded-full text-[10px] sm:text-[11px] font-black flex flex-col items-center gap-0.5 transition relative ${
+            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
               activeTab === 'tickets'
-                ? 'shadow-lg'
-                : 'text-slate-400 hover:text-white'
+                ? 'font-black shadow-lg scale-105'
+                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
             }`}
           >
-            <Ticket className="w-4 h-4" />
+            <Ticket className="w-4 h-4 sm:w-5 sm:h-5" />
             <span>امتيازاتي</span>
             {activeCouponsCount > 0 && (
               <span
-                className="absolute top-1 right-1.5 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm"
+                className="absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm"
                 style={{ backgroundColor: brandSecondary }}
               >
                 {activeCouponsCount}
@@ -3456,16 +3579,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
                 : undefined
             }
-            className={`flex-1 py-2 px-1 rounded-full text-[10px] sm:text-[11px] font-black flex flex-col items-center gap-0.5 transition ${
+            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 ${
               activeTab === 'tiers'
-                ? 'shadow-lg'
-                : 'text-slate-400 hover:text-white'
+                ? 'font-black shadow-lg scale-105'
+                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
             }`}
           >
-            <Crown className="w-4 h-4" />
+            <Crown className="w-4 h-4 sm:w-5 sm:h-5" />
             <span>مكانتك</span>
           </button>
-
         </nav>
       </div>
 
@@ -4380,11 +4502,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             <div className="p-4 bg-slate-950 border-t border-slate-800 shrink-0">
               <button
                 type="button"
-                onClick={handleSendWhatsAppOrder}
+                onClick={handleSubmitOrder}
                 className="w-full py-3.5 rounded-2xl font-black text-sm text-white bg-emerald-600 hover:bg-emerald-500 shadow-xl shadow-emerald-600/25 flex items-center justify-center gap-2 transition active:scale-95"
               >
-                <MessageCircle className="w-5 h-5 fill-current" />
-                <span>إرسال الطلب عبر الواتساب مباشرة 🚀</span>
+                <ShoppingBag className="w-5 h-5 fill-current" />
+                <span>تأكيد وإرسال الطلب 🚀</span>
               </button>
             </div>
           </div>

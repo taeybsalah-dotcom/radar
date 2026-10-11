@@ -128,6 +128,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [coupons, setCoupons] = useState<CustomerCoupon[]>([]);
   const [staffList, setStaffList] = useState<StoreStaff[]>([]);
   const [storeWallet, setStoreWallet] = useState<StoreWallet | null>(null);
+  const [telegramChatId, setTelegramChatId] = useState(store?.telegram_chat_id || '');
   const [loading, setLoading] = useState(true);
 
   // Active Admin Navigation Tab & Sub-Sections
@@ -254,7 +255,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [editStaffPinValue, setEditStaffPinValue] = useState('');
 
   // WhatsApp Meta Embedded Signup & Cloud API Settings State
-  const [whatsappProvider, setWhatsappProvider] = useState<'direct' | 'meta'>('direct');
+  const [whatsappProvider, setWhatsappProvider] = useState<'direct' | 'meta' | 'qr'>('direct');
+  const [waQrCodeData, setWaQrCodeData] = useState<string | null>(null);
+  const [waQrStatus, setWaQrStatus] = useState<string | null>(null);
   const [metaPhoneNumberId, setMetaPhoneNumberId] = useState('');
   const [metaWabaId, setMetaWabaId] = useState('');
   const [metaAccessToken, setMetaAccessToken] = useState('');
@@ -2113,6 +2116,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setTimeout(() => setMetaSavedMessage(null), 4000);
     } catch (err: any) {
       console.error(err);
+    }
+  };
+
+  const handleSaveTelegram = async () => {
+    try {
+      await LoyaltyService.updateStoreSettings(store.id, {
+        telegram_chat_id: telegramChatId.trim() || null,
+        telegram_notifications_enabled: !!telegramChatId.trim()
+      });
+      alert('تم ربط إشعارات التليجرام بنجاح ✅');
+    } catch (err) {
+      console.error(err);
+      alert('حدث خطأ أثناء حفظ إعدادات التليجرام');
     }
   };
 
@@ -5823,6 +5839,65 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           )}
 
           {/* ========================================== */}
+          {/* 🤖 Telegram Bot Integration Card */}
+          {/* ========================================== */}
+          <div className="mt-8 rounded-3xl p-6 sm:p-8 bg-blue-900/10 border border-blue-500/30 shadow-xl space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-blue-500/20">
+              <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+                <div className="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                  <Send className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white">
+                    تنبيهات بوت تليجرام (مباشر ومجاني)
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    اربط متجرك بالبوت لاستقبال إشعارات الطلبات الجديدة، المواعيد، وتنبيهات النظام فوراً.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between bg-slate-950 p-4 rounded-2xl border border-slate-800">
+              <div>
+                <p className="text-sm font-bold text-white mb-1">تفعيل الإشعارات على جوالك</p>
+                <p className="text-xs text-slate-400">سيتم فتح تطبيق تليجرام وبدء المحادثة مع البوت الخاص بالمنصة.</p>
+              </div>
+              
+              <a 
+                href={`https://t.me/Myradarstore_bot?start=${store?.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="py-2.5 px-5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-sm shadow-md transition flex items-center gap-2"
+              >
+                <Send className="w-4 h-4" />
+                <span>الخطوة 1: الحصول على المعرف</span>
+              </a>
+            </div>
+
+            <div className="flex flex-col space-y-3 p-4 rounded-2xl bg-slate-950 border border-slate-800">
+              <label className="text-sm font-bold text-white">الخطوة 2: لصق معرف الشات (Chat ID)</label>
+              <p className="text-xs text-slate-400">البوت راح يرد عليك برقم معرف الشات الخاص بك. انسخه والصقه هنا:</p>
+              <div className="flex items-center gap-3">
+                <input 
+                  type="text" 
+                  value={telegramChatId}
+                  onChange={(e) => setTelegramChatId(e.target.value)}
+                  placeholder="مثال: 123456789"
+                  className="flex-1 bg-slate-900 border border-slate-700 focus:border-blue-500 rounded-xl px-4 py-2 text-sm text-white outline-none font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveTelegram}
+                  className="py-2 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-sm transition"
+                >
+                  تأكيد وحفظ
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ========================================== */}
           {/* 📡 WhatsApp & Meta Cloud API Integration Card */}
           {/* ========================================== */}
           <div className="mt-8 rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
@@ -5900,6 +5975,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       إرسال آلي صامت في الخلفية عبر خوادم Meta الرسمية الموثقة. يدعم الردود التفاعلية والأزرار الذكية.
                     </p>
                   </div>
+                  <div
+                    onClick={() => setWhatsappProvider('qr')}
+                    className={`p-4 rounded-2xl border cursor-pointer transition ${
+                      whatsappProvider === 'qr'
+                        ? 'bg-amber-500/10 border-amber-500/40 shadow-lg shadow-amber-500/5'
+                        : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                        <Smartphone className="w-5 h-5 text-amber-400" />
+                        <h4 className="text-sm font-black text-white">واتساب ويب (سيرفر المنصة)</h4>
+                      </div>
+                      {whatsappProvider === 'qr' && <CheckCircle2 className="w-4 h-4 text-amber-400" />}
+                    </div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      إرسال آلي صامت ومجاني عبر ربط رقمك كـ (واتساب ويب) بمسح باركود. مثالي للبدء والتجربة.
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -5962,6 +6056,52 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       />
                     </div>
                   </div>
+                </div>
+              )}
+
+              {whatsappProvider === 'qr' && (
+                <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4 animate-fade-in flex flex-col items-center">
+                   <p className="text-sm font-bold text-white mb-2">امسح الباركود لربط رقم المتجر</p>
+                   {waQrStatus === 'loading' && <p className="text-amber-400 text-xs animate-pulse">جاري الاتصال بسيرفر الاختبار...</p>}
+                   {waQrStatus === 'connected' && <p className="text-emerald-400 font-bold">✅ تم الربط بنجاح! يمكنك الآن تجربة المنصة وتلقي الإشعارات.</p>}
+                   {waQrCodeData && (
+                      <div className="bg-white p-4 rounded-xl mt-2">
+                          {/* Use an external QR generator for the raw data returned by whatsapp-web.js */}
+                          <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(waQrCodeData)}`} alt="WhatsApp QR Code" />
+                      </div>
+                   )}
+                   <button
+                      type="button"
+                      onClick={async () => {
+                         setWaQrStatus('loading');
+                         try {
+                            const res = await fetch('https://radar-wa-salah.loca.lt/api/whatsapp/init', {
+                               method: 'POST',
+                               headers: { 
+                                 'Content-Type': 'application/json',
+                                 'Bypass-Tunnel-Reminder': 'true'
+                               },
+                               body: JSON.stringify({ storeId: store.id })
+                            });
+                            const data = await res.json();
+                            if (data.qr_code) {
+                               setWaQrCodeData(data.qr_code);
+                               setWaQrStatus('ready');
+                            } else if (data.message && data.message.includes('ready')) {
+                               setWaQrStatus('connected');
+                            }
+                         } catch (e) {
+                            setWaQrStatus('error');
+                            console.error(e);
+                         }
+                      }}
+                      className="mt-4 px-6 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs transition shadow-md"
+                   >
+                      توليد الباركود
+                   </button>
+                   <p className="text-[10px] text-slate-500 text-center mt-2">
+                       (ملاحظة: هذا الخيار يعمل فقط عند تشغيل سيرفر الاختبار المحلي لديك npx localtunnel)
+                   </p>
                 </div>
               )}
 

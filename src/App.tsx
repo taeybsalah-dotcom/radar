@@ -38,6 +38,7 @@ const PartnerPublicLanding = React.lazy(() =>
 const MerchantOnboardingConsole = React.lazy(() =>
   import('./components/MerchantOnboardingConsole').then((m) => ({ default: m.MerchantOnboardingConsole }))
 );
+import { RadarQuickSwitcher } from './components/RadarQuickSwitcher';
 
 type PortalTab =
   | 'super-admin'
@@ -52,6 +53,7 @@ type PortalTab =
 function getInitialStoreSync(targetSlug?: string | null): Store | null {
   if (typeof window === 'undefined') return null;
   const clean = (targetSlug || '').trim().toLowerCase();
+  if (!clean) return null;
   if (clean === DEMO_STORE_SLUG || isDemoStoreSlug(clean)) {
     return INITIAL_DEMO_STORE;
   }
@@ -60,11 +62,8 @@ function getInitialStoreSync(targetSlug?: string | null): Store | null {
     if (rawList) {
       const stores: Store[] = JSON.parse(rawList);
       if (Array.isArray(stores) && stores.length > 0) {
-        if (targetSlug) {
-          const found = stores.find((s) => s.slug === targetSlug || s.id === targetSlug);
-          return found || null;
-        }
-        return stores[0];
+        const found = stores.find((s) => s.slug === clean || s.id === clean);
+        return found || null;
       }
     }
   } catch {}
@@ -297,7 +296,20 @@ function parseRouteParams() {
     };
   }
 
-  // 9. Session-Aware Fallback on Root "/"
+  // 9. Explicit Platform Root: "/"
+  // When accessing root "/" directly with no parameters, it is ALWAYS the official Landing Page ('join')!
+  // Prevents sticky merchant redirects and stale cache hijacking.
+  const isDirectRoot = (pathname === '' || pathname === '/') && !slugParam && !portalParam && !rawHash;
+  if (isDirectRoot) {
+    return {
+      portal: 'join' as const,
+      isPreview: false,
+      storeSlug: null,
+      partnerSlug: null,
+    };
+  }
+
+  // 10. Fallback for non-root paths or explicit query parameters
   let resolvedRolePortal: PortalTab = 'join';
   let hasSession = false;
   try {
@@ -315,7 +327,7 @@ function parseRouteParams() {
   } catch {}
 
   const savedSlug = localStorage.getItem('radar_last_store_slug');
-  const storeSlug = slugParam || savedSlug || null;
+  const storeSlug = slugParam || (portalParam ? savedSlug : null);
 
   if (!portalParam && !hasSession && slugParam) {
     resolvedRolePortal = 'customer';
@@ -897,6 +909,23 @@ export function App() {
           </div>
         </footer>
       )}
+
+      {/* ⚡ Radar Quick Switcher & Reset Floating Dock */}
+      <RadarQuickSwitcher
+        currentStore={store}
+        activePortal={activeTab}
+        onNavigate={(targetPortal, targetStoreSlug) => {
+          if (targetPortal === 'join') {
+            window.location.href = window.location.origin + '/';
+          } else if (targetPortal === 'super-admin') {
+            window.location.href = window.location.origin + '/super-admin';
+          } else if (targetPortal === 'partner') {
+            window.location.href = window.location.origin + '/partner';
+          } else if (targetStoreSlug) {
+            window.location.href = `${window.location.origin}/${targetStoreSlug}${targetPortal === 'customer' ? '' : '/' + targetPortal}`;
+          }
+        }}
+      />
     </div>
   );
 }
