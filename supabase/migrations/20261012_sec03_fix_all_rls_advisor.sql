@@ -1,13 +1,13 @@
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MIGRATION 20261012_SEC03 (ENTERPRISE HARDENING)
 -- RESOLVE ALL 18 SUPABASE SECURITY ADVISOR RLS ISSUES
--- STAGED SECURITY UPGRADE: ZERO COMPROMISE PRIVACY & AUTH ISOLATION
+-- 100% IDEMPOTENT: AUTO DROPS PREVIOUS POLICIES & ADDS MISSING COLUMNS
 -- ==============================================================================
 
 -- 0. Ensure pgcrypto extension for secure Bcrypt PIN hashing
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- التأكد من وجود كافة الأعمدة المطلوبة مسبقاً لمنع أي خطأ 42703 (Missing Columns)
+-- 1. التأكد من وجود كافة الأعمدة المطلوبة مسبقاً لمنع أي خطأ
 ALTER TABLE IF EXISTS public.partner_accounts ADD COLUMN IF NOT EXISTS pin_code VARCHAR(100) DEFAULT '1234';
 ALTER TABLE IF EXISTS public.partner_accounts ADD COLUMN IF NOT EXISTS referral_code VARCHAR(50);
 ALTER TABLE IF EXISTS public.partner_accounts ADD COLUMN IF NOT EXISTS commission_rate NUMERIC(5, 4) DEFAULT 0.2000;
@@ -16,23 +16,39 @@ ALTER TABLE IF EXISTS public.partner_accounts ALTER COLUMN pin_code TYPE VARCHAR
 ALTER TABLE IF EXISTS public.affiliates ADD COLUMN IF NOT EXISTS commission_rate NUMERIC(5, 4) DEFAULT 0.2000;
 ALTER TABLE IF EXISTS public.partner_commissions ADD COLUMN IF NOT EXISTS affiliate_id UUID REFERENCES public.affiliates(id) ON DELETE SET NULL;
 
+-- 2. حذف أي سياسات سابقة على الجداول الـ 11 لتجنب أي تكرار أو تعارض (Clean Reset)
+DO $$
+DECLARE
+    r RECORD;
+    t TEXT;
+    tbls TEXT[] := ARRAY[
+        'billing_plans', 'catalog_items', 'store_specialists', 'service_bookings',
+        'affiliates', 'partner_accounts', 'partner_commissions', 'partner_bonus_rules',
+        'partner_bonus_awards', 'partner_targets', 'partner_audit_logs'
+    ];
+BEGIN
+    FOREACH t IN ARRAY tbls LOOP
+        FOR r IN (
+            SELECT policyname 
+            FROM pg_policies 
+            WHERE schemaname = 'public' AND tablename = t
+        ) LOOP
+            EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', r.policyname, t);
+        END LOOP;
+    END LOOP;
+END $$;
+
+
 -- ==============================================================================
 -- 1. BILLING PLANS (باقات وخطط الأسعار)
 -- ==============================================================================
 ALTER TABLE IF EXISTS public.billing_plans ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "billing_plans_select_active" ON public.billing_plans;
-DROP POLICY IF EXISTS "Public can view active billing plans" ON public.billing_plans;
-DROP POLICY IF EXISTS "SuperAdmin can manage billing plans" ON public.billing_plans;
-DROP POLICY IF EXISTS "Service Role billing plans full access" ON public.billing_plans;
-
--- قراءة عامة للخطط النشطة فقط (لصفحة الأسعار والتسجيل)
 CREATE POLICY "Public can view active billing plans"
 ON public.billing_plans FOR SELECT
 TO anon, authenticated
 USING (active = true OR public.is_super_admin());
 
--- إدارة الباقات محصورة بالسوبر أدمن
 CREATE POLICY "SuperAdmin can manage billing plans"
 ON public.billing_plans FOR ALL
 TO authenticated
@@ -49,17 +65,11 @@ TO service_role USING (true) WITH CHECK (true);
 -- ==============================================================================
 ALTER TABLE IF EXISTS public.catalog_items ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Public can view catalog items" ON public.catalog_items;
-DROP POLICY IF EXISTS "Store staff can manage catalog items" ON public.catalog_items;
-DROP POLICY IF EXISTS "Service Role catalog items full access" ON public.catalog_items;
-
--- قراءة عامة للمنيو والمنتجات (ليتمكن أي زبون من رؤية المنتجات)
 CREATE POLICY "Public can view catalog items"
 ON public.catalog_items FOR SELECT
 TO anon, authenticated
 USING (true);
 
--- التعديل والإضافة للتجار والسوبر أدمن
 CREATE POLICY "Store staff can manage catalog items"
 ON public.catalog_items FOR ALL
 TO anon, authenticated
@@ -76,11 +86,6 @@ TO service_role USING (true) WITH CHECK (true);
 -- ==============================================================================
 ALTER TABLE IF EXISTS public.store_specialists ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Public can view specialists" ON public.store_specialists;
-DROP POLICY IF EXISTS "Store staff can manage specialists" ON public.store_specialists;
-DROP POLICY IF EXISTS "Service Role specialists full access" ON public.store_specialists;
-
--- قراءة عامة لأسماء الأخصائيين لاختيارهم أثناء الحجز
 CREATE POLICY "Public can view specialists"
 ON public.store_specialists FOR SELECT
 TO anon, authenticated
@@ -102,27 +107,16 @@ TO service_role USING (true) WITH CHECK (true);
 -- ==============================================================================
 ALTER TABLE IF EXISTS public.service_bookings ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Public can insert bookings" ON public.service_bookings;
-DROP POLICY IF EXISTS "Public can update bookings" ON public.service_bookings;
-DROP POLICY IF EXISTS "Public can read bookings" ON public.service_bookings;
-DROP POLICY IF EXISTS "Store staff can read bookings" ON public.service_bookings;
-DROP POLICY IF EXISTS "Store staff can update bookings" ON public.service_bookings;
-DROP POLICY IF EXISTS "SuperAdmin can manage bookings" ON public.service_bookings;
-DROP POLICY IF EXISTS "Service Role bookings full access" ON public.service_bookings;
-
--- السماح للزبون العام بإنشاء حجز جديد فقط
 CREATE POLICY "Public can insert bookings"
 ON public.service_bookings FOR INSERT
 TO anon, authenticated
 WITH CHECK (true);
 
--- القراءة للمتجر والسوبر أدمن
 CREATE POLICY "Store staff can read bookings"
 ON public.service_bookings FOR SELECT
 TO anon, authenticated
 USING (true);
 
--- التعديل للكاشير/التاجر (لتغيير حالة الحجز)
 CREATE POLICY "Store staff can update bookings"
 ON public.service_bookings FOR UPDATE
 TO anon, authenticated
@@ -145,11 +139,6 @@ TO service_role USING (true) WITH CHECK (true);
 -- ==============================================================================
 ALTER TABLE IF EXISTS public.affiliates ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "service_role_affiliates_full_access" ON public.affiliates;
-DROP POLICY IF EXISTS "Affiliates read access" ON public.affiliates;
-DROP POLICY IF EXISTS "SuperAdmin affiliates access" ON public.affiliates;
-
--- حصر الوصول المباشر بالسوبر أدمن والخدمات السحابية فقط (ممنوع منعاً باتاً على anon قراءة الجدول مباشرة)
 CREATE POLICY "SuperAdmin affiliates access"
 ON public.affiliates FOR ALL
 TO authenticated
@@ -160,7 +149,6 @@ CREATE POLICY "Service Role affiliates full access"
 ON public.affiliates FOR ALL
 TO service_role USING (true) WITH CHECK (true);
 
--- 🛡️ دالة ذكية آمنة (RPC) لفحص كود الإحالة فقط (دون كشف أرقام الجوالات أو العمولات للعامة)
 CREATE OR REPLACE FUNCTION public.check_referral_code(p_code TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -185,7 +173,6 @@ BEGIN
         RETURN jsonb_build_object('valid', false, 'message', 'كود غير صحيح');
     END IF;
 
-    -- إعادة الاسم وكود الإحالة فقط - بدون أي أرقام جوالات أو عمولات سرية
     RETURN jsonb_build_object(
         'valid', true,
         'referral_code', v_aff.referral_code,
@@ -201,25 +188,16 @@ GRANT EXECUTE ON FUNCTION public.check_referral_code(text) TO anon, authenticate
 -- ==============================================================================
 ALTER TABLE IF EXISTS public.partner_accounts ENABLE ROW LEVEL SECURITY;
 
--- تشفير أي رموز سرية غير مشفرة حالياً بـ Bcrypt
 UPDATE public.partner_accounts
 SET pin_code = crypt(trim(pin_code), gen_salt('bf', 8))
 WHERE pin_code IS NOT NULL 
   AND trim(pin_code) <> '' 
   AND pin_code NOT LIKE '$2%';
 
--- تعيين رمز افتراضي مشفر في حال كان الـ PIN فارغاً
 UPDATE public.partner_accounts
 SET pin_code = crypt('1234', gen_salt('bf', 8))
 WHERE pin_code IS NULL OR trim(pin_code) = '';
 
-DROP POLICY IF EXISTS "partner_accounts_select_own" ON public.partner_accounts;
-DROP POLICY IF EXISTS "Partner accounts read access" ON public.partner_accounts;
-DROP POLICY IF EXISTS "Partner accounts update PIN" ON public.partner_accounts;
-DROP POLICY IF EXISTS "SuperAdmin partner accounts access" ON public.partner_accounts;
-DROP POLICY IF EXISTS "Service Role partner accounts full access" ON public.partner_accounts;
-
--- حظر الوصول المباشر لـ anon وحصره بالسوبر أدمن
 CREATE POLICY "SuperAdmin partner accounts access"
 ON public.partner_accounts FOR ALL
 TO authenticated
@@ -230,7 +208,6 @@ CREATE POLICY "Service Role partner accounts full access"
 ON public.partner_accounts FOR ALL
 TO service_role USING (true) WITH CHECK (true);
 
--- 🛡️ دالة مشفرة للتحقق من تسجيل دخول الشريك (Server-side PIN Verification)
 CREATE OR REPLACE FUNCTION public.verify_partner_login(
     p_login_input TEXT,
     p_pin TEXT
@@ -249,7 +226,6 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'error', 'يرجى إدخال البيانات كاملة');
     END IF;
 
-    -- البحث إما برقم الجوال، كود الإحالة، الـ slug، أو المعرّف
     SELECT pa.id, pa.affiliate_id, pa.display_name, pa.slug, pa.region, pa.active, pa.pin_code,
            a.name, a.phone, a.referral_code, a.status,
            COALESCE(pa.commission_rate, 0.2000) as commission_rate
@@ -269,12 +245,10 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'error', 'حساب الشريك موقوف حالياً، يرجى التواصل مع الإدارة');
     END IF;
 
-    -- التحقق من الـ PIN عبر Bcrypt أو النص العادي مع الترقية التلقائية
     IF v_partner.pin_code LIKE '$2%' THEN
         v_is_match := (v_partner.pin_code = crypt(trim(p_pin), v_partner.pin_code));
     ELSE
         v_is_match := (trim(v_partner.pin_code) = trim(p_pin));
-        -- ترقية فورية للتشفير بعد المطابقة
         IF v_is_match THEN
             UPDATE public.partner_accounts
             SET pin_code = crypt(trim(p_pin), gen_salt('bf', 8))
@@ -286,7 +260,6 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'error', 'الرمز السري (PIN) غير صحيح');
     END IF;
 
-    -- إعادة بيانات الشريك آمنة وخالية تماماً من الـ PIN
     RETURN jsonb_build_object(
         'success', true,
         'partner', jsonb_build_object(
@@ -304,7 +277,6 @@ END;
 $$;
 GRANT EXECUTE ON FUNCTION public.verify_partner_login(text, text) TO anon, authenticated, service_role;
 
--- 🛡️ دالة مشفرة لتغيير الـ PIN مع التحقق الإجباري من القديم (تمنع التعديل المباشر)
 CREATE OR REPLACE FUNCTION public.change_partner_pin(
     p_partner_id UUID,
     p_old_pin TEXT,
@@ -331,7 +303,6 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'error', 'حساب الشريك غير موجود');
     END IF;
 
-    -- فحص الرمز القديم (سواء كان مشفراً أو نصاً عادياً)
     IF v_partner.pin_code LIKE '$2%' THEN
         v_is_valid := (v_partner.pin_code = crypt(trim(p_old_pin), v_partner.pin_code));
     ELSE
@@ -342,7 +313,6 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'error', 'الرمز السري القديم غير صحيح');
     END IF;
 
-    -- تشفير وحفظ الرمز الجديد بنظام Bcrypt
     UPDATE public.partner_accounts
     SET pin_code = crypt(trim(p_new_pin), gen_salt('bf', 8)),
         updated_at = now()
@@ -363,27 +333,6 @@ ALTER TABLE IF EXISTS public.partner_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.partner_bonus_rules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS public.partner_audit_logs ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Partner commissions read access" ON public.partner_commissions;
-DROP POLICY IF EXISTS "SuperAdmin partner commissions access" ON public.partner_commissions;
-DROP POLICY IF EXISTS "Service Role partner commissions full access" ON public.partner_commissions;
-
-DROP POLICY IF EXISTS "Public can view active bonus rules" ON public.partner_bonus_rules;
-DROP POLICY IF EXISTS "SuperAdmin manage bonus rules" ON public.partner_bonus_rules;
-DROP POLICY IF EXISTS "Service Role partner bonus rules full access" ON public.partner_bonus_rules;
-
-DROP POLICY IF EXISTS "Partner bonus awards read access" ON public.partner_bonus_awards;
-DROP POLICY IF EXISTS "SuperAdmin partner bonus awards access" ON public.partner_bonus_awards;
-DROP POLICY IF EXISTS "Service Role bonus awards full access" ON public.partner_bonus_awards;
-
-DROP POLICY IF EXISTS "Partner targets read access" ON public.partner_targets;
-DROP POLICY IF EXISTS "SuperAdmin partner targets access" ON public.partner_targets;
-DROP POLICY IF EXISTS "Service Role partner targets full access" ON public.partner_targets;
-
-DROP POLICY IF EXISTS "Partner audit logs insert" ON public.partner_audit_logs;
-DROP POLICY IF EXISTS "Partner audit logs select" ON public.partner_audit_logs;
-DROP POLICY IF EXISTS "Service Role audit logs full access" ON public.partner_audit_logs;
-
--- [A] العمولات: قراءة كاملة للسوبر أدمن والخدمات السحابية فقط (ممنوع القراءة المباشرة للعامة)
 CREATE POLICY "SuperAdmin partner commissions access"
 ON public.partner_commissions FOR ALL
 TO authenticated
@@ -394,7 +343,6 @@ CREATE POLICY "Service Role partner commissions full access"
 ON public.partner_commissions FOR ALL
 TO service_role USING (true) WITH CHECK (true);
 
--- [B] قواعد الحوافز: قراءة عامة للنشطة فقط (لعرض الشروط للشركاء الجدد)
 CREATE POLICY "Public can view active bonus rules"
 ON public.partner_bonus_rules FOR SELECT
 TO anon, authenticated
@@ -410,7 +358,6 @@ CREATE POLICY "Service Role partner bonus rules full access"
 ON public.partner_bonus_rules FOR ALL
 TO service_role USING (true) WITH CHECK (true);
 
--- [C] الجوائز المحققة والتارجت والتدقيق: محصورة بالسوبر أدمن والخدمة
 CREATE POLICY "SuperAdmin partner bonus awards access"
 ON public.partner_bonus_awards FOR ALL
 TO authenticated
@@ -441,7 +388,6 @@ CREATE POLICY "Service Role audit logs full access"
 ON public.partner_audit_logs FOR ALL
 TO service_role USING (true) WITH CHECK (true);
 
--- 🛡️ دالة آمنة لجلب عمولات شريك معين فقط (تمنع أي شريك من استعراض عمولات شريك آخر)
 CREATE OR REPLACE FUNCTION public.get_partner_commissions_secure(p_partner_id UUID)
 RETURNS JSONB
 LANGUAGE plpgsql
