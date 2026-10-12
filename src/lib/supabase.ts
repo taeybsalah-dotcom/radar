@@ -2296,7 +2296,7 @@ export const LoyaltyService = {
     storeId?: string,
     storeSlug?: string,
     requiredRole?: 'admin' | 'cashier'
-  ): Promise<{ success: boolean; staff?: StoreStaff & { matchedStore?: Store }; error?: string; message?: string }> {
+  ): Promise<{ success: boolean; staff?: StoreStaff & { matchedStore?: Store }; error?: string; message?: string; session_token?: string }> {
     const normPhone = normalizePhone(phone);
     const normPin = pin.trim();
     if (!normPhone || !normPin) {
@@ -2324,6 +2324,7 @@ export const LoyaltyService = {
             const returnedStaff = res.staff;
             return {
               success: true,
+              session_token: typeof res.session_token === 'string' ? res.session_token : undefined,
               staff: {
                 id: returnedStaff.id,
                 store_id: returnedStaff.store_id || resolvedStoreId,
@@ -2570,6 +2571,107 @@ export const LoyaltyService = {
     if (storeSlug) {
       localStorage.removeItem(`radar_session_${storeSlug}_${role}`);
     }
+    this.revokeStaffToken(storeId, role);
+  },
+
+  // 7.3 تذكرة الجلسة المؤقتة (8 ساعات) التي يصدرها السيرفر بعد التحقق من الـ PIN.
+  // تُستخدم لتعديل المنيو والأخصائيين وقراءة وتحديث الحجوزات. الـ PIN نفسه لا يُحفظ في المتصفح.
+  saveStaffToken(storeId: string, role: string, token?: string): void {
+    if (!storeId || !token) return;
+    const bucket = role === 'admin' ? 'admin' : 'cashier';
+    try {
+      localStorage.setItem(`radar_stoken_${storeId}_${bucket}`, token);
+    } catch {
+      /* ignore */
+    }
+  },
+
+  getStaffToken(storeId?: string, role: 'admin' | 'cashier' | 'any' = 'any'): string | null {
+    try {
+      const roles: Array<'admin' | 'cashier'> = role === 'any' ? ['admin', 'cashier'] : [role];
+      if (storeId) {
+        for (const r of roles) {
+          const t = localStorage.getItem(`radar_stoken_${storeId}_${r}`);
+          if (t) return t;
+        }
+        return null;
+      }
+      // معرف المتجر غير معروف: السيرفر يتحقق أن العنصر يتبع متجر صاحب التذكرة
+      for (const r of roles) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('radar_stoken_') && k.endsWith('_' + r)) {
+            const t = localStorage.getItem(k);
+            if (t) return t;
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  },
+
+  revokeStaffToken(storeId: string, role: 'admin' | 'cashier'): void {
+    try {
+      const key = `radar_stoken_${storeId}_${role}`;
+      const token = localStorage.getItem(key);
+      localStorage.removeItem(key);
+      const supabase = getSupabaseClient();
+      if (token && supabase) {
+        void Promise.resolve((supabase as any).rpc('end_staff_session', { p_token: token })).catch(() => {});
+      }
+    } catch {
+      /* ignore */
+    }
+  },
+
+  // استدعاء دالة سيرفر محمية بالتذكرة. يرجع null إذا لا توجد تذكرة (لمسار المشرف العام).
+  async callWithStaffToken(
+    fn: string,
+    args: Record<string, any>,
+    token: string | null
+  ): Promise<any | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase || !token) return null;
+    const { data, error } = await (supabase as any).rpc(fn, { p_token: token, ...args });
+    if (error) throw new Error(error.message || 'فشل الاتصال بالسيرفر');
+    if (data && data.success === false) {
+      throw new Error(data.message || data.error || 'تعذر تنفيذ العملية');
+    }
+    return data;
+  },
+
+  // لا كتابة مباشرة بدون تذكرة تاجر أو جلسة مشرف عام؛ نوضح السبب بدل الحفظ المحلي الصامت.
+  async assertCanWrite(token: string | null): Promise<void> {
+    if (token) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session) return;
+    } catch {
+      /* ignore */
+    }
+    throw new Error('انتهت جلسة الدخول. سجّل الدخول مرة أخرى ثم أعد المحاولة.');
+  },
+
+  // تغيير الرمز السري: التحقق من الرمز القديم يتم داخل السيرفر (مع حد المحاولات)، لا في المتصفح.
+  async updateStaffPinSecure(
+    staffId: string,
+    oldPin: string,
+    newPin: string
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, message: 'قاعدة البيانات غير متصلة' };
+    if (!isUUID(staffId)) return { success: false, message: 'لا يمكن تغيير رمز هذا الحساب من هنا' };
+    const { data, error } = await (supabase as any).rpc('update_staff_pin', {
+      p_staff_id: staffId,
+      p_old_pin: oldPin,
+      p_new_pin: newPin,
+    });
+    if (error || !data) return { success: false, message: error?.message || 'فشل تحديث الرمز السري' };
+    return data as { success: boolean; message?: string; error?: string };
   },
 
   // 8. جلب جميع الرتب
@@ -6533,19 +6635,30 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     let createdItem: CatalogItem | null = null;
     if (supabase && isUUID(resolvedStoreId)) {
-      try {
-        const { data, error } = await supabase
-          .from('catalog_items')
-          .insert([stripDataUrls({ ...newItem }) as any])
-          .select()
-          .single();
-        if (!error && data) {
-          createdItem = data as unknown as CatalogItem;
-        } else if (error) {
-          console.error('Supabase addCatalogItem error:', error);
+      const adminToken = this.getStaffToken(resolvedStoreId, 'admin');
+      await this.assertCanWrite(adminToken);
+      if (adminToken) {
+        const res = await this.callWithStaffToken(
+          'merchant_save_catalog_item',
+          { p_item_id: null, p_item: stripDataUrls({ ...item, store_id: resolvedStoreId }) },
+          adminToken
+        );
+        if (res?.item) createdItem = res.item as unknown as CatalogItem;
+      } else {
+        try {
+          const { data, error } = await supabase
+            .from('catalog_items')
+            .insert([stripDataUrls({ ...newItem }) as any])
+            .select()
+            .single();
+          if (!error && data) {
+            createdItem = data as unknown as CatalogItem;
+          } else if (error) {
+            console.error('Supabase addCatalogItem error:', error);
+          }
+        } catch (e) {
+          console.warn('Supabase addCatalogItem exception:', e);
         }
-      } catch (e) {
-        console.warn('Supabase addCatalogItem exception:', e);
       }
     }
 
@@ -6571,13 +6684,20 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
     const supabase = getSupabaseClient();
     if (supabase) {
-      try {
-        const { data, error } = await supabase.from('catalog_items').update(stripDataUrls({ ...updates }) as any).eq('id', id).select().single();
-        if (!error && data) {
-          updatedItem = data as unknown as CatalogItem;
+      const adminToken = this.getStaffToken(updates.store_id || updatedItem?.store_id, 'admin');
+      await this.assertCanWrite(adminToken);
+      if (adminToken) {
+        const res = await this.callWithStaffToken('merchant_save_catalog_item', { p_item_id: id, p_item: stripDataUrls({ ...updates }) }, adminToken);
+        if (res?.item) updatedItem = res.item as unknown as CatalogItem;
+      } else {
+        try {
+          const { data, error } = await supabase.from('catalog_items').update(stripDataUrls({ ...updates }) as any).eq('id', id).select().single();
+          if (!error && data) {
+            updatedItem = data as unknown as CatalogItem;
+          }
+        } catch (e) {
+          console.warn('Supabase updateCatalogItem fallback', e);
         }
-      } catch (e) {
-        console.warn('Supabase updateCatalogItem fallback', e);
       }
     }
 
@@ -6594,17 +6714,23 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     const itemToDelete = localList.find((i) => i.id === id);
     const storeId = itemToDelete?.store_id;
 
-    const filtered = localList.filter((item) => item.id !== id);
-    saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, filtered);
-
     const supabase = getSupabaseClient();
     if (supabase) {
-      try {
-        await supabase.from('catalog_items').delete().eq('id', id);
-      } catch (e) {
-        console.warn('Supabase deleteCatalogItem fallback', e);
+      const adminToken = this.getStaffToken(storeId, 'admin');
+      await this.assertCanWrite(adminToken);
+      if (adminToken) {
+        await this.callWithStaffToken('merchant_delete_catalog_item', { p_item_id: id }, adminToken);
+      } else {
+        try {
+          await supabase.from('catalog_items').delete().eq('id', id);
+        } catch (e) {
+          console.warn('Supabase deleteCatalogItem fallback', e);
+        }
       }
     }
+
+    const filtered = localList.filter((item) => item.id !== id);
+    saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, filtered);
 
     if (storeId) {
       LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
@@ -6779,6 +6905,12 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        const staffToken = this.getStaffToken(resolvedStoreId, 'any');
+        if (staffToken) {
+          const res = await this.callWithStaffToken('get_store_bookings_secure', { p_live_only: true }, staffToken);
+          if (res && Array.isArray(res.bookings)) return res.bookings as any;
+          return [];
+        }
         const { data, error } = await (supabase as any).from('service_bookings')
           .select('*')
           .eq('store_id', resolvedStoreId)
@@ -6788,7 +6920,6 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
         if (!error && data) return data as any;
       } catch (e: any) {
         console.warn('Supabase getLiveStoreBookings failed', e);
-        alert('Get Bookings Error: ' + e.message);
       }
     }
     return [];
@@ -6884,17 +7015,34 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedStoreId)) {
-      try {
-        const { data: created, error } = await supabase.from('store_specialists').insert([stripDataUrls({ ...newSpec }) as any]).select().single();
-        if (!error && created) {
+      const adminToken = this.getStaffToken(resolvedStoreId, 'admin');
+      await this.assertCanWrite(adminToken);
+      if (adminToken) {
+        const res = await this.callWithStaffToken(
+          'merchant_save_specialist',
+          { p_item_id: null, p_item: stripDataUrls({ ...data, store_id: resolvedStoreId }) },
+          adminToken
+        );
+        if (res?.item) {
           const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
-          list.unshift(created as unknown as StoreSpecialist);
+          list.unshift(res.item as unknown as StoreSpecialist);
           saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, list);
           LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: resolvedStoreId });
-          return created as unknown as StoreSpecialist;
+          return res.item as unknown as StoreSpecialist;
         }
-      } catch (e) {
-        console.warn('Supabase addStoreSpecialist fallback', e);
+      } else {
+        try {
+          const { data: created, error } = await supabase.from('store_specialists').insert([stripDataUrls({ ...newSpec }) as any]).select().single();
+          if (!error && created) {
+            const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
+            list.unshift(created as unknown as StoreSpecialist);
+            saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, list);
+            LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: resolvedStoreId });
+            return created as unknown as StoreSpecialist;
+          }
+        } catch (e) {
+          console.warn('Supabase addStoreSpecialist fallback', e);
+        }
       }
     }
 
@@ -6918,11 +7066,18 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
     const supabase = getSupabaseClient();
     if (supabase) {
-      try {
-        const { data: remoteUpdated } = await supabase.from('store_specialists').update(stripDataUrls({ ...updates }) as any).eq('id', id).select().single();
-        if (remoteUpdated) updatedSpec = remoteUpdated as unknown as StoreSpecialist;
-      } catch (e) {
-        console.warn('Supabase updateStoreSpecialist fallback', e);
+      const adminToken = this.getStaffToken(updates.store_id || updatedSpec?.store_id, 'admin');
+      await this.assertCanWrite(adminToken);
+      if (adminToken) {
+        const res = await this.callWithStaffToken('merchant_save_specialist', { p_item_id: id, p_item: stripDataUrls({ ...updates }) }, adminToken);
+        if (res?.item) updatedSpec = res.item as unknown as StoreSpecialist;
+      } else {
+        try {
+          const { data: remoteUpdated } = await supabase.from('store_specialists').update(stripDataUrls({ ...updates }) as any).eq('id', id).select().single();
+          if (remoteUpdated) updatedSpec = remoteUpdated as unknown as StoreSpecialist;
+        } catch (e) {
+          console.warn('Supabase updateStoreSpecialist fallback', e);
+        }
       }
     }
 
@@ -6936,17 +7091,23 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     const target = list.find((s) => s.id === id);
     const storeId = target?.store_id;
 
-    const filtered = list.filter((s) => s.id !== id);
-    saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, filtered);
-
     const supabase = getSupabaseClient();
     if (supabase) {
-      try {
-        await supabase.from('store_specialists').delete().eq('id', id);
-      } catch (e) {
-        console.warn('Supabase deleteStoreSpecialist fallback', e);
+      const adminToken = this.getStaffToken(storeId, 'admin');
+      await this.assertCanWrite(adminToken);
+      if (adminToken) {
+        await this.callWithStaffToken('merchant_delete_specialist', { p_item_id: id }, adminToken);
+      } else {
+        try {
+          await supabase.from('store_specialists').delete().eq('id', id);
+        } catch (e) {
+          console.warn('Supabase deleteStoreSpecialist fallback', e);
+        }
       }
     }
+
+    const filtered = list.filter((s) => s.id !== id);
+    saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, filtered);
 
     if (storeId) LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
     return true;
@@ -7132,25 +7293,46 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
   // 📅 Service Bookings & Appointments Methods
   // ==========================================
 
-  async getStoreBookings(storeId: string): Promise<ServiceBooking[]> {
+  async getStoreBookings(storeId: string, customerPhone?: string): Promise<ServiceBooking[]> {
     const currentStore = await this.resolveStore(storeId);
     const resolvedStoreId = currentStore?.id || storeId;
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedStoreId)) {
       try {
-        const { data, error } = await (supabase as any)
-          .from('service_bookings')
-          .select('*')
-          .eq('store_id', resolvedStoreId)
-          .order('created_at', { ascending: false });
+        // 1) عميل: حجوزات رقم جواله فقط (نقطة ضعف معروفة: دخول العميل بالجوال فقط)
+        if (customerPhone) {
+          const { data, error } = await (supabase as any).rpc('get_customer_bookings', {
+            p_store_id: resolvedStoreId,
+            p_phone: customerPhone,
+          });
+          if (!error && Array.isArray(data)) return data as ServiceBooking[];
+          return [];
+        }
+        // 2) تاجر/كاشير: حجوزات متجره عبر التذكرة
+        const staffToken = this.getStaffToken(resolvedStoreId, 'any');
+        if (staffToken) {
+          const res = await this.callWithStaffToken('get_store_bookings_secure', { p_live_only: false }, staffToken);
+          if (res && Array.isArray(res.bookings)) {
+            saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, res.bookings);
+            return res.bookings as ServiceBooking[];
+          }
+        } else {
+          // 3) مشرف عام (Supabase Auth): القراءة المباشرة تسمح له فقط
+          const { data, error } = await (supabase as any)
+            .from('service_bookings')
+            .select('*')
+            .eq('store_id', resolvedStoreId)
+            .order('created_at', { ascending: false });
 
-        if (!error && Array.isArray(data)) {
-          saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, data);
-          return data as ServiceBooking[];
+          if (!error && Array.isArray(data)) {
+            saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, data);
+            return data as ServiceBooking[];
+          }
         }
       } catch (e) {
         console.warn('Supabase getStoreBookings failed:', e);
       }
+      if (customerPhone) return [];
     }
     const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
     return list.filter((b) => b.store_id === resolvedStoreId || b.store_id === storeId);
@@ -7200,17 +7382,34 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedStoreId)) {
-      const { data: created, error } = await (supabase as any)
-        .from('service_bookings')
-        .insert([dbPayload as any])
-        .select()
-        .single();
+      const { data: rpcRes, error } = await (supabase as any).rpc('book_service_safely', {
+        p_store_id: resolvedStoreId,
+        p_customer_id: dbPayload.customer_id,
+        p_customer_name: dbPayload.customer_name,
+        p_customer_phone: dbPayload.customer_phone,
+        p_service_id: dbPayload.service_id,
+        p_service_name: dbPayload.service_name,
+        p_service_price: dbPayload.service_price,
+        p_service_duration_minutes: dbPayload.service_duration_minutes,
+        p_specialist_id: dbPayload.specialist_id,
+        p_specialist_name: dbPayload.specialist_name,
+        p_booking_date: dbPayload.booking_date,
+        p_booking_time: dbPayload.booking_time,
+        p_notes: dbPayload.customer_notes,
+        p_points_to_earn: dbPayload.loyalty_points_earned,
+        p_selected_modifiers: dbPayload.selected_modifiers,
+      });
 
       if (error) {
         console.error('Supabase createServiceBooking error', error);
         throw new Error('فشل إرسال الحجز للسيرفر: ' + error.message);
       }
 
+      if (!rpcRes || rpcRes.success !== true) {
+        throw new Error((rpcRes && rpcRes.error) || 'تعذر إنشاء الحجز، يرجى المحاولة مرة أخرى.');
+      }
+
+      const created = rpcRes.booking;
       if (created) {
         const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
         list.unshift(created as unknown as ServiceBooking);
@@ -7288,16 +7487,22 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
     const supabase = getSupabaseClient();
     if (supabase) {
-      try {
-        const { data: remoteUpdated } = await supabase
-          .from('service_bookings')
-          .update({ status })
-          .eq('id', bookingId)
-          .select()
-          .single();
-        if (remoteUpdated) updatedBooking = remoteUpdated as unknown as ServiceBooking;
-      } catch (e) {
-        console.warn('Supabase updateServiceBookingStatus fallback', e);
+      const staffToken = this.getStaffToken(undefined, 'any');
+      if (staffToken) {
+        const res = await this.callWithStaffToken('update_booking_status_secure', { p_booking_id: bookingId, p_status: status }, staffToken);
+        if (res?.booking) updatedBooking = res.booking as unknown as ServiceBooking;
+      } else {
+        try {
+          const { data: remoteUpdated } = await supabase
+            .from('service_bookings')
+            .update({ status })
+            .eq('id', bookingId)
+            .select()
+            .single();
+          if (remoteUpdated) updatedBooking = remoteUpdated as unknown as ServiceBooking;
+        } catch (e) {
+          console.warn('Supabase updateServiceBookingStatus fallback', e);
+        }
       }
     }
 

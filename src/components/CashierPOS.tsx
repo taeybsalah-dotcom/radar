@@ -190,7 +190,14 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         )
       .subscribe();
 
+    // الحجوزات صارت خاصة (لا Realtime للزوار/الكاشير): تحديث احتياطي كل 60 ثانية والصفحة ظاهرة فقط
+    const bookingsRefreshTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings);
+    }, 60000);
+
     return () => {
+      clearInterval(bookingsRefreshTimer);
       supabase.removeChannel(channel);
     };
   }, [store?.id]);
@@ -576,20 +583,41 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       return;
     }
 
-    // التحقق من الرمز المدخل مقارنة بـ store.admin_pin أو أي موظف بصلاحية admin
-    const masterAdminPin = store.admin_pin || '9999';
-    const adminStaff = staffList.filter((s) => s.role === 'admin');
-    const isValidPin =
-      enteredPin === masterAdminPin ||
-      adminStaff.some((admin) => (admin.pin_code || '1234') === enteredPin);
+    // التحقق من رمز مدير المتجر داخل السيرفر عبر verify_staff_pin (مع قفل بعد 5 محاولات خاطئة)
+    setIsSubmittingApproval(true);
+    setManagerPinError(null);
+    const adminPhones = Array.from(
+      new Set(
+        [
+          ...staffList.filter((s) => s.role === 'admin').map((s) => s.phone),
+          (store as any).manager_contact,
+        ].filter((p): p is string => !!p && !!String(p).trim())
+      )
+    );
+    let isValidPin = false;
+    let lockedMessage: string | null = null;
+    for (const adminPhone of adminPhones) {
+      const check = await LoyaltyService.verifyStaffPin(adminPhone, enteredPin, store.id, store.slug, 'admin');
+      if (check.success) {
+        isValidPin = true;
+        break;
+      }
+      if (check.error === 'LOCKED') {
+        lockedMessage = check.message || null;
+        break;
+      }
+    }
 
     if (!isValidPin) {
-      setManagerPinError('الرمز السري لمدير المتجر غير صحيح. لا يمكن اعتماد هذه الفاتورة الكبيرة دون موافقة الإدارة.');
+      setIsSubmittingApproval(false);
+      setManagerPinError(
+        lockedMessage ||
+          'الرمز السري لمدير المتجر غير صحيح. لا يمكن اعتماد هذه الفاتورة الكبيرة دون موافقة الإدارة.'
+      );
       playBeepSound('error');
       return;
     }
 
-    setIsSubmittingApproval(true);
     setManagerPinError(null);
     try {
       const amountNum = Number(invoiceAmount);
@@ -659,12 +687,6 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       return;
     }
 
-    const expectedCurrentPin = effectiveStaff.pin_code || '1234';
-    if (currentPin !== expectedCurrentPin) {
-      setChangePinError('الرمز السري الحالي غير صحيح');
-      return;
-    }
-
     if (!/^\d{4,6}$/.test(newPin)) {
       setChangePinError('يجب أن يتكون الرمز السري الجديد من 4 إلى 6 أرقام فقط');
       return;
@@ -677,16 +699,35 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
     setIsSavingCashierPin(true);
     try {
-      await LoyaltyService.updateStoreStaff(effectiveStaff.id, {
-        pin_code: newPin,
-      });
+      // التحقق من الرمز الحالي داخل السيرفر (مع قفل بعد 5 محاولات خاطئة)
+      const currentCheck = await LoyaltyService.verifyStaffPin(
+        effectiveStaff.phone || '',
+        currentPin,
+        store.id,
+        store.slug
+      );
+      if (!currentCheck.success) {
+        setChangePinError(
+          currentCheck.error === 'LOCKED'
+            ? currentCheck.message || 'تم قفل الدخول مؤقتاً'
+            : 'الرمز السري الحالي غير صحيح'
+        );
+        return;
+      }
 
-      const updatedStaff = { ...effectiveStaff, pin_code: newPin };
+      const updateRes = await LoyaltyService.updateStaffPinSecure(effectiveStaff.id, currentPin, newPin);
+      if (!updateRes.success) {
+        setChangePinError(updateRes.message || 'فشل تحديث الرمز السري');
+        return;
+      }
+
+      const updatedStaff = { ...effectiveStaff };
+      delete (updatedStaff as any).pin_code;
       setAuthenticatedCashier(updatedStaff);
       setActiveStaff(updatedStaff);
       LoyaltyService.saveStaffSession(store.id, updatedStaff, store.slug);
 
-      setStaffList(staffList.map((s) => (s.id === effectiveStaff.id ? updatedStaff : s)));
+      setStaffList(staffList.map((s) => (s.id === effectiveStaff.id ? { ...s, ...updatedStaff } : s)));
 
       setChangePinSuccess('تم بنجاح تغيير وحفظ رمزك السري الجديد! 🔒');
       setTimeout(() => {

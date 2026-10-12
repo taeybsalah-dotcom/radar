@@ -426,7 +426,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         LoyaltyService.getPrivileges(store.id),
         LoyaltyService.getCatalogItems(store.id),
         LoyaltyService.getStoreSpecialists(store.id),
-        LoyaltyService.getStoreBookings(store.id),
+        LoyaltyService.getStoreBookings(store.id, freshCust?.phone),
         freshCust ? LoyaltyService.getCustomerCoupons(freshCust.id, store.id, freshCust.phone) : Promise.resolve([]),
       ]);
 
@@ -481,6 +481,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         const [freshCust, freshCoupons] = await Promise.all([
           LoyaltyService.getCustomer(store.id, customer.phone),
           LoyaltyService.getCustomerCoupons(customer.id, store.id, customer.phone),
+          LoyaltyService.getStoreBookings(store.id, customer.phone).then((bks) => { if (isSubscribed && Array.isArray(bks)) setStoreBookings(bks); return bks; }),
         ]);
 
         if (!isSubscribed) return;
@@ -633,7 +634,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       setPastOrders(orders);
     });
 
-    LoyaltyService.getStoreBookings(store.id).then(bks => {
+    LoyaltyService.getStoreBookings(store.id, customer.phone).then(bks => {
       setStoreBookings(bks);
     });
 
@@ -647,7 +648,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         });
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'service_bookings', filter: 'store_id=eq.' + store.id }, () => {
-        LoyaltyService.getStoreBookings(store.id).then(bks => {
+        LoyaltyService.getStoreBookings(store.id, customer.phone).then(bks => {
           setStoreBookings(bks);
         });
       })
@@ -680,7 +681,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     try {
       const [cpns, bks] = await Promise.all([
         LoyaltyService.getCustomerCoupons(authCustomer.id, store.id, authCustomer.phone),
-        LoyaltyService.getStoreBookings(store.id),
+        LoyaltyService.getStoreBookings(store.id, authCustomer.phone),
       ]);
       setCustomerCoupons(cpns);
       if (bks) setStoreBookings(bks);

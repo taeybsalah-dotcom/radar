@@ -101,6 +101,7 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
 
       // تسجيل دخول ناجح للمتجر الحالي حصراً
       LoyaltyService.saveStaffSession(store.id, staff, store.slug);
+      LoyaltyService.saveStaffToken(store.id, staff.role, authRes.session_token);
       authLogin(staff.role === 'admin' ? 'merchant' : 'cashier', {
         id: staff.id,
         storeId: store.id,
