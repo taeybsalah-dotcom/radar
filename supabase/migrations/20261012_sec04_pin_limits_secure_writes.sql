@@ -261,7 +261,7 @@ BEGIN
             'message', 'تعذر العثور على المتجر المحدد');
     END IF;
 
-    SELECT id, slug, name, manager_name, manager_contact, admin_pin
+    SELECT id, slug, name, manager_name, manager_contact
     INTO v_store_record
     FROM public.stores
     WHERE id = v_resolved_store_id
@@ -328,44 +328,8 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- Step B: store manager (stores.manager_contact + admin_pin)
-    IF v_store_record.manager_contact IS NOT NULL
-       AND public.normalize_phone(v_store_record.manager_contact) = v_norm_input
-       AND (p_required_role IS NULL OR p_required_role = 'admin')
-    THEN
-        IF v_store_record.admin_pin LIKE '$2%' THEN
-            v_is_match := (v_store_record.admin_pin = crypt(v_norm_pin, v_store_record.admin_pin));
-        ELSE
-            v_is_match := (trim(COALESCE(v_store_record.admin_pin, '9999')) = v_norm_pin);
-            IF v_is_match THEN
-                UPDATE public.stores
-                SET admin_pin = crypt(v_norm_pin, gen_salt('bf', 8)),
-                    updated_at = now()
-                WHERE id = v_store_record.id;
-            END IF;
-        END IF;
-
-        IF v_is_match THEN
-            PERFORM public._pin_register_success('staff', v_key);
-            v_token := public._staff_session_create(v_store_record.id, 'manager-' || v_store_record.id::text, 'admin');
-
-            RETURN jsonb_build_object(
-                'success', true,
-                'session_token', v_token,
-                'staff', jsonb_build_object(
-                    'id', 'manager-' || v_store_record.id::text,
-                    'store_id', v_store_record.id,
-                    'name', COALESCE(v_store_record.manager_name, 'المدير العام'),
-                    'phone', v_store_record.manager_contact,
-                    'role', 'admin',
-                    'is_active', true,
-                    'can_manual_input_phone', true,
-                    'store_name', v_store_record.name,
-                    'store_slug', v_store_record.slug
-                )
-            );
-        END IF;
-    END IF;
+    -- (No separate "store manager" step: in the real database the manager's PIN is stored in
+    --  store_staff.pin_code with role = 'admin', so Step A above already covers managers.)
 
     -- Failure: count it, log it, lock if needed
     v_count := public._pin_register_fail(
@@ -999,7 +963,7 @@ BEGIN
 
         SELECT EXISTS (
             SELECT 1 FROM public.service_bookings
-            WHERE specialist_id = p_specialist_id
+            WHERE specialist_id = p_specialist_id::text
               AND status NOT IN ('cancelled', 'rejected')
               AND ((booking_date || ' ' || booking_time)::TIMESTAMP < v_end)
               AND (((booking_date || ' ' || booking_time)::TIMESTAMP + (service_duration_minutes || ' minutes')::INTERVAL) > v_start)
