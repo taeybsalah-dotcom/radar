@@ -163,8 +163,8 @@ async function handleParseMenu(request: Request, env: Env): Promise<Response> {
       imageBase64 = imageBase64.split(',')[1];
     }
 
-    // Use gemini-2.5-flash exclusively as requested
-    const result = await callGeminiVision(apiKey, imageBase64, mimeType, 'gemini-2.5-flash');
+    // Use gemini-3.8-flash exclusively as requested
+    const result = await callGeminiVision(apiKey, imageBase64, mimeType, 'gemini-3.8-flash');
 
     return jsonResponse({
       success: true,
