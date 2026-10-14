@@ -678,49 +678,171 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     if (!store?.id || !customer?.phone) return;
     
     // Fetch initial orders & bookings directly from live Supabase
-    LoyaltyService.getCustomerOrders(store.id, customer.phone).then(orders => {
-      setPastOrders(orders);
-    });
+    let isCancelled = false;
+    let channel: any = null;
 
-    LoyaltyService.getStoreBookings(store.id, customer.phone).then(bks => {
-      setStoreBookings(bks);
-    });
+    LoyaltyService.resolveStore(store.id).then((resolvedStore) => {
+      if (isCancelled) return;
+      const targetStoreId = resolvedStore?.id || store.id;
 
-    // Listen to live changes
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
-    const channel = supabase.channel('customer-live-' + customer.phone)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'store_orders', filter: 'store_id=eq.' + store.id }, () => {
-        LoyaltyService.getCustomerOrders(store.id, customer.phone).then(orders => {
-          setPastOrders(orders);
-        });
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_bookings', filter: 'store_id=eq.' + store.id }, () => {
-        LoyaltyService.getStoreBookings(store.id, customer.phone).then(bks => {
-          setStoreBookings(bks);
-        });
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'store_customers', filter: 'phone=eq.' + customer.phone }, () => {
-        // ⚡ Instant push update when cashier adds points or edits customer
-        LoyaltyService.getCustomer(store.id, customer.phone).then(fresh => {
-          if (fresh) {
-            setCustomer(fresh);
-            lastPointsRef.current = fresh.wallet_balance;
+      LoyaltyService.getCustomerOrders(store.id, customer.phone).then((orders) => {
+        if (!isCancelled) setPastOrders(orders);
+      }).catch(() => {});
+
+      LoyaltyService.getStoreBookings(store.id, customer.phone).then((bks) => {
+        if (!isCancelled) setStoreBookings(bks);
+      }).catch(() => {});
+
+      // Listen to live changes with resolved store UUID
+      const supabase = getSupabaseClient();
+      if (!supabase) return;
+
+      const normPhone = (p: string) => (p || '').replace(/\D/g, '').slice(-9);
+      const targetNormPhone = normPhone(customer.phone);
+
+      channel = supabase
+        .channel('customer-live-' + customer.phone)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'store_orders',
+            filter: `store_id=eq.${targetStoreId}`,
+          },
+          (payload: any) => {
+            const updated = payload.new;
+            if (!updated) return;
+            if (normPhone(updated.customer_phone) === targetNormPhone) {
+              setPastOrders((prev) => [
+                updated,
+                ...prev.filter(
+                  (o: any) => o.id !== updated.id && (o.order_number || o.order_id) !== (updated.order_number || updated.order_id)
+                ),
+              ]);
+
+              // ⚡ Instant live update on active order confirmation modal
+              setOrderSuccessPayload((prev) => {
+                if (!prev) return prev;
+                if (
+                  prev.order_id === updated.order_number ||
+                  (prev as any).id === updated.id
+                ) {
+                  return {
+                    ...prev,
+                    status: updated.status,
+                  };
+                }
+                return prev;
+              });
+
+              if (payload.eventType === 'UPDATE') {
+                try { playBeepSound('notification'); } catch {}
+              }
+            }
           }
-        });
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_coupons', filter: 'customer_phone=eq.' + customer.phone }, () => {
-        // ⚡ Instant push update when a coupon is redeemed or added
-        LoyaltyService.getCustomerCoupons(customer.id, store.id, customer.phone).then(freshCoupons => {
-          if (freshCoupons) setCustomerCoupons(freshCoupons);
-        });
-      })
-      .subscribe();
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'service_bookings',
+            filter: `store_id=eq.${targetStoreId}`,
+          },
+          (payload: any) => {
+            const updated = payload.new;
+            if (!updated) return;
+            if (normPhone(updated.customer_phone) === targetNormPhone) {
+              setStoreBookings((prev) => [
+                updated,
+                ...prev.filter(
+                  (b) =>
+                    b.id !== updated.id &&
+                    b.booking_number !== updated.booking_number
+                ),
+              ]);
+              if (payload.eventType === 'UPDATE') {
+                try { playBeepSound('notification'); } catch {}
+              }
+            }
+          }
+        )
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'store_customers', filter: 'phone=eq.' + customer.phone }, () => {
+          // ⚡ Instant push update when cashier adds points or edits customer
+          LoyaltyService.getCustomer(store.id, customer.phone).then((fresh) => {
+            if (fresh && !isCancelled) {
+              setCustomer(fresh);
+              lastPointsRef.current = fresh.wallet_balance;
+            }
+          });
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_coupons', filter: 'customer_phone=eq.' + customer.phone }, () => {
+          // ⚡ Instant push update when a coupon is redeemed or added
+          LoyaltyService.getCustomerCoupons(customer.id, store.id, customer.phone).then((freshCoupons) => {
+            if (freshCoupons && !isCancelled) setCustomerCoupons(freshCoupons);
+          });
+        })
+        .subscribe();
+    });
+
+    // ⚡ Cross-Device Event Bus listener for instant POS <-> Customer sync
+    const normPhone = (p: string) => (p || '').replace(/\D/g, '').slice(-9);
+    const targetNormPhone = normPhone(customer.phone);
+
+    const unsubscribeEvents = LoyaltyEvents.listen((event) => {
+      if (event.type === 'ORDER_STATUS_UPDATED' && event.orderData) {
+        const orderPhone = normPhone(event.phone || event.orderData.customer_phone);
+        if (orderPhone === targetNormPhone) {
+          const updated = event.orderData;
+          setPastOrders((prev) => [
+            updated,
+            ...prev.filter(
+              (o: any) => o.id !== updated.id && (o.order_number || o.order_id) !== (updated.order_number || updated.order_id)
+            ),
+          ]);
+          setOrderSuccessPayload((prev) => {
+            if (!prev) return prev;
+            if (
+              prev.order_id === updated.order_number ||
+              (prev as any).id === updated.id
+            ) {
+              return {
+                ...prev,
+                status: updated.status,
+              };
+            }
+            return prev;
+          });
+          try { playBeepSound('notification'); } catch {}
+        }
+      }
+
+      if (event.type === 'BOOKING_STATUS_UPDATED' && event.bookingData) {
+        const bPhone = normPhone(event.phone || event.bookingData.customer_phone);
+        if (bPhone === targetNormPhone) {
+          const updated = event.bookingData;
+          setStoreBookings((prev) => [
+            updated,
+            ...prev.filter(
+              (b) =>
+                b.id !== updated.id &&
+                b.booking_number !== updated.booking_number
+            ),
+          ]);
+          try { playBeepSound('notification'); } catch {}
+        }
+      }
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      isCancelled = true;
+      unsubscribeEvents();
+      if (channel) {
+        getSupabaseClient()?.removeChannel(channel);
+      }
     };
-  }, [store?.id, customer?.phone, isCartModalOpen, orderSuccessPayload, bookingSuccessData]);
+  }, [store?.id, customer?.phone]);
 
   const handleCustomerAuthenticated = async (authCustomer: Customer) => {
     setCustomer(authCustomer);
@@ -4790,19 +4912,79 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <X className="w-5 h-5" />
             </button>
 
-            <div className="w-16 h-16 rounded-3xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-4xl mx-auto shadow-inner animate-bounce">
-              ✅
-            </div>
-
-            <div className="space-y-2">
-              <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold font-mono inline-block">
-                طلبك رقم #{orderSuccessPayload.order_id}
-              </span>
-              <h3 className="text-xl font-black text-white">تم استلام طلبك بنجاح!</h3>
-              <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
-                تم إرسال طلبك مباشرة لكاشير المتجر والمطبخ بنجاح! سيتم تجهيز طلبك فوراً 🚀
-              </p>
-            </div>
+            {(() => {
+              const st = String(orderSuccessPayload.status || 'pending');
+              if (st === 'preparing' || st === 'accepted') {
+                return (
+                  <>
+                    <div className="w-16 h-16 rounded-3xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-4xl mx-auto shadow-inner animate-pulse">
+                      👨‍🍳
+                    </div>
+                    <div className="space-y-2">
+                      <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold font-mono inline-block">
+                        طلبك رقم #{orderSuccessPayload.order_id}
+                      </span>
+                      <h3 className="text-xl font-black text-amber-400">تم قبول الطلب وجاري التحضير!</h3>
+                      <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
+                        الكاشير قبل طلبك وبدأ المطبخ في تجهيز أصنافك الآن بكل حب وعناية 🍳🔥
+                      </p>
+                    </div>
+                  </>
+                );
+              }
+              if (st === 'ready' || st === 'completed') {
+                return (
+                  <>
+                    <div className="w-16 h-16 rounded-3xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-4xl mx-auto shadow-inner animate-bounce">
+                      🛍️
+                    </div>
+                    <div className="space-y-2">
+                      <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-xs font-bold font-mono inline-block">
+                        طلبك رقم #{orderSuccessPayload.order_id}
+                      </span>
+                      <h3 className="text-xl font-black text-emerald-400">طلبك جاهز تماماً!</h3>
+                      <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
+                        تم الانتهاء من تجهيز طلبك وهو جاهز للاستلام أو التوصيل، بالهناء والعافية ✨
+                      </p>
+                    </div>
+                  </>
+                );
+              }
+              if (st === 'cancelled') {
+                return (
+                  <>
+                    <div className="w-16 h-16 rounded-3xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-4xl mx-auto shadow-inner">
+                      ❌
+                    </div>
+                    <div className="space-y-2">
+                      <span className="px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold font-mono inline-block">
+                        طلبك رقم #{orderSuccessPayload.order_id}
+                      </span>
+                      <h3 className="text-xl font-black text-rose-400">تم إلغاء الطلب</h3>
+                      <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
+                        نعتذر منك، تم إلغاء هذا الطلب من إدارة المتجر.
+                      </p>
+                    </div>
+                  </>
+                );
+              }
+              return (
+                <>
+                  <div className="w-16 h-16 rounded-3xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-4xl mx-auto shadow-inner animate-bounce">
+                    ✅
+                  </div>
+                  <div className="space-y-2">
+                    <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold font-mono inline-block">
+                      طلبك رقم #{orderSuccessPayload.order_id}
+                    </span>
+                    <h3 className="text-xl font-black text-white">تم استلام طلبك وبانتظار الموافقة!</h3>
+                    <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
+                      تم إرسال طلبك مباشرة لكاشير المتجر والمطبخ بنجاح! سيتم تجهيز طلبك فوراً 🚀
+                    </p>
+                  </div>
+                </>
+              );
+            })()}
 
             <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-1.5 text-xs text-right">
               <div className="flex items-center justify-between text-slate-400">

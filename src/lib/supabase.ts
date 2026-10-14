@@ -7099,12 +7099,42 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
   async updateOrderStatus(orderId: string, status: string): Promise<boolean> {
     const supabase = getSupabaseClient();
     if (supabase) {
-      const { error } = await (supabase as any).from('store_orders')
-        .update({ status, updated_at: new Date().toISOString() })
-        .eq('id', orderId);
-      if (error) {
-        throw new Error(error.message || 'فشل في تحديث حالة الطلب. يرجى التأكد من الصلاحيات.');
+      try {
+        const { data, error } = await (supabase as any).from('store_orders')
+          .update({ status, updated_at: new Date().toISOString() })
+          .eq('id', orderId)
+          .select()
+          .single();
+        if (error) {
+          throw error;
+        }
+        if (data) {
+          LoyaltyEvents.emit({
+            type: 'ORDER_STATUS_UPDATED',
+            storeId: data.store_id,
+            phone: data.customer_phone,
+            orderData: data,
+          });
+        }
+        return true;
+      } catch (err: any) {
+        console.warn('Supabase updateOrderStatus error:', err);
       }
+    }
+
+    // 🛡️ Local fallback for demo or offline mode
+    const localList = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
+    const idx = localList.findIndex(o => o.id === orderId || o.order_number === orderId);
+    if (idx !== -1) {
+      localList[idx].status = status;
+      localList[idx].updated_at = new Date().toISOString();
+      saveLocalData(STORAGE_KEYS.LOCAL_ORDERS, localList);
+      LoyaltyEvents.emit({
+        type: 'ORDER_STATUS_UPDATED',
+        storeId: localList[idx].store_id,
+        phone: localList[idx].customer_phone,
+        orderData: localList[idx],
+      });
       return true;
     }
     return false;
@@ -7662,6 +7692,12 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     }
 
     if (!updatedBooking) throw new Error(`الحجز غير موجود`);
+    LoyaltyEvents.emit({
+      type: 'BOOKING_STATUS_UPDATED',
+      storeId: updatedBooking.store_id,
+      phone: updatedBooking.customer_phone,
+      bookingData: updatedBooking,
+    });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: updatedBooking.store_id });
     return updatedBooking;
   },

@@ -153,15 +153,38 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     title: string;
     detail: string;
     type: 'order' | 'booking' | 'coupon';
+    orderId?: string;
+    bookingId?: string;
   } | null>(null);
 
   const lastAlertKeyRef = useRef<{ key: string; time: number }>({ key: '', time: 0 });
+  const alertRingerTimerRef = useRef<any>(null);
 
-  const triggerLiveAlert = (title: string, detail: string, type: 'order' | 'booking' | 'coupon' = 'order') => {
+  const stopAlertRinger = () => {
+    if (alertRingerTimerRef.current) {
+      clearInterval(alertRingerTimerRef.current);
+      alertRingerTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopAlertRinger();
+    };
+  }, []);
+
+  const triggerLiveAlert = (
+    title: string,
+    detail: string,
+    type: 'order' | 'booking' | 'coupon' = 'order',
+    targetEntityId?: string
+  ) => {
     const alertKey = `${title}_${detail}`;
     const now = Date.now();
     const isDuplicate = lastAlertKeyRef.current.key === alertKey && (now - lastAlertKeyRef.current.time < 3500);
     lastAlertKeyRef.current = { key: alertKey, time: now };
+
+    stopAlertRinger();
 
     if (!isDuplicate && !isSoundMutedRef.current) {
       try {
@@ -169,12 +192,35 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       } catch (e) {
         console.warn('Audio alert failed', e);
       }
+
+      // 🛎️ Continuous ringer loop (rings every 3.2 seconds until accepted or cancelled)
+      if (type === 'order' || type === 'booking') {
+        alertRingerTimerRef.current = setInterval(() => {
+          if (!isSoundMutedRef.current) {
+            try {
+              playBeepSound('pos_order_alert');
+            } catch {}
+          }
+        }, 3200);
+      }
     }
+
     const alertId = Math.random().toString(36).substring(7);
-    setIncomingAlert({ id: alertId, title, detail, type });
-    setTimeout(() => {
-      setIncomingAlert(prev => (prev?.id === alertId ? null : prev));
-    }, 8000);
+    setIncomingAlert({
+      id: alertId,
+      title,
+      detail,
+      type,
+      orderId: type === 'order' ? targetEntityId : undefined,
+      bookingId: type === 'booking' ? targetEntityId : undefined,
+    });
+
+    // Coupons auto-dismiss after 6s; Orders & Bookings remain until handled
+    if (type === 'coupon') {
+      setTimeout(() => {
+        setIncomingAlert(prev => (prev?.id === alertId ? null : prev));
+      }, 6000);
+    }
   };
 
   // 📦 Orders & Bookings Organization State
@@ -245,7 +291,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
               const name = payload.new.customer_name || 'عميل المتجر';
               const price = payload.new.total_price || 0;
               const typeText = payload.new.order_type === 'dine_in' ? 'محلي' : payload.new.order_type === 'takeaway' ? 'سفري' : 'توصيل';
-              triggerLiveAlert(`طلب جديد #${num}`, `${name} (${price} ر.س) • ${typeText}`, 'order');
+              triggerLiveAlert(`طلب جديد #${num}`, `${name} (${price} ر.س) • ${typeText}`, 'order', payload.new.id);
             } else if (payload.eventType === 'UPDATE') {
               setLiveOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
             } else if (payload.eventType === 'DELETE') {
@@ -268,7 +314,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
               const name = payload.new.customer_name || 'عميل جديد';
               const service = payload.new.service_name || 'خدمة';
               const date = payload.new.booking_date || '';
-              triggerLiveAlert(`حجز جديد #${num}`, `${name} - ${service} (${date})`, 'booking');
+              triggerLiveAlert(`حجز جديد #${num}`, `${name} - ${service} (${date})`, 'booking', payload.new.id);
             } else if (payload.eventType === 'UPDATE') {
               setLiveBookings(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
             } else if (payload.eventType === 'DELETE') {
@@ -313,25 +359,29 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
   const updateOrderStatus = async (orderId: string, status: string) => {
     try {
+      stopAlertRinger();
+      setIncomingAlert(prev => prev?.orderId === orderId ? null : prev);
       setOrderActionError(null);
       await LoyaltyService.updateOrderStatus(orderId, status);
       setLiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
     } catch (e: any) {
       setOrderActionError(e.message || 'حدث خطأ أثناء تحديث الحالة.');
       console.error(e);
-      LoyaltyService.getLiveStoreOrders(store!.id).then(setLiveOrders);
+      LoyaltyService.getLiveStoreOrders(effectiveStoreId || store!.id).then(setLiveOrders);
     }
   };
 
   const updateBookingStatus = async (bookingId: string, status: 'pending' | 'completed' | 'cancelled' | 'confirmed' | 'no_show') => {
     try {
+      stopAlertRinger();
+      setIncomingAlert(prev => prev?.bookingId === bookingId ? null : prev);
       setOrderActionError(null);
       await LoyaltyService.updateServiceBookingStatus(bookingId, status);
       setLiveBookings(prev => prev.map(o => o.id === bookingId ? { ...o, status } : o));
     } catch (e: any) {
       setOrderActionError(e.message || 'حدث خطأ أثناء تحديث حالة الحجز.');
       console.error(e);
-      LoyaltyService.getLiveStoreBookings(store!.id).then(setLiveBookings);
+      LoyaltyService.getLiveStoreBookings(effectiveStoreId || store!.id).then(setLiveBookings);
     }
   };
 
@@ -387,7 +437,8 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             triggerLiveAlert(
               `طلب جديد #${num}`,
               `${name} (${price} ر.س) • ${typeText}`,
-              'order'
+              'order',
+              o.id
             );
           } else {
             triggerLiveAlert(
@@ -421,7 +472,8 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             triggerLiveAlert(
               `حجز جديد #${num}`,
               `${name} - ${service} (${date})`,
-              'booking'
+              'booking',
+              b.id
             );
           } else {
             triggerLiveAlert(
@@ -1176,41 +1228,95 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         </div>
       </div>
 
-      {/* 🛎️ Real-Time Floating Incoming Alert Toast */}
+      {/* 🛎️ Real-Time Floating Incoming Alert Toast with Loop Ringer & Instant Actions */}
       {incomingAlert && (
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-slate-900 to-amber-500/10 border-2 border-amber-500/60 shadow-2xl flex items-center justify-between gap-4 animate-fade-in">
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/25 via-slate-900 to-amber-500/15 border-2 border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.35)] flex flex-wrap items-center justify-between gap-4 animate-fade-in relative overflow-hidden">
+          <div className="absolute top-0 right-0 left-0 h-1 bg-amber-500 animate-pulse"></div>
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-amber-500 text-black flex items-center justify-center font-black text-lg shrink-0">
+            <div className="w-11 h-11 rounded-2xl bg-amber-500 text-black flex items-center justify-center font-black text-xl shrink-0 animate-bounce shadow-lg">
               🔔
             </div>
             <div className="min-w-0">
               <div className="text-sm font-black text-amber-300 flex items-center gap-2">
                 <span className="truncate">{incomingAlert.title}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono shrink-0">
-                  وصل للتو!
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/25 text-amber-200 border border-amber-500/40 font-mono shrink-0 animate-pulse">
+                  رنين مباشر 🔔
                 </span>
               </div>
               <p className="text-xs text-white font-medium mt-0.5 truncate">{incomingAlert.detail}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {incomingAlert.type === 'order' && incomingAlert.orderId && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => updateOrderStatus(incomingAlert.orderId!, 'preparing')}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1"
+                >
+                  <span>قبول وتحضير ✅</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateOrderStatus(incomingAlert.orderId!, 'cancelled')}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-black text-xs transition shrink-0"
+                >
+                  <span>رفض ❌</span>
+                </button>
+              </>
+            )}
+
+            {incomingAlert.type === 'booking' && incomingAlert.bookingId && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => updateBookingStatus(incomingAlert.bookingId!, 'confirmed')}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1"
+                >
+                  <span>تأكيد الموعد ✅</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateBookingStatus(incomingAlert.bookingId!, 'cancelled')}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 font-black text-xs transition shrink-0"
+                >
+                  <span>إلغاء ❌</span>
+                </button>
+              </>
+            )}
+
             <button
+              type="button"
+              onClick={() => stopAlertRinger()}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 font-bold text-xs transition shrink-0"
+              title="كتم صوت الجرس الحالي"
+            >
+              <span>إيقاف الرنين 🔕</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => {
+                stopAlertRinger();
                 setActiveTab('orders');
                 if (incomingAlert.type === 'booking') {
                   setOrdersSubTab('bookings');
                 } else {
                   setOrdersSubTab('orders');
                 }
-                setIncomingAlert(null);
               }}
-              className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition shadow-lg shrink-0"
+              className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-black text-xs transition shrink-0"
             >
-              عرض الآن 👈
+              عرض التفاصيل 📋
             </button>
             <button
-              onClick={() => setIncomingAlert(null)}
+              type="button"
+              onClick={() => {
+                stopAlertRinger();
+                setIncomingAlert(null);
+              }}
               className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+              title="إغلاق التنبيه"
             >
               <X className="w-4 h-4" />
             </button>

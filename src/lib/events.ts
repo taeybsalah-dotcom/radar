@@ -17,7 +17,9 @@ export type LoyaltyEventType =
   | 'CUSTOM_NOTIFICATION'
   | 'SCAN_REJECTED'
   | 'ORDER_CREATED'
-  | 'BOOKING_CREATED';
+  | 'BOOKING_CREATED'
+  | 'ORDER_STATUS_UPDATED'
+  | 'BOOKING_STATUS_UPDATED';
 
 export interface LoyaltyEventPayload {
   type: LoyaltyEventType;
@@ -57,6 +59,8 @@ const CROSS_DEVICE_REALTIME_EVENTS = new Set<LoyaltyEventType>([
   'CUSTOM_NOTIFICATION',
   'ORDER_CREATED',
   'BOOKING_CREATED',
+  'ORDER_STATUS_UPDATED',
+  'BOOKING_STATUS_UPDATED',
 ]);
 
 const channelName = 'radar_loyalty_realtime_channel';
