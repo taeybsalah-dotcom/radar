@@ -37,8 +37,8 @@ export interface CompressedImageResult {
  * أبعاد لا تتجاوز 1600px، وحجم لا يتجاوز 1MB للحفاظ على سرعة الرفع وأداء Cloudflare Worker
  */
 export async function compressMenuImageForAi(file: File): Promise<CompressedImageResult> {
-  const MAX_DIMENSION = 1600;
-  const QUALITY = 0.82;
+  const MAX_DIMENSION = 1024;
+  const QUALITY = 0.7;
 
   return new Promise((resolve, reject) => {
     // إذا كان الملف PDF، نرفضه بلطف لأن المعالجة الحالية للصور

@@ -40,15 +40,14 @@ async function callGeminiVision(
 ): Promise<ParsedMenuResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  const prompt = `أنت خبير محترف في رقمنة قوائم الطعام والخدمات (Menu Digitizer).
-قم بتحليل صورة المنيو بدقة واستخرج كافة الأصناف والمنتجات والخدمات.
+  const prompt = `استخرج أصناف المنيو بدقة وسرعة وبدون تفكير مطول:
 لكل صنف استخرج:
-1. name: اسم الصنف بدقة كما هو مكتوب.
-2. category: اسم القسم المناسب (مثل: أطباق رئيسية، برجر، مقبلات، مشروبات، حلويات، خدمات عامة).
-3. price: السعر كرقم مجرد فقط (مثلاً 25 أو 18.5) بدون علامات عملة، وإذا لم يوجد سعر ضعه 0.
-4. description: وصف الصنف أو مكوناته إن وجدت، أو اتركه فارغاً.
-5. item_type: حدد هل هو "product" (طعام، مشروبات، منتجات) أو "service" (خدمات مواعيد، حلاقة، مساج، إلخ).
-استخرج أيضاً قائمة بجميع الأقسام المميزة في categories.`;
+- name: اسم الصنف
+- category: اسم القسم
+- price: السعر كرقم مجرد (إذا غير موجود 0)
+- description: نص فارغ "" إذا لم يكن مكتوباً بالمنيو
+- item_type: "product" أو "service"
+لا تؤلف أي وصف من عندك أبداً.`;
 
   const payload = {
     contents: [
@@ -65,6 +64,11 @@ async function callGeminiVision(
       },
     ],
     generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 4096,
+      thinkingConfig: {
+        thinkingBudget: 0,
+      },
       responseMimeType: 'application/json',
       responseSchema: {
         type: 'OBJECT',
@@ -72,21 +76,20 @@ async function callGeminiVision(
           categories: {
             type: 'ARRAY',
             items: { type: 'STRING' },
-            description: 'قائمة الأقسام المستخرجة من المنيو',
+            description: 'الأقسام',
           },
           items: {
             type: 'ARRAY',
             items: {
               type: 'OBJECT',
               properties: {
-                name: { type: 'STRING', description: 'اسم الصنف' },
-                category: { type: 'STRING', description: 'القسم أو التصنيف' },
-                price: { type: 'NUMBER', description: 'السعر كرقم مجرد' },
-                description: { type: 'STRING', description: 'الوصف أو المكونات' },
+                name: { type: 'STRING' },
+                category: { type: 'STRING' },
+                price: { type: 'NUMBER' },
+                description: { type: 'STRING' },
                 item_type: {
                   type: 'STRING',
                   enum: ['product', 'service'],
-                  description: 'نوع الصنف',
                 },
               },
               required: ['name', 'category', 'price', 'item_type'],
