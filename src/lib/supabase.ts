@@ -4571,7 +4571,60 @@ export const LoyaltyService = {
     return createdCust;
   },
 
-  // 13.5 إدارة وحفظ جلسة وملف العميل
+  // 13.5 إدارة وحفظ جلسة وملف العميل وإرسال كود واتساب
+  async sendStoreWhatsAppOTP(
+    storeId: string,
+    phone: string,
+    otp: string,
+    storeName: string,
+    customerName?: string
+  ): Promise<boolean> {
+    try {
+      const cleanDigits = phone.replace(/\D/g, '');
+      const norm = cleanDigits.startsWith('0') ? cleanDigits.substring(1) : cleanDigits;
+      const intlPhone = norm.startsWith('966') ? norm : '966' + norm;
+      const wallet = await this.getStoreWallet(storeId);
+      const name = (customerName || '').trim() || 'عميلنا العزيز';
+      const msg = `مرحباً ${name} 🌟\nرمز التحقق الخاص بك لمتجر ${storeName} هو: *${otp}*`;
+
+      if (wallet?.whatsapp_provider === 'qr') {
+        const res = await fetch('https://radar-wa-salah.loca.lt/api/whatsapp/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Bypass-Tunnel-Reminder': 'true'
+          },
+          body: JSON.stringify({
+            storeId,
+            phone: intlPhone,
+            message: msg
+          })
+        });
+        const data = await res.json();
+        return Boolean(data?.success);
+      } else if (wallet?.whatsapp_provider === 'meta' && wallet.meta_phone_number_id && wallet.meta_access_token) {
+        const res = await fetch(`https://graph.facebook.com/v18.0/${wallet.meta_phone_number_id}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${wallet.meta_access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to: intlPhone,
+            type: 'text',
+            text: { body: msg }
+          })
+        });
+        return res.ok;
+      }
+      return false;
+    } catch (e) {
+      console.warn('sendStoreWhatsAppOTP failed:', e);
+      return false;
+    }
+  },
+
   saveCustomerSession(storeId: string, phone: string, storeSlug?: string): void {
     const normPhone = normalizePhone(phone);
     localStorage.setItem(`radar_cust_session_${storeId}`, normPhone);
@@ -6901,6 +6954,20 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
           
         if (error) throw error;
         if (data) {
+          const itemsSummary = (payload.items || [])
+            .map((it: any) => `• ${it.name || it.item_name} × ${it.quantity} (${it.total_price || it.price} ر.س)`)
+            .join('\n');
+          const fulfillmentLabel = payload.fulfillment_type === 'dine_in' ? '🍽️ محلي' : payload.fulfillment_type === 'takeaway' ? '🚗 سفري' : '🛵 توصيل';
+          const telegramMsg = `🛎️ طلب جديد رقم #${orderNumber}!\n\n` +
+            `👤 العميل: ${payload.customer_name || 'عميل المتجر'}\n` +
+            `📱 الجوال: ${payload.customer_phone || '-'}\n` +
+            `📦 طريقة الاستلام: ${fulfillmentLabel}\n` +
+            (payload.fulfillment_details?.table_number ? `🪑 رقم الطاولة: ${payload.fulfillment_details.table_number}\n` : '') +
+            `💰 المبلغ الإجمالي: ${payload.total_price || payload.total_amount || 0} ر.س\n\n` +
+            `الأصناف:\n${itemsSummary}\n\n` +
+            `🔗 افتح شاشة الكاشير للتعامل مع الطلب فوراً 🚀`;
+          sendTelegramNotification(resolvedStoreId, telegramMsg);
+
           return {
             ...payload,
             id: data.id,
@@ -7445,6 +7512,16 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
       const created = rpcRes.booking;
       if (created) {
+        const telegramMsg = `📅 حجز موعد جديد رقم #${bookingNumber}!\n\n` +
+          `👤 العميل: ${dbPayload.customer_name}\n` +
+          `📱 الجوال: ${dbPayload.customer_phone}\n` +
+          `💇 الخدمة: ${dbPayload.service_name}\n` +
+          `⏰ الموعد: ${dbPayload.booking_date} | ${dbPayload.booking_time}\n` +
+          (dbPayload.specialist_name ? `👨‍⚕️ المختص: ${dbPayload.specialist_name}\n` : '') +
+          `💰 السعر: ${dbPayload.service_price} ر.س\n\n` +
+          `🔗 يرجى مراجعة لوحة الحجوزات لتأكيد الموعد ✅`;
+        sendTelegramNotification(resolvedStoreId, telegramMsg);
+
         const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
         list.unshift(created as unknown as ServiceBooking);
         saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, list);

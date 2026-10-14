@@ -100,16 +100,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const [guestName, setGuestName] = useState(() => savedProfile?.name || '');
   const [guestPhone, setGuestPhone] = useState(() => savedProfile?.phone || '');
-  const [isEditingGuestDetails, setIsEditingGuestDetails] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [isEditingGuestDetails, setIsEditingGuestDetails] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
-  const [otpVerificationState, setOtpVerificationState] = useState<{
-    isOpen: boolean;
-    otpCode: string;
-    enteredCode: string;
-    payload: any;
-    error?: string;
-  } | null>(null);
+  type PendingAuthAction =
+    | { type: 'SHOW_QR' }
+    | { type: 'SUBMIT_ORDER' }
+    | { type: 'SUBMIT_BOOKING' }
+    | { type: 'REDEEM_PRIVILEGE'; privilege: Privilege };
+
+  const [pendingAuthAction, setPendingAuthAction] = useState<PendingAuthAction | null>(null);
 
   const [activeTab, setActiveTab] = useState<'pass' | 'menu' | 'services' | 'perks' | 'tickets' | 'tiers'>(() => {
     try {
@@ -731,6 +731,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     lastPointsRef.current = authCustomer.wallet_balance;
     regenerateToken(authCustomer, null);
     setShowLoginModal(false);
+
     try {
       const [cpns, bks] = await Promise.all([
         LoyaltyService.getCustomerCoupons(authCustomer.id, store.id, authCustomer.phone),
@@ -740,6 +741,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       if (bks) setStoreBookings(bks);
     } catch (e) {
       console.error(e);
+    }
+
+    // ⚡ التنفيذ التلقائي للعملية السابقة بدون إعادة طلب الضغط (Auto-Resume)
+    const action = pendingAuthAction;
+    setPendingAuthAction(null);
+
+    if (action) {
+      if (action.type === 'SHOW_QR') {
+        setActiveTab('pass');
+      } else if (action.type === 'SUBMIT_ORDER') {
+        setTimeout(() => {
+          executeDirectOrderSubmission(authCustomer);
+        }, 150);
+      } else if (action.type === 'SUBMIT_BOOKING') {
+        setTimeout(() => {
+          executeDirectBookingSubmission(authCustomer);
+        }, 150);
+      } else if (action.type === 'REDEEM_PRIVILEGE') {
+        setPurchasingPrivilege(action.privilege);
+      }
     }
   };
 
@@ -1098,8 +1119,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
   };
 
-  const handleConfirmServiceBooking = async () => {
-    if (!selectedBookingService || !customer) return;
+  const executeDirectBookingSubmission = async (targetCustomer: Customer) => {
+    if (!selectedBookingService || bookingSubmitting) return;
 
     if (selectedBookingService.modifier_groups) {
       for (const group of selectedBookingService.modifier_groups) {
@@ -1131,13 +1152,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     try {
       const flatModifiers = getFlatSelectedServiceModifiers();
       const finalPrice = calculateServiceBookingPrice();
-      const merchantPhone = store.manager_contact || '0577371780';
       const createdBooking = await LoyaltyService.createServiceBooking({
         store_id: store.id,
         store_name: store.name,
-        customer_id: customer.id,
-        customer_name: customer.name || 'عميل المتجر',
-        customer_phone: customer.phone,
+        customer_id: targetCustomer.id,
+        customer_name: targetCustomer.name || 'عميل المتجر',
+        customer_phone: targetCustomer.phone,
         service_id: selectedBookingService.id,
         service_name: selectedBookingService.name,
         service_category: selectedBookingService.category,
@@ -1157,8 +1177,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       setStoreBookings((prev) => [createdBooking, ...prev]);
       setBookingSuccessData(createdBooking);
 
-      
-
       playBeepSound('success');
       confetti({
         particleCount: 120,
@@ -1171,6 +1189,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     } finally {
       setBookingSubmitting(false);
     }
+  };
+
+  const handleConfirmServiceBooking = async () => {
+    if (!selectedBookingService || bookingSubmitting) return;
+
+    if (!customer) {
+      setPendingAuthAction({ type: 'SUBMIT_BOOKING' });
+      setShowLoginModal(true);
+      return;
+    }
+
+    await executeDirectBookingSubmission(customer);
   };
 
   const handleReBookService = (pastBooking: ServiceBooking) => {
@@ -1368,44 +1398,57 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
   };
 
-  const finalizeAndSubmitOrder = async (
-    payload: any,
-    finalName: string,
-    finalPhone: string,
-    activationCode: string
-  ) => {
+  const executeDirectOrderSubmission = async (targetCustomer: Customer) => {
+    if (cartItems.length === 0 || submittingOrder) return;
     setSubmittingOrder(true);
+
     try {
-      // 1. Save customer session and profile permanently
-      LoyaltyService.saveCustomerProfile(store.id, { name: finalName, phone: finalPhone }, store.slug);
-      setSavedProfile({ name: finalName, phone: finalPhone });
-      setIsEditingGuestDetails(false);
+      const orderId = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
+      const activationCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-      // Register or link customer in background (best-effort for loyalty points)
-      LoyaltyService.registerCustomer(store.id, finalPhone, finalName)
-        .then((newCust) => {
-          if (newCust) setCustomer(newCust);
-        })
-        .catch(() => {});
+      const payload: any = {
+        order_id: orderId,
+        store_id: store.id,
+        store_name: store.name,
+        customer_name: targetCustomer.name || 'عميل المتجر',
+        customer_phone: targetCustomer.phone,
+        customer_tier: currentTierObj?.tier_name,
+        activation_code: activationCode,
+        items: cartItems,
+        fulfillment_type: fulfillmentType,
+        fulfillment_details: {
+          table_number: tableNumber.trim() || undefined,
+          party_size: partySize > 0 ? partySize : undefined,
+          arrival_date: arrivalDate || undefined,
+          arrival_time: arrivalTime || undefined,
+          car_model_and_plate: carPlate.trim() || undefined,
+          delivery_address: deliveryAddress.trim() || undefined,
+          delivery_gps_link: deliveryGpsLink.trim() || undefined,
+          specialist_name: specialistName.trim() || undefined,
+          general_notes: generalOrderNotes.trim() || undefined,
+        },
+        subtotal: cartSubtotal,
+        delivery_fee: deliveryFee,
+        total_amount: cartGrandTotal,
+        total_price: cartGrandTotal,
+        notes: generalOrderNotes.trim(),
+        loyalty_points_earned: estimatedLoyaltyPoints,
+        status: 'pending',
+        points_awarded: false,
+        created_at: new Date().toISOString(),
+      };
 
-      // 2. Insert order in Supabase store_orders (immediately lands on Cashier POS!)
+      // 1. Insert order in Supabase store_orders (also triggers Telegram notification)
       await LoyaltyService.createStoreOrder(payload);
 
-      // 3. Update past orders in local view
-      LoyaltyService.getCustomerOrders(store.id, finalPhone)
+      // 2. Update past orders in local view
+      LoyaltyService.getCustomerOrders(store.id, targetCustomer.phone)
         .then((updated) => {
           if (updated && Array.isArray(updated)) setPastOrders(updated);
         })
         .catch(() => {});
 
-      // 4. Construct direct WhatsApp link to merchant
-      const merchantPhone = store.manager_contact || (store as any).phone || (store as any).contact_number || '';
-      if (merchantPhone) {
-        const waUrl = LoyaltyService.generateWhatsAppOrderUrl(merchantPhone, payload);
-        window.open(waUrl, '_blank');
-      }
-
-      // 5. Clear cart and show order confirmation modal
+      // 3. Clear cart and show order confirmation modal (ZERO WhatsApp redirect!)
       setCartItems([]);
       setIsCartModalOpen(false);
       setOrderSuccessPayload(payload);
@@ -1427,101 +1470,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const handleSubmitOrder = async () => {
     if (cartItems.length === 0 || submittingOrder) return;
 
-    const finalName = (guestName || savedProfile?.name || customer?.name || '').trim();
-    const rawPhone = (guestPhone || savedProfile?.phone || customer?.phone || '').trim();
-    const arabicNumerals = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
-    const finalPhone = rawPhone
-      .replace(/[٠-٩۰۱۲۳۴۵۶۷۸۹]/g, (d) => (arabicNumerals.indexOf(d) % 10).toString())
-      .replace(/[^\d+]/g, '');
-
-    if (!finalName) {
-      alert('يرجى إدخال اسمك الكريم لإتمام الطلب.');
-      return;
-    }
-    if (!finalPhone || finalPhone.replace(/\D/g, '').length < 9) {
-      alert('يرجى إدخال رقم جوال صحيح (مثال: 05XXXXXXXX).');
+    if (!customer) {
+      setPendingAuthAction({ type: 'SUBMIT_ORDER' });
+      setShowLoginModal(true);
       return;
     }
 
-    let storeWallet: StoreWallet | null = null;
-    try {
-      storeWallet = await LoyaltyService.getStoreWallet(store.id);
-    } catch {}
-
-    const orderId = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
-    const activationCode = Math.floor(1000 + Math.random() * 9000).toString();
-
-    const payload: any = {
-      order_id: orderId,
-      store_id: store.id,
-      store_name: store.name,
-      customer_name: finalName,
-      customer_phone: finalPhone,
-      customer_tier: currentTierObj?.tier_name,
-      activation_code: activationCode,
-      items: cartItems,
-      fulfillment_type: fulfillmentType,
-      fulfillment_details: {
-        table_number: tableNumber.trim() || undefined,
-        party_size: partySize > 0 ? partySize : undefined,
-        arrival_date: arrivalDate || undefined,
-        arrival_time: arrivalTime || undefined,
-        car_model_and_plate: carPlate.trim() || undefined,
-        delivery_address: deliveryAddress.trim() || undefined,
-        delivery_gps_link: deliveryGpsLink.trim() || undefined,
-        specialist_name: specialistName.trim() || undefined,
-        general_notes: generalOrderNotes.trim() || undefined,
-      },
-      subtotal: cartSubtotal,
-      delivery_fee: deliveryFee,
-      total_amount: cartGrandTotal,
-      total_price: cartGrandTotal,
-      notes: generalOrderNotes.trim(),
-      loyalty_points_earned: estimatedLoyaltyPoints,
-      status: 'pending',
-      points_awarded: false,
-      created_at: new Date().toISOString(),
-    };
-
-    const isMetaEnabled =
-      storeWallet?.whatsapp_provider === 'meta' &&
-      Boolean(storeWallet?.meta_phone_number_id && storeWallet?.meta_access_token);
-    const hasExistingSession = Boolean(customer?.phone || (savedProfile?.phone && savedProfile.phone.length >= 9));
-
-    if (isMetaEnabled && !hasExistingSession) {
-      const otp = Math.floor(1000 + Math.random() * 9000).toString();
-      try {
-        setSubmittingOrder(true);
-        const cleanDigits = finalPhone.replace(/\D/g, '');
-        const norm = cleanDigits.startsWith('0') ? cleanDigits.substring(1) : cleanDigits;
-        const intlPhone = norm.startsWith('966') ? norm : '966' + norm;
-
-        await fetch('/api/whatsapp/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            storeId: store.id,
-            phone: intlPhone,
-            message: `رمز التحقق الخاص بك لتأكيد طلبك من ${store.name} هو: *${otp}*`,
-          }),
-        }).catch(() => null);
-
-        setOtpVerificationState({
-          isOpen: true,
-          otpCode: otp,
-          enteredCode: '',
-          payload,
-        });
-        setSubmittingOrder(false);
-        return;
-      } catch (e: any) {
-        console.warn('Meta OTP failed, falling back to direct:', e);
-      } finally {
-        setSubmittingOrder(false);
-      }
-    }
-
-    await finalizeAndSubmitOrder(payload, finalName, finalPhone, activationCode);
+    await executeDirectOrderSubmission(customer);
   };
 
   const handleReOrder = (order: WhatsAppOrderPayload) => {
@@ -1603,7 +1558,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           ) : (
             <button
               type="button"
-              onClick={() => setShowLoginModal(true)}
+              onClick={() => {
+                setPendingAuthAction({ type: 'SHOW_QR' });
+                setShowLoginModal(true);
+              }}
               className="px-2.5 py-1.5 rounded-xl border font-bold text-[11px] flex items-center gap-1 transition active:scale-95 shadow"
               style={{
                 backgroundColor: `${brandSecondary}20`,
@@ -1763,7 +1721,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
               <button
                 type="button"
-                onClick={() => setShowLoginModal(true)}
+                onClick={() => {
+                  setPendingAuthAction({ type: 'SHOW_QR' });
+                  setShowLoginModal(true);
+                }}
                 style={{
                   backgroundColor: brandSecondary,
                   color: '#000000',
@@ -3270,9 +3231,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   ? requiredTier
                     ? customer.lifetime_xp >= requiredTier.required_xp
                     : true
-                  : false;
+                  : true;
 
-                const hasEnoughPoints = (customer?.wallet_balance || 0) >= (priv.cost_points || 0);
+                const hasEnoughPoints = customer ? (customer.wallet_balance || 0) >= (priv.cost_points || 0) : true;
                 const isSoldOut =
                   priv.quantity_limit !== null &&
                   priv.quantity_limit > 0 &&
@@ -3405,12 +3366,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       ) : (
                         <button
                           onClick={() => {
+                            if (!customer) {
+                              setPendingAuthAction({ type: 'REDEEM_PRIVILEGE', privilege: priv });
+                              setShowLoginModal(true);
+                              return;
+                            }
                             setPurchaseError(null);
                             setPurchasingPrivilege(priv);
                           }}
-                          disabled={!hasEnoughPoints}
+                          disabled={customer ? !hasEnoughPoints : false}
                           style={
-                            hasEnoughPoints
+                            (!customer || hasEnoughPoints)
                               ? {
                                   backgroundColor: brandSecondary,
                                   color: '#000000',
@@ -3418,14 +3384,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               : undefined
                           }
                           className={`w-full py-3 rounded-2xl font-black text-xs flex items-center justify-center space-x-1.5 rtl:space-x-reverse transition shadow-lg ${
-                            hasEnoughPoints
+                            (!customer || hasEnoughPoints)
                               ? 'hover:brightness-110'
                               : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                           }`}
                         >
                           <ShoppingBag className="w-4 h-4" />
                           <span>
-                            {hasEnoughPoints
+                            {!customer
+                              ? `استبدال وشراء بالنقاط (${priv.cost_points} نقطة) ✨`
+                              : hasEnoughPoints
                               ? `فتح وتفعيل الامتياز (${priv.cost_points} نقطة) ✨`
                               : `تحتاج ${priv.cost_points} نقطة (رصيدك غير كافٍ)`}
                           </span>
@@ -3686,7 +3654,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         <nav className="glass-dock rounded-3xl p-1.5 flex items-center justify-around shadow-[0_-8px_30px_rgba(0,0,0,0.4)] bg-slate-950/95 backdrop-blur-3xl border border-slate-800">
           
           <button
-            onClick={() => setActiveTab('pass')}
+            onClick={() => {
+              if (!customer) {
+                setPendingAuthAction({ type: 'SHOW_QR' });
+                setShowLoginModal(true);
+              } else {
+                setActiveTab('pass');
+              }
+            }}
             style={
               activeTab === 'pass'
                 ? {
@@ -4476,7 +4451,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 const currentDisplayName = customer?.name || savedProfile?.name || guestName;
                 const currentDisplayPhone = customer?.phone || savedProfile?.phone || guestPhone;
 
-                if (hasValidSavedCustomer && !isEditingGuestDetails) {
+                if (customer) {
                   return (
                     <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2 shadow-inner">
                       <div className="flex items-center justify-between">
@@ -4486,70 +4461,32 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         </div>
                         <button
                           type="button"
-                          onClick={() => setIsEditingGuestDetails(true)}
+                          onClick={() => {
+                            setPendingAuthAction({ type: 'SUBMIT_ORDER' });
+                            setShowLoginModal(true);
+                          }}
                           className="text-[11px] text-slate-400 hover:text-white underline transition"
                         >
-                          تغيير البيانات
+                          تغيير الحساب
                         </button>
                       </div>
                       <div className="flex items-center justify-between text-xs pt-1">
-                        <span className="text-white font-bold">{currentDisplayName || 'عميل المتجر'}</span>
-                        <span className="font-mono text-slate-400 font-semibold" dir="ltr">{currentDisplayPhone}</span>
+                        <span className="text-white font-bold">{customer.name || 'عميل المتجر'}</span>
+                        <span className="font-mono text-slate-400 font-semibold" dir="ltr">{customer.phone}</span>
                       </div>
                     </div>
                   );
                 }
 
                 return (
-                  <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3 shadow-inner">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <User className="w-4 h-4 text-amber-400" />
-                        <h4 className="text-xs font-black text-white">بيانات الطلب والتوثيق (لمرة واحدة):</h4>
-                      </div>
-                      {hasValidSavedCustomer && (
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingGuestDetails(false)}
-                          className="text-[11px] text-slate-400 hover:text-white"
-                        >
-                          إلغاء
-                        </button>
-                      )}
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1.5 shadow-inner text-right">
+                    <div className="flex items-center gap-1.5 text-amber-400">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <h4 className="text-xs font-black">طلب مباشر وسريع كزائر 🛍️</h4>
                     </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                        الاسم الكريم:
-                      </label>
-                      <input
-                        type="text"
-                        value={guestName}
-                        onChange={(e) => setGuestName(e.target.value)}
-                        placeholder="اكتب اسمك الكريم..."
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-bold text-slate-300 block mb-1">
-                        رقم الجوال:
-                      </label>
-                      <input
-                        type="tel"
-                        autoComplete="tel"
-                        inputMode="numeric"
-                        value={guestPhone}
-                        onChange={(e) => {
-                          const arabicNumerals = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
-                          const english = e.target.value.replace(/[٠-٩۰۱۲۳۴۵۶۷۸۹]/g, (d) => (arabicNumerals.indexOf(d) % 10).toString());
-                          setGuestPhone(english.replace(/[^\d+]/g, ''));
-                        }}
-                        placeholder="05XXXXXXXX"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono text-left focus:outline-none"
-                        dir="ltr"
-                      />
-                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      عند الضغط على «إتمام الطلب»، ستفتح لك نافذة سريعة لتأكيد رقمك بكود 4 أرقام لمرة واحدة، لحفظ نقاطك وتجهيز طلبك مباشرة للكاشير.
+                    </p>
                   </div>
                 );
               })()}
@@ -4830,9 +4767,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <span>
                   {submittingOrder
                     ? 'جاري إرسال الطلب...'
-                    : (customer?.phone || (savedProfile?.phone && savedProfile.phone.length >= 9)) && !isEditingGuestDetails
+                    : customer
                     ? 'تأكيد وإرسال الطلب للكاشير فوراً 🚀'
-                    : 'تأكيد وإرسال الطلب 🚀'}
+                    : 'إتمام الطلب وتأكيد الرقم 🚀'}
                 </span>
               </button>
             </div>
@@ -4861,9 +4798,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold font-mono inline-block">
                 طلبك رقم #{orderSuccessPayload.order_id}
               </span>
-              <h3 className="text-xl font-black text-white">تم تجهيز وإرسال الطلب بنجاح!</h3>
+              <h3 className="text-xl font-black text-white">تم استلام طلبك بنجاح!</h3>
               <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
-                تم تحويل طلبك لـ <strong className="text-white">{store.name}</strong> عبر الواتساب. سيقوم المتجر بتأكيد استلاستلام الطلب وتجهيزه فوراً.
+                تم إرسال طلبك مباشرة لكاشير المتجر والمطبخ بنجاح! سيتم تجهيز طلبك فوراً 🚀
               </p>
             </div>
 
@@ -5189,92 +5126,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
       {showLoginModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
-          <div className="relative max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
-            <button
-              onClick={() => setShowLoginModal(false)}
-              className="absolute top-4 left-4 p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition z-10"
-            >
-              <X className="w-4 h-4" />
-            </button>
+          <div className="relative max-w-md w-full">
             <CustomerLoginGate
               store={store}
-              onAuthenticated={(c) => {
-                handleCustomerAuthenticated(c);
+              initialName={guestName || savedProfile?.name || ''}
+              initialPhone={guestPhone || savedProfile?.phone || ''}
+              onClose={() => {
                 setShowLoginModal(false);
+                setPendingAuthAction(null);
               }}
+              onAuthenticated={handleCustomerAuthenticated}
             />
-          </div>
-        </div>
-      )}
-
-      {otpVerificationState?.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
-          <div className="glass-card max-w-sm w-full rounded-3xl p-6 space-y-4 border border-slate-700 bg-slate-900 shadow-2xl text-center relative">
-            <button
-              onClick={() => setOtpVerificationState(null)}
-              className="absolute top-4 left-4 p-2 rounded-xl text-slate-400 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div
-              className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-lg border"
-              style={{
-                backgroundColor: `${brandSecondary}20`,
-                borderColor: `${brandSecondary}40`,
-                color: brandSecondary,
-              }}
-            >
-              🔐
-            </div>
-
-            <h3 className="text-base font-black text-white">تأكيد رقم الجوال</h3>
-            <p className="text-xs text-slate-300">
-              أدخل رمز التحقق المرسل إلى واتساب رقم:
-              <br />
-              <strong className="font-mono text-white" dir="ltr">{otpVerificationState.payload?.customer_phone}</strong>
-            </p>
-
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              value={otpVerificationState.enteredCode}
-              onChange={(e) => {
-                const arabicNumerals = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
-                const eng = e.target.value.replace(/[٠-٩۰۱۲۳۴۵۶۷۸۹]/g, (d) => (arabicNumerals.indexOf(d) % 10).toString());
-                setOtpVerificationState(prev => prev ? { ...prev, enteredCode: eng.replace(/\D/g, '') } : null);
-              }}
-              placeholder="1234"
-              className="w-full bg-slate-950 border border-slate-700 rounded-2xl py-3 text-center text-xl font-mono tracking-widest text-white outline-none"
-              autoFocus
-            />
-
-            {otpVerificationState.error && (
-              <p className="text-xs text-rose-400 font-bold">{otpVerificationState.error}</p>
-            )}
-
-            <button
-              type="button"
-              disabled={submittingOrder}
-              onClick={async () => {
-                const code = otpVerificationState.enteredCode.trim();
-                if (code === otpVerificationState.otpCode || code === '1234') {
-                  const p = otpVerificationState.payload;
-                  setOtpVerificationState(null);
-                  await finalizeAndSubmitOrder(p, p.customer_name, p.customer_phone, p.activation_code);
-                } else {
-                  setOtpVerificationState(prev => prev ? { ...prev, error: 'رمز التحقق غير صحيح، يرجى المحاولة مجدداً' } : null);
-                }
-              }}
-              style={{
-                backgroundColor: brandSecondary,
-                color: '#000000',
-              }}
-              className="w-full py-3 rounded-xl font-black text-xs transition active:scale-95 shadow-lg"
-            >
-              تأكيد الرمز وإرسال الطلب 🚀
-            </button>
           </div>
         </div>
       )}
