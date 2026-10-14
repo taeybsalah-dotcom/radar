@@ -163,30 +163,8 @@ async function handleParseMenu(request: Request, env: Env): Promise<Response> {
       imageBase64 = imageBase64.split(',')[1];
     }
 
-    // Try primary requested model: gemini-2.5-flash
-    // If Google returns 404/not-found, fallback seamlessly to gemini-2.0-flash then gemini-1.5-flash
-    const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-    let lastError: any = null;
-    let result: ParsedMenuResult | null = null;
-
-    for (const model of modelsToTry) {
-      try {
-        result = await callGeminiVision(apiKey, imageBase64, mimeType, model);
-        if (result) break;
-      } catch (err: any) {
-        lastError = err;
-        // If 404 (model not available in current region/API version), try next model
-        if (err?.status === 404 || String(err?.message).includes('not found')) {
-          continue;
-        }
-        // If other error (e.g. invalid key or bad payload), stop and report
-        throw err;
-      }
-    }
-
-    if (!result) {
-      throw lastError || new Error('تعذر معالجة الصورة بنماذج Gemini المتاحة.');
-    }
+    // Use gemini-2.5-flash exclusively as requested
+    const result = await callGeminiVision(apiKey, imageBase64, mimeType, 'gemini-2.5-flash');
 
     return jsonResponse({
       success: true,
