@@ -31,6 +31,12 @@ import {
   DollarSign,
   KeyRound,
   Key,
+  Volume2,
+  VolumeX,
+  Bell,
+  Utensils,
+  ChefHat,
+  Filter,
 } from 'lucide-react';
 
 interface CashierPOSProps {
@@ -118,86 +124,145 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const [liveBookings, setLiveBookings] = useState<any[]>([]);
   const [orderActionError, setOrderActionError] = useState<string | null>(null);
 
+  // 🔔 Audio & Realtime Alert State
+  const [isSoundMuted, setIsSoundMuted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('radar_pos_sound_muted') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const isSoundMutedRef = useRef(isSoundMuted);
+  isSoundMutedRef.current = isSoundMuted;
+
+  const toggleSound = () => {
+    setIsSoundMuted(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('radar_pos_sound_muted', String(next));
+      } catch {}
+      if (!next) {
+        try { playBeepSound('pos_order_alert'); } catch {}
+      }
+      return next;
+    });
+  };
+
+  const [incomingAlert, setIncomingAlert] = useState<{
+    id: string;
+    title: string;
+    detail: string;
+    type: 'order' | 'booking' | 'coupon';
+  } | null>(null);
+
+  const triggerLiveAlert = (title: string, detail: string, type: 'order' | 'booking' | 'coupon' = 'order') => {
+    if (!isSoundMutedRef.current) {
+      try {
+        playBeepSound('pos_order_alert');
+      } catch (e) {
+        console.warn('Audio alert failed', e);
+      }
+    }
+    const alertId = Math.random().toString(36).substring(7);
+    setIncomingAlert({ id: alertId, title, detail, type });
+    setTimeout(() => {
+      setIncomingAlert(prev => (prev?.id === alertId ? null : prev));
+    }, 8000);
+  };
+
+  // 📦 Orders & Bookings Organization State
+  const [ordersSubTab, setOrdersSubTab] = useState<'orders' | 'bookings'>('orders');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'new' | 'preparing' | 'completed'>('all');
+  const [bookingStatusFilter, setBookingStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'past'>('all');
+  const [orderSearchQuery, setOrderSearchQuery] = useState('');
+
   useEffect(() => {
     if (!store?.id) return;
     
-    // Fetch initial orders
-    LoyaltyService.getLiveStoreOrders(store.id).then(orders => setLiveOrders(orders));
-    LoyaltyService.getLiveStoreBookings(store.id).then(bookings => setLiveBookings(bookings));
+    // Fetch initial orders & bookings
+    LoyaltyService.getLiveStoreOrders(store.id).then(orders => setLiveOrders(orders)).catch(() => {});
+    LoyaltyService.getLiveStoreBookings(store.id).then(bookings => setLiveBookings(bookings)).catch(() => {});
 
-    // Listen to changes
+    // Listen to changes via Supabase Realtime
     const supabase = getSupabaseClient();
     if (!supabase) return;
 
     const channel = supabase
-      .channel('live-orders-' + store.id)
-                      .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'store_orders',
-            filter: `store_id=eq.${store.id}`
-          },
-          (payload: any) => {
-            if (payload.eventType === 'INSERT') {
-              setLiveOrders(prev => [...prev, payload.new]);
-              try { playBeepSound('success'); } catch(e){}
-            } else if (payload.eventType === 'UPDATE') {
-              setLiveOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
-            } else if (payload.eventType === 'DELETE') {
-              setLiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
-            }
+      .channel('live-pos-' + store.id)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'store_orders',
+          filter: `store_id=eq.${store.id}`
+        },
+        (payload: any) => {
+          if (payload.eventType === 'INSERT') {
+            setLiveOrders(prev => [payload.new, ...prev.filter(o => o.id !== payload.new.id)]);
+            const num = payload.new.order_number || '';
+            const name = payload.new.customer_name || 'عميل جديد';
+            const price = payload.new.total_price || 0;
+            const typeText = payload.new.order_type === 'dine_in' ? 'محلي' : payload.new.order_type === 'takeaway' ? 'سفري' : 'توصيل';
+            triggerLiveAlert(`طلب جديد #${num}`, `${name} (${price} ر.س) • ${typeText}`, 'order');
+          } else if (payload.eventType === 'UPDATE') {
+            setLiveOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+          } else if (payload.eventType === 'DELETE') {
+            setLiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
           }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'service_bookings',
-            filter: `store_id=eq.${store.id}`
-          },
-          (payload: any) => {
-            if (payload.eventType === 'INSERT') {
-              setLiveBookings(prev => [...prev, payload.new]);
-              try { playBeepSound('success'); } catch(e){}
-            } else if (payload.eventType === 'UPDATE') {
-              setLiveBookings(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
-            } else if (payload.eventType === 'DELETE') {
-              setLiveBookings(prev => prev.filter(o => o.id !== payload.old.id));
-            }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'service_bookings',
+          filter: `store_id=eq.${store.id}`
+        },
+        (payload: any) => {
+          if (payload.eventType === 'INSERT') {
+            setLiveBookings(prev => [payload.new, ...prev.filter(b => b.id !== payload.new.id)]);
+            const num = payload.new.booking_number || '';
+            const name = payload.new.customer_name || 'عميل جديد';
+            const service = payload.new.service_name || 'خدمة';
+            const date = payload.new.booking_date || '';
+            triggerLiveAlert(`حجز جديد #${num}`, `${name} - ${service} (${date})`, 'booking');
+          } else if (payload.eventType === 'UPDATE') {
+            setLiveBookings(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+          } else if (payload.eventType === 'DELETE') {
+            setLiveBookings(prev => prev.filter(o => o.id !== payload.old.id));
           }
-        )
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'service_bookings',
-            filter: `store_id=eq.${store.id}`
-          },
-          (payload: any) => {
-            if (payload.eventType === 'INSERT') {
-              setLiveBookings(prev => [...prev, payload.new]);
-              try { playBeepSound('success'); } catch(e){}
-            } else if (payload.eventType === 'UPDATE') {
-              setLiveBookings(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
-            } else if (payload.eventType === 'DELETE') {
-              setLiveBookings(prev => prev.filter(o => o.id !== payload.old.id));
-            }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'customer_coupons',
+          filter: `store_id=eq.${store.id}`
+        },
+        (payload: any) => {
+          LoyaltyService.getAllStoreCoupons(store.id).then(setStoreCoupons).catch(() => {});
+          if (payload.eventType === 'INSERT' || (payload.new && (payload.new.status === 'USED' || payload.new.status === 'REDEEMED'))) {
+            const phone = payload.new.customer_phone || '';
+            const title = payload.new.privilege_title || 'مكافأة ولاء';
+            triggerLiveAlert('عملية استبدال نقاط / كوبون 🎁', `تم حرق/صرف (${title}) للعميل ${phone}`, 'coupon');
           }
-        )
+        }
+      )
       .subscribe();
 
-    // الحجوزات صارت خاصة (لا Realtime للزوار/الكاشير): تحديث احتياطي كل 60 ثانية والصفحة ظاهرة فقط
-    const bookingsRefreshTimer = setInterval(() => {
+    // مزامنة دورية احترازية كل 15 ثانية لضمان أحدث البيانات في الخلفية
+    const livePollingTimer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings);
-    }, 60000);
+      LoyaltyService.getLiveStoreOrders(store.id).then(setLiveOrders).catch(() => {});
+      LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings).catch(() => {});
+    }, 15000);
 
     return () => {
-      clearInterval(bookingsRefreshTimer);
+      clearInterval(livePollingTimer);
       supabase.removeChannel(channel);
     };
   }, [store?.id]);
@@ -251,6 +316,18 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     const unsubscribe = LoyaltyEvents.listen((event) => {
       if (event.storeId === store?.id) {
         // تحديثات مستهدفة دقيقة فقط حسب نوع الحدث، دون إعادة تحميل كامل البيانات التشغيلية
+        if (event.type === 'ORDER_CREATED') {
+          LoyaltyService.getLiveStoreOrders(store.id).then(setLiveOrders).catch(() => {});
+          triggerLiveAlert('طلب جديد في المنيو 📦', 'تم استلام طلب جديد من العميل', 'order');
+          return;
+        }
+
+        if (event.type === 'BOOKING_CREATED') {
+          LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings).catch(() => {});
+          triggerLiveAlert('حجز موعد جديد 📅', 'تم استلام حجز خدمة جديد من العميل', 'booking');
+          return;
+        }
+
         if (event.type === 'TIERS_UPDATED') {
           LoyaltyService.getTiers(store.id).then(setTiers).catch(() => {});
           return;
@@ -924,6 +1001,25 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             portalFilter="cashier"
           />
 
+          {/* 🔔 Live Audio Alert Toggle */}
+          <button
+            type="button"
+            onClick={toggleSound}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
+              isSoundMuted
+                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
+                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+            }`}
+            title={isSoundMuted ? 'تفعيل جرس التنبيه الصوتي' : 'كتم جرس التنبيه الصوتي'}
+          >
+            {isSoundMuted ? (
+              <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+            ) : (
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            )}
+            <span>{isSoundMuted ? 'الصوت صامت 🔕' : 'جرس التنبيه 🔔'}</span>
+          </button>
+
           <div className="flex items-center space-x-2 rtl:space-x-reverse bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
             <User className="w-3.5 h-3.5" style={{ color: store.secondary_color || '#F59E0B' }} />
             <span className="text-slate-400">الكاشير:</span>
@@ -970,102 +1066,47 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         </div>
       </div>
 
-      {/* ========================================== */}
-      {/* 🚀 LIVE ORDERS BOARD (Kitchen Display System) */}
-      {/* ========================================== */}
-      <div className="space-y-4 animate-fade-in mb-8">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-black text-white flex items-center gap-2">
-              📅 حجوزات الخدمات (مباشر)
-            </h2>
-            <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 text-xs font-bold font-mono">
-              {liveBookings.length} حجوزات
-            </span>
-          </div>
-          
-          {liveBookings.length === 0 ? (
-            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 text-center text-slate-400">
-              لا توجد حجوزات بانتظار الموافقة.
+      {/* 🛎️ Real-Time Floating Incoming Alert Toast */}
+      {incomingAlert && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-slate-900 to-amber-500/10 border-2 border-amber-500/60 shadow-2xl flex items-center justify-between gap-4 animate-fade-in">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-black flex items-center justify-center font-black text-lg shrink-0">
+              🔔
             </div>
-          ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {liveBookings.map(bk => (
-              <div key={bk.id} className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4 flex flex-col justify-between shadow-xl">
-                <div>
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
-                    <span className="text-sm font-bold font-mono text-amber-400">
-                      #{bk.booking_number}
-                    </span>
-                    <span className="text-xs px-2.5 py-1 rounded-full bg-blue-500/20 text-blue-300 font-bold">
-                      {bk.status === 'confirmed' ? 'تأكيد وحضور' : bk.status === 'pending' ? 'في الانتظار' : bk.status}
-                    </span>
-                  </div>
-                  
-                  <div className="space-y-2 mb-4">
-                    <div className="flex items-start justify-between">
-                      <div className="space-y-0.5">
-                        <div className="text-sm font-bold text-white">{bk.customer_name}</div>
-                        <div className="text-xs text-slate-400">{bk.customer_phone}</div>
-                      </div>
-                      <div className="text-sm font-black font-mono text-emerald-400">
-                        {bk.total_price} ر.س
-                      </div>
-                    </div>
-                    
-                    <div className="bg-slate-950 p-2 rounded-xl border border-slate-800">
-                      <div className="text-xs text-slate-300 font-bold">{bk.service_name}</div>
-                      <div className="text-[10px] text-slate-500 mt-1 flex justify-between">
-                        <span>مع: {bk.specialist_name || 'أي مختص'}</span>
-                        <span dir="ltr">{bk.booking_date} {bk.booking_time}</span>
-                      </div>
-                    </div>
-                    
-                    {bk.notes && (
-                      <div className="text-xs text-amber-300/80 bg-amber-500/10 p-2 rounded-xl mt-2 border border-amber-500/20 leading-relaxed">
-                        <strong>ملاحظة العميل:</strong> {bk.notes}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex gap-2 border-t border-slate-800 pt-3">
-                  {bk.status === 'pending' ? (
-                    <>
-                      <button
-                        onClick={() => updateBookingStatus(bk.id, 'confirmed')}
-                        className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition"
-                      >
-                        قبول وتأكيد ✅
-                      </button>
-                      <button
-                        onClick={() => updateBookingStatus(bk.id, 'cancelled')}
-                        className="flex-1 py-2 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition"
-                      >
-                        رفض / غير متاح ❌
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => updateBookingStatus(bk.id, 'completed')}
-                        className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition"
-                      >
-                        حضر واكتمل 🏁
-                      </button>
-                      <button
-                        onClick={() => updateBookingStatus(bk.id, 'no_show')}
-                        className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold text-xs rounded-xl transition"
-                      >
-                        لم يحضر 🏖️
-                      </button>
-                    </>
-                  )}
-                </div>
+            <div className="min-w-0">
+              <div className="text-sm font-black text-amber-300 flex items-center gap-2">
+                <span className="truncate">{incomingAlert.title}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono shrink-0">
+                  وصل للتو!
+                </span>
               </div>
-            ))}
+              <p className="text-xs text-white font-medium mt-0.5 truncate">{incomingAlert.detail}</p>
+            </div>
           </div>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => {
+                setActiveTab('orders');
+                if (incomingAlert.type === 'booking') {
+                  setOrdersSubTab('bookings');
+                } else {
+                  setOrdersSubTab('orders');
+                }
+                setIncomingAlert(null);
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition shadow-lg shrink-0"
+            >
+              عرض الآن 👈
+            </button>
+            <button
+              onClick={() => setIncomingAlert(null)}
+              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
+      )}
 
       
 
@@ -1224,107 +1265,577 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         </div>
       )}
 
-      {activeTab === 'orders' && (
-        <div className="animate-fade-in max-w-3xl mx-auto pb-24">
-          {liveOrders.length > 0 && (
-        <div className="space-y-4 animate-fade-in mb-8">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-black text-white flex items-center gap-2">
-              <span className="relative flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
-              </span>
-              الطلبات النشطة
-            </h2>
-            <span className="px-3 py-1 rounded-full bg-slate-800 text-slate-300 text-xs font-bold font-mono">
-              {liveOrders.length} طلبات
-            </span>
-          </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {liveOrders.map(order => (
-              <div key={order.id} className="bg-slate-900 border border-slate-700/50 rounded-2xl p-4 flex flex-col justify-between shadow-xl">
-                <div>
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
-                    <span className="text-xs font-bold text-slate-400 font-mono">#{order.order_number}</span>
-                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                      order.status === 'pending' ? 'bg-amber-500/20 text-amber-400' :
-                      order.status === 'preparing' ? 'bg-blue-500/20 text-blue-400' :
-                      'bg-emerald-500/20 text-emerald-400'
-                    }`}>
-                      {order.status === 'pending' ? 'طلب جديد' : order.status === 'preparing' ? 'جاري التحضير' : 'جاهز للاستلام'}
-                    </span>
-                  </div>
-                  <div className="mb-3">
-                    <h3 className="font-bold text-white text-sm">{order.customer_name}</h3>
-                    <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
-                      {order.order_type === 'dine_in' ? `محلي - طاولة ${order.table_number || ''}` : 
-                       order.order_type === 'takeaway' ? 'استلام سفري' : 'توصيل'}
-                    </p>
-                  </div>
-                  <div className="space-y-1 mb-4 bg-slate-950 p-2 rounded-xl border border-slate-800">
-                    {order.items?.map((item: any, idx: number) => (
-                      <div key={idx} className="flex justify-between items-center text-xs">
-                        <span className="text-slate-300 truncate pl-2">{item.quantity}x {item.catalog_item?.name || item.name}</span>
-                        <span className="text-slate-500 font-mono">{(item.item_total_price || (item.price * item.quantity) || 0).toFixed(2)}</span>
-                      </div>
-                    ))}
-                    {order.notes && (
-                      <div className="mt-2 pt-2 border-t border-slate-800/50 text-[10px] text-amber-200/70 italic">
-                        * {order.notes}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="flex gap-2 mt-auto">
-                  {order.status === 'pending' && (
-                    <button
-                      onClick={() => updateOrderStatus(order.id, 'preparing')}
-                      className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-lg shadow-blue-900/20"
-                    >
-                      قبول وبدء التحضير
-                    </button>
-                  )}
-                  {order.status === 'preparing' && (
-                    <button
-                      onClick={() => updateOrderStatus(order.id, 'ready')}
-                      className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-lg shadow-emerald-900/20"
-                    >
-                      الطلب جاهز للاستلام
-                    </button>
-                  )}
-                  {order.status === 'ready' && (
-                    <button
-                      onClick={() => updateOrderStatus(order.id, 'completed')}
-                      className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
-                    >
-                      إنهاء الطلب
-                    </button>
-                  )}
-                  {order.status === 'pending' && (
-                    <button
-                      onClick={() => updateOrderStatus(order.id, 'cancelled')}
-                      className="px-3 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold transition"
-                    >
-                      إلغاء
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {activeTab === 'orders' && (() => {
+        const newOrders = liveOrders.filter(o => o.status === 'pending' || o.status === 'accepted');
+        const prepOrders = liveOrders.filter(o => o.status === 'preparing');
+        const readyOrders = liveOrders.filter(o => o.status === 'ready');
+        const completedOrders = liveOrders.filter(o => o.status === 'completed' || o.status === 'cancelled');
 
-      
-          {liveOrders.length === 0 && liveBookings.length === 0 && (
-            <div className="text-center p-12 bg-slate-900/50 rounded-3xl border border-slate-800">
-              <ShoppingBag className="w-12 h-12 text-slate-700 mx-auto mb-3" />
-              <p className="text-slate-400 font-bold">لا توجد طلبات أو حجوزات نشطة حالياً</p>
+        const displayedOrders = liveOrders.filter(order => {
+          if (orderStatusFilter === 'new' && !(order.status === 'pending' || order.status === 'accepted')) return false;
+          if (orderStatusFilter === 'preparing' && order.status !== 'preparing') return false;
+          if (orderStatusFilter === 'completed' && !(order.status === 'ready' || order.status === 'completed' || order.status === 'cancelled')) return false;
+          
+          if (orderSearchQuery.trim()) {
+            const q = orderSearchQuery.toLowerCase().trim();
+            const matchNum = String(order.order_number || '').toLowerCase().includes(q);
+            const matchName = String(order.customer_name || '').toLowerCase().includes(q);
+            const matchPhone = String(order.customer_phone || '').includes(q);
+            if (!matchNum && !matchName && !matchPhone) return false;
+          }
+          return true;
+        });
+
+        const pendingBookings = liveBookings.filter(b => b.status === 'pending');
+        const confirmedBookings = liveBookings.filter(b => b.status === 'confirmed');
+        const pastBookings = liveBookings.filter(b => b.status === 'completed' || b.status === 'cancelled' || b.status === 'no_show');
+
+        const displayedBookings = liveBookings.filter(bk => {
+          if (bookingStatusFilter === 'pending' && bk.status !== 'pending') return false;
+          if (bookingStatusFilter === 'confirmed' && bk.status !== 'confirmed') return false;
+          if (bookingStatusFilter === 'past' && !(bk.status === 'completed' || bk.status === 'cancelled' || bk.status === 'no_show')) return false;
+
+          if (orderSearchQuery.trim()) {
+            const q = orderSearchQuery.toLowerCase().trim();
+            const matchNum = String(bk.booking_number || '').toLowerCase().includes(q);
+            const matchName = String(bk.customer_name || '').toLowerCase().includes(q);
+            const matchPhone = String(bk.customer_phone || '').includes(q);
+            const matchService = String(bk.service_name || '').toLowerCase().includes(q);
+            if (!matchNum && !matchName && !matchPhone && !matchService) return false;
+          }
+          return true;
+        });
+
+        return (
+          <div className="animate-fade-in max-w-4xl mx-auto space-y-5 pb-28">
+            
+            {/* 🔘 Sub-Tab Selector & Live Sync Controls */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/90 p-3 sm:p-4 rounded-3xl border border-slate-800 shadow-xl backdrop-blur-md">
+              <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-slate-800/80">
+                <button
+                  type="button"
+                  onClick={() => setOrdersSubTab('orders')}
+                  className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition duration-200 ${
+                    ordersSubTab === 'orders'
+                      ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Utensils className="w-4 h-4" />
+                  <span>طلبات المنيو</span>
+                  {newOrders.length > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
+                      {newOrders.length}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOrdersSubTab('bookings')}
+                  className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition duration-200 ${
+                    ordersSubTab === 'bookings'
+                      ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4" />
+                  <span>حجوزات الخدمات</span>
+                  {pendingBookings.length > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
+                      {pendingBookings.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Quick Search & Manual Refresh */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1 sm:w-56">
+                  <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    value={orderSearchQuery}
+                    onChange={(e) => setOrderSearchQuery(e.target.value)}
+                    placeholder="بحث برقم، اسم، جوال..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-8 pl-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    LoyaltyService.getLiveStoreOrders(store.id).then(setLiveOrders);
+                    LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings);
+                  }}
+                  className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition"
+                  title="تحديث فوري"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          )}
-        </div>
-      )}
+
+            {/* Error notice if action failed */}
+            {orderActionError && (
+              <div className="p-3 rounded-2xl bg-rose-950/70 border border-rose-500/50 text-rose-300 text-xs flex items-center justify-between">
+                <span>{orderActionError}</span>
+                <button onClick={() => setOrderActionError(null)} className="p-1 text-slate-400 hover:text-white">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* ══════════════════════════════════════════════ */}
+            {/* TAB 1: MENU ORDERS (طلبات المنيو) */}
+            {/* ══════════════════════════════════════════════ */}
+            {ordersSubTab === 'orders' && (
+              <div className="space-y-4">
+                {/* Status Filter Pills */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  <button
+                    type="button"
+                    onClick={() => setOrderStatusFilter('all')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition shrink-0 ${
+                      orderStatusFilter === 'all'
+                        ? 'bg-slate-200 text-black border-white'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    الكل ({liveOrders.length})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setOrderStatusFilter('new')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 shrink-0 ${
+                      orderStatusFilter === 'new'
+                        ? 'bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-500/30'
+                        : 'bg-slate-900 text-rose-400 border-slate-800 hover:border-rose-500/40'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${newOrders.length > 0 ? 'bg-rose-400 animate-ping' : 'bg-slate-600'}`}></span>
+                    <span>الطلبات الجديدة ({newOrders.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setOrderStatusFilter('preparing')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 shrink-0 ${
+                      orderStatusFilter === 'preparing'
+                        ? 'bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/30'
+                        : 'bg-slate-900 text-amber-400 border-slate-800 hover:border-amber-500/40'
+                    }`}
+                  >
+                    <ChefHat className="w-3.5 h-3.5" />
+                    <span>قيد التحضير ({prepOrders.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setOrderStatusFilter('completed')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 shrink-0 ${
+                      orderStatusFilter === 'completed'
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-600/30'
+                        : 'bg-slate-900 text-emerald-400 border-slate-800 hover:border-emerald-500/40'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>جاهزة ومكتملة ({readyOrders.length + completedOrders.length})</span>
+                  </button>
+                </div>
+
+                {/* Orders Grid */}
+                {displayedOrders.length === 0 ? (
+                  <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center text-slate-400 space-y-2">
+                    <ShoppingBag className="w-12 h-12 text-slate-700 mx-auto" />
+                    <p className="font-bold text-sm text-slate-300">لا توجد طلبات مطابقة في هذا القسم</p>
+                    <p className="text-xs text-slate-500">الطلبات الجديدة القادمة من المنيو ستظهر هنا فورياً مع جرس تنبيه صوتي</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {displayedOrders.map((order) => {
+                      const isNew = order.status === 'pending' || order.status === 'accepted';
+                      const isPrep = order.status === 'preparing';
+                      const isReady = order.status === 'ready';
+                      const isDone = order.status === 'completed';
+                      const isCancelled = order.status === 'cancelled';
+
+                      return (
+                        <div
+                          key={order.id}
+                          className={`bg-slate-900 rounded-3xl p-5 border flex flex-col justify-between shadow-xl transition duration-200 relative overflow-hidden ${
+                            isNew
+                              ? 'border-rose-500/60 shadow-rose-950/30 ring-1 ring-rose-500/30'
+                              : isPrep
+                              ? 'border-amber-500/50 shadow-amber-950/20'
+                              : isReady
+                              ? 'border-emerald-500/50 shadow-emerald-950/20'
+                              : 'border-slate-800 opacity-80'
+                          }`}
+                        >
+                          {/* Top Order Card Header */}
+                          <div>
+                            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-black font-mono text-amber-400">
+                                  #{order.order_number || String(order.id).slice(0, 6)}
+                                </span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800 text-slate-300 font-bold">
+                                  {order.order_type === 'dine_in'
+                                    ? `🍽️ محلي ${order.table_number ? `(طاولة ${order.table_number})` : ''}`
+                                    : order.order_type === 'takeaway'
+                                    ? '🥡 استلام سفري'
+                                    : '🛵 توصيل'}
+                                </span>
+                              </div>
+
+                              <span
+                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 ${
+                                  isNew
+                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
+                                    : isPrep
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                    : isReady
+                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                    : isCancelled
+                                    ? 'bg-slate-800 text-rose-400'
+                                    : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                {isNew ? '🔴 طلب جديد' : isPrep ? '🟡 قيد التحضير' : isReady ? '🟢 جاهز للتسليم' : isCancelled ? '❌ ملغي' : '🏁 مكتمل'}
+                              </span>
+                            </div>
+
+                            {/* Customer & Time Info */}
+                            <div className="flex items-start justify-between mb-3 text-xs">
+                              <div>
+                                <div className="font-bold text-white text-sm">
+                                  {order.customer_name || 'عميل المتجر'}
+                                </div>
+                                {order.customer_phone && (
+                                  <a
+                                    href={`tel:${order.customer_phone}`}
+                                    className="text-slate-400 hover:text-amber-400 font-mono text-[11px] flex items-center gap-1 mt-0.5"
+                                    dir="ltr"
+                                  >
+                                    <Phone className="w-3 h-3 text-slate-500" />
+                                    {order.customer_phone}
+                                  </a>
+                                )}
+                              </div>
+                              <div className="text-left rtl:text-right">
+                                <span className="text-[10px] text-slate-500 font-mono block">
+                                  {order.created_at
+                                    ? new Date(order.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
+                                    : ''}
+                                </span>
+                                <span className="text-sm font-black font-mono text-emerald-400 block mt-0.5">
+                                  {Number(order.total_price || 0).toFixed(2)} ر.س
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Items Breakdown */}
+                            <div className="space-y-1.5 mb-4 bg-slate-950/90 p-3 rounded-2xl border border-slate-800/80">
+                              {Array.isArray(order.items) && order.items.length > 0 ? (
+                                order.items.map((it: any, idx: number) => (
+                                  <div key={idx} className="flex justify-between items-center text-xs">
+                                    <div className="text-slate-300 min-w-0 pr-1">
+                                      <strong className="text-amber-400 font-mono ml-1">{it.quantity || 1}x</strong>
+                                      <span>{it.catalog_item?.name || it.name || 'صنف'}</span>
+                                    </div>
+                                    <span className="text-slate-500 font-mono text-[11px] shrink-0">
+                                      {(Number(it.item_total_price || (it.price * (it.quantity || 1)) || 0)).toFixed(2)}
+                                    </span>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="text-[11px] text-slate-500">تفاصيل الطلب غير متوفرة</div>
+                              )}
+
+                              {order.notes && (
+                                <div className="mt-2 pt-2 border-t border-slate-800/80 text-[11px] text-amber-300/90 bg-amber-500/10 p-2 rounded-xl border border-amber-500/20 leading-relaxed">
+                                  <strong>ملاحظات:</strong> {order.notes}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-2 pt-1 border-t border-slate-800/80 mt-auto">
+                            {isNew && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => updateOrderStatus(order.id, 'preparing')}
+                                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition shadow-lg shadow-blue-900/30 flex items-center justify-center gap-1.5"
+                                >
+                                  <ChefHat className="w-3.5 h-3.5" />
+                                  <span>قبول وبدء التحضير</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => updateOrderStatus(order.id, 'cancelled')}
+                                  className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition"
+                                  title="إلغاء الطلب"
+                                >
+                                  إلغاء ❌
+                                </button>
+                              </>
+                            )}
+
+                            {isPrep && (
+                              <button
+                                type="button"
+                                onClick={() => updateOrderStatus(order.id, 'ready')}
+                                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-1.5"
+                              >
+                                <CheckCircle2 className="w-4 h-4" />
+                                <span>الطلب جاهز للاستلام 📦</span>
+                              </button>
+                            )}
+
+                            {isReady && (
+                              <button
+                                type="button"
+                                onClick={() => updateOrderStatus(order.id, 'completed')}
+                                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition flex items-center justify-center gap-1.5 border border-slate-700"
+                              >
+                                <Check className="w-4 h-4 text-emerald-400" />
+                                <span>تسليم وإنهاء الطلب ✅</span>
+                              </button>
+                            )}
+
+                            {(isDone || isCancelled) && (
+                              <div className="w-full text-center py-1.5 text-[11px] font-bold text-slate-500">
+                                {isDone ? 'تم إنهاء وتسليم الطلب ✅' : 'تم إلغاء هذا الطلب ❌'}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ══════════════════════════════════════════════ */}
+            {/* TAB 2: SERVICE BOOKINGS (حجوزات الخدمات) */}
+            {/* ══════════════════════════════════════════════ */}
+            {ordersSubTab === 'bookings' && (
+              <div className="space-y-4">
+                {/* Status Filter Pills */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                  <button
+                    type="button"
+                    onClick={() => setBookingStatusFilter('all')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition shrink-0 ${
+                      bookingStatusFilter === 'all'
+                        ? 'bg-slate-200 text-black border-white'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    الكل ({liveBookings.length})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBookingStatusFilter('pending')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 shrink-0 ${
+                      bookingStatusFilter === 'pending'
+                        ? 'bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-500/30'
+                        : 'bg-slate-900 text-rose-400 border-slate-800 hover:border-rose-500/40'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${pendingBookings.length > 0 ? 'bg-rose-400 animate-ping' : 'bg-slate-600'}`}></span>
+                    <span>بانتظار التأكيد ({pendingBookings.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBookingStatusFilter('confirmed')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 shrink-0 ${
+                      bookingStatusFilter === 'confirmed'
+                        ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/30'
+                        : 'bg-slate-900 text-blue-400 border-slate-800 hover:border-blue-500/40'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>مؤكدة ومجدولة ({confirmedBookings.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBookingStatusFilter('past')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 shrink-0 ${
+                      bookingStatusFilter === 'past'
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-600/30'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                    }`}
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    <span>السجل والمكتملة ({pastBookings.length})</span>
+                  </button>
+                </div>
+
+                {/* Bookings Grid */}
+                {displayedBookings.length === 0 ? (
+                  <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center text-slate-400 space-y-2">
+                    <Calendar className="w-12 h-12 text-slate-700 mx-auto" />
+                    <p className="font-bold text-sm text-slate-300">لا توجد حجوزات في هذا التصنيف</p>
+                    <p className="text-xs text-slate-500">حجوزات الخدمات والمواعيد الجديدة ستظهر هنا فور تسجيلها</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {displayedBookings.map((bk) => {
+                      const isPending = bk.status === 'pending';
+                      const isConfirmed = bk.status === 'confirmed';
+                      const isCompleted = bk.status === 'completed';
+                      const isCancelled = bk.status === 'cancelled';
+                      const isNoShow = bk.status === 'no_show';
+
+                      return (
+                        <div
+                          key={bk.id}
+                          className={`bg-slate-900 rounded-3xl p-5 border flex flex-col justify-between shadow-xl transition duration-200 relative overflow-hidden ${
+                            isPending
+                              ? 'border-rose-500/60 shadow-rose-950/30 ring-1 ring-rose-500/30'
+                              : isConfirmed
+                              ? 'border-blue-500/50 shadow-blue-950/20'
+                              : isCompleted
+                              ? 'border-emerald-500/40'
+                              : 'border-slate-800 opacity-75'
+                          }`}
+                        >
+                          <div>
+                            {/* Booking Card Header */}
+                            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3">
+                              <span className="text-sm font-black font-mono text-amber-400">
+                                #{bk.booking_number || String(bk.id).slice(0, 6)}
+                              </span>
+                              <span
+                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
+                                  isPending
+                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
+                                    : isConfirmed
+                                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                                    : isCompleted
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : isNoShow
+                                    ? 'bg-slate-800 text-amber-400'
+                                    : 'bg-slate-800 text-rose-400'
+                                }`}
+                              >
+                                {isPending
+                                  ? '🔴 في الانتظار'
+                                  : isConfirmed
+                                  ? '🔵 مؤكد'
+                                  : isCompleted
+                                  ? '🏁 اكتمل الحضور'
+                                  : isNoShow
+                                  ? '🏖️ لم يحضر'
+                                  : '❌ ملغي'}
+                              </span>
+                            </div>
+
+                            {/* Customer & Price */}
+                            <div className="flex items-start justify-between mb-3 text-xs">
+                              <div>
+                                <div className="font-bold text-white text-sm">{bk.customer_name || 'العميل'}</div>
+                                {bk.customer_phone && (
+                                  <a
+                                    href={`tel:${bk.customer_phone}`}
+                                    className="text-slate-400 hover:text-amber-400 font-mono text-[11px] flex items-center gap-1 mt-0.5"
+                                    dir="ltr"
+                                  >
+                                    <Phone className="w-3 h-3 text-slate-500" />
+                                    {bk.customer_phone}
+                                  </a>
+                                )}
+                              </div>
+                              <div className="text-sm font-black font-mono text-emerald-400">
+                                {Number(bk.total_price || 0).toFixed(2)} ر.س
+                              </div>
+                            </div>
+
+                            {/* Service Details Card */}
+                            <div className="bg-slate-950/90 p-3 rounded-2xl border border-slate-800/80 space-y-1.5 mb-4">
+                              <div className="text-xs text-white font-bold">{bk.service_name || 'خدمة'}</div>
+                              <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                                <span>مع: {bk.specialist_name || 'أي مختص متاح'}</span>
+                                <span className="font-mono text-slate-300" dir="ltr">
+                                  {bk.booking_date} • {bk.booking_time}
+                                </span>
+                              </div>
+
+                              {bk.notes && (
+                                <div className="text-[11px] text-amber-300/90 bg-amber-500/10 p-2 rounded-xl mt-2 border border-amber-500/20 leading-relaxed">
+                                  <strong>ملاحظة العميل:</strong> {bk.notes}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Booking Action Buttons */}
+                          <div className="flex gap-2 pt-1 border-t border-slate-800/80 mt-auto">
+                            {isPending && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => updateBookingStatus(bk.id, 'confirmed')}
+                                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/30"
+                                >
+                                  قبول وتأكيد ✅
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => updateBookingStatus(bk.id, 'cancelled')}
+                                  className="flex-1 py-2.5 bg-rose-600/15 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition"
+                                >
+                                  رفض / غير متاح ❌
+                                </button>
+                              </>
+                            )}
+
+                            {isConfirmed && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => updateBookingStatus(bk.id, 'completed')}
+                                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-blue-900/30"
+                                >
+                                  حضر واكتمل 🏁
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => updateBookingStatus(bk.id, 'no_show')}
+                                  className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold text-xs rounded-xl transition"
+                                  title="العميل لم يحضر"
+                                >
+                                  لم يحضر 🏖️
+                                </button>
+                              </>
+                            )}
+
+                            {(isCompleted || isCancelled || isNoShow) && (
+                              <div className="w-full text-center py-1.5 text-[11px] font-bold text-slate-500">
+                                {isCompleted ? 'اكتمل الموعد بنجاح ✅' : isNoShow ? 'تم تسجيل عدم حضور العميل 🏖️' : 'تم إلغاء الحجز ❌'}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+          </div>
+        );
+      })()}
 
       {activeTab === 'rewards' && (
         <div className="animate-fade-in pb-24">
@@ -1500,11 +2011,16 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           >
             <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
             <span>الطلبات</span>
-            {(liveOrders.length > 0 || liveBookings.length > 0) && (
-              <span className="absolute top-0 right-3 sm:right-5 w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
-                {liveOrders.length + liveBookings.length}
-              </span>
-            )}
+            {(() => {
+              const activeCount =
+                liveOrders.filter(o => o.status === 'pending' || o.status === 'accepted' || o.status === 'preparing' || o.status === 'ready').length +
+                liveBookings.filter(b => b.status === 'pending' || b.status === 'confirmed').length;
+              return activeCount > 0 ? (
+                <span className="absolute top-0 right-3 sm:right-5 w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
+                  {activeCount}
+                </span>
+              ) : null;
+            })()}
           </button>
 
           <button

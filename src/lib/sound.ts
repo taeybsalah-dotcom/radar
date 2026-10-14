@@ -32,7 +32,7 @@ if (typeof window !== 'undefined') {
 }
 
 export function playBeepSound(
-  type: 'success' | 'redeem' | 'error' | 'notification' | 'commission' = 'success'
+  type: 'success' | 'redeem' | 'error' | 'notification' | 'commission' | 'pos_order_alert' = 'success'
 ) {
   try {
     const ctx = getOrCreateAudioContext();
@@ -43,7 +43,22 @@ export function playBeepSound(
 
     const t = ctx.currentTime;
 
-    if (type === 'notification') {
+    if (type === 'pos_order_alert') {
+      // 🛎️ Clear Loud Restaurant / POS Melodic Bell (C5 -> E5 -> G5 -> C6)
+      const notes = [523.25, 659.25, 783.99, 1046.50];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t + idx * 0.09);
+        gain.gain.setValueAtTime(0.55, t + idx * 0.09);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + idx * 0.09 + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t + idx * 0.09);
+        osc.stop(t + idx * 0.09 + 0.35);
+      });
+    } else if (type === 'notification') {
       // 🔔 Modern Crisp Double Bell Notification (G5 -> C6)
       const osc1 = ctx.createOscillator();
       const gain1 = ctx.createGain();

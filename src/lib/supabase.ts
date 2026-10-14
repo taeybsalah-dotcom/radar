@@ -7015,9 +7015,9 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
         const { data, error } = await (supabase as any).from('service_bookings')
           .select('*')
           .eq('store_id', resolvedStoreId)
-          .in('status', ['pending', 'confirmed'])
-          .order('booking_date', { ascending: true })
-          .order('booking_time', { ascending: true });
+          .in('status', ['pending', 'confirmed', 'completed', 'cancelled', 'no_show'])
+          .order('created_at', { ascending: false })
+          .limit(80);
         if (!error && data) return data as any;
       } catch (e: any) {
         console.warn('Supabase getLiveStoreBookings failed', e);
@@ -7035,8 +7035,9 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
         const { data, error } = await (supabase as any).from('store_orders')
           .select('*')
           .eq('store_id', resolvedStoreId)
-          .in('status', ['pending', 'accepted', 'preparing', 'ready'])
-          .order('created_at', { ascending: true });
+          .in('status', ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'])
+          .order('created_at', { ascending: false })
+          .limit(80);
         if (!error && data) return data as any;
       } catch (e) {
         console.warn('Supabase getLiveStoreOrders failed', e);

@@ -15,7 +15,9 @@ export type LoyaltyEventType =
   | 'LEAD_UPDATED'
   | 'PARTNER_UPDATED'
   | 'CUSTOM_NOTIFICATION'
-  | 'SCAN_REJECTED';
+  | 'SCAN_REJECTED'
+  | 'ORDER_CREATED'
+  | 'BOOKING_CREATED';
 
 export interface LoyaltyEventPayload {
   type: LoyaltyEventType;
