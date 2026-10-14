@@ -32,6 +32,35 @@ interface ParsedMenuResult {
   items: ParsedMenuItem[];
 }
 
+export function cleanPrice(raw: any): number {
+  if (raw === null || raw === undefined) return 0;
+  if (typeof raw === 'number' && !isNaN(raw)) return raw;
+
+  let str = String(raw).trim();
+
+  // تحويل الأرقام العربية والشرقية (٠-٩) إلى أرقام إنجليزية (0-9)
+  const arabicNumerals = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+  const persianNumerals = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+  for (let i = 0; i < 10; i++) {
+    str = str.replace(new RegExp(arabicNumerals[i], 'g'), String(i));
+    str = str.replace(new RegExp(persianNumerals[i], 'g'), String(i));
+  }
+
+  // استبدال الفواصل العشرية العربية
+  str = str.replace(/٫/g, '.').replace(/,/g, '.');
+
+  // إزالة كلمات ورموز العملات
+  str = str.replace(/(ر\.س|رس|ريال|ريالات|SAR|SR|USD|\$|EUR|AED)/gi, '');
+
+  // استخراج الرقم
+  const match = str.match(/(\d+(?:\.\d+)?)/);
+  if (match) {
+    const num = parseFloat(match[1]);
+    return isNaN(num) ? 0 : num;
+  }
+  return 0;
+}
+
 async function callGeminiVision(
   apiKey: string,
   base64Data: string,
@@ -40,13 +69,16 @@ async function callGeminiVision(
 ): Promise<ParsedMenuResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  const prompt = `استخرج أصناف المنيو بدقة وسرعة وبدون تفكير مطول:
+  const prompt = `استخرج أصناف المنيو بدقة وسرعة:
 لكل صنف استخرج:
-- name: اسم الصنف
-- category: اسم القسم
-- price: السعر كرقم مجرد (إذا غير موجود 0)
-- description: نص فارغ "" إذا لم يكن مكتوباً بالمنيو
-- item_type: "product" أو "service"
+- name: اسم الصنف بدقة.
+- category: اسم القسم المناسب.
+- price: السعر المالي كرقم إنجليزي صريح (مثلاً 15 أو 24.5).
+  * إلزام: حوّل أي أرقام عربية (مثل ١٥، ٢٠) إلى أرقام إنجليزية صريحة (15, 20).
+  * تفريق صارم: تجاهل تماماً أرقام السعرات الحرارية (سعرة / كالوري / Cal / Kcal / 🔥 / أو الأرقام الكبيرة مثل 350 و 600) ولا تضعها في السعر! السعر هو الثمن المالي فقط.
+  * احذف أي كلمة عملة (ر.س أو ريال أو SAR) وضع الرقم فقط.
+- description: نص فارغ "" إذا لم يكن مكتوباً بالمنيو.
+- item_type: "product" أو "service".
 لا تؤلف أي وصف من عندك أبداً.`;
 
   const payload = {
@@ -85,7 +117,7 @@ async function callGeminiVision(
               properties: {
                 name: { type: 'STRING' },
                 category: { type: 'STRING' },
-                price: { type: 'NUMBER' },
+                price: { type: 'NUMBER', description: 'السعر المالي كرقم مجرد' },
                 description: { type: 'STRING' },
                 item_type: {
                   type: 'STRING',
@@ -126,9 +158,17 @@ async function callGeminiVision(
   }
 
   const parsed = JSON.parse(rawText) as ParsedMenuResult;
+  const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+
   return {
     categories: Array.isArray(parsed.categories) ? parsed.categories : [],
-    items: Array.isArray(parsed.items) ? parsed.items : [],
+    items: rawItems.map((it: any) => ({
+      name: String(it.name || '').trim(),
+      category: String(it.category || 'عام').trim(),
+      price: cleanPrice(it.price),
+      description: it.description ? String(it.description).trim() : '',
+      item_type: it.item_type === 'service' ? 'service' : 'product',
+    })),
   };
 }
 
