@@ -38,6 +38,8 @@ export interface LoyaltyEventPayload {
   soundType?: 'notification' | 'commission' | 'redeem' | 'success';
   targetType?: string;
   targetId?: string;
+  orderData?: any;
+  bookingData?: any;
 }
 
 const CLIENT_INSTANCE_ID =
@@ -53,6 +55,8 @@ const CROSS_DEVICE_REALTIME_EVENTS = new Set<LoyaltyEventType>([
   'COUPON_REDEEMED',
   'SCAN_REJECTED',
   'CUSTOM_NOTIFICATION',
+  'ORDER_CREATED',
+  'BOOKING_CREATED',
 ]);
 
 const channelName = 'radar_loyalty_realtime_channel';

@@ -6968,6 +6968,14 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
             `🔗 افتح شاشة الكاشير للتعامل مع الطلب فوراً 🚀`;
           sendTelegramNotification(resolvedStoreId, telegramMsg);
 
+          // ⚡ Realtime broadcast across tabs & physical devices
+          LoyaltyEvents.emit({
+            type: 'ORDER_CREATED',
+            storeId: resolvedStoreId,
+            phone: payload.customer_phone,
+            orderData: data,
+          });
+
           return {
             ...payload,
             id: data.id,
@@ -6980,7 +6988,28 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
       }
     }
     
-    throw new Error('قاعدة البيانات غير متصلة.');
+    // 🛡️ Local fallback for demo stores or when Supabase is offline
+    const localOrder = {
+      ...dbPayload,
+      id: 'local_ord_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      created_at: new Date().toISOString()
+    };
+    const localList = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
+    localList.unshift(localOrder);
+    saveLocalData(STORAGE_KEYS.LOCAL_ORDERS, localList);
+
+    LoyaltyEvents.emit({
+      type: 'ORDER_CREATED',
+      storeId: resolvedStoreId,
+      phone: payload.customer_phone,
+      orderData: localOrder,
+    });
+
+    return {
+      ...payload,
+      id: localOrder.id,
+      order_id: localOrder.order_number,
+    };
   },
 
     async createOrder(orderData: any): Promise<any> {
@@ -7023,7 +7052,8 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
         console.warn('Supabase getLiveStoreBookings failed', e);
       }
     }
-    return [];
+    const localBookings = getLocalData<any[]>(STORAGE_KEYS.LOCAL_BOOKINGS, []);
+    return localBookings.filter((b: any) => b.store_id === resolvedStoreId || b.store_id === storeId);
   },
 
   async getLiveStoreOrders(storeId: string): Promise<any[]> {
@@ -7043,7 +7073,8 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
         console.warn('Supabase getLiveStoreOrders failed', e);
       }
     }
-    return [];
+    const localOrders = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
+    return localOrders.filter((o: any) => o.store_id === resolvedStoreId || o.store_id === storeId);
   },
   
   async getCustomerOrders(storeId: string, phone: string): Promise<any[]> {
@@ -7523,19 +7554,31 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
           `🔗 يرجى مراجعة لوحة الحجوزات لتأكيد الموعد ✅`;
         sendTelegramNotification(resolvedStoreId, telegramMsg);
 
+        LoyaltyEvents.emit({
+          type: 'BOOKING_CREATED',
+          storeId: resolvedStoreId,
+          phone: dbPayload.customer_phone,
+          bookingData: created,
+        });
+
         const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
         list.unshift(created as unknown as ServiceBooking);
         saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, list);
         return created as unknown as ServiceBooking;
       }
     } else {
-      throw new Error('قاعدة البيانات غير متصلة أو معرف المتجر غير صالح.');
-    }
-
-    const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, INITIAL_BOOKINGS);
-    if (!list.some((b) => b.id === newBooking.id)) {
+      const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, INITIAL_BOOKINGS);
       list.unshift(newBooking);
       saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, list);
+
+      LoyaltyEvents.emit({
+        type: 'BOOKING_CREATED',
+        storeId: resolvedStoreId,
+        phone: dbPayload.customer_phone,
+        bookingData: newBooking,
+      });
+
+      return newBooking;
     }
 
     // 📝 تسجيل حركة الحجز تلقائياً في سجل العمليات والتدقيق المالي (Audit Logs)

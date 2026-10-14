@@ -155,8 +155,15 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     type: 'order' | 'booking' | 'coupon';
   } | null>(null);
 
+  const lastAlertKeyRef = useRef<{ key: string; time: number }>({ key: '', time: 0 });
+
   const triggerLiveAlert = (title: string, detail: string, type: 'order' | 'booking' | 'coupon' = 'order') => {
-    if (!isSoundMutedRef.current) {
+    const alertKey = `${title}_${detail}`;
+    const now = Date.now();
+    const isDuplicate = lastAlertKeyRef.current.key === alertKey && (now - lastAlertKeyRef.current.time < 3500);
+    lastAlertKeyRef.current = { key: alertKey, time: now };
+
+    if (!isDuplicate && !isSoundMutedRef.current) {
       try {
         playBeepSound('pos_order_alert');
       } catch (e) {
@@ -189,93 +196,118 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     };
   }, []);
 
+  const [effectiveStoreId, setEffectiveStoreId] = useState<string>(store.id);
+
+  useEffect(() => {
+    LoyaltyService.resolveStore(store.id).then((resolved) => {
+      if (resolved?.id) {
+        setEffectiveStoreId(resolved.id);
+      }
+    });
+  }, [store?.id]);
+
   useEffect(() => {
     if (!store?.id) return;
-    
-    // Fetch initial orders & bookings
-    LoyaltyService.getLiveStoreOrders(store.id).then(orders => setLiveOrders(orders)).catch(() => {});
-    LoyaltyService.getLiveStoreBookings(store.id).then(bookings => setLiveBookings(bookings)).catch(() => {});
+    let isCancelled = false;
+    let channel: any = null;
 
-    // Listen to changes via Supabase Realtime
-    const supabase = getSupabaseClient();
-    if (!supabase) return;
+    LoyaltyService.resolveStore(store.id).then((resolvedStore) => {
+      if (isCancelled) return;
+      const targetStoreId = resolvedStore?.id || store.id;
+      setEffectiveStoreId(targetStoreId);
 
-    const channel = supabase
-      .channel('live-pos-' + store.id)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'store_orders',
-          filter: `store_id=eq.${store.id}`
-        },
-        (payload: any) => {
-          if (payload.eventType === 'INSERT') {
-            setLiveOrders(prev => [payload.new, ...prev.filter(o => o.id !== payload.new.id)]);
-            const num = payload.new.order_number || '';
-            const name = payload.new.customer_name || 'عميل جديد';
-            const price = payload.new.total_price || 0;
-            const typeText = payload.new.order_type === 'dine_in' ? 'محلي' : payload.new.order_type === 'takeaway' ? 'سفري' : 'توصيل';
-            triggerLiveAlert(`طلب جديد #${num}`, `${name} (${price} ر.س) • ${typeText}`, 'order');
-          } else if (payload.eventType === 'UPDATE') {
-            setLiveOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
-          } else if (payload.eventType === 'DELETE') {
-            setLiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'service_bookings',
-          filter: `store_id=eq.${store.id}`
-        },
-        (payload: any) => {
-          if (payload.eventType === 'INSERT') {
-            setLiveBookings(prev => [payload.new, ...prev.filter(b => b.id !== payload.new.id)]);
-            const num = payload.new.booking_number || '';
-            const name = payload.new.customer_name || 'عميل جديد';
-            const service = payload.new.service_name || 'خدمة';
-            const date = payload.new.booking_date || '';
-            triggerLiveAlert(`حجز جديد #${num}`, `${name} - ${service} (${date})`, 'booking');
-          } else if (payload.eventType === 'UPDATE') {
-            setLiveBookings(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
-          } else if (payload.eventType === 'DELETE') {
-            setLiveBookings(prev => prev.filter(o => o.id !== payload.old.id));
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'customer_coupons',
-          filter: `store_id=eq.${store.id}`
-        },
-        (payload: any) => {
-          if (payload.eventType === 'INSERT') {
-            setStoreCoupons(prev => [payload.new, ...prev.filter(c => c.id !== payload.new.id)]);
-          } else if (payload.eventType === 'UPDATE') {
-            setStoreCoupons(prev => prev.map(c => c.id === payload.new.id ? payload.new : c));
-          } else if (payload.eventType === 'DELETE') {
-            setStoreCoupons(prev => prev.filter(c => c.id !== payload.old.id));
-          }
+      // 1. Initial Load (Runs ONCE when cashier mounts)
+      LoyaltyService.getLiveStoreOrders(targetStoreId).then(orders => {
+        if (!isCancelled) setLiveOrders(orders);
+      }).catch(() => {});
+      LoyaltyService.getLiveStoreBookings(targetStoreId).then(bookings => {
+        if (!isCancelled) setLiveBookings(bookings);
+      }).catch(() => {});
 
-          if (payload.eventType === 'INSERT' || (payload.new && (payload.new.status === 'USED' || payload.new.status === 'REDEEMED'))) {
-            const phone = payload.new.customer_phone || '';
-            const title = payload.new.privilege_title || 'مكافأة ولاء';
-            triggerLiveAlert('عملية استبدال نقاط / كوبون 🎁', `تم حرق/صرف (${title}) للعميل ${phone}`, 'coupon');
+      // 2. Realtime WebSocket subscription with resolved UUID
+      const supabase = getSupabaseClient();
+      if (!supabase) return;
+
+      channel = supabase
+        .channel('live-pos-' + targetStoreId)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'store_orders',
+            filter: `store_id=eq.${targetStoreId}`
+          },
+          (payload: any) => {
+            if (payload.eventType === 'INSERT') {
+              setLiveOrders(prev => [payload.new, ...prev.filter(o => o.id !== payload.new.id && o.order_number !== payload.new.order_number)]);
+              const num = payload.new.order_number || '';
+              const name = payload.new.customer_name || 'عميل المتجر';
+              const price = payload.new.total_price || 0;
+              const typeText = payload.new.order_type === 'dine_in' ? 'محلي' : payload.new.order_type === 'takeaway' ? 'سفري' : 'توصيل';
+              triggerLiveAlert(`طلب جديد #${num}`, `${name} (${price} ر.س) • ${typeText}`, 'order');
+            } else if (payload.eventType === 'UPDATE') {
+              setLiveOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+            } else if (payload.eventType === 'DELETE') {
+              setLiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
+            }
           }
-        }
-      )
-      .subscribe();
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'service_bookings',
+            filter: `store_id=eq.${targetStoreId}`
+          },
+          (payload: any) => {
+            if (payload.eventType === 'INSERT') {
+              setLiveBookings(prev => [payload.new, ...prev.filter(b => b.id !== payload.new.id && b.booking_number !== payload.new.booking_number)]);
+              const num = payload.new.booking_number || '';
+              const name = payload.new.customer_name || 'عميل جديد';
+              const service = payload.new.service_name || 'خدمة';
+              const date = payload.new.booking_date || '';
+              triggerLiveAlert(`حجز جديد #${num}`, `${name} - ${service} (${date})`, 'booking');
+            } else if (payload.eventType === 'UPDATE') {
+              setLiveBookings(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+            } else if (payload.eventType === 'DELETE') {
+              setLiveBookings(prev => prev.filter(o => o.id !== payload.old.id));
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'customer_coupons',
+            filter: `store_id=eq.${targetStoreId}`
+          },
+          (payload: any) => {
+            if (payload.eventType === 'INSERT') {
+              setStoreCoupons(prev => [payload.new, ...prev.filter(c => c.id !== payload.new.id)]);
+            } else if (payload.eventType === 'UPDATE') {
+              setStoreCoupons(prev => prev.map(c => c.id === payload.new.id ? payload.new : c));
+            } else if (payload.eventType === 'DELETE') {
+              setStoreCoupons(prev => prev.filter(c => c.id !== payload.old.id));
+            }
+
+            if (payload.eventType === 'INSERT' || (payload.new && (payload.new.status === 'USED' || payload.new.status === 'REDEEMED'))) {
+              const phone = payload.new.customer_phone || '';
+              const title = payload.new.privilege_title || 'مكافأة ولاء';
+              triggerLiveAlert('عملية استبدال نقاط / كوبون 🎁', `تم حرق/صرف (${title}) للعميل ${phone}`, 'coupon');
+            }
+          }
+        )
+        .subscribe();
+    });
 
     return () => {
-      supabase.removeChannel(channel);
+      isCancelled = true;
+      if (channel) {
+        getSupabaseClient()?.removeChannel(channel);
+      }
     };
   }, [store?.id]);
 
@@ -326,15 +358,83 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     });
 
     const unsubscribe = LoyaltyEvents.listen((event) => {
-      if (event.storeId === store?.id) {
+      const isCurrentStore =
+        !event.storeId ||
+        event.storeId === store?.id ||
+        (effectiveStoreId && event.storeId === effectiveStoreId) ||
+        event.storeId === store?.slug;
+
+      if (isCurrentStore) {
         // تحديثات مستهدفة دقيقة فقط حسب نوع الحدث، دون إعادة تحميل كامل البيانات التشغيلية
         if (event.type === 'ORDER_CREATED') {
-          triggerLiveAlert('طلب جديد في المنيو 📦', 'تم استلام طلب جديد من العميل', 'order');
+          if (event.orderData) {
+            const o = event.orderData;
+            setLiveOrders((prev) => [
+              o,
+              ...prev.filter(
+                (item) => item.id !== o.id && item.order_number !== o.order_number
+              ),
+            ]);
+            const num = o.order_number || '';
+            const name = o.customer_name || 'عميل المتجر';
+            const price = o.total_price || 0;
+            const typeText =
+              o.order_type === 'dine_in'
+                ? 'محلي'
+                : o.order_type === 'takeaway'
+                ? 'سفري'
+                : 'توصيل';
+            triggerLiveAlert(
+              `طلب جديد #${num}`,
+              `${name} (${price} ر.س) • ${typeText}`,
+              'order'
+            );
+          } else {
+            triggerLiveAlert(
+              'طلب جديد في المنيو 📦',
+              'تم استلام طلب جديد من العميل',
+              'order'
+            );
+            if (effectiveStoreId || store?.id) {
+              LoyaltyService.getLiveStoreOrders(effectiveStoreId || store.id)
+                .then(setLiveOrders)
+                .catch(() => {});
+            }
+          }
           return;
         }
 
         if (event.type === 'BOOKING_CREATED') {
-          triggerLiveAlert('حجز موعد جديد 📅', 'تم استلام حجز خدمة جديد من العميل', 'booking');
+          if (event.bookingData) {
+            const b = event.bookingData;
+            setLiveBookings((prev) => [
+              b,
+              ...prev.filter(
+                (item) =>
+                  item.id !== b.id && item.booking_number !== b.booking_number
+              ),
+            ]);
+            const num = b.booking_number || '';
+            const name = b.customer_name || 'عميل جديد';
+            const service = b.service_name || 'خدمة';
+            const date = b.booking_date || '';
+            triggerLiveAlert(
+              `حجز جديد #${num}`,
+              `${name} - ${service} (${date})`,
+              'booking'
+            );
+          } else {
+            triggerLiveAlert(
+              'حجز موعد جديد 📅',
+              'تم استلام حجز خدمة جديد من العميل',
+              'booking'
+            );
+            if (effectiveStoreId || store?.id) {
+              LoyaltyService.getLiveStoreBookings(effectiveStoreId || store.id)
+                .then(setLiveBookings)
+                .catch(() => {});
+            }
+          }
           return;
         }
 
@@ -386,7 +486,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     return () => {
       unsubscribe();
     };
-  }, [store?.id]);
+  }, [store?.id, effectiveStoreId]);
 
   const loadStoreMetadata = async () => {
     if (!store?.id) return;
