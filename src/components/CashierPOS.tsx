@@ -4,7 +4,7 @@ import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supaba
 import { QRScannerModal } from './QRScannerModal';
 import { StaffLoginGate } from './StaffLoginGate';
 import { NotificationBell } from './NotificationBell';
-import { playBeepSound } from '../lib/sound';
+import { playBeepSound, ensureAudioUnlocked } from '../lib/sound';
 import { LoyaltyEvents } from '../lib/events';
 import {
   Camera, QrCode, ShoppingBag, Calendar,
@@ -176,6 +176,19 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const [bookingStatusFilter, setBookingStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'past'>('all');
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
 
+  // 🔊 Unlock Web Audio API on first user interaction (click/touch/key) to comply with browser Autoplay Policy
+  useEffect(() => {
+    const handleUnlock = () => {
+      ensureAudioUnlocked();
+    };
+    window.addEventListener('pointerdown', handleUnlock, { once: true, passive: true });
+    window.addEventListener('keydown', handleUnlock, { once: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleUnlock);
+      window.removeEventListener('keydown', handleUnlock);
+    };
+  }, []);
+
   useEffect(() => {
     if (!store?.id) return;
     
@@ -244,7 +257,14 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           filter: `store_id=eq.${store.id}`
         },
         (payload: any) => {
-          LoyaltyService.getAllStoreCoupons(store.id).then(setStoreCoupons).catch(() => {});
+          if (payload.eventType === 'INSERT') {
+            setStoreCoupons(prev => [payload.new, ...prev.filter(c => c.id !== payload.new.id)]);
+          } else if (payload.eventType === 'UPDATE') {
+            setStoreCoupons(prev => prev.map(c => c.id === payload.new.id ? payload.new : c));
+          } else if (payload.eventType === 'DELETE') {
+            setStoreCoupons(prev => prev.filter(c => c.id !== payload.old.id));
+          }
+
           if (payload.eventType === 'INSERT' || (payload.new && (payload.new.status === 'USED' || payload.new.status === 'REDEEMED'))) {
             const phone = payload.new.customer_phone || '';
             const title = payload.new.privilege_title || 'مكافأة ولاء';
@@ -254,15 +274,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       )
       .subscribe();
 
-    // مزامنة دورية احترازية كل 15 ثانية لضمان أحدث البيانات في الخلفية
-    const livePollingTimer = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      LoyaltyService.getLiveStoreOrders(store.id).then(setLiveOrders).catch(() => {});
-      LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings).catch(() => {});
-    }, 15000);
-
     return () => {
-      clearInterval(livePollingTimer);
       supabase.removeChannel(channel);
     };
   }, [store?.id]);
@@ -317,13 +329,11 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       if (event.storeId === store?.id) {
         // تحديثات مستهدفة دقيقة فقط حسب نوع الحدث، دون إعادة تحميل كامل البيانات التشغيلية
         if (event.type === 'ORDER_CREATED') {
-          LoyaltyService.getLiveStoreOrders(store.id).then(setLiveOrders).catch(() => {});
           triggerLiveAlert('طلب جديد في المنيو 📦', 'تم استلام طلب جديد من العميل', 'order');
           return;
         }
 
         if (event.type === 'BOOKING_CREATED') {
-          LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings).catch(() => {});
           triggerLiveAlert('حجز موعد جديد 📅', 'تم استلام حجز خدمة جديد من العميل', 'booking');
           return;
         }

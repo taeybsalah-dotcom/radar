@@ -17,18 +17,32 @@ function getOrCreateAudioContext(): AudioContext | null {
   }
 }
 
-// Warm up AudioContext immediately on first user touch/click on screen
+// Warm up and unlock AudioContext on first user interaction (touch/click/key)
+export function ensureAudioUnlocked(): Promise<boolean> {
+  try {
+    const ctx = getOrCreateAudioContext();
+    if (!ctx) return Promise.resolve(false);
+    if (ctx.state === 'suspended') {
+      return ctx.resume().then(() => true).catch(() => false);
+    }
+    return Promise.resolve(ctx.state === 'running');
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
 if (typeof window !== 'undefined') {
   const unlockAudio = () => {
-    const ctx = getOrCreateAudioContext();
-    if (ctx && ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-    }
+    ensureAudioUnlocked();
     window.removeEventListener('click', unlockAudio);
     window.removeEventListener('touchstart', unlockAudio);
+    window.removeEventListener('pointerdown', unlockAudio);
+    window.removeEventListener('keydown', unlockAudio);
   };
   window.addEventListener('click', unlockAudio, { passive: true });
   window.addEventListener('touchstart', unlockAudio, { passive: true });
+  window.addEventListener('pointerdown', unlockAudio, { passive: true });
+  window.addEventListener('keydown', unlockAudio, { passive: true });
 }
 
 export function playBeepSound(
