@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "radar",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-09-30",
   "assets": {
     "directory": "./dist",

@@ -2,3 +2,8 @@
 node_modules/ 
 
 scripts/.migration-backup/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+*.local

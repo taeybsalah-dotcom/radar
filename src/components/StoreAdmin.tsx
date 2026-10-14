@@ -34,6 +34,7 @@ import { StaffLoginGate } from './StaffLoginGate';
 import { StoreAnalyticsView } from './merchant/StoreAnalyticsView';
 import { SandboxPaymentModal } from './SandboxPaymentModal';
 import { NotificationBell } from './NotificationBell';
+import { MenuAutoBuilderModal } from './merchant/MenuAutoBuilderModal';
 import {
   Users,
   Coins,
@@ -178,6 +179,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState('ALL');
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+  const [isAiMenuBuilderOpen, setIsAiMenuBuilderOpen] = useState(false);
   const [showInlineCatAdder, setShowInlineCatAdder] = useState(false);
   const [inlineCatNameInput, setInlineCatNameInput] = useState('');
   const [editingCatalogItem, setEditingCatalogItem] = useState<CatalogItem | null>(null);
@@ -4125,14 +4127,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </div>
                 </div>
 
-            <button
-              type="button"
-              onClick={handleOpenAddProduct}
-              className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs sm:text-sm flex items-center justify-center space-x-2 rtl:space-x-reverse shadow-md transition self-start sm:self-auto"
-            >
-              <Plus className="w-4 h-4" />
-              <span>+ إضافة منتج جديد للمنيو</span>
-            </button>
+            <div className="flex items-center gap-2.5 flex-wrap self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setIsAiMenuBuilderOpen(true)}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center space-x-2 rtl:space-x-reverse shadow-lg shadow-amber-500/20 transition group"
+              >
+                <Sparkles className="w-4 h-4 text-slate-950 animate-pulse" />
+                <span>✨ سحب المنيو الذكي (صورة)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenAddProduct}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center space-x-2 rtl:space-x-reverse border border-slate-700 transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ إضافة يدوية</span>
+              </button>
+            </div>
           </div>
 
           {/* 🚗 Fulfillment Settings Status Box */}
@@ -7020,6 +7033,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           </div>
         </div>
       )}
+
+      {/* 🧠 Modal: AI Menu Auto-Builder (سحب المنيو بالذكاء الاصطناعي) */}
+      <MenuAutoBuilderModal
+        isOpen={isAiMenuBuilderOpen}
+        onClose={() => setIsAiMenuBuilderOpen(false)}
+        storeId={store.id}
+        existingCategories={globalCategories.map((c) => c.name)}
+        onItemsSaved={(newItems) => {
+          setCatalogItems((prev) => [...newItems, ...prev]);
+          setCatalogActionSuccess(`تم بنجاح إضافة ${newItems.length} صنف بالذكاء الاصطناعي إلى المنيو! 🎉`);
+          setTimeout(() => setCatalogActionSuccess(null), 4000);
+        }}
+      />
 
       {/* 🍔 Modal: Add / Edit Product (إضافة أو تعديل منتج في المنيو) */}
       {isProductModalOpen && (
