@@ -4571,13 +4571,42 @@ export const LoyaltyService = {
     return createdCust;
   },
 
-  // 13.5 إدارة وحفظ جلسة العميل
+  // 13.5 إدارة وحفظ جلسة وملف العميل
   saveCustomerSession(storeId: string, phone: string, storeSlug?: string): void {
     const normPhone = normalizePhone(phone);
     localStorage.setItem(`radar_cust_session_${storeId}`, normPhone);
     if (storeSlug) {
       localStorage.setItem(`radar_cust_session_${storeSlug}`, normPhone);
     }
+  },
+
+  saveCustomerProfile(storeId: string, profile: { name: string; phone: string }, storeSlug?: string): void {
+    const normPhone = normalizePhone(profile.phone);
+    const data = JSON.stringify({ name: (profile.name || '').trim(), phone: normPhone });
+    localStorage.setItem(`radar_cust_profile_${storeId}`, data);
+    localStorage.setItem(`radar_cust_session_${storeId}`, normPhone);
+    if (storeSlug) {
+      localStorage.setItem(`radar_cust_profile_${storeSlug}`, data);
+      localStorage.setItem(`radar_cust_session_${storeSlug}`, normPhone);
+    }
+  },
+
+  getCustomerProfile(storeId: string, storeSlug?: string): { name: string; phone: string } | null {
+    try {
+      let raw = localStorage.getItem(`radar_cust_profile_${storeId}`);
+      if (!raw && storeSlug) {
+        raw = localStorage.getItem(`radar_cust_profile_${storeSlug}`);
+      }
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && (parsed.phone || parsed.name)) return parsed;
+      }
+      const sessionPhone = this.getCustomerSession(storeId, storeSlug);
+      if (sessionPhone) {
+        return { name: '', phone: sessionPhone };
+      }
+    } catch {}
+    return null;
   },
 
   getCustomerSession(storeId: string, storeSlug?: string): string | null {
@@ -4591,8 +4620,10 @@ export const LoyaltyService = {
 
   clearCustomerSession(storeId: string, storeSlug?: string): void {
     localStorage.removeItem(`radar_cust_session_${storeId}`);
+    localStorage.removeItem(`radar_cust_profile_${storeId}`);
     if (storeSlug) {
       localStorage.removeItem(`radar_cust_session_${storeSlug}`);
+      localStorage.removeItem(`radar_cust_profile_${storeSlug}`);
     }
   },
 
@@ -6751,6 +6782,9 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
     lines.push(`*📋 طلب وحجز جديد - ${payload.store_name}*`);
     lines.push(`*رقم الطلب:* #${payload.order_id}`);
+    if (payload.activation_code) {
+      lines.push(`*كود التفعيل / التأكيد:* ${payload.activation_code}`);
+    }
     lines.push(`*العميل:* ${payload.customer_name || 'عميل المتجر'} (${payload.customer_phone})`);
     if (payload.customer_tier) {
       lines.push(`*رتبة العميل:* 🌟 ${payload.customer_tier}`);
@@ -6842,7 +6876,7 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     const resolvedStoreId = currentStore?.id || payload.store_id;
     const supabase = getSupabaseClient();
     
-    const orderNumber = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
+    const orderNumber = payload.order_id || ('ORD-' + Math.floor(1000 + Math.random() * 9000));
     const dbPayload = {
       store_id: resolvedStoreId,
       order_number: orderNumber,
@@ -6851,11 +6885,11 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
       order_type: payload.fulfillment_type === 'dine_in' ? 'dine_in' : payload.fulfillment_type === 'takeaway' ? 'takeaway' : 'delivery',
       table_number: payload.fulfillment_details?.table_number || null,
       items: payload.items || [],
-      total_price: payload.total_price || 0,
+      total_price: payload.total_price || payload.total_amount || 0,
       loyalty_points_earned: payload.loyalty_points_earned || 0,
       status: 'pending',
       payment_status: 'unpaid',
-      notes: payload.notes || ''
+      notes: payload.notes || payload.fulfillment_details?.general_notes || ''
     };
 
     if (supabase && isUUID(resolvedStoreId)) {

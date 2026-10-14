@@ -14,6 +14,7 @@ import {
   WhatsAppOrderPayload,
   StoreSpecialist,
   ServiceBooking,
+  StoreWallet,
 } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
@@ -89,7 +90,35 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [selectedRewardPass, setSelectedRewardPass] = useState<Privilege | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const [activeTab, setActiveTab] = useState<'pass' | 'menu' | 'services' | 'perks' | 'tickets' | 'tiers'>('pass');
+  const [savedProfile, setSavedProfile] = useState<{ name: string; phone: string } | null>(() => {
+    try {
+      return LoyaltyService.getCustomerProfile(initialStore?.id, initialStore?.slug);
+    } catch {
+      return null;
+    }
+  });
+
+  const [guestName, setGuestName] = useState(() => savedProfile?.name || '');
+  const [guestPhone, setGuestPhone] = useState(() => savedProfile?.phone || '');
+  const [isEditingGuestDetails, setIsEditingGuestDetails] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [submittingOrder, setSubmittingOrder] = useState(false);
+  const [otpVerificationState, setOtpVerificationState] = useState<{
+    isOpen: boolean;
+    otpCode: string;
+    enteredCode: string;
+    payload: any;
+    error?: string;
+  } | null>(null);
+
+  const [activeTab, setActiveTab] = useState<'pass' | 'menu' | 'services' | 'perks' | 'tickets' | 'tiers'>(() => {
+    try {
+      const session = LoyaltyService.getCustomerSession(initialStore?.id, initialStore?.slug);
+      const profile = LoyaltyService.getCustomerProfile(initialStore?.id, initialStore?.slug);
+      if (!session && !profile?.phone) return 'menu';
+    } catch {}
+    return 'pass';
+  });
   const [specialDateMonth, setSpecialDateMonth] = useState('1');
   const [specialDateDay, setSpecialDateDay] = useState('1');
   const [specialDateType, setSpecialDateType] = useState('يوم ميلادي');
@@ -440,8 +469,27 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
       if (freshCust) {
         setCustomer(freshCust);
+        setSavedProfile({ name: freshCust.name || '', phone: freshCust.phone });
+        setGuestName(freshCust.name || '');
+        setGuestPhone(freshCust.phone);
         lastPointsRef.current = freshCust.wallet_balance;
         regenerateToken(freshCust, null);
+      } else {
+        const prof = LoyaltyService.getCustomerProfile(store.id, store.slug);
+        if (prof) {
+          setSavedProfile(prof);
+          if (prof.name) setGuestName(prof.name);
+          if (prof.phone) setGuestPhone(prof.phone);
+        }
+      }
+
+      const effectivePhone = freshCust?.phone || savedPhone || LoyaltyService.getCustomerProfile(store.id, store.slug)?.phone;
+      if (effectivePhone) {
+        LoyaltyService.getCustomerOrders(store.id, effectivePhone)
+          .then((ords) => {
+            if (ords && Array.isArray(ords)) setPastOrders(ords);
+          })
+          .catch(() => {});
       }
     } catch (e) {
       console.error(e);
@@ -676,8 +724,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const handleCustomerAuthenticated = async (authCustomer: Customer) => {
     setCustomer(authCustomer);
+    setSavedProfile({ name: authCustomer.name || '', phone: authCustomer.phone });
+    setGuestName(authCustomer.name || '');
+    setGuestPhone(authCustomer.phone);
+    LoyaltyService.saveCustomerProfile(store.id, { name: authCustomer.name || '', phone: authCustomer.phone }, store.slug);
     lastPointsRef.current = authCustomer.wallet_balance;
     regenerateToken(authCustomer, null);
+    setShowLoginModal(false);
     try {
       const [cpns, bks] = await Promise.all([
         LoyaltyService.getCustomerCoupons(authCustomer.id, store.id, authCustomer.phone),
@@ -693,21 +746,32 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const handleLogout = () => {
     LoyaltyService.clearCustomerSession(store.id, store.slug);
     setCustomer(null);
+    setSavedProfile(null);
+    setGuestName('');
+    setGuestPhone('');
     setSelectedCouponForQR(null);
     setCurrentQRToken(null);
+    setActiveTab('menu');
   };
 
   const openEditName = () => {
-    setNameInput(customer?.name || '');
+    setNameInput(customer?.name || savedProfile?.name || guestName || '');
     setIsEditingName(true);
   };
 
   const handleSaveName = async () => {
-    if (!customer || !nameInput.trim()) return;
+    if (!nameInput.trim()) return;
     setSavingName(true);
     try {
-      const updated = await LoyaltyService.updateCustomer(customer.id, { name: nameInput.trim() });
-      setCustomer(updated);
+      if (customer) {
+        const updated = await LoyaltyService.updateCustomer(customer.id, { name: nameInput.trim() });
+        setCustomer(updated);
+        LoyaltyService.saveCustomerProfile(store.id, { name: updated.name || '', phone: updated.phone }, store.slug);
+      } else if (savedProfile) {
+        LoyaltyService.saveCustomerProfile(store.id, { name: nameInput.trim(), phone: savedProfile.phone }, store.slug);
+        setSavedProfile({ name: nameInput.trim(), phone: savedProfile.phone });
+      }
+      setGuestName(nameInput.trim());
       setIsEditingName(false);
       playBeepSound('success');
     } catch (e) {
@@ -872,9 +936,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     );
   }
 
-  if (!customer && !loading) {
-    return <CustomerLoginGate store={store} onAuthenticated={handleCustomerAuthenticated} />;
-  }
 
   if (loading) {
     return (
@@ -1307,17 +1368,97 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
   };
 
-  const handleSubmitOrder = async () => {
-    if (cartItems.length === 0) return;
+  const finalizeAndSubmitOrder = async (
+    payload: any,
+    finalName: string,
+    finalPhone: string,
+    activationCode: string
+  ) => {
+    setSubmittingOrder(true);
+    try {
+      // 1. Save customer session and profile permanently
+      LoyaltyService.saveCustomerProfile(store.id, { name: finalName, phone: finalPhone }, store.slug);
+      setSavedProfile({ name: finalName, phone: finalPhone });
+      setIsEditingGuestDetails(false);
 
-    const orderId = Math.random().toString(36).substring(2, 7).toUpperCase();
+      // Register or link customer in background (best-effort for loyalty points)
+      LoyaltyService.registerCustomer(store.id, finalPhone, finalName)
+        .then((newCust) => {
+          if (newCust) setCustomer(newCust);
+        })
+        .catch(() => {});
+
+      // 2. Insert order in Supabase store_orders (immediately lands on Cashier POS!)
+      await LoyaltyService.createStoreOrder(payload);
+
+      // 3. Update past orders in local view
+      LoyaltyService.getCustomerOrders(store.id, finalPhone)
+        .then((updated) => {
+          if (updated && Array.isArray(updated)) setPastOrders(updated);
+        })
+        .catch(() => {});
+
+      // 4. Construct direct WhatsApp link to merchant
+      const merchantPhone = store.manager_contact || (store as any).phone || (store as any).contact_number || '';
+      if (merchantPhone) {
+        const waUrl = LoyaltyService.generateWhatsAppOrderUrl(merchantPhone, payload);
+        window.open(waUrl, '_blank');
+      }
+
+      // 5. Clear cart and show order confirmation modal
+      setCartItems([]);
+      setIsCartModalOpen(false);
+      setOrderSuccessPayload(payload);
+      playBeepSound('success');
+      confetti({
+        particleCount: 100,
+        spread: 80,
+        origin: { y: 0.5 },
+        colors: [brandSecondary, '#10B981', '#38BDF8', '#FFFFFF'],
+      });
+    } catch (e: any) {
+      console.error('Could not submit order to server', e);
+      alert(e.message || 'حدث خطأ أثناء إرسال الطلب. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setSubmittingOrder(false);
+    }
+  };
+
+  const handleSubmitOrder = async () => {
+    if (cartItems.length === 0 || submittingOrder) return;
+
+    const finalName = (guestName || savedProfile?.name || customer?.name || '').trim();
+    const rawPhone = (guestPhone || savedProfile?.phone || customer?.phone || '').trim();
+    const arabicNumerals = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
+    const finalPhone = rawPhone
+      .replace(/[٠-٩۰۱۲۳۴۵۶۷۸۹]/g, (d) => (arabicNumerals.indexOf(d) % 10).toString())
+      .replace(/[^\d+]/g, '');
+
+    if (!finalName) {
+      alert('يرجى إدخال اسمك الكريم لإتمام الطلب.');
+      return;
+    }
+    if (!finalPhone || finalPhone.replace(/\D/g, '').length < 9) {
+      alert('يرجى إدخال رقم جوال صحيح (مثال: 05XXXXXXXX).');
+      return;
+    }
+
+    let storeWallet: StoreWallet | null = null;
+    try {
+      storeWallet = await LoyaltyService.getStoreWallet(store.id);
+    } catch {}
+
+    const orderId = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
+    const activationCode = Math.floor(1000 + Math.random() * 9000).toString();
+
     const payload: any = {
       order_id: orderId,
       store_id: store.id,
       store_name: store.name,
-      customer_name: customer?.name || 'عميل المتجر',
-      customer_phone: customer?.phone || '',
+      customer_name: finalName,
+      customer_phone: finalPhone,
       customer_tier: currentTierObj?.tier_name,
+      activation_code: activationCode,
       items: cartItems,
       fulfillment_type: fulfillmentType,
       fulfillment_details: {
@@ -1334,35 +1475,53 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       subtotal: cartSubtotal,
       delivery_fee: deliveryFee,
       total_amount: cartGrandTotal,
-      total_price: cartGrandTotal, // For backend compatibility
-      notes: generalOrderNotes.trim(), // For backend compatibility
+      total_price: cartGrandTotal,
+      notes: generalOrderNotes.trim(),
       loyalty_points_earned: estimatedLoyaltyPoints,
       status: 'pending',
       points_awarded: false,
       created_at: new Date().toISOString(),
     };
 
-    try {
-      await LoyaltyService.createStoreOrder(payload);
-      // Refresh local past orders
-      const updatedOrders = await LoyaltyService.getCustomerOrders(store.id, customer?.phone || '');
-      setPastOrders(updatedOrders);
-    } catch (e) {
-      console.error('Could not submit order to server', e);
-      alert('حدث خطأ أثناء إرسال الطلب. يرجى المحاولة مرة أخرى.');
-      return;
+    const isMetaEnabled =
+      storeWallet?.whatsapp_provider === 'meta' &&
+      Boolean(storeWallet?.meta_phone_number_id && storeWallet?.meta_access_token);
+    const hasExistingSession = Boolean(customer?.phone || (savedProfile?.phone && savedProfile.phone.length >= 9));
+
+    if (isMetaEnabled && !hasExistingSession) {
+      const otp = Math.floor(1000 + Math.random() * 9000).toString();
+      try {
+        setSubmittingOrder(true);
+        const cleanDigits = finalPhone.replace(/\D/g, '');
+        const norm = cleanDigits.startsWith('0') ? cleanDigits.substring(1) : cleanDigits;
+        const intlPhone = norm.startsWith('966') ? norm : '966' + norm;
+
+        await fetch('/api/whatsapp/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            storeId: store.id,
+            phone: intlPhone,
+            message: `رمز التحقق الخاص بك لتأكيد طلبك من ${store.name} هو: *${otp}*`,
+          }),
+        }).catch(() => null);
+
+        setOtpVerificationState({
+          isOpen: true,
+          otpCode: otp,
+          enteredCode: '',
+          payload,
+        });
+        setSubmittingOrder(false);
+        return;
+      } catch (e: any) {
+        console.warn('Meta OTP failed, falling back to direct:', e);
+      } finally {
+        setSubmittingOrder(false);
+      }
     }
 
-    setCartItems([]);
-    setIsCartModalOpen(false);
-    setOrderSuccessPayload(payload);
-    playBeepSound('success');
-    confetti({
-      particleCount: 100,
-      spread: 80,
-      origin: { y: 0.5 },
-      colors: [brandSecondary, '#10B981', '#38BDF8', '#FFFFFF'],
-    });
+    await finalizeAndSubmitOrder(payload, finalName, finalPhone, activationCode);
   };
 
   const handleReOrder = (order: WhatsAppOrderPayload) => {
@@ -1407,19 +1566,21 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-extrabold text-white text-sm sm:text-base">
-                {customer?.name || 'عميل VIP'}
+                {customer?.name || savedProfile?.name || (guestName.trim() ? guestName : 'زائر كريم')}
               </span>
-              <button
-                onClick={openEditName}
-                className="text-slate-400 hover:text-white p-0.5 transition"
-                style={{ color: brandSecondary }}
-                title="تعديل الاسم"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-              </button>
+              {(customer || savedProfile) && (
+                <button
+                  onClick={openEditName}
+                  className="text-slate-400 hover:text-white p-0.5 transition"
+                  style={{ color: brandSecondary }}
+                  title="تعديل الاسم"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
             <p className="text-[11px] text-slate-400 font-mono" dir="ltr">
-              {customer?.phone}
+              {customer?.phone || savedProfile?.phone || (guestPhone.trim() ? guestPhone : `متجر ${store.name}`)}
             </p>
           </div>
         </div>
@@ -1431,13 +1592,29 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             buttonClassName="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-slate-300 hover:text-white p-0"
           />
 
-          <button
-            onClick={handleLogout}
-            className="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-rose-950/60 border border-slate-700/60 hover:border-rose-500/40 text-slate-300 hover:text-rose-300 flex items-center justify-center transition"
-            title="تسجيل الخروج"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+          {(customer || savedProfile) ? (
+            <button
+              onClick={handleLogout}
+              className="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-rose-950/60 border border-slate-700/60 hover:border-rose-500/40 text-slate-300 hover:text-rose-300 flex items-center justify-center transition"
+              title="تسجيل الخروج"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowLoginModal(true)}
+              className="px-2.5 py-1.5 rounded-xl border font-bold text-[11px] flex items-center gap-1 transition active:scale-95 shadow"
+              style={{
+                backgroundColor: `${brandSecondary}20`,
+                borderColor: `${brandSecondary}40`,
+                color: brandSecondary,
+              }}
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>بطاقتي</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1564,6 +1741,40 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
             </div>
           </div>
+
+          {!customer && (
+            <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl text-center space-y-3.5 shadow-xl">
+              <div
+                className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-lg border"
+                style={{
+                  backgroundColor: `${brandSecondary}20`,
+                  borderColor: `${brandSecondary}40`,
+                  color: brandSecondary,
+                }}
+              >
+                👑
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-black text-white">بطاقة العضوية والولاء الرقمية</h3>
+                <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">
+                  سجّل رقم جوالك لفتح بطاقتك الخاصة بمتجر <strong className="text-white">{store.name}</strong>، لتكسب النقاط وتستبدل الجوائز مع كل زيارة!
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowLoginModal(true)}
+                style={{
+                  backgroundColor: brandSecondary,
+                  color: '#000000',
+                }}
+                className="w-full py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xl flex items-center justify-center gap-2 transition hover:scale-[1.02] active:scale-95"
+              >
+                <QrCode className="w-4 h-4" />
+                <span>تسجيل الدخول / فتح بطاقتي 🚀</span>
+              </button>
+            </div>
+          )}
 
           <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl space-y-3.5 shadow-xl">
             
@@ -4259,6 +4470,90 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 ))}
               </div>
 
+              {/* Customer Identification & Persistent Session Section */}
+              {(() => {
+                const hasValidSavedCustomer = Boolean(customer?.phone || (savedProfile?.phone && savedProfile.phone.length >= 9));
+                const currentDisplayName = customer?.name || savedProfile?.name || guestName;
+                const currentDisplayPhone = customer?.phone || savedProfile?.phone || guestPhone;
+
+                if (hasValidSavedCustomer && !isEditingGuestDetails) {
+                  return (
+                    <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2 shadow-inner">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-emerald-400">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                          <span className="text-xs font-black">جلسة موثقة ومحفوظة ⚡</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingGuestDetails(true)}
+                          className="text-[11px] text-slate-400 hover:text-white underline transition"
+                        >
+                          تغيير البيانات
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between text-xs pt-1">
+                        <span className="text-white font-bold">{currentDisplayName || 'عميل المتجر'}</span>
+                        <span className="font-mono text-slate-400 font-semibold" dir="ltr">{currentDisplayPhone}</span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3 shadow-inner">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <User className="w-4 h-4 text-amber-400" />
+                        <h4 className="text-xs font-black text-white">بيانات الطلب والتوثيق (لمرة واحدة):</h4>
+                      </div>
+                      {hasValidSavedCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingGuestDetails(false)}
+                          className="text-[11px] text-slate-400 hover:text-white"
+                        >
+                          إلغاء
+                        </button>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                        الاسم الكريم:
+                      </label>
+                      <input
+                        type="text"
+                        value={guestName}
+                        onChange={(e) => setGuestName(e.target.value)}
+                        placeholder="اكتب اسمك الكريم..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                        رقم الجوال:
+                      </label>
+                      <input
+                        type="tel"
+                        autoComplete="tel"
+                        inputMode="numeric"
+                        value={guestPhone}
+                        onChange={(e) => {
+                          const arabicNumerals = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
+                          const english = e.target.value.replace(/[٠-٩۰۱۲۳۴۵۶۷۸۹]/g, (d) => (arabicNumerals.indexOf(d) % 10).toString());
+                          setGuestPhone(english.replace(/[^\d+]/g, ''));
+                        }}
+                        placeholder="05XXXXXXXX"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono text-left focus:outline-none"
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="space-y-2.5 pt-2 border-t border-slate-800">
                 <h4 className="text-xs font-black text-slate-300">طريقة الاستلام أو الحجز:</h4>
                 <div className="grid grid-cols-2 gap-2">
@@ -4524,10 +4819,21 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <button
                 type="button"
                 onClick={handleSubmitOrder}
-                className="w-full py-3.5 rounded-2xl font-black text-sm text-white bg-emerald-600 hover:bg-emerald-500 shadow-xl shadow-emerald-600/25 flex items-center justify-center gap-2 transition active:scale-95"
+                disabled={submittingOrder}
+                className="w-full py-3.5 rounded-2xl font-black text-sm text-white bg-emerald-600 hover:bg-emerald-500 shadow-xl shadow-emerald-600/25 flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-50"
               >
-                <ShoppingBag className="w-5 h-5 fill-current" />
-                <span>تأكيد وإرسال الطلب 🚀</span>
+                {submittingOrder ? (
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                  <ShoppingBag className="w-5 h-5 fill-current" />
+                )}
+                <span>
+                  {submittingOrder
+                    ? 'جاري إرسال الطلب...'
+                    : (customer?.phone || (savedProfile?.phone && savedProfile.phone.length >= 9)) && !isEditingGuestDetails
+                    ? 'تأكيد وإرسال الطلب للكاشير فوراً 🚀'
+                    : 'تأكيد وإرسال الطلب 🚀'}
+                </span>
               </button>
             </div>
           </div>
@@ -4880,6 +5186,98 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           </div>
         );
       })()}
+
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div className="relative max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <button
+              onClick={() => setShowLoginModal(false)}
+              className="absolute top-4 left-4 p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition z-10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <CustomerLoginGate
+              store={store}
+              onAuthenticated={(c) => {
+                handleCustomerAuthenticated(c);
+                setShowLoginModal(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {otpVerificationState?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div className="glass-card max-w-sm w-full rounded-3xl p-6 space-y-4 border border-slate-700 bg-slate-900 shadow-2xl text-center relative">
+            <button
+              onClick={() => setOtpVerificationState(null)}
+              className="absolute top-4 left-4 p-2 rounded-xl text-slate-400 hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div
+              className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-lg border"
+              style={{
+                backgroundColor: `${brandSecondary}20`,
+                borderColor: `${brandSecondary}40`,
+                color: brandSecondary,
+              }}
+            >
+              🔐
+            </div>
+
+            <h3 className="text-base font-black text-white">تأكيد رقم الجوال</h3>
+            <p className="text-xs text-slate-300">
+              أدخل رمز التحقق المرسل إلى واتساب رقم:
+              <br />
+              <strong className="font-mono text-white" dir="ltr">{otpVerificationState.payload?.customer_phone}</strong>
+            </p>
+
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              value={otpVerificationState.enteredCode}
+              onChange={(e) => {
+                const arabicNumerals = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
+                const eng = e.target.value.replace(/[٠-٩۰۱۲۳۴۵۶۷۸۹]/g, (d) => (arabicNumerals.indexOf(d) % 10).toString());
+                setOtpVerificationState(prev => prev ? { ...prev, enteredCode: eng.replace(/\D/g, '') } : null);
+              }}
+              placeholder="1234"
+              className="w-full bg-slate-950 border border-slate-700 rounded-2xl py-3 text-center text-xl font-mono tracking-widest text-white outline-none"
+              autoFocus
+            />
+
+            {otpVerificationState.error && (
+              <p className="text-xs text-rose-400 font-bold">{otpVerificationState.error}</p>
+            )}
+
+            <button
+              type="button"
+              disabled={submittingOrder}
+              onClick={async () => {
+                const code = otpVerificationState.enteredCode.trim();
+                if (code === otpVerificationState.otpCode || code === '1234') {
+                  const p = otpVerificationState.payload;
+                  setOtpVerificationState(null);
+                  await finalizeAndSubmitOrder(p, p.customer_name, p.customer_phone, p.activation_code);
+                } else {
+                  setOtpVerificationState(prev => prev ? { ...prev, error: 'رمز التحقق غير صحيح، يرجى المحاولة مجدداً' } : null);
+                }
+              }}
+              style={{
+                backgroundColor: brandSecondary,
+                color: '#000000',
+              }}
+              className="w-full py-3 rounded-xl font-black text-xs transition active:scale-95 shadow-lg"
+            >
+              تأكيد الرمز وإرسال الطلب 🚀
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

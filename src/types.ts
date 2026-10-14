@@ -422,6 +422,7 @@ export interface WhatsAppOrderPayload {
   customer_name: string;
   customer_phone: string;
   customer_tier?: string;
+  activation_code?: string;
   fulfillment_type: FulfillmentType;
   items: CartItem[];
   subtotal: number;
