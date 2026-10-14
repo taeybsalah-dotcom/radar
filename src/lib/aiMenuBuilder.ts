@@ -69,8 +69,8 @@ export function cleanPrice(raw: any): number {
  * أبعاد لا تتجاوز 1600px، وحجم لا يتجاوز 1MB للحفاظ على سرعة الرفع وأداء Cloudflare Worker
  */
 export async function compressMenuImageForAi(file: File): Promise<CompressedImageResult> {
-  const MAX_DIMENSION = 1024;
-  const QUALITY = 0.7;
+  const MAX_DIMENSION = 1000;
+  const QUALITY = 0.6;
 
   return new Promise((resolve, reject) => {
     // إذا كان الملف PDF، نرفضه بلطف لأن المعالجة الحالية للصور

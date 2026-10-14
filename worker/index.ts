@@ -69,17 +69,14 @@ async function callGeminiVision(
 ): Promise<ParsedMenuResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  const prompt = `استخرج أصناف المنيو بدقة وسرعة:
-لكل صنف استخرج:
-- name: اسم الصنف بدقة.
-- category: اسم القسم المناسب.
-- price: السعر المالي كرقم إنجليزي صريح (مثلاً 15 أو 24.5).
-  * إلزام: حوّل أي أرقام عربية (مثل ١٥، ٢٠) إلى أرقام إنجليزية صريحة (15, 20).
-  * تفريق صارم: تجاهل تماماً أرقام السعرات الحرارية (سعرة / كالوري / Cal / Kcal / 🔥 / أو الأرقام الكبيرة مثل 350 و 600) ولا تضعها في السعر! السعر هو الثمن المالي فقط.
-  * احذف أي كلمة عملة (ر.س أو ريال أو SAR) وضع الرقم فقط.
-- description: نص فارغ "" إذا لم يكن مكتوباً بالمنيو.
-- item_type: "product" أو "service".
-لا تؤلف أي وصف من عندك أبداً.`;
+  const prompt = `استخرج أصناف المنيو على شكل مصفوفة JSON مضغوطة بمفاتيح من حرف واحد فقط:
+[{"n": "اسم الصنف", "c": "القسم", "p": 15}]
+- n: اسم الصنف بدقة.
+- c: اسم القسم المناسب.
+- p: السعر المالي كرقم إنجليزي فقط (مثلاً 15 أو 24.5).
+  * حوّل أي أرقام عربية إلى إنجليزية (15).
+  * تجاهل السعرات الحرارية تماماً (cal/سعرة/kcal/🔥).
+لا تستخرج وصفاً نهائياً.`;
 
   const payload = {
     contents: [
@@ -96,39 +93,23 @@ async function callGeminiVision(
       },
     ],
     generationConfig: {
-      temperature: 0.1,
-      maxOutputTokens: 4096,
+      temperature: 0,
+      maxOutputTokens: 8192,
       thinkingConfig: {
         thinkingBudget: 0,
       },
       responseMimeType: 'application/json',
       responseSchema: {
-        type: 'OBJECT',
-        properties: {
-          categories: {
-            type: 'ARRAY',
-            items: { type: 'STRING' },
-            description: 'الأقسام',
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            n: { type: 'STRING', description: 'اسم الصنف' },
+            c: { type: 'STRING', description: 'القسم' },
+            p: { type: 'NUMBER', description: 'السعر المالي' },
           },
-          items: {
-            type: 'ARRAY',
-            items: {
-              type: 'OBJECT',
-              properties: {
-                name: { type: 'STRING' },
-                category: { type: 'STRING' },
-                price: { type: 'NUMBER', description: 'السعر المالي كرقم مجرد' },
-                description: { type: 'STRING' },
-                item_type: {
-                  type: 'STRING',
-                  enum: ['product', 'service'],
-                },
-              },
-              required: ['name', 'category', 'price', 'item_type'],
-            },
-          },
+          required: ['n', 'c', 'p'],
         },
-        required: ['categories', 'items'],
       },
     },
   };
@@ -157,18 +138,40 @@ async function callGeminiVision(
     throw new Error('لم يتم استخراج أي بيانات من الصورة، يرجى التأكد من وضوح المنيو.');
   }
 
-  const parsed = JSON.parse(rawText) as ParsedMenuResult;
-  const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+  let rawList: any[] = [];
+  try {
+    const parsed = JSON.parse(rawText);
+    rawList = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.items)
+      ? parsed.items
+      : [];
+  } catch (e) {
+    throw new Error('فشل في قراءة بيانات المنيو المستخرجة.');
+  }
+
+  const categoriesSet = new Set<string>();
+  const items: ParsedMenuItem[] = [];
+
+  for (const it of rawList) {
+    const name = String(it.n || it.name || '').trim();
+    const category = String(it.c || it.category || 'عام').trim();
+    const price = cleanPrice(it.p ?? it.price);
+    if (!name) continue;
+
+    if (category) categoriesSet.add(category);
+    items.push({
+      name,
+      category,
+      price,
+      description: '',
+      item_type: 'product',
+    });
+  }
 
   return {
-    categories: Array.isArray(parsed.categories) ? parsed.categories : [],
-    items: rawItems.map((it: any) => ({
-      name: String(it.name || '').trim(),
-      category: String(it.category || 'عام').trim(),
-      price: cleanPrice(it.price),
-      description: it.description ? String(it.description).trim() : '',
-      item_type: it.item_type === 'service' ? 'service' : 'product',
-    })),
+    categories: Array.from(categoriesSet),
+    items,
   };
 }
 
