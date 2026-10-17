@@ -749,7 +749,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         total_price: cartGrandTotal,
         payment_method: transferredMetadata?.isAppPrepaid ? 'online' : paymentMethod,
         payment_status: 'paid',
-        status: 'completed',
+        status: 'preparing',
         cashier_id: activeStaff.id,
         cashier_name: activeStaff.name,
         created_at: nowIso,

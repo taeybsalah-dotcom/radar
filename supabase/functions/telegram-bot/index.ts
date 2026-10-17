@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1"
 
-const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') || '8065372904:AAH8xReiWQ2zTrog0gwnQD-4Vz1zcyE51XY';
+const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN') || '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || 'https://zagpvflyizbmzsbmhnts.supabase.co';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || 'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
 

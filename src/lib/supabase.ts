@@ -7372,7 +7372,7 @@ export const LoyaltyService = {
     const orderNumber = payload.order_id || payload.order_number || ('ORD-' + Math.floor(1000 + Math.random() * 9000));
     const isDirectPOSOrder = Boolean(payload.cashier_id) || payload.order_source === 'pos' || payload.status === 'completed';
     const resolvedOrderSource = payload.order_source || (isDirectPOSOrder ? 'pos' : 'customer_app');
-    const resolvedStatus = payload.status || (isDirectPOSOrder ? 'completed' : 'pending');
+    const resolvedStatus = payload.status || (isDirectPOSOrder ? 'preparing' : 'pending');
     const resolvedPaymentStatus = payload.payment_status || (isDirectPOSOrder ? 'paid' : 'unpaid');
 
     const dbPayload = {

@@ -92,7 +92,7 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
   const [stationFilter, setStationFilter] = useState<'ALL' | 'BARISTA' | 'KITCHEN' | 'BAKERY'>('ALL');
   const [fulfillmentFilter, setFulfillmentFilter] = useState<'ALL' | 'dine_in' | 'takeaway' | 'car'>('ALL');
   const [specialistFilter, setSpecialistFilter] = useState<string>('ALL');
-  const [bookingDateFilter, setBookingDateFilter] = useState<'today' | 'all'>('today');
+  const [bookingDateFilter, setBookingDateFilter] = useState<'today' | 'all'>('all');
   const [viewMode, setViewMode] = useState<'kanban' | 'grid'>('kanban');
   const [ticketTab, setTicketTab] = useState<'active' | 'completed'>('active');
 
@@ -501,8 +501,25 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
 
       // 2. Date Filter
       if (bookingDateFilter === 'today') {
-        const todayStr = new Date().toISOString().split('T')[0];
-        if (b.booking_date && b.booking_date !== todayStr) return false;
+        const rawDate = b.booking_date ? String(b.booking_date) : '';
+        const bDatePart = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+
+        const now = new Date();
+        const localYear = now.getFullYear();
+        const localMonth = String(now.getMonth() + 1).padStart(2, '0');
+        const localDay = String(now.getDate()).padStart(2, '0');
+        const localToday = `${localYear}-${localMonth}-${localDay}`;
+        const utcToday = now.toISOString().split('T')[0];
+
+        let isMatch = bDatePart === localToday || bDatePart === utcToday;
+        if (!isMatch && rawDate) {
+          try {
+            const bD = new Date(rawDate);
+            const bLocal = `${bD.getFullYear()}-${String(bD.getMonth() + 1).padStart(2, '0')}-${String(bD.getDate()).padStart(2, '0')}`;
+            if (bLocal === localToday || bLocal === utcToday) isMatch = true;
+          } catch {}
+        }
+        if (!isMatch) return false;
       }
 
       // 3. Specialist Filter
