@@ -74,6 +74,18 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
       secondaryColor = effectiveStore?.secondary_color || '#F59E0B';
       break;
 
+    case 'kds':
+      pageTitle = effectiveStore?.name
+        ? `${effectiveStore.name} - شاشة المطبخ KDS`
+        : 'شاشة المطبخ والعرض';
+      manifestName = effectiveStore?.name
+        ? `${effectiveStore.name} - شاشة العرض المباشر`
+        : 'شاشة العرض المباشر';
+      manifestShortName = 'شاشة KDS';
+      primaryColor = '#0F172A';
+      secondaryColor = '#F59E0B';
+      break;
+
     case 'customer':
       pageTitle = effectiveStore?.name
         ? effectiveStore.name

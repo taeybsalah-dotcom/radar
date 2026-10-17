@@ -291,10 +291,13 @@ function parseRouteParams() {
 
   // 7. Check Subpaths like /:slug/pos, /:slug/admin, /:slug/cashier, /:slug/kds
   const pathSegments = pathname.split('/').filter(Boolean);
-  if (pathSegments.length === 2) {
-    const [firstSeg, secondSeg] = pathSegments;
-    const cleanSecond = secondSeg.toLowerCase();
-    if (cleanSecond === 'pos' || cleanSecond === 'cashier') {
+  const hashSegments = rawHash ? rawHash.split('/').filter(Boolean) : [];
+  const effectiveSegments = pathSegments.length >= 2 ? pathSegments : hashSegments.length >= 2 ? hashSegments : [];
+
+  if (effectiveSegments.length >= 2) {
+    const firstSeg = effectiveSegments[0];
+    const secondSeg = effectiveSegments[1].toLowerCase();
+    if (secondSeg === 'pos' || secondSeg === 'cashier') {
       return {
         portal: 'cashier' as const,
         isPreview: previewParam,
@@ -302,7 +305,7 @@ function parseRouteParams() {
         partnerSlug: null,
       };
     }
-    if (cleanSecond === 'admin' || cleanSecond === 'merchant' || cleanSecond === 'store') {
+    if (secondSeg === 'admin' || secondSeg === 'merchant' || secondSeg === 'store') {
       return {
         portal: 'admin' as const,
         isPreview: previewParam,
@@ -310,7 +313,7 @@ function parseRouteParams() {
         partnerSlug: null,
       };
     }
-    if (cleanSecond === 'kds' || cleanSecond === 'kitchen') {
+    if (secondSeg === 'kds' || secondSeg === 'kitchen') {
       return {
         portal: 'kds' as const,
         isPreview: previewParam,
@@ -699,7 +702,7 @@ export function App() {
         if (found) {
           setStore(found);
           const targetPortal =
-            config.portal && ['cashier', 'customer', 'admin'].includes(config.portal)
+            config.portal && ['cashier', 'customer', 'admin', 'kds'].includes(config.portal)
               ? config.portal
               : 'customer';
           setActiveTab(targetPortal);
@@ -737,8 +740,8 @@ export function App() {
         }
       }
 
-      // 7. Resolving default store if portal is cashier, admin, or customer without slug
-      if (config.portal && ['cashier', 'customer', 'admin'].includes(config.portal)) {
+      // 7. Resolving default store if portal is cashier, admin, customer, or kds without slug
+      if (config.portal && ['cashier', 'customer', 'admin', 'kds'].includes(config.portal)) {
         const defaultStore = await LoyaltyService.getStore();
         if (defaultStore) {
           setStore(defaultStore);
@@ -1073,20 +1076,22 @@ export function App() {
         )}
 
         {/* Global Lock-Screen Push & Notification Permission Banner */}
-        <NotificationPermissionBanner
-          portalName={
-            activeTab === 'partner'
-              ? 'بوابة الشريك والمسوق'
-              : activeTab === 'cashier'
-              ? 'بوابة الكاشير'
-              : activeTab === 'admin'
-              ? 'لوحة إدارة المتجر'
-              : activeTab === 'super-admin'
-              ? 'لوحة المالك (Super Admin)'
-              : store?.name || 'محفظة الولاء'
-          }
-          role={role || activeTab}
-        />
+        {activeTab !== 'kds' && (
+          <NotificationPermissionBanner
+            portalName={
+              activeTab === 'partner'
+                ? 'بوابة الشريك والمسوق'
+                : activeTab === 'cashier'
+                ? 'بوابة الكاشير'
+                : activeTab === 'admin'
+                ? 'لوحة إدارة المتجر'
+                : activeTab === 'super-admin'
+                ? 'لوحة المالك (Super Admin)'
+                : store?.name || 'محفظة الولاء'
+            }
+            role={role || activeTab}
+          />
+        )}
       </main>
 
       {/* SaaS Multi-Tenant Footer (Visible ONLY in Super Admin / Preview mode) */}
@@ -1110,21 +1115,23 @@ export function App() {
       )}
 
       {/* ⚡ Radar Quick Switcher & Reset Floating Dock */}
-      <RadarQuickSwitcher
-        currentStore={store}
-        activePortal={activeTab}
-        onNavigate={(targetPortal, targetStoreSlug) => {
-          if (targetPortal === 'join') {
-            window.location.href = window.location.origin + '/';
-          } else if (targetPortal === 'super-admin') {
-            window.location.href = window.location.origin + '/super-admin';
-          } else if (targetPortal === 'partner') {
-            window.location.href = window.location.origin + '/partner';
-          } else if (targetStoreSlug) {
-            window.location.href = `${window.location.origin}/${targetStoreSlug}${targetPortal === 'customer' ? '' : '/' + targetPortal}`;
-          }
-        }}
-      />
+      {activeTab !== 'kds' && (
+        <RadarQuickSwitcher
+          currentStore={store}
+          activePortal={activeTab}
+          onNavigate={(targetPortal, targetStoreSlug) => {
+            if (targetPortal === 'join') {
+              window.location.href = window.location.origin + '/';
+            } else if (targetPortal === 'super-admin') {
+              window.location.href = window.location.origin + '/super-admin';
+            } else if (targetPortal === 'partner') {
+              window.location.href = window.location.origin + '/partner';
+            } else if (targetStoreSlug) {
+              window.location.href = `${window.location.origin}/${targetStoreSlug}${targetPortal === 'customer' ? '' : '/' + targetPortal}`;
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
