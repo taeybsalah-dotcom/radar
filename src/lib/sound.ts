@@ -22,6 +22,16 @@ export function ensureAudioUnlocked(): Promise<boolean> {
   try {
     const ctx = getOrCreateAudioContext();
     if (!ctx) return Promise.resolve(false);
+
+    // Force-unlock audio hardware on iOS Safari and mobile Chrome via micro-buffer
+    try {
+      const buffer = ctx.createBuffer(1, 1, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start(0);
+    } catch {}
+
     if (ctx.state === 'suspended') {
       return ctx.resume().then(() => true).catch(() => false);
     }
@@ -45,19 +55,67 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', unlockAudio, { passive: true });
 }
 
+let posBellAudio: HTMLAudioElement | null = null;
+function playPosBellAudioFile() {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!posBellAudio) {
+      posBellAudio = new Audio('/sounds/radar-pos-bell.wav');
+      posBellAudio.preload = 'auto';
+    }
+    posBellAudio.currentTime = 0;
+    posBellAudio.play().catch(() => {});
+  } catch {}
+}
+
 export function playBeepSound(
-  type: 'success' | 'redeem' | 'error' | 'notification' | 'commission' | 'pos_order_alert' = 'success'
+  type: 'success' | 'redeem' | 'error' | 'notification' | 'commission' | 'pos_order_alert' | 'kitchen_order_ding' = 'success'
 ) {
+  // 📳 Mobile Physical Device Vibration (works even when muted or low volume)
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      if (type === 'pos_order_alert') {
+        navigator.vibrate([400, 150, 400, 150, 600]);
+      } else if (type === 'kitchen_order_ding') {
+        navigator.vibrate([300, 100, 300, 100, 500]);
+      } else if (type === 'notification') {
+        navigator.vibrate([250, 120, 250]);
+      } else if (type === 'error') {
+        navigator.vibrate([300, 100, 300]);
+      } else {
+        navigator.vibrate([80]);
+      }
+    } catch {}
+  }
+
+  // 🔔 Also play real WAV audio file for OS media session playback (active when screen locked)
+  if (type === 'pos_order_alert') {
+    playPosBellAudioFile();
+  }
+
   try {
     const ctx = getOrCreateAudioContext();
     if (!ctx) return;
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-    }
 
-    const t = ctx.currentTime;
+    const renderSound = () => {
+      const t = ctx.currentTime;
 
-    if (type === 'pos_order_alert') {
+    if (type === 'kitchen_order_ding') {
+      // 👨‍🍳 Authentic Kitchen Bell / Service Chime (D5 -> A5 -> D6)
+      const kitchenNotes = [587.33, 880.0, 1174.66];
+      kitchenNotes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = idx === 2 ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(freq, t + idx * 0.08);
+        gain.gain.setValueAtTime(0.5, t + idx * 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + idx * 0.08 + 0.45);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t + idx * 0.08);
+        osc.stop(t + idx * 0.08 + 0.45);
+      });
+    } else if (type === 'pos_order_alert') {
       // 🛎️ Clear Loud Restaurant / POS Melodic Bell (C5 -> E5 -> G5 -> C6)
       const notes = [523.25, 659.25, 783.99, 1046.50];
       notes.forEach((freq, idx) => {
@@ -158,10 +216,16 @@ export function playBeepSound(
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start(t + offset);
-        osc.stop(t + offset + 0.1);
       });
     }
-  } catch (e) {
-    console.warn('Audio playback not supported or blocked:', e);
+  };
+
+  if (ctx.state === 'suspended') {
+    ctx.resume().then(renderSound).catch(renderSound);
+  } else {
+    renderSound();
   }
+} catch (e) {
+  console.warn('Audio playback not supported or blocked:', e);
+}
 }

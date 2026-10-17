@@ -17,7 +17,7 @@ import {
   AuditLog,
 } from '../types';
 
-export const DEMO_STORE_ID = 'demo-cafe-store-uuid';
+export const DEMO_STORE_ID = 'c0a80101-cafe-4000-8000-000000000001';
 export const DEMO_STORE_SLUG = 'demo-cafe';
 
 export const INITIAL_DEMO_STORE: Store = {

@@ -19,11 +19,18 @@ export type LoyaltyEventType =
   | 'ORDER_CREATED'
   | 'BOOKING_CREATED'
   | 'ORDER_STATUS_UPDATED'
-  | 'BOOKING_STATUS_UPDATED';
+  | 'BOOKING_STATUS_UPDATED'
+  | 'BRANCHES_UPDATED'
+  | 'CATALOG_UPDATED'
+  | 'BOOKINGS_UPDATED'
+  | 'SHIFT_CLOSED'
+  | 'REFUND_PROCESSED'
+  | 'CASH_MOVEMENT_RECORDED';
 
 export interface LoyaltyEventPayload {
   type: LoyaltyEventType;
   storeId: string;
+  eventId?: string;
   senderId?: string;
   phone?: string;
   points?: number;
@@ -42,6 +49,9 @@ export interface LoyaltyEventPayload {
   targetId?: string;
   orderData?: any;
   bookingData?: any;
+  shiftData?: any;
+  refundData?: any;
+  cashMovementData?: any;
 }
 
 const CLIENT_INSTANCE_ID =
@@ -61,6 +71,8 @@ const CROSS_DEVICE_REALTIME_EVENTS = new Set<LoyaltyEventType>([
   'BOOKING_CREATED',
   'ORDER_STATUS_UPDATED',
   'BOOKING_STATUS_UPDATED',
+  'CATALOG_UPDATED',
+  'BOOKINGS_UPDATED',
 ]);
 
 const channelName = 'radar_loyalty_realtime_channel';
@@ -73,6 +85,21 @@ let activeSupabaseClient: any = null;
 const lastBroadcastTimestamps = new Map<string, number>();
 const BROADCAST_THROTTLE_MS = 1500;
 
+// 🛡️ Sliding window cache to strictly prevent duplicate processing of events (e.g. BroadcastChannel + WebSocket arrival)
+const processedEventIds = new Set<string>();
+function markAndCheckProcessed(eventId?: string): boolean {
+  if (!eventId) return false;
+  if (processedEventIds.has(eventId)) {
+    return true; // Already processed, duplicate!
+  }
+  processedEventIds.add(eventId);
+  if (processedEventIds.size > 300) {
+    const first = processedEventIds.values().next().value;
+    if (first) processedEventIds.delete(first);
+  }
+  return false;
+}
+
 try {
   if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
     channel = new BroadcastChannel(channelName);
@@ -80,6 +107,10 @@ try {
       if (event.data) {
         // Prevent echo if sender is current client instance
         if (event.data.senderId && event.data.senderId === CLIENT_INSTANCE_ID) {
+          return;
+        }
+        // Deduplicate across transport layers (BroadcastChannel vs WebSocket)
+        if (markAndCheckProcessed(event.data.eventId)) {
           return;
         }
         listeners.forEach((fn) => {
@@ -111,6 +142,10 @@ export const LoyaltyEvents = {
             if (msg.payload.senderId && msg.payload.senderId === CLIENT_INSTANCE_ID) {
               return;
             }
+            // Deduplicate across transport layers (BroadcastChannel vs WebSocket)
+            if (markAndCheckProcessed(msg.payload.eventId)) {
+              return;
+            }
             listeners.forEach((fn) => {
               try { fn(msg.payload); } catch (err) { console.warn('Realtime listener error:', err); }
             });
@@ -139,10 +174,15 @@ export const LoyaltyEvents = {
   },
 
   emit(payload: LoyaltyEventPayload) {
+    const eventId = payload.eventId || `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const eventWithSender: LoyaltyEventPayload = {
       ...payload,
+      eventId,
       senderId: payload.senderId || CLIENT_INSTANCE_ID,
     };
+
+    // Mark as processed on current emitter client to prevent echo loops
+    markAndCheckProcessed(eventId);
 
     // 1. Notify local browser listeners once (Instant UI update: 0ms, 0 network cost)
     listeners.forEach((fn) => {

@@ -9,11 +9,83 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      store_branches: {
+        Row: {
+          id: string;
+          store_id: string;
+          branch_code: string;
+          name: string;
+          city: string | null;
+          address: string | null;
+          phone: string | null;
+          is_main: boolean;
+          status: string;
+          is_open: boolean;
+          manual_override: string;
+          working_hours: Json;
+          busy_mode: boolean;
+          pickup_available: boolean;
+          delivery_available: boolean;
+          dine_in_available: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          store_id: string;
+          branch_code?: string;
+          name: string;
+          city?: string | null;
+          address?: string | null;
+          phone?: string | null;
+          is_main?: boolean;
+          status?: string;
+          is_open?: boolean;
+          manual_override?: string;
+          working_hours?: Json;
+          busy_mode?: boolean;
+          pickup_available?: boolean;
+          delivery_available?: boolean;
+          dine_in_available?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          store_id?: string;
+          branch_code?: string;
+          name?: string;
+          city?: string | null;
+          address?: string | null;
+          phone?: string | null;
+          is_main?: boolean;
+          status?: string;
+          is_open?: boolean;
+          manual_override?: string;
+          working_hours?: Json;
+          busy_mode?: boolean;
+          pickup_available?: boolean;
+          delivery_available?: boolean;
+          dine_in_available?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "store_branches_store_id_fkey";
+            columns: ["store_id"];
+            isOneToOne: false;
+            referencedRelation: "stores";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       stores: {
         Row: {
           id: string;
           slug: string;
           name: string;
+          store_code: string | null;
           logo_url: string | null;
           primary_color: string | null;
           secondary_color: string | null;
@@ -58,6 +130,7 @@ export type Database = {
           id?: string;
           slug: string;
           name: string;
+          store_code?: string | null;
           logo_url?: string | null;
           primary_color?: string | null;
           secondary_color?: string | null;
@@ -102,6 +175,7 @@ export type Database = {
           id?: string;
           slug?: string;
           name?: string;
+          store_code?: string | null;
           logo_url?: string | null;
           primary_color?: string | null;
           secondary_color?: string | null;
@@ -148,6 +222,7 @@ export type Database = {
         Row: {
           id: string;
           store_id: string;
+          branch_id: string | null;
           user_id: string | null;
           name: string;
           phone: string;
@@ -162,6 +237,7 @@ export type Database = {
         Insert: {
           id?: string;
           store_id: string;
+          branch_id?: string | null;
           user_id?: string | null;
           name: string;
           phone: string;
@@ -176,6 +252,7 @@ export type Database = {
         Update: {
           id?: string;
           store_id?: string;
+          branch_id?: string | null;
           user_id?: string | null;
           name?: string;
           phone?: string;

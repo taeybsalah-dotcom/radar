@@ -63,10 +63,10 @@ export async function uploadImageBlob(blob: Blob, folder: string = 'misc'): Prom
 
 export function compressImage(
   file: File,
-  maxWidth: number = 500,
-  maxHeight: number = 500,
-  quality: number = 0.85,
-  format: 'image/png' | 'image/webp' | 'image/jpeg' = 'image/png',
+  maxWidth: number = 400,
+  maxHeight: number = 400,
+  quality: number = 0.78,
+  format: 'image/png' | 'image/webp' | 'image/jpeg' = 'image/webp',
   folder: string = 'misc'
 ): Promise<CompressionResult> {
   return new Promise((resolve, reject) => {
@@ -133,8 +133,29 @@ export function compressImage(
               reductionPercentage,
               savingsPercent: reductionPercentage,
             });
-          } catch (err) {
-            reject(err);
+          } catch (uploadErr) {
+            console.warn('Storage upload unavailable, falling back to compressed local dataUrl:', uploadErr);
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const fallbackUrl = reader.result as string;
+              const originalSizeKB = Math.round(file.size / 1024);
+              const compressedSizeKB = Math.round(blob.size / 1024);
+              const reductionPercentage = Math.max(
+                0,
+                Math.round(((originalSizeKB - compressedSizeKB) / Math.max(originalSizeKB, 1)) * 100)
+              );
+
+              resolve({
+                dataUrl: fallbackUrl,
+                url: fallbackUrl,
+                originalSizeKB,
+                compressedSizeKB,
+                reductionPercentage,
+                savingsPercent: reductionPercentage,
+              });
+            };
+            reader.onerror = () => reject(uploadErr);
+            reader.readAsDataURL(blob);
           }
         },
         format,

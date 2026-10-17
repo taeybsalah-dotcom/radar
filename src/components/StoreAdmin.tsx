@@ -6,6 +6,7 @@ import {
   Privilege,
   AuditLog,
   StoreStaff,
+  StoreBranch,
   CustomerCoupon,
   StoreBanner,
   StoreWallet,
@@ -25,8 +26,9 @@ import {
   resolveUnifiedStage,
   getStoreUnifiedStage,
 } from '../types';
-import { LoyaltyService, normalizeStore } from '../lib/supabase';
+import { LoyaltyService, normalizeStore, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
+import { saveActiveStoreBranding } from '../lib/storeBranding';
 import { debounce } from '../lib/debounce';
 import { INITIAL_STORE } from '../lib/demoData';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
@@ -34,13 +36,17 @@ import { StaffLoginGate } from './StaffLoginGate';
 import { StoreAnalyticsView } from './merchant/StoreAnalyticsView';
 import { SandboxPaymentModal } from './SandboxPaymentModal';
 import { NotificationBell } from './NotificationBell';
+import { clearAllInboxNotifications, saveInboxNotification } from '../lib/notifications';
+import { playBeepSound } from '../lib/sound';
 import { MenuAutoBuilderModal } from './merchant/MenuAutoBuilderModal';
+import { POSOperationsTab } from './merchant/POSOperationsTab';
 import {
   Users,
   Coins,
   Flame,
   Radar,
   Send,
+  Bell,
   Clock,
   ShieldCheck,
   TrendingUp,
@@ -81,6 +87,7 @@ import {
   User,
   Edit3,
   Edit,
+  Plus,
   PlusCircle,
   Download,
   Search,
@@ -101,11 +108,14 @@ import {
   CreditCard,
   MessageSquare,
   RefreshCw,
-  Plus,
   Utensils,
   Car,
+  Building2,
+  Ticket,
+  Receipt,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { BranchesManagementTab } from './BranchesManagementTab';
 
 interface StoreAdminProps {
   store: Store;
@@ -116,7 +126,9 @@ type AdminTab =
   | 'catalog'
   | 'loyalty'
   | 'customers'
+  | 'pos_operations'
   | 'staff'
+  | 'branches'
   | 'settings';
 
 export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) => {
@@ -128,16 +140,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [privileges, setPrivileges] = useState<Privilege[]>([]);
   const [coupons, setCoupons] = useState<CustomerCoupon[]>([]);
   const [staffList, setStaffList] = useState<StoreStaff[]>([]);
+  const [branches, setBranches] = useState<StoreBranch[]>([]);
   const [storeWallet, setStoreWallet] = useState<StoreWallet | null>(null);
   const [telegramChatId, setTelegramChatId] = useState(store?.telegram_chat_id || '');
+  const [showManualTelegram, setShowManualTelegram] = useState(false);
   const [loading, setLoading] = useState(true);
 
   // Active Admin Navigation Tab & Sub-Sections
   const [activeTab, setActiveTab] = useState<AdminTab>('analytics');
   const [catalogSection, setCatalogSection] = useState<'products' | 'services' | 'modifiers'>('products');
-  const [loyaltySection, setLoyaltySection] = useState<'perks' | 'tiers'>('perks');
+  const [loyaltySection, setLoyaltySection] = useState<'perks' | 'tiers' | 'coupons'>('perks');
   const [customersSection, setCustomersSection] = useState<'crm' | 'logs'>('crm');
-  const [settingsSection, setSettingsSection] = useState<'identity' | 'billing'>('identity');
+  const [settingsSection, setSettingsSection] = useState<'identity' | 'modules' | 'billing'>('identity');
   const [showQuickLinks, setShowQuickLinks] = useState(true);
 
   // Authentication & Session State
@@ -236,6 +250,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   // 📅 Service Bookings State
   const [bookings, setBookings] = useState<ServiceBooking[]>([]);
   const [bookingStatusFilter, setBookingStatusFilter] = useState<'ALL' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'>('ALL');
+  const [bookingBranchFilter, setBookingBranchFilter] = useState<string>('ALL');
   const [bookingSearchQuery, setBookingSearchQuery] = useState('');
   const [bookingActionSuccess, setBookingActionSuccess] = useState<string | null>(null);
   const [statusNotifyBooking, setStatusNotifyBooking] = useState<{
@@ -250,6 +265,77 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [allowDelivery, setAllowDelivery] = useState(currentStore?.fulfillment_settings?.allow_delivery ?? true);
   const [deliveryFee, setDeliveryFee] = useState<number | ''>(currentStore?.fulfillment_settings?.delivery_fee ?? 15);
   const [allowServiceBooking, setAllowServiceBooking] = useState(currentStore?.fulfillment_settings?.allow_service_booking ?? true);
+  const [enablePosWhatsappReceipt, setEnablePosWhatsappReceipt] = useState(currentStore?.enable_pos_whatsapp_receipt !== false);
+
+  // 🎛️ Module Toggles State (SaaS Architecture)
+  const [enableOrders, setEnableOrders] = useState(currentStore?.enable_orders !== false);
+  const [enableBookings, setEnableBookings] = useState(currentStore?.enable_bookings !== false);
+  const [enableLoyalty, setEnableLoyalty] = useState(currentStore?.enable_loyalty !== false);
+  const [moduleToggleError, setModuleToggleError] = useState<string | null>(null);
+  const [moduleToggleSuccess, setModuleToggleSuccess] = useState<string | null>(null);
+  const [isTogglingModule, setIsTogglingModule] = useState<string | null>(null);
+
+  const handleToggleModule = async (module: 'orders' | 'bookings' | 'loyalty', targetVal: boolean) => {
+    setModuleToggleError(null);
+    setModuleToggleSuccess(null);
+
+    // 1. فحص قفل المالك (SaaS Hierarchy Check)
+    if (module === 'orders' && (store?.owner_enable_orders === false || currentStore?.owner_enable_orders === false)) {
+      setModuleToggleError('موديول الطلبات والمنيو غير مشمول في باقة متجرك الحالية 🔒 يرجى التواصل مع إدارة المنصة للترقية.');
+      return;
+    }
+    if (module === 'bookings' && (store?.owner_enable_bookings === false || currentStore?.owner_enable_bookings === false)) {
+      setModuleToggleError('موديول الحجوزات والمواعيد غير مشمول في باقة متجرك الحالية 🔒 يرجى التواصل مع إدارة المنصة للترقية.');
+      return;
+    }
+    if (module === 'loyalty' && (store?.owner_enable_loyalty === false || currentStore?.owner_enable_loyalty === false)) {
+      setModuleToggleError('موديول برنامج الولاء والمكافآت غير مشمول في باقة متجرك الحالية 🔒 يرجى التواصل مع إدارة المنصة للترقية.');
+      return;
+    }
+
+    // 2. حساب الحالات القادمة
+    const nextOrders = module === 'orders' ? targetVal : enableOrders;
+    const nextBookings = module === 'bookings' ? targetVal : enableBookings;
+    const nextLoyalty = module === 'loyalty' ? targetVal : enableLoyalty;
+
+    // 3. حساب الموديولات الفعالة فعلياً
+    const effOrders = ((store?.owner_enable_orders ?? currentStore?.owner_enable_orders) !== false) && nextOrders;
+    const effBookings = ((store?.owner_enable_bookings ?? currentStore?.owner_enable_bookings) !== false) && nextBookings;
+    const effLoyalty = ((store?.owner_enable_loyalty ?? currentStore?.owner_enable_loyalty) !== false) && nextLoyalty;
+
+    // شرط القيد الإلزامي: منع إيقاف جميع الموديولات دفعة واحدة
+    if (!effOrders && !effBookings && !effLoyalty) {
+      setModuleToggleError('⚠️ لا يمكن إيقاف كافة الخدمات دفعة واحدة. يجب أن يبقى موديول واحد نشطاً على الأقل لضمان عمل المتجر لعملائك.');
+      return;
+    }
+
+    setIsTogglingModule(module);
+    if (module === 'orders') setEnableOrders(targetVal);
+    if (module === 'bookings') setEnableBookings(targetVal);
+    if (module === 'loyalty') setEnableLoyalty(targetVal);
+
+    try {
+      const updates: Partial<Store> = {};
+      if (module === 'orders') updates.enable_orders = targetVal;
+      if (module === 'bookings') updates.enable_bookings = targetVal;
+      if (module === 'loyalty') updates.enable_loyalty = targetVal;
+
+      const targetStoreId = store?.id || currentStore?.id;
+      const updated = await LoyaltyService.updateStoreSettings(targetStoreId, updates);
+      setStore(updated);
+      const modName = module === 'orders' ? 'الطلبات والمنيو' : module === 'bookings' ? 'الحجوزات والمواعيد' : 'برنامج الولاء والمكافآت';
+      setModuleToggleSuccess(`تم ${targetVal ? 'تفعيل' : 'إيقاف'} موديول ${modName} بنجاح ${targetVal ? '✅' : '⏸️'}`);
+      setTimeout(() => setModuleToggleSuccess(null), 3500);
+    } catch (err: any) {
+      setModuleToggleError(err?.message || 'حدث خطأ أثناء حفظ الإعدادات');
+      // Revert on failure
+      if (module === 'orders') setEnableOrders(!targetVal);
+      if (module === 'bookings') setEnableBookings(!targetVal);
+      if (module === 'loyalty') setEnableLoyalty(!targetVal);
+    } finally {
+      setIsTogglingModule(null);
+    }
+  };
 
   // Edit Staff PIN Modal State
   const [isEditStaffPinModalOpen, setIsEditStaffPinModalOpen] = useState(false);
@@ -330,7 +416,17 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editCustomerName, setEditCustomerName] = useState('');
   const [editCustomerPhone, setEditCustomerPhone] = useState('');
+  const [editCustomerSpecialDate, setEditCustomerSpecialDate] = useState('');
+  const [editCustomerSpecialDateType, setEditCustomerSpecialDateType] = useState('');
   const [customerActionSuccess, setCustomerActionSuccess] = useState<string | null>(null);
+
+  // Customer In-App Notification Modal State
+  const [isCustomerNotificationOpen, setIsCustomerNotificationOpen] = useState(false);
+  const [selectedCustomerForNotification, setSelectedCustomerForNotification] = useState<Customer | null>(null);
+  const [customerNotifTitle, setCustomerNotifTitle] = useState('');
+  const [customerNotifBody, setCustomerNotifBody] = useState('');
+  const [customerNotifSound, setCustomerNotifSound] = useState<'notification' | 'commission' | 'redeem' | 'success'>('notification');
+  const [isSendingCustomerNotif, setIsSendingCustomerNotif] = useState(false);
 
   // Add Staff Modal State & Limits
   const [isAddStaffOpen, setIsAddStaffOpen] = useState(false);
@@ -357,8 +453,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [logFilter, setLogFilter] = useState<'all' | 'manual' | 'qr_scan'>('all');
   const [logActionFilter, setLogActionFilter] = useState<'ALL' | 'PURCHASE' | 'REDEEM' | 'ADJUSTMENT' | 'SERVICE_BOOKING'>('ALL');
   const [logStaffFilter, setLogStaffFilter] = useState<string>('ALL');
+  const [logBranchFilter, setLogBranchFilter] = useState<string>('ALL');
   const [logDateFilter, setLogDateFilter] = useState<'TODAY' | '7DAYS' | '30DAYS' | 'ALL'>('ALL');
   const [logSearchQuery, setLogSearchQuery] = useState<string>('');
+
+  // 4️⃣-B Coupons Ledger Filter State
+  const [couponBranchFilter, setCouponBranchFilter] = useState<string>('ALL');
+  const [couponStatusFilter, setCouponStatusFilter] = useState<'ALL' | 'ACTIVE' | 'USED'>('ALL');
+  const [couponSearchQuery, setCouponSearchQuery] = useState<string>('');
 
   // 5️⃣ SaaS Subscription & Invoices State
   const [invoices, setInvoices] = useState<StoreInvoice[]>([]);
@@ -391,6 +493,78 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     invoiceType: 'setup' | 'renewal' | 'upgrade';
     planId?: string;
   } | null>(null);
+
+  // 🏢 Branch Resolver Helpers for Central Ledgers (Operations, Bookings, Coupons)
+  const resolveLogBranch = (log: AuditLog): { id: string | null; name: string; isFallback: boolean } => {
+    if (log.branch_id) {
+      const match = branches.find((b) => b.id === log.branch_id);
+      if (match) return { id: match.id, name: match.name, isFallback: false };
+    }
+    if (log.metadata?.branch_id) {
+      const match = branches.find((b) => b.id === log.metadata.branch_id);
+      if (match) return { id: match.id, name: match.name, isFallback: false };
+    }
+    if (log.branch_name) {
+      return { id: log.branch_id || null, name: log.branch_name, isFallback: false };
+    }
+    if (log.metadata?.branch_name) {
+      return { id: log.metadata?.branch_id || null, name: log.metadata.branch_name, isFallback: false };
+    }
+    if (log.staff_id || log.metadata?.cashier_name) {
+      const st = staffList.find(
+        (s) => s.id === log.staff_id || (log.metadata?.cashier_name && s.name === log.metadata.cashier_name)
+      );
+      if (st?.branch_id) {
+        const match = branches.find((b) => b.id === st.branch_id);
+        if (match) return { id: match.id, name: match.name, isFallback: false };
+      }
+    }
+    if (log.metadata?.booking_id) {
+      const bk = bookings.find((b) => b.id === log.metadata?.booking_id);
+      if (bk?.branch_id) {
+        const match = branches.find((b) => b.id === bk.branch_id);
+        if (match) return { id: match.id, name: match.name, isFallback: false };
+      }
+    }
+    const mainBranch = branches.find((b) => b.is_main) || branches[0];
+    if (mainBranch) return { id: mainBranch.id, name: mainBranch.name, isFallback: true };
+    return { id: null, name: 'الفرع الرئيسي', isFallback: true };
+  };
+
+  const resolveCouponBranch = (coupon: CustomerCoupon): { id: string | null; name: string } => {
+    if (coupon.branch_id) {
+      const match = branches.find((b) => b.id === coupon.branch_id);
+      if (match) return { id: match.id, name: match.name };
+    }
+    if (coupon.branch_name) return { id: coupon.branch_id || null, name: coupon.branch_name };
+    if (coupon.redeemed_by_staff_id) {
+      const st = staffList.find((s) => s.id === coupon.redeemed_by_staff_id);
+      if (st?.branch_id) {
+        const match = branches.find((b) => b.id === st.branch_id);
+        if (match) return { id: match.id, name: match.name };
+      }
+    }
+    const mainBranch = branches.find((b) => b.is_main) || branches[0];
+    if (mainBranch) return { id: mainBranch.id, name: mainBranch.name };
+    return { id: null, name: 'الفرع الرئيسي' };
+  };
+
+  const resolveBookingBranch = (bk: ServiceBooking): { id: string | null; name: string } => {
+    if (bk.branch_id) {
+      const match = branches.find((b) => b.id === bk.branch_id);
+      if (match) return { id: match.id, name: match.name };
+    }
+    if (bk.specialist_id) {
+      const spec = specialists.find((s) => s.id === bk.specialist_id);
+      if (spec?.branch_id) {
+        const match = branches.find((b) => b.id === spec.branch_id);
+        if (match) return { id: match.id, name: match.name };
+      }
+    }
+    const mainBranch = branches.find((b) => b.is_main) || branches[0];
+    if (mainBranch) return { id: mainBranch.id, name: mainBranch.name };
+    return { id: null, name: 'الفرع الرئيسي' };
+  };
 
   // 🛡️ Pre-calculate unified stage and trial status at top level
   const unifiedStage = getStoreUnifiedStage(store);
@@ -455,6 +629,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   const handleLogout = () => {
     LoyaltyService.clearStaffSession(store.id, 'admin', store.slug);
+    clearAllInboxNotifications({ portal: 'store', storeId: store.id });
     setAuthenticatedAdmin(null);
   };
 
@@ -501,6 +676,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   useEffect(() => {
     if (initialStore) {
       setStore(initialStore);
+      saveActiveStoreBranding(initialStore);
     }
   }, [initialStore]);
 
@@ -563,6 +739,196 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     };
   }, [currentStore?.id, debouncedSyncStoreAndSubscription, debouncedSyncCoupons, debouncedSyncPointsAndCustomers]);
 
+  // 🔗 Keep Browser URL cleanly in sync with ?store=...&portal=admin to preserve session on refresh
+  useEffect(() => {
+    if (store?.slug && typeof window !== 'undefined') {
+      try {
+        const url = new URL(window.location.href);
+        const curStore = url.searchParams.get('store');
+        const curPortal = url.searchParams.get('portal');
+        if (curStore !== store.slug || curPortal !== 'admin') {
+          url.searchParams.set('store', store.slug);
+          url.searchParams.set('portal', 'admin');
+          window.history.replaceState({}, '', url.toString());
+        }
+      } catch {}
+    }
+  }, [store?.slug]);
+
+  // ⚡ Supabase Realtime WebSocket Connection for StoreAdmin
+  useEffect(() => {
+    if (!currentStore?.id || !authenticatedAdmin) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    let isSubscribed = true;
+    let channel: any = null;
+
+    const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+    LoyaltyService.resolveStore(currentStore.id).then((resolved) => {
+      if (!isSubscribed) return;
+      const targetStoreId = resolved?.id || currentStore.id;
+      const storeUuid = isUuid(targetStoreId)
+        ? targetStoreId
+        : isUuid(currentStore.id)
+        ? currentStore.id
+        : null;
+
+      if (!storeUuid) return;
+
+      channel = supabase
+        .channel(`store-admin-realtime-${storeUuid}-${Date.now()}`)
+        // 1. Listen for new or updated customers in real-time
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'store_customers',
+            filter: `store_id=eq.${storeUuid}`,
+          },
+          (payload: any) => {
+            if (!isSubscribed) return;
+            if (payload.eventType === 'INSERT') {
+              setCustomers((prev) => [payload.new, ...prev.filter((c) => c.id !== payload.new.id && c.phone !== payload.new.phone)]);
+            } else if (payload.eventType === 'UPDATE') {
+              setCustomers((prev) =>
+                prev.map((c) => (c.id === payload.new.id || c.phone === payload.new.phone ? { ...c, ...payload.new } : c))
+              );
+            } else if (payload.eventType === 'DELETE') {
+              setCustomers((prev) => prev.filter((c) => c.id !== payload.old?.id));
+            }
+          }
+        )
+        // 2. Listen for store settings & branding updates in real-time
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'stores',
+            filter: `id=eq.${storeUuid}`,
+          },
+          (payload: any) => {
+            if (!isSubscribed || !payload.new) return;
+            setStore((prev) => ({ ...prev, ...payload.new }));
+            if (payload.new.name) setStoreName(payload.new.name);
+            if (payload.new.slug) setStoreSlug(payload.new.slug);
+            if (payload.new.primary_color) setPrimaryColor(payload.new.primary_color);
+            if (payload.new.secondary_color) setSecondaryColor(payload.new.secondary_color);
+            if (payload.new.enable_orders !== undefined) setEnableOrders(payload.new.enable_orders);
+            if (payload.new.enable_bookings !== undefined) setEnableBookings(payload.new.enable_bookings);
+            if (payload.new.enable_loyalty !== undefined) setEnableLoyalty(payload.new.enable_loyalty);
+            if (payload.new.status) {
+              setSubscriptionInfo((prev: any) => prev ? { ...prev, status: payload.new.status } : prev);
+            }
+          }
+        )
+        // 3. Listen for catalog items (products & services) in real-time
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'catalog_items',
+            filter: `store_id=eq.${storeUuid}`,
+          },
+          (payload: any) => {
+            if (!isSubscribed) return;
+            if (payload.eventType === 'INSERT') {
+              setCatalogItems((prev) => [payload.new, ...prev.filter((it) => it.id !== payload.new.id)]);
+            } else if (payload.eventType === 'UPDATE') {
+              setCatalogItems((prev) => prev.map((it) => (it.id === payload.new.id ? { ...it, ...payload.new } : it)));
+            } else if (payload.eventType === 'DELETE') {
+              setCatalogItems((prev) => prev.filter((it) => it.id !== payload.old?.id));
+            }
+          }
+        )
+        // 4. Listen for coupons in real-time
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'customer_coupons',
+            filter: `store_id=eq.${storeUuid}`,
+          },
+          (payload: any) => {
+            if (!isSubscribed) return;
+            if (payload.eventType === 'INSERT') {
+              setCoupons((prev) => [payload.new, ...prev.filter((c) => c.id !== payload.new.id)]);
+            } else if (payload.eventType === 'UPDATE') {
+              setCoupons((prev) => prev.map((c) => (c.id === payload.new.id ? { ...c, ...payload.new } : c)));
+            } else if (payload.eventType === 'DELETE') {
+              setCoupons((prev) => prev.filter((c) => c.id !== payload.old?.id));
+            }
+          }
+        )
+        // 5. Listen for bookings in real-time
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'service_bookings',
+            filter: `store_id=eq.${storeUuid}`,
+          },
+          (payload: any) => {
+            if (!isSubscribed) return;
+            if (payload.eventType === 'INSERT') {
+              setBookings((prev) => [payload.new, ...prev.filter((b) => b.id !== payload.new.id)]);
+            } else if (payload.eventType === 'UPDATE') {
+              setBookings((prev) => prev.map((b) => (b.id === payload.new.id ? { ...b, ...payload.new } : b)));
+            } else if (payload.eventType === 'DELETE') {
+              setBookings((prev) => prev.filter((b) => b.id !== payload.old?.id));
+            }
+          }
+        )
+        // 6. Listen for staff and branches updates
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'store_staff',
+            filter: `store_id=eq.${storeUuid}`,
+          },
+          () => {
+            if (isSubscribed) {
+              LoyaltyService.getStoreStaff(storeUuid).then((freshStaff) => {
+                if (isSubscribed) setStaffList(freshStaff);
+              }).catch(() => {});
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'store_branches',
+            filter: `store_id=eq.${storeUuid}`,
+          },
+          () => {
+            if (isSubscribed) {
+              LoyaltyService.getStoreBranches(storeUuid).then((freshBranches) => {
+                if (isSubscribed) setBranches(freshBranches);
+              }).catch(() => {});
+            }
+          }
+        )
+        .subscribe();
+    });
+
+    return () => {
+      isSubscribed = false;
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [currentStore?.id, authenticatedAdmin]);
+
   const loadAdminData = async () => {
     if (!currentStore?.id) return;
     setLoading(true);
@@ -572,7 +938,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
     try {
       // 🚀 المرحلة 1: التحميل الفوري للوحة التحكم الأساسية (Core Dashboard Tier)
-      const [s, c, t, staff, p, cpn, wallet, invs, subInfo] = await Promise.all([
+      const [s, c, t, staff, p, cpn, wallet, invs, subInfo, brs] = await Promise.all([
         LoyaltyService.resolveStore(currentStore.id),
         LoyaltyService.getAllCustomers(currentStore.id),
         LoyaltyService.getTiers(currentStore.id),
@@ -582,6 +948,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         LoyaltyService.getStoreWallet(currentStore.id),
         LoyaltyService.getStoreInvoices(currentStore.id),
         LoyaltyService.checkAndUpdateStoreSubscription(currentStore.id),
+        LoyaltyService.getStoreBranches(currentStore.id),
       ]);
       const activeStore = normalizeStore(s || currentStore);
       setStore(activeStore);
@@ -608,9 +975,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setDeliveryFee(activeStore.fulfillment_settings.delivery_fee ?? 15);
         setAllowServiceBooking(activeStore.fulfillment_settings.allow_service_booking ?? true);
       }
+      setEnableOrders(activeStore.enable_orders !== false);
+      setEnableBookings(activeStore.enable_bookings !== false);
+      setEnableLoyalty(activeStore.enable_loyalty !== false);
       setCustomers(c);
       setTiers(t.sort((t1, t2) => t1.required_xp - t2.required_xp));
       setStaffList(staff);
+      setBranches(brs || []);
       setPrivileges(p);
       setCoupons(cpn);
       setStoreWallet(wallet);
@@ -909,6 +1280,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         max_cashier_invoice_amount: maxCashierInvoiceAmount === '' ? 500 : Number(maxCashierInvoiceAmount),
         admin_pin: adminPinCode.trim() || '9999',
         catalog_enabled: catalogEnabled,
+        enable_orders: enableOrders,
+        enable_bookings: enableBookings,
+        enable_loyalty: enableLoyalty,
+        enable_pos_whatsapp_receipt: enablePosWhatsappReceipt,
         fulfillment_settings: {
           allow_dine_in: allowDineIn,
           allow_takeaway: allowTakeaway,
@@ -940,6 +1315,190 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setUpdatingSettings(false);
     }
   };
+
+  const renderModulesCard = () => (
+    <div className="rounded-3xl p-6 sm:p-7 bg-slate-950/90 border border-slate-800 space-y-4 shadow-xl">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+        <div className="flex items-center space-x-3 rtl:space-x-reverse">
+          <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+            <Layers className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-sm sm:text-base font-black text-white">التحكم في خدمات وموديولات المتجر (Module Toggles)</h4>
+            <p className="text-xs text-slate-400 mt-0.5">
+              فعل أو عطل الخدمات التي تظهر لعملائك في المتجر (يجب بقاء موديول واحد نشطاً على الأقل لضمان عمل المتجر)
+            </p>
+          </div>
+        </div>
+        <span className="text-[11px] font-mono text-amber-400 bg-amber-500/10 px-3 py-1 rounded-xl border border-amber-500/20 self-start sm:self-auto font-bold">
+          تحديث لحظي فوري ⚡
+        </span>
+      </div>
+
+      {moduleToggleError && (
+        <div className="p-3.5 rounded-2xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2 animate-shake">
+          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+          <span className="font-bold leading-relaxed">{moduleToggleError}</span>
+        </div>
+      )}
+
+      {moduleToggleSuccess && (
+        <div className="p-3.5 rounded-2xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs flex items-center gap-2 animate-fade-in">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="font-bold leading-relaxed">{moduleToggleSuccess}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+        {/* 1. Orders & Menu Module */}
+        <div className={`p-5 rounded-2xl border transition relative overflow-hidden flex flex-col justify-between ${
+          (store?.owner_enable_orders ?? currentStore?.owner_enable_orders) === false
+            ? 'bg-slate-900/40 border-slate-800 opacity-80'
+            : enableOrders
+            ? 'bg-slate-900/90 border-blue-500/40 shadow-lg shadow-blue-500/5'
+            : 'bg-slate-900/60 border-slate-800'
+        }`}>
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                <div className="w-8 h-8 rounded-xl bg-blue-500/15 text-blue-400 flex items-center justify-center">
+                  <ShoppingBag className="w-4 h-4" />
+                </div>
+                <span className="text-xs sm:text-sm font-black text-white">الطلبات الفورية والمنيو</span>
+              </div>
+              
+              {(store?.owner_enable_orders ?? currentStore?.owner_enable_orders) === false ? (
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5 text-rose-400" />
+                  <span>غير مشمول بالباقة 🔒</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isTogglingModule === 'orders'}
+                  onClick={() => handleToggleModule('orders', !enableOrders)}
+                  className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
+                    enableOrders
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 shadow-sm'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${enableOrders ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
+                  <span>{enableOrders ? 'مفعل ✅' : 'معطل ✕'}</span>
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              عرض قائمة المأكولات والمنتجات للعميل، السلة الذكية، والطلب المباشر لتناول محلي أو سفري أو توصيل.
+            </p>
+          </div>
+          {(store?.owner_enable_orders ?? currentStore?.owner_enable_orders) === false && (
+            <p className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 mt-3 font-medium">
+              ⚠️ ميزة المنيو غير مشمولة في باقة متجرك الحالية من إدارة المنصة. تواصل مع الإدارة للترقية.
+            </p>
+          )}
+        </div>
+
+        {/* 2. Appointments & Bookings Module */}
+        <div className={`p-5 rounded-2xl border transition relative overflow-hidden flex flex-col justify-between ${
+          (store?.owner_enable_bookings ?? currentStore?.owner_enable_bookings) === false
+            ? 'bg-slate-900/40 border-slate-800 opacity-80'
+            : enableBookings
+            ? 'bg-slate-900/90 border-amber-500/40 shadow-lg shadow-amber-500/5'
+            : 'bg-slate-900/60 border-slate-800'
+        }`}>
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <span className="text-xs sm:text-sm font-black text-white">حجوزات المواعيد والخدمات</span>
+              </div>
+
+              {(store?.owner_enable_bookings ?? currentStore?.owner_enable_bookings) === false ? (
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5 text-rose-400" />
+                  <span>غير مشمول بالباقة 🔒</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isTogglingModule === 'bookings'}
+                  onClick={() => handleToggleModule('bookings', !enableBookings)}
+                  className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
+                    enableBookings
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 shadow-sm'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${enableBookings ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
+                  <span>{enableBookings ? 'مفعل ✅' : 'معطل ✕'}</span>
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              عرض خدمات الصالونات، العيادات، والاستشارات، اختيار المختصين، وتأكيد المواعيد بالتقويم.
+            </p>
+          </div>
+          {(store?.owner_enable_bookings ?? currentStore?.owner_enable_bookings) === false && (
+            <p className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 mt-3 font-medium">
+              ⚠️ ميزة الحجوزات غير مشمولة في باقة متجرك الحالية من إدارة المنصة. تواصل مع الإدارة للترقية.
+            </p>
+          )}
+        </div>
+
+        {/* 3. Loyalty & Rewards Module */}
+        <div className={`p-5 rounded-2xl border transition relative overflow-hidden flex flex-col justify-between ${
+          (store?.owner_enable_loyalty ?? currentStore?.owner_enable_loyalty) === false
+            ? 'bg-slate-900/40 border-slate-800 opacity-80'
+            : enableLoyalty
+            ? 'bg-slate-900/90 border-emerald-500/40 shadow-lg shadow-emerald-500/5'
+            : 'bg-slate-900/60 border-slate-800'
+        }`}>
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
+                  <Gift className="w-4 h-4" />
+                </div>
+                <span className="text-xs sm:text-sm font-black text-white">برنامج الولاء والمكافآت</span>
+              </div>
+
+              {(store?.owner_enable_loyalty ?? currentStore?.owner_enable_loyalty) === false ? (
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5 text-rose-400" />
+                  <span>غير مشمول بالباقة 🔒</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isTogglingModule === 'loyalty'}
+                  onClick={() => handleToggleModule('loyalty', !enableLoyalty)}
+                  className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
+                    enableLoyalty
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 shadow-sm'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${enableLoyalty ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
+                  <span>{enableLoyalty ? 'مفعل ✅' : 'معطل ✕'}</span>
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              كسب النقاط والمكافآت، مستويات العضوية (Tiers)، والكوبونات الترويجية لزيادة ولاء العملاء.
+            </p>
+          </div>
+          {(store?.owner_enable_loyalty ?? currentStore?.owner_enable_loyalty) === false && (
+            <p className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 mt-3 font-medium">
+              ⚠️ ميزة برنامج الولاء غير مشمولة في باقة متجرك الحالية من إدارة المنصة. تواصل مع الإدارة للترقية.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   // ==========================================
   // 🛍️ إدارة قائمة المنتجات والخدمات (Products & Services Handlers)
@@ -1035,6 +1594,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     try {
       if (editingCatalogItem) {
         const updated = await LoyaltyService.updateCatalogItem(editingCatalogItem.id, {
+          store_id: editingCatalogItem.store_id || store.id,
           name: catNameInput.trim(),
           description: catDescInput.trim() || null,
           category: catCategoryInput.trim() || 'عام',
@@ -1077,6 +1637,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     try {
       if (editingCatalogItem) {
         const updated = await LoyaltyService.updateCatalogItem(editingCatalogItem.id, {
+          store_id: editingCatalogItem.store_id || store.id,
           name: catNameInput.trim(),
           description: catDescInput.trim() || null,
           category: catCategoryInput.trim() || 'خدمات عامة',
@@ -1128,7 +1689,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const handleToggleCatalogItemAvailability = async (item: CatalogItem) => {
     try {
       const newStatus = !item.is_available;
-      const updated = await LoyaltyService.updateCatalogItem(item.id, { is_available: newStatus });
+      const updated = await LoyaltyService.updateCatalogItem(item.id, {
+        store_id: item.store_id || store.id,
+        is_available: newStatus,
+      });
       setCatalogItems(catalogItems.map((it) => (it.id === item.id ? updated : it)));
     } catch (err: any) {
       console.error('Failed to toggle availability:', err);
@@ -1141,7 +1705,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
     setIsCatImageCompressing(true);
     try {
-      const result = await compressImage(file, 500, 500, 0.82);
+      const result = await compressImage(file, 400, 400, 0.78, 'image/webp', 'catalog');
       setCatImageUrlInput(result.dataUrl);
     } catch (err: any) {
       console.error('Failed to compress catalog image:', err);
@@ -1725,6 +2289,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     setEditingCustomer(cust);
     setEditCustomerName(cust.name || '');
     setEditCustomerPhone(cust.phone || '');
+    setEditCustomerSpecialDate(cust.special_date || '');
+    setEditCustomerSpecialDateType(cust.special_date_type || 'يوم ميلادي');
     setIsEditCustomerOpen(true);
   };
 
@@ -1736,6 +2302,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       const updated = await LoyaltyService.updateCustomer(editingCustomer.id, {
         name: editCustomerName.trim() || null,
         phone: editCustomerPhone.trim() || editingCustomer.phone,
+        special_date: editCustomerSpecialDate.trim() || null,
+        special_date_type: editCustomerSpecialDate.trim() ? editCustomerSpecialDateType.trim() || null : null,
       });
       setCustomers(customers.map((c) => (c.id === editingCustomer.id ? { ...c, ...updated } : c)));
       setCustomerActionSuccess(`تم تحديث بيانات العميل: ${updated.name || updated.phone}`);
@@ -1787,12 +2355,81 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         .filter((t) => t.required_xp <= cust.lifetime_xp)
         .sort((a, b) => b.required_xp - a.required_xp)[0]?.tier_name || 'ضيف';
 
+    const specialDateLine = cust.special_date
+      ? `\n🎉 نتمنى لك أجمل الأوقات بمناسبة (${cust.special_date_type || 'يومك المفضل'}) القادم في ${cust.special_date}!`
+      : '';
+
     const text = encodeURIComponent(
-      `أهلاً بك يا ${cust.name || 'عميلنا العزيز'}! 🌟\nيسعدنا تواصلك مع ${store.name}.\nرصيدك الحالي هو: ${cust.wallet_balance} نقطة (مكانتك: ${tierName}).\nنسعد بزيارتك القادمة للاستمتاع بحصرياتك وامتيازاتك ✨`
+      `أهلاً بك يا ${cust.name || 'عميلنا العزيز'}! 🌟\nيسعدنا تواصلك مع ${store.name}.${specialDateLine}\nرصيدك الحالي هو: ${cust.wallet_balance} نقطة (مكانتك: ${tierName}).\nنسعد بزيارتك القادمة للاستمتاع بحصرياتك وامتيازاتك ✨`
     );
     const cleanPhone = cust.phone.replace(/\D/g, '');
     const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
     window.open(`https://wa.me/${intlPhone}?text=${text}`, '_blank');
+  };
+
+  const handleOpenCustomerNotification = (cust: Customer) => {
+    setSelectedCustomerForNotification(cust);
+    if (cust.special_date) {
+      setCustomerNotifTitle(`تهنئة بمناسبة ${cust.special_date_type || 'يومك المميز'} 🎉`);
+      setCustomerNotifBody(`أهلاً بك يا ${cust.name || 'عميلنا العزيز'}! 🌸 يسعدنا في ${store.name} مشاركتك فرحتك بيومك المفضل، تنتظرك مفاجأة وضيافة خاصة في زيارتك القادمة ✨`);
+    } else {
+      setCustomerNotifTitle(`هدية وعرض حصري لك من ${store.name} 🎁`);
+      setCustomerNotifBody(`أهلاً بك يا ${cust.name || 'عميلنا العزيز'}! يسعدنا إهداؤك نقاط ولاء ومكافآت مميزة في محفظتك.`);
+    }
+    setCustomerNotifSound('notification');
+    setIsCustomerNotificationOpen(true);
+  };
+
+  const handleSendCustomerNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCustomerForNotification || !customerNotifTitle.trim() || !customerNotifBody.trim()) return;
+
+    setIsSendingCustomerNotif(true);
+    try {
+      const cust = selectedCustomerForNotification;
+      const eventId = `notif_cust_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+      // 1. Emit realtime event targeted specifically to this customer
+      LoyaltyEvents.emit({
+        eventId,
+        type: 'CUSTOM_NOTIFICATION',
+        storeId: store.id,
+        targetType: 'customer',
+        targetId: cust.id,
+        phone: cust.phone,
+        title: customerNotifTitle.trim(),
+        message: customerNotifBody.trim(),
+        soundType: customerNotifSound,
+      });
+
+      // 2. Persist in scoped customer inbox storage
+      saveInboxNotification(
+        {
+          id: eventId,
+          title: customerNotifTitle.trim(),
+          body: customerNotifBody.trim(),
+          soundType: customerNotifSound,
+          targetType: 'customer',
+          targetId: cust.id,
+          storeId: store.id,
+          userPhone: cust.phone,
+          portal: 'customer',
+        },
+        {
+          portal: 'customer',
+          storeId: store.id,
+          userPhone: cust.phone,
+        }
+      );
+
+      setCustomerActionSuccess(`تم إرسال الإشعار الفوري بنجاح إلى محفظة: ${cust.name || cust.phone} 🔔`);
+      setIsCustomerNotificationOpen(false);
+      setTimeout(() => setCustomerActionSuccess(null), 4000);
+    } catch (err: any) {
+      console.error('Error sending customer notification:', err);
+    } finally {
+      setIsSendingCustomerNotif(false);
+    }
   };
 
   const handleExportCustomersCSV = () => {
@@ -2127,10 +2764,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         telegram_chat_id: telegramChatId.trim() || null,
         telegram_notifications_enabled: !!telegramChatId.trim()
       });
-      alert('تم ربط إشعارات التليجرام بنجاح ✅');
+      alert('تم حفظ إعدادات التليجرام بنجاح ✅');
     } catch (err) {
       console.error(err);
       alert('حدث خطأ أثناء حفظ إعدادات التليجرام');
+    }
+  };
+
+  const handleUnlinkTelegram = async () => {
+    if (!window.confirm('هل أنت متأكد من رغبتك في إلغاء ربط بوت التليجرام؟')) return;
+    try {
+      await LoyaltyService.updateStoreSettings(store.id, {
+        telegram_chat_id: null,
+        telegram_notifications_enabled: false
+      });
+      setTelegramChatId('');
+      alert('تم إلغاء ربط التليجرام بنجاح ✅');
+    } catch (err) {
+      console.error(err);
+      alert('حدث خطأ أثناء إلغاء الربط');
     }
   };
 
@@ -2204,10 +2856,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       badge: `${customers.length}`,
     },
     {
+      id: 'pos_operations' as AdminTab,
+      label: 'الورديات والمصروفات',
+      icon: Receipt,
+      badge: 'جديد ⚡',
+    },
+    {
       id: 'staff' as AdminTab,
       label: 'طاقم العمل والـ PIN',
       icon: ShieldCheck,
       badge: `${staffList.length}`,
+    },
+    {
+      id: 'branches' as AdminTab,
+      label: 'الفروع وأوقات العمل',
+      icon: Building2,
+      badge: null,
     },
     {
       id: 'settings' as AdminTab,
@@ -2335,8 +2999,16 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 font-mono mt-0.5">
-                لوحة القيادة التنفيذية: <strong className="text-slate-200 font-sans">{store.name}</strong> (/{store.slug})
+              <p className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
+                <span>لوحة القيادة التنفيذية: <strong className="text-slate-200 font-sans">{store.name}</strong> (/{store.slug})</span>
+                {(store.store_code || store.id) && (
+                  <span
+                    title="كود المتجر التعريفي السريع"
+                    className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 font-extrabold tracking-wider"
+                  >
+                    كود المتجر: {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -2345,7 +3017,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           <div className="flex items-center gap-2.5 self-start lg:self-auto flex-wrap">
             <NotificationBell
               portalName={store.name || 'لوحة التاجر'}
-              portalFilter="admin"
+              portalFilter="store"
+              storeId={store.id}
             />
 
             <button
@@ -2479,7 +3152,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
       {/* 🧭 Luxury Executive Navigation Hub (Tab Bar) */}
       <div className="rounded-2xl p-2 border border-slate-800 bg-slate-900/80 shadow-xl backdrop-blur-md">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
           {tabsConfig.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -2775,6 +3448,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             >
               <Award className="w-4 h-4" />
               <span>رتب ومستويات الولاء ({tiers.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setLoyaltySection('coupons')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                loyaltySection === 'coupons'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <Ticket className="w-4 h-4" />
+              <span>سجل الكوبونات والعروض ({coupons.length})</span>
             </button>
           </div>
 
@@ -3132,6 +3818,279 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           </div>
         </div>
       )}
+
+      {/* Sub-Section 3: Coupons Ledger */}
+      {loyaltySection === 'coupons' && (() => {
+        const filteredCoupons = coupons.filter((cpn) => {
+          // Status filter
+          if (couponStatusFilter === 'ACTIVE' && cpn.status !== 'ACTIVE') return false;
+          if (couponStatusFilter === 'USED' && cpn.status !== 'USED') return false;
+
+          // Branch filter
+          if (couponBranchFilter !== 'ALL') {
+            const br = resolveCouponBranch(cpn);
+            if (br.id !== couponBranchFilter && br.name !== couponBranchFilter) return false;
+          }
+
+          // Search query
+          if (couponSearchQuery.trim()) {
+            const q = couponSearchQuery.trim().toLowerCase();
+            const code = (cpn.code || '').toLowerCase();
+            const title = (cpn.title || '').toLowerCase();
+            const custName = (customers.find((c) => c.id === cpn.customer_id)?.name || '').toLowerCase();
+            const custPhone = (customers.find((c) => c.id === cpn.customer_id)?.phone || '').toLowerCase();
+            const matches = code.includes(q) || title.includes(q) || custName.includes(q) || custPhone.includes(q);
+            if (!matches) return false;
+          }
+
+          return true;
+        });
+
+        const activeCouponsCount = coupons.filter((c) => c.status === 'ACTIVE').length;
+        const usedCouponsCount = coupons.filter((c) => c.status === 'USED').length;
+
+        return (
+          <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+              <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                  <Ticket className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
+                    <span>سجل الكوبونات والعروض المصروفة</span>
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-bold font-mono">
+                      {coupons.length} كوبون
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    متابعة حركة إصدار وصرف الكوبونات حسب الفروع والكاشيرات والعملاء
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const fresh = await LoyaltyService.getAllStoreCoupons(store.id);
+                    setCoupons(fresh);
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold flex items-center gap-1.5 self-start sm:self-auto transition shadow-sm"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>تحديث الكوبونات 🔄</span>
+              </button>
+            </div>
+
+            {/* Metric Summary Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                <span className="text-[11px] text-slate-400 block font-medium">إجمالي الكوبونات</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xl font-black text-white font-mono">{coupons.length}</span>
+                  <Ticket className="w-4 h-4 text-slate-500" />
+                </div>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                <span className="text-[11px] text-slate-400 block font-medium">كوبونات تم صرفها</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xl font-black text-rose-400 font-mono">{usedCouponsCount}</span>
+                  <Flame className="w-4 h-4 text-rose-500" />
+                </div>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                <span className="text-[11px] text-slate-400 block font-medium">كوبونات جاهزة للصرف</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xl font-black text-emerald-400 font-mono">{activeCouponsCount}</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                </div>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1">
+                <span className="text-[11px] text-slate-400 block font-medium">الفروع النشطة</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xl font-black text-amber-400 font-mono">{branches.length || 1}</span>
+                  <Building2 className="w-4 h-4 text-amber-500" />
+                </div>
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                {/* Search */}
+                <div className="sm:col-span-5 relative">
+                  <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={couponSearchQuery}
+                    onChange={(e) => setCouponSearchQuery(e.target.value)}
+                    placeholder="ابحث بكود الكوبون، اسم العرض، أو العميل..."
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl pr-10 pl-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500 transition"
+                  />
+                </div>
+
+                {/* Status Tabs */}
+                <div className="sm:col-span-4 flex items-center gap-1.5">
+                  {[
+                    { id: 'ALL', label: 'الكل' },
+                    { id: 'ACTIVE', label: '🟢 جاهز للصرف' },
+                    { id: 'USED', label: '🔥 تم الصرف' },
+                  ].map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => setCouponStatusFilter(st.id as any)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition shrink-0 ${
+                        couponStatusFilter === st.id
+                          ? 'bg-amber-500 text-black shadow-sm'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      }`}
+                    >
+                      {st.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Branch Filter */}
+                <div className="sm:col-span-3 flex items-center justify-end">
+                  {branches.length > 0 && (
+                    <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 w-full">
+                      <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <select
+                        value={couponBranchFilter}
+                        onChange={(e) => setCouponBranchFilter(e.target.value)}
+                        className="bg-transparent text-slate-300 text-xs font-bold outline-none cursor-pointer w-full"
+                      >
+                        <option value="ALL" className="bg-slate-900 text-slate-200">
+                          📍 جميع الفروع ({branches.length})
+                        </option>
+                        {branches.map((b) => (
+                          <option key={b.id} value={b.id} className="bg-slate-900 text-slate-200">
+                            {b.name} {b.city ? `(${b.city})` : ''} {b.is_main ? '⭐' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
+              <table className="w-full text-right text-xs">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-950/80">
+                    <th className="py-3.5 px-3">كود الكوبون</th>
+                    <th className="py-3.5 px-3">العرض / المكافأة</th>
+                    <th className="py-3.5 px-3">العميل</th>
+                    <th className="py-3.5 px-3">الفرع</th>
+                    <th className="py-3.5 px-3">المسؤول / الكاشير</th>
+                    <th className="py-3.5 px-3">الحالة</th>
+                    <th className="py-3.5 px-3">تاريخ الاكتساب / الصرف</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {filteredCoupons.length > 0 ? (
+                    filteredCoupons.map((cpn) => {
+                      const cust = customers.find((c) => c.id === cpn.customer_id);
+                      const br = resolveCouponBranch(cpn);
+                      const staff = cpn.redeemed_by_staff_id
+                        ? staffList.find((s) => s.id === cpn.redeemed_by_staff_id)
+                        : null;
+                      return (
+                        <tr key={cpn.id} className="hover:bg-slate-900/60 transition">
+                          {/* 1. كود الكوبون */}
+                          <td className="py-3.5 px-3">
+                            <span className="font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-1 rounded-lg border border-amber-500/20 text-xs">
+                              {cpn.code}
+                            </span>
+                          </td>
+
+                          {/* 2. العرض / المكافأة */}
+                          <td className="py-3.5 px-3">
+                            <div className="font-bold text-white">{cpn.title}</div>
+                            {cpn.cost_in_points ? (
+                              <div className="text-[10px] text-amber-400/90 font-mono mt-0.5">
+                                القيمة: {cpn.cost_in_points} نقطة
+                              </div>
+                            ) : null}
+                          </td>
+
+                          {/* 3. العميل */}
+                          <td className="py-3.5 px-3">
+                            <div className="font-bold text-white">{cust?.name || 'عميل المتجر'}</div>
+                            <div className="text-[11px] font-mono text-slate-400 mt-0.5" dir="ltr">
+                              {cust?.phone || ''}
+                            </div>
+                          </td>
+
+                          {/* 4. الفرع */}
+                          <td className="py-3.5 px-3">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-slate-800/90 text-slate-200 border border-slate-700/80 shadow-sm whitespace-nowrap">
+                              <Building2 className="w-3 h-3 text-amber-400 shrink-0" />
+                              <span>{br.name}</span>
+                            </span>
+                          </td>
+
+                          {/* 5. المسؤول / الكاشير */}
+                          <td className="py-3.5 px-3 font-medium text-slate-300">
+                            {staff ? (
+                              <span className="text-xs font-bold text-white">{staff.name}</span>
+                            ) : cpn.status === 'USED' ? (
+                              <span className="text-xs text-slate-400">كاشير المتجر</span>
+                            ) : (
+                              <span className="text-xs text-slate-500">-</span>
+                            )}
+                          </td>
+
+                          {/* 6. الحالة */}
+                          <td className="py-3.5 px-3">
+                            {cpn.status === 'USED' ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-500/10 text-rose-300 border border-rose-500/30">
+                                <Flame className="w-3 h-3 text-rose-400" />
+                                <span>🔥 تم الصرف</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                <span>🟢 جاهز للصرف</span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* 7. تاريخ الاكتساب / الصرف */}
+                          <td className="py-3.5 px-3 text-slate-300 font-mono whitespace-nowrap">
+                            <div className="font-bold text-slate-200 text-xs">
+                              {cpn.used_at
+                                ? `صرف: ${new Date(cpn.used_at).toLocaleDateString('ar-SA', { day: 'numeric', month: 'short' })}`
+                                : `اكتساب: ${new Date(cpn.purchased_at || cpn.created_at || '').toLocaleDateString('ar-SA', { day: 'numeric', month: 'short' })}`}
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              {new Date(cpn.used_at || cpn.purchased_at || cpn.created_at || '').toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="text-center py-10 text-slate-500">
+                        لا توجد كوبونات تطابق شروط الفلتر المحددة
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
         </div>
       )}
 
@@ -3270,12 +4229,23 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                   {cust.name ? cust.name.charAt(0) : 'ع'}
                                 </div>
                                 <div>
-                                  <span className="font-bold text-white block">
-                                    {cust.name || 'عميل'}
-                                  </span>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-bold text-white block">
+                                      {cust.name || 'عميل'}
+                                    </span>
+                                    {cust.special_date && (
+                                      <span
+                                        className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full bg-pink-500/15 text-pink-300 border border-pink-500/30 font-bold"
+                                        title={`اليوم المفضل: ${cust.special_date_type || 'مناسبة'} (${cust.special_date})`}
+                                      >
+                                        <span>🎁</span>
+                                        <span>{cust.special_date}</span>
+                                      </span>
+                                    )}
+                                  </div>
                                   <button
                                     onClick={() => handleOpenEditCustomer(cust)}
-                                    className="text-[10px] text-slate-400 hover:text-white flex items-center gap-0.5"
+                                    className="text-[10px] text-slate-400 hover:text-white flex items-center gap-0.5 mt-0.5"
                                   >
                                     <Edit3 className="w-2.5 h-2.5" />
                                     <span>{cust.name ? 'تعديل' : '+ إضافة اسم'}</span>
@@ -3343,6 +4313,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                   title="إرسال رسالة واتساب للعميل"
                                 >
                                   <Send className="w-3.5 h-3.5" />
+                                </button>
+
+                                <button
+                                  onClick={() => handleOpenCustomerNotification(cust)}
+                                  className="p-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 hover:text-amber-300 border border-amber-500/30 transition shadow-sm"
+                                  title="إرسال إشعار فوري داخل التطبيق للعميل"
+                                >
+                                  <Bell className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </td>
@@ -3412,6 +4390,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 const matchesName =
                   cashierName === logStaffFilter || (matchingStaff && cashierName === matchingStaff.name);
                 if (!matchesId && !matchesName) return false;
+              }
+
+              // Branch filter
+              if (logBranchFilter !== 'ALL') {
+                const resBranch = resolveLogBranch(log);
+                if (resBranch.id !== logBranchFilter && resBranch.name !== logBranchFilter) {
+                  return false;
+                }
               }
 
               // Search Query
@@ -3663,6 +4649,27 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                           ))}
                         </select>
                       )}
+
+                      {/* Branch Filter Dropdown */}
+                      {branches.length > 0 && (
+                        <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5">
+                          <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <select
+                            value={logBranchFilter}
+                            onChange={(e) => setLogBranchFilter(e.target.value)}
+                            className="bg-transparent text-slate-300 text-xs font-bold outline-none cursor-pointer"
+                          >
+                            <option value="ALL" className="bg-slate-900 text-slate-200">
+                              📍 جميع الفروع ({branches.length})
+                            </option>
+                            {branches.map((b) => (
+                              <option key={b.id} value={b.id} className="bg-slate-900 text-slate-200">
+                                {b.name} {b.city ? `(${b.city})` : ''} {b.is_main ? '⭐' : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3673,6 +4680,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     <thead>
                       <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-950/80">
                         <th className="py-3.5 px-3">التاريخ والوقت</th>
+                        <th className="py-3.5 px-3">الفرع</th>
                         <th className="py-3.5 px-3">نوع الحركة</th>
                         <th className="py-3.5 px-3">التفاصيل (المبلغ / الكوبون)</th>
                         <th className="py-3.5 px-3">بيانات العميل</th>
@@ -3706,6 +4714,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                     minute: '2-digit',
                                   })}
                                 </div>
+                              </td>
+
+                              {/* 1-B. الفرع */}
+                              <td className="py-3.5 px-3">
+                                {(() => {
+                                  const br = resolveLogBranch(log);
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-slate-800/90 text-slate-200 border border-slate-700/80 shadow-sm whitespace-nowrap">
+                                      <Building2 className="w-3 h-3 text-amber-400 shrink-0" />
+                                      <span>{br.name}</span>
+                                    </span>
+                                  );
+                                })()}
                               </td>
 
                               {/* 2. نوع الحركة */}
@@ -3858,7 +4879,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         })
                       ) : (
                         <tr>
-                          <td colSpan={6} className="py-12 text-center text-slate-500 space-y-2">
+                          <td colSpan={7} className="py-12 text-center text-slate-500 space-y-2">
                             <FileText className="w-8 h-8 text-slate-600 mx-auto" />
                             <p className="text-xs">لا توجد أي حركات مطابقة لشروط البحث والفلتر المحددة.</p>
                           </td>
@@ -3871,6 +4892,17 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             );
           })()}
         </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 🧾 TAB: العمليات والورديات والمصروفات */}
+      {/* ========================================== */}
+      {!isStoreSuspended && activeTab === 'pos_operations' && (
+        <POSOperationsTab
+          store={store}
+          branches={branches}
+          staffList={staffList}
+        />
       )}
 
       {/* ========================================== */}
@@ -4754,15 +5786,38 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
               {/* Filter & Search Bar */}
               <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
-                <div className="relative w-full sm:w-80">
-                  <Search className="w-4 h-4 text-slate-500 absolute top-3 right-3" />
-                  <input
-                    type="text"
-                    value={bookingSearchQuery}
-                    onChange={(e) => setBookingSearchQuery(e.target.value)}
-                    placeholder="ابحث بالاسم، رقم الجوال، أو كود الحجز..."
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-400 rounded-xl pr-9 pl-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
-                  />
+                <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto flex-1">
+                  <div className="relative w-full sm:w-80">
+                    <Search className="w-4 h-4 text-slate-500 absolute top-3 right-3" />
+                    <input
+                      type="text"
+                      value={bookingSearchQuery}
+                      onChange={(e) => setBookingSearchQuery(e.target.value)}
+                      placeholder="ابحث بالاسم، رقم الجوال، أو كود الحجز..."
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-blue-400 rounded-xl pr-9 pl-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
+                    />
+                  </div>
+
+                  {/* Branch Filter Dropdown */}
+                  {branches.length > 0 && (
+                    <div className="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 w-full sm:w-auto">
+                      <Building2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                      <select
+                        value={bookingBranchFilter}
+                        onChange={(e) => setBookingBranchFilter(e.target.value)}
+                        className="bg-transparent text-slate-300 text-xs font-bold outline-none cursor-pointer w-full sm:w-auto"
+                      >
+                        <option value="ALL" className="bg-slate-900 text-slate-200">
+                          📍 جميع الفروع ({branches.length})
+                        </option>
+                        {branches.map((b) => (
+                          <option key={b.id} value={b.id} className="bg-slate-900 text-slate-200">
+                            {b.name} {b.city ? `(${b.city})` : ''} {b.is_main ? '⭐' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
@@ -4796,6 +5851,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-950/90">
                       <th className="py-3.5 px-3">رقم الحجز والتاريخ</th>
                       <th className="py-3.5 px-3">بيانات العميل</th>
+                      <th className="py-3.5 px-3">الفرع</th>
                       <th className="py-3.5 px-3">الخدمة المطلوبة</th>
                       <th className="py-3.5 px-3">المختص</th>
                       <th className="py-3.5 px-3">الوقت والسعر</th>
@@ -4806,13 +5862,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     {bookings
                       .filter((b) => {
                         const matchStatus = bookingStatusFilter === 'ALL' || b.status === bookingStatusFilter;
+                        const matchBranch =
+                          bookingBranchFilter === 'ALL' || resolveBookingBranch(b).id === bookingBranchFilter;
                         const matchQuery =
                           !bookingSearchQuery.trim() ||
                           b.customer_name.toLowerCase().includes(bookingSearchQuery.toLowerCase()) ||
                           b.customer_phone.includes(bookingSearchQuery.trim()) ||
                           b.booking_number.toLowerCase().includes(bookingSearchQuery.toLowerCase()) ||
                           b.service_name.toLowerCase().includes(bookingSearchQuery.toLowerCase());
-                        return matchStatus && matchQuery;
+                        return matchStatus && matchBranch && matchQuery;
                       })
                       .map((bk) => (
                         <tr key={bk.id} className="hover:bg-slate-900/40 transition">
@@ -4824,6 +5882,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                           <td className="py-3.5 px-3">
                             <div className="font-bold text-white">{bk.customer_name}</div>
                             <div className="text-[11px] text-slate-400 font-mono">{bk.customer_phone}</div>
+                          </td>
+
+                          {/* الفرع */}
+                          <td className="py-3.5 px-3">
+                            {(() => {
+                              const br = resolveBookingBranch(bk);
+                              return (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-slate-900 text-slate-300 border border-slate-800 whitespace-nowrap">
+                                  <Building2 className="w-3 h-3 text-blue-400 shrink-0" />
+                                  <span>{br.name}</span>
+                                </span>
+                              );
+                            })()}
                           </td>
 
                           <td className="py-3.5 px-3">
@@ -4844,7 +5915,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                           <td className="py-3.5 px-3">
                             <div className="font-bold font-mono text-white">{bk.booking_time}</div>
-                            <div className="text-[11px] font-mono text-amber-400 font-bold">{bk.total_price} ر.س</div>
+                            <div className="text-[11px] font-mono text-amber-400 font-bold">
+                              {bk.service_price || bk.total_price || 0} ر.س
+                            </div>
                           </td>
 
                           <td className="py-3.5 px-3">
@@ -5140,6 +6213,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       )}
 
       {/* ========================================== */}
+      {/* 🏢 TAB: إدارة الفروع وأوقات العمل */}
+      {/* ========================================== */}
+      {!isStoreSuspended && activeTab === 'branches' && (
+        <BranchesManagementTab
+          store={store}
+          staffList={staffList}
+          onStaffUpdated={() => {
+            LoyaltyService.getStoreStaff(store.id).then(setStaffList);
+          }}
+        />
+      )}
+
+      {/* ========================================== */}
       {/* ⚙️ TAB 6: الإعدادات والفوترة */}
       {/* ========================================== */}
       {!isStoreSuspended && activeTab === 'settings' && (
@@ -5157,6 +6243,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             >
               <Sliders className="w-4 h-4" />
               <span>هوية المتجر والشعار</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSettingsSection('modules')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                settingsSection === 'modules'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <Layers className="w-4 h-4" />
+              <span>التحكم بالخدمات (الموديولات)</span>
             </button>
 
             <button
@@ -5199,6 +6298,35 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
           <form onSubmit={handleSaveLoyaltySettings} className="grid grid-cols-1 md:grid-cols-12 gap-6">
             
+            {/* Store Identifiers Banner (Unified UUID & Short Code) */}
+            <div className="md:col-span-12 p-4 rounded-2xl bg-slate-950/80 border border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-sm">
+                  #
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white">كود المتجر التعريفي (Store Code):</span>
+                    <span className="text-xs font-mono font-black px-2.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
+                      {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    كود مختصر وسهل للتعريف السريع بالمتجر وربط الكاشير والفروع مستقبلاً.
+                  </p>
+                </div>
+              </div>
+              <div className="text-left sm:text-right bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800">
+                <span className="text-[10px] text-slate-500 block font-sans">المعرف البرمجي الموحد (UUID):</span>
+                <span className="text-[10px] font-mono text-slate-400 select-all font-bold">{store.id}</span>
+              </div>
+            </div>
+
+            {/* 🎛️ Store Modules Toggles Card */}
+            <div className="md:col-span-12">
+              {renderModulesCard()}
+            </div>
+
             {/* Store Name & Slug */}
             <div className="md:col-span-6 space-y-1.5">
               <label className="text-xs font-medium text-slate-300 block">اسم المتجر / العلامة التجارية</label>
@@ -5450,6 +6578,23 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     <span className="text-[10px] font-mono">{allowServiceBooking ? 'مفعل' : 'معطل'}</span>
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">حجز موعد خدمة، جلسة، أو صالون</p>
+                </button>
+
+                {/* 5. POS WhatsApp Receipt Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setEnablePosWhatsappReceipt(!enablePosWhatsappReceipt)}
+                  className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between sm:col-span-2 lg:col-span-4 ${
+                    enablePosWhatsappReceipt
+                      ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300 shadow-sm'
+                      : 'bg-slate-900 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold">📲 إرسال فواتير الكاشير عبر الواتساب (اختياري للعميل)</span>
+                    <span className="text-[10px] font-mono">{enablePosWhatsappReceipt ? 'مفعل ✅' : 'معطل ✕'}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">إظهار زر إرسال الفاتورة الإلكترونية عبر الواتساب في شاشة الكاشير عند إتمام البيع</p>
                 </button>
               </div>
 
@@ -5862,51 +7007,126 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 </div>
                 <div>
                   <h3 className="text-base sm:text-lg font-black text-white">
-                    تنبيهات بوت تليجرام (مباشر ومجاني)
+                    تنبيهات بوت تليجرام التفاعلي (مباشر ومجاني)
                   </h3>
                   <p className="text-xs text-slate-400">
-                    اربط متجرك بالبوت لاستقبال إشعارات الطلبات الجديدة، المواعيد، وتنبيهات النظام فوراً.
+                    استقبال إشعارات فورية للطلبات، الحجوزات، واستبدال النقاط مع أزرار تفاعلية لإدارتها مباشرة من تليجرام.
                   </p>
                 </div>
               </div>
+
+              {/* Status Badge */}
+              {telegramChatId ? (
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold self-start sm:self-auto">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span>متصل ومفعّل</span>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-bold self-start sm:self-auto">
+                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                  <span>غير مربوط حالياً</span>
+                </div>
+              )}
             </div>
 
-            <div className="flex items-center justify-between bg-slate-950 p-4 rounded-2xl border border-slate-800">
-              <div>
-                <p className="text-sm font-bold text-white mb-1">تفعيل الإشعارات على جوالك</p>
-                <p className="text-xs text-slate-400">سيتم فتح تطبيق تليجرام وبدء المحادثة مع البوت الخاص بالمنصة.</p>
+            {/* Quick 1-Click Linking Buttons */}
+            <div className="space-y-3">
+              <p className="text-sm font-bold text-white">
+                اختر طريقة الربط التلقائي بضغطة زر واحدة:
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {/* Button 1: Private chat */}
+                <a 
+                  href={`https://t.me/Myradarstore_bot?start=store_${store?.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm shadow-lg shadow-blue-900/30 transition flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
+                      <Send className="w-4 h-4" />
+                    </div>
+                    <div className="text-right">
+                      <div className="font-black text-sm">🔗 ربط بحسابي الخاص</div>
+                      <div className="text-[11px] text-blue-100 font-normal">استقبال الطلبات في محادثتك الشخصية</div>
+                    </div>
+                  </div>
+                  <span className="text-xs bg-white/20 px-2.5 py-1 rounded-lg">فتح البوت</span>
+                </a>
+
+                {/* Button 2: Group chat */}
+                <a 
+                  href={`https://t.me/Myradarstore_bot?startgroup=store_${store?.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-900/30 transition flex items-center justify-between group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
+                      <Users className="w-4 h-4" />
+                    </div>
+                    <div className="text-right">
+                      <div className="font-black text-sm">👥 ربط بقروب عمل (للموظفين)</div>
+                      <div className="text-[11px] text-indigo-100 font-normal">إضافة البوت للقروب واستقبال الطلبات جماعياً</div>
+                    </div>
+                  </div>
+                  <span className="text-xs bg-white/20 px-2.5 py-1 rounded-lg">اختيار قروب</span>
+                </a>
               </div>
-              
-              <a 
-                href={`https://t.me/Myradarstore_bot?start=${store?.id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="py-2.5 px-5 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-bold text-sm shadow-md transition flex items-center gap-2"
-              >
-                <Send className="w-4 h-4" />
-                <span>الخطوة 1: الحصول على المعرف</span>
-              </a>
+              <p className="text-[11px] text-slate-400">
+                💡 بمجرد الضغط على Start أو إضافة البوت للقروب، يلتقط النظام المتجر تلقائياً ويتم تفعيل الإشعارات فوراً.
+              </p>
             </div>
 
-            <div className="flex flex-col space-y-3 p-4 rounded-2xl bg-slate-950 border border-slate-800">
-              <label className="text-sm font-bold text-white">الخطوة 2: لصق معرف الشات (Chat ID)</label>
-              <p className="text-xs text-slate-400">البوت راح يرد عليك برقم معرف الشات الخاص بك. انسخه والصقه هنا:</p>
-              <div className="flex items-center gap-3">
-                <input 
-                  type="text" 
-                  value={telegramChatId}
-                  onChange={(e) => setTelegramChatId(e.target.value)}
-                  placeholder="مثال: 123456789"
-                  className="flex-1 bg-slate-900 border border-slate-700 focus:border-blue-500 rounded-xl px-4 py-2 text-sm text-white outline-none font-mono"
-                />
+            {/* If connected, show active Chat ID & Unlink option */}
+            {telegramChatId && (
+              <div className="flex items-center justify-between bg-emerald-950/30 border border-emerald-500/20 p-4 rounded-2xl">
+                <div>
+                  <p className="text-xs font-bold text-emerald-300">معرف المحادثة المربوط حالياً:</p>
+                  <p className="text-xs font-mono text-emerald-400 mt-0.5">{telegramChatId}</p>
+                </div>
                 <button
                   type="button"
-                  onClick={handleSaveTelegram}
-                  className="py-2 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-sm transition"
+                  onClick={handleUnlinkTelegram}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-bold transition"
                 >
-                  تأكيد وحفظ
+                  إلغاء الربط ✕
                 </button>
               </div>
+            )}
+
+            {/* Collapsible Manual Settings (Secondary) */}
+            <div className="pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowManualTelegram(!showManualTelegram)}
+                className="text-xs font-bold text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5"
+              >
+                <span>⚙️ إعدادات الربط اليدوي للـ Chat ID (خيار ثانوي)</span>
+                <span className="text-[10px]">{showManualTelegram ? '▲' : '▼'}</span>
+              </button>
+
+              {showManualTelegram && (
+                <div className="mt-3 flex flex-col space-y-3 p-4 rounded-2xl bg-slate-950 border border-slate-800 animate-fade-in">
+                  <label className="text-xs font-bold text-white">إدخال معرف الشات يدوياً (Chat ID):</label>
+                  <div className="flex items-center gap-3">
+                    <input 
+                      type="text" 
+                      value={telegramChatId}
+                      onChange={(e) => setTelegramChatId(e.target.value)}
+                      placeholder="مثال: 123456789 أو -100123456789"
+                      className="flex-1 bg-slate-900 border border-slate-700 focus:border-blue-500 rounded-xl px-4 py-2 text-sm text-white outline-none font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveTelegram}
+                      className="py-2 px-5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-sm transition"
+                    >
+                      تأكيد وحفظ
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -6142,6 +7362,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Sub-Section: Modules Management */}
+      {settingsSection === 'modules' && (
+        <div className="space-y-6 animate-fade-in">
+          {renderModulesCard()}
         </div>
       )}
 
@@ -6722,6 +7949,48 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 />
               </div>
 
+              {/* 🎁 Special Date (اليوم المفضل) - Editable by store admin */}
+              <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>🎁</span>
+                    <span>توثيق اليوم المفضل (خاص بالإدارة)</span>
+                  </span>
+                  <span className="text-[10px] text-amber-400 font-mono">
+                    {editCustomerSpecialDate ? `مسجل: ${editCustomerSpecialDate}` : 'غير مسجل'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">تاريخ اليوم والشهر (MM-DD)</label>
+                    <input
+                      type="text"
+                      value={editCustomerSpecialDate}
+                      onChange={(e) => setEditCustomerSpecialDate(e.target.value)}
+                      placeholder="مثال: 05-18"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none font-mono text-center"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-slate-400 block mb-1">نوع المناسبة</label>
+                    <select
+                      value={editCustomerSpecialDateType}
+                      onChange={(e) => setEditCustomerSpecialDateType(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                    >
+                      <option value="يوم ميلادي">يوم ميلادي 🎂</option>
+                      <option value="يوم زواجي">يوم زواجي 💍</option>
+                      <option value="يوم الأم">يوم الأم 👩‍👧</option>
+                      <option value="يوم التخرج">يوم التخرج 🎓</option>
+                      <option value="أفضل يوم بحياتي">أفضل يوم بحياتي ✨</option>
+                      <option value="مناسبة خاصة">مناسبة خاصة 🌸</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               <div className="pt-2 flex items-center space-x-3 rtl:space-x-reverse">
                 <button
                   type="submit"
@@ -6732,6 +8001,165 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 <button
                   type="button"
                   onClick={() => setIsEditCustomerOpen(false)}
+                  className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-semibold"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 🔔 Modal: Direct In-App Customer Notification */}
+      {isCustomerNotificationOpen && selectedCustomerForNotification && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+          <div className="max-w-lg w-full rounded-3xl p-6 sm:p-7 bg-slate-900 border border-slate-800 relative shadow-2xl space-y-5 text-right">
+            <button
+              onClick={() => setIsCustomerNotificationOpen(false)}
+              className="absolute top-5 left-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3 rtl:space-x-reverse">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <Bell className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-white">إرسال إشعار فوري داخل التطبيق</h3>
+                <p className="text-xs text-slate-400">يصل مباشرة لمحفظة العميل كإشعار منبثق وتنبيه صوتي</p>
+              </div>
+            </div>
+
+            {/* Customer Snapshot Box */}
+            <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-slate-800 text-slate-200 font-bold flex items-center justify-center text-xs">
+                  {selectedCustomerForNotification.name ? selectedCustomerForNotification.name.charAt(0) : 'ع'}
+                </div>
+                <div>
+                  <strong className="text-white block">{selectedCustomerForNotification.name || 'عميل'}</strong>
+                  <span className="text-[11px] font-mono text-slate-400" dir="ltr">{selectedCustomerForNotification.phone}</span>
+                </div>
+              </div>
+
+              {selectedCustomerForNotification.special_date ? (
+                <div className="text-left">
+                  <span className="inline-flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full bg-pink-500/15 text-pink-300 border border-pink-500/30 font-bold">
+                    <span>🎉</span>
+                    <span>{selectedCustomerForNotification.special_date_type || 'مناسبة خاصة'}: {selectedCustomerForNotification.special_date}</span>
+                  </span>
+                </div>
+              ) : (
+                <span className="text-[10px] text-slate-500 font-medium">الرصيد: {selectedCustomerForNotification.wallet_balance} نقطة</span>
+              )}
+            </div>
+
+            {/* Quick Templates */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-300 block">نماذج رسائل سريعة:</label>
+              <div className="flex gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomerNotifTitle(`تهنئة بمناسبة ${selectedCustomerForNotification.special_date_type || 'يومك المميز'} 🎉`);
+                    setCustomerNotifBody(`أهلاً بك يا ${selectedCustomerForNotification.name || 'عميلنا العزيز'}! 🌸 يسعدنا في ${store.name} مشاركتك فرحتك بيومك المفضل، تنتظرك مفاجأة وضيافة خاصة في زيارتك القادمة ✨`);
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-pink-300 border border-pink-500/20 transition flex items-center gap-1"
+                >
+                  <span>🎂</span>
+                  <span>تهنئة باليوم المفضل</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomerNotifTitle(`هدية ونقاط ولاء في محفظتك 🎁`);
+                    setCustomerNotifBody(`أهلاً بك يا ${selectedCustomerForNotification.name || 'عميلنا العزيز'}! يسعدنا إهداؤك نقاط ولاء إضافية في محفظتك، استمتع بزيارتك القادمة لـ ${store.name}!`);
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-amber-300 border border-amber-500/20 transition flex items-center gap-1"
+                >
+                  <span>🎁</span>
+                  <span>هدية نقاط ولاء</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomerNotifTitle(`عرض حصري وضيافة خاصة 🌟`);
+                    setCustomerNotifBody(`نحن بانتظارك في ${store.name}! يتوفر لك عرض خاص وامتيازات حصرية جاهزة للاستبدال.`);
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-emerald-300 border border-emerald-500/20 transition flex items-center gap-1"
+                >
+                  <span>🌟</span>
+                  <span>عرض حصري</span>
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleSendCustomerNotification} className="space-y-3.5">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300 block">عنوان الإشعار</label>
+                <input
+                  type="text"
+                  value={customerNotifTitle}
+                  onChange={(e) => setCustomerNotifTitle(e.target.value)}
+                  placeholder="مثال: هدية خاصة في محفظتك 🎁"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500/60 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 outline-none transition"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300 block">نص الإشعار</label>
+                <textarea
+                  value={customerNotifBody}
+                  onChange={(e) => setCustomerNotifBody(e.target.value)}
+                  placeholder="اكتب تفاصيل التهنئة أو العرض..."
+                  rows={3}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500/60 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 outline-none transition resize-none leading-relaxed"
+                  required
+                />
+              </div>
+
+              {/* Sound Effect Selector */}
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800/80">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-300 font-bold">النغمة الصوتية:</span>
+                  <select
+                    value={customerNotifSound}
+                    onChange={(e: any) => setCustomerNotifSound(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white outline-none"
+                  >
+                    <option value="notification">تنبيه رسمي 🔔</option>
+                    <option value="success">احتفال وإنجاز 🎉</option>
+                    <option value="redeem">مكافأة واستبدال 🎁</option>
+                    <option value="commission">رنين عملات 🪙</option>
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => playBeepSound(customerNotifSound)}
+                  className="text-[11px] text-amber-400 hover:text-amber-300 font-bold px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 transition"
+                >
+                  🔊 تجربة الصوت
+                </button>
+              </div>
+
+              <div className="pt-2 flex items-center space-x-3 rtl:space-x-reverse">
+                <button
+                  type="submit"
+                  disabled={isSendingCustomerNotif || !customerNotifTitle.trim() || !customerNotifBody.trim()}
+                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs transition shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>{isSendingCustomerNotif ? 'جاري الإرسال...' : 'إرسال الإشعار للمحفظة الآن 🔔'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCustomerNotificationOpen(false)}
                   className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-semibold"
                 >
                   إلغاء
@@ -7042,6 +8470,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         existingCategories={globalCategories.map((c) => c.name)}
         onItemsSaved={(newItems) => {
           setCatalogItems((prev) => [...newItems, ...prev]);
+          LoyaltyEvents.emit({ type: 'CATALOG_UPDATED', storeId: store.id });
+          LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: store.id });
           setCatalogActionSuccess(`تم بنجاح إضافة ${newItems.length} صنف بالذكاء الاصطناعي إلى المنيو! 🎉`);
           setTimeout(() => setCatalogActionSuccess(null), 4000);
         }}

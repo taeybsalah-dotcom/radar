@@ -87,13 +87,6 @@ export const SendNotificationModal: React.FC<SendNotificationModalProps> = ({
         targetId: targetId || undefined,
       });
 
-      // 2. Trigger Local Sound & Lock Screen Notification for sender feedback
-      await sendPortalNotification({
-        title,
-        body,
-        soundType,
-        tag: `radar-direct-${Date.now()}`,
-      });
 
       // 2. Persist in local notifications storage for platform history
       const newNotif = {

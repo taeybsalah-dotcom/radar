@@ -304,10 +304,42 @@ export interface StoreInvoice {
   metadata?: any;
 }
 
+export interface BranchDaySchedule {
+  day: 'sunday' | 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday';
+  day_ar: string;
+  is_open: boolean;
+  open_time: string; // "09:00"
+  close_time: string; // "23:00"
+}
+
+export interface StoreBranch {
+  id: string;
+  store_id: string;
+  branch_code: string;
+  name: string;
+  city?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  is_main: boolean;
+  status: 'active' | 'inactive';
+  is_open?: boolean;
+  manual_override?: 'auto' | 'forced_open' | 'forced_closed';
+  working_hours?: BranchDaySchedule[];
+  busy_mode?: boolean;
+  pickup_available?: boolean;
+  delivery_available?: boolean;
+  dine_in_available?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Store {
   id: string;
   slug: string;
   name: string;
+  store_code?: string; // كود العرض المختصر للمتجر مثل RD-1001 للتعريف السريع
+  tax_number?: string; // الرقم الضريبي للمتجر لدى هيئة الزكاة والضريبة والجمارك (ZATCA)
+  vat_number?: string;
   is_demo?: boolean;
   logo_url: string | null;
   primary_color: string;
@@ -343,6 +375,14 @@ export interface Store {
   max_cashier_invoice_amount?: number; // سقف الفواتير العادية للكاشير (مثال: 500 ريال) - ما زاد يتطلب رمز المدير
   admin_pin?: string; // الرمز السري الرئيسي لمدير المتجر
   catalog_enabled?: boolean; // تفعيل قائمة المنيو والخدمات
+  // 🎛️ Module Toggles (SaaS Architecture)
+  enable_orders?: boolean; // تفعيل/إيقاف الطلبات الفورية والمنيو (من قبل التاجر)
+  enable_bookings?: boolean; // تفعيل/إيقاف حجوزات المواعيد والخدمات (من قبل التاجر)
+  enable_loyalty?: boolean; // تفعيل/إيقاف برنامج الولاء والنقاط (من قبل التاجر)
+  owner_enable_orders?: boolean; // صلاحية باقة المنصة للطلبات (من قبل المالك)
+  owner_enable_bookings?: boolean; // صلاحية باقة المنصة للحجوزات (من قبل المالك)
+  owner_enable_loyalty?: boolean; // صلاحية باقة المنصة للولاء (من قبل المالك)
+  enable_pos_whatsapp_receipt?: boolean; // تفعيل إرسال الفاتورة عبر الواتساب في الكاشير
   fulfillment_settings?: StoreFulfillmentSettings; // إعدادات طرق الاستلام والتوصيل والحجز
   wallet?: StoreWallet; // محفظة باقات المتجر وحدود العمليات
   grace_period_days?: number; // فترة السماح بالأيام (افتراضي 3 إلى 5 أيام)
@@ -351,8 +391,50 @@ export interface Store {
   complimentary_days_granted?: number; // إجمالي الأيام الإضافية الممنوحة يدوياً من الإدارة
   last_override_at?: string; // تاريخ آخر تمديد يدوي
   last_override_reason?: string; // سبب التمديد اليدوي الأخير
+  branches?: StoreBranch[]; // فروع المتجر
+  modules_enabled?: { menu?: boolean; bookings?: boolean; loyalty?: boolean };
+  has_menu_module?: boolean;
+  has_bookings_module?: boolean;
   created_at?: string;
   updated_at?: string;
+}
+
+// 🎛️ فحص حالة الموديولات الفعالة للمتجر مع تطبيق تسلسل الصلاحيات (SaaS Hierarchy)
+export function getStoreActiveModules(store?: Partial<Store> | null) {
+  if (!store) {
+    return {
+      orders: true,
+      bookings: true,
+      loyalty: true,
+      ownerOrders: true,
+      ownerBookings: true,
+      ownerLoyalty: true,
+      hasAtLeastOneActive: true,
+    };
+  }
+
+  // 1. كلمة المالك العليا (SaaS Plan Permission)
+  const ownerOrders = store.owner_enable_orders !== false;
+  const ownerBookings = store.owner_enable_bookings !== false;
+  const ownerLoyalty = store.owner_enable_loyalty !== false;
+
+  // 2. حالة المتجر الفعلية (Effective Module State)
+  const orders = ownerOrders && store.enable_orders !== false;
+  const bookings = ownerBookings && store.enable_bookings !== false;
+  const loyalty = ownerLoyalty && store.enable_loyalty !== false;
+
+  return {
+    orders,
+    bookings,
+    loyalty,
+    ownerOrders,
+    ownerBookings,
+    ownerLoyalty,
+    merchantOrders: store.enable_orders !== false,
+    merchantBookings: store.enable_bookings !== false,
+    merchantLoyalty: store.enable_loyalty !== false,
+    hasAtLeastOneActive: orders || bookings || loyalty,
+  };
 }
 
 // ===================================================
@@ -429,7 +511,7 @@ export interface WhatsAppOrderPayload {
   delivery_fee: number;
   total_amount: number;
   loyalty_points_earned: number;
-  status?: 'pending' | 'preparing' | 'completed' | 'cancelled';
+  status?: 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled';
   points_awarded?: boolean;
   fulfillment_details: {
     table_number?: string;
@@ -455,6 +537,8 @@ export interface StoreStaff {
   pin_code?: string;
   is_active: boolean;
   can_manual_input_phone: boolean; // صلاحية خاصة بالموظف: هل مسموح له بإدخال الجوال يدوياً أم مسح إجباري فقط؟
+  branch_id?: string | null; // الفرع الافتراضي المعين له الموظف
+  assigned_branch_ids?: string[]; // قائمة الفروع المصرح للموظف العمل بها
   created_at?: string;
   updated_at?: string;
 }
@@ -473,6 +557,104 @@ export interface Customer {
   is_active?: boolean;
   visits_count?: number;
   created_at?: string;
+}
+
+export interface POSShift {
+  id: string;
+  store_id: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  staff_id?: string | null;
+  staff_name: string;
+  staff_phone?: string | null;
+  status: 'open' | 'closed';
+  opened_at: string;
+  closed_at?: string | null;
+  opening_cash: number;
+  expected_cash: number;
+  actual_cash: number;
+  cash_difference: number;
+  total_sales: number;
+  cash_sales: number;
+  card_sales: number;
+  split_sales: number;
+  tax_amount: number;
+  discount_amount: number;
+  orders_count: number;
+  total_refunds?: number;
+  cash_refunds?: number;
+  card_refunds?: number;
+  refunds_count?: number;
+  total_cash_in?: number;
+  total_cash_out?: number;
+  cash_movements_count?: number;
+  notes?: string | null;
+  telegram_sent?: boolean;
+  metadata?: Record<string, any>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface POSRefundItem {
+  id: string;
+  name: string;
+  unit_price: number;
+  quantity: number;
+  original_quantity: number;
+  total_price: number;
+}
+
+export interface POSRefund {
+  id: string;
+  store_id: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  order_id?: string | null;
+  order_number: string;
+  credit_note_number: string;
+  refund_type: 'full' | 'partial';
+  refund_reason: string;
+  refund_method: 'cash' | 'card' | 'wallet';
+  items: POSRefundItem[];
+  subtotal: number;
+  tax_amount: number;
+  total_refunded: number;
+  loyalty_points_deducted: number;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  cashier_id?: string | null;
+  cashier_name?: string | null;
+  shift_id?: string | null;
+  zatca_qr?: string | null;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface POSCashMovement {
+  id: string;
+  store_id: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  shift_id?: string | null;
+  staff_id: string;
+  staff_name: string;
+  type: 'cash_in' | 'cash_out';
+  amount: number;
+  reason: string;
+  category?: string | null;
+  recipient_name?: string | null;
+  invoice_ref?: string | null;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface POSCartDiscount {
+  type: 'percentage' | 'fixed' | 'complimentary' | 'coupon';
+  value: number; // percentage (e.g. 10) or fixed amount (e.g. 15)
+  amount: number; // calculated total SAR discount
+  reason?: string;
+  coupon_code?: string;
 }
 
 export interface Tier {
@@ -509,26 +691,35 @@ export type CouponStatus = 'ACTIVE' | 'USED' | 'REDEEMED' | 'EXPIRED' | 'FROZEN'
 export interface CustomerCoupon {
   id: string;
   coupon_code: string; // كود فريد يستخدم لتوليد الباركود
+  code?: string; // alias for coupon_code
   customer_id: string;
   customer_phone?: string;
   customer_name?: string;
   store_id: string;
   privilege_id: string;
   privilege_title: string;
+  title?: string; // alias for privilege_title
   privilege_image_url?: string | null;
   cost_points: number;
+  cost_in_points?: number; // alias for cost_points
   status: CouponStatus;
   valid_start_time?: string | null;
   valid_end_time?: string | null;
   purchased_at: string;
+  created_at?: string; // alias for purchased_at
   used_at?: string | null;
   cashier_name?: string | null;
+  redeemed_by_staff_id?: string | null;
+  branch_id?: string | null;
+  branch_name?: string | null;
 }
 
 export interface AuditLog {
   id: string;
   store_id: string;
   staff_id: string | null;
+  branch_id?: string | null;
+  branch_name?: string | null;
   customer_id: string;
   customer_phone?: string;
   customer_name?: string; // اسم العميل
@@ -575,6 +766,8 @@ export interface StoreOnboardingPayload {
 export interface StoreSpecialist {
   id: string;
   store_id: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
   name: string; // مثال: "أحمد - خبير تصفيف", "محمد - أخصائي عناية"
   specialty?: string; // مثال: "حلاقة وتحديد VIP", "تنظيف بشرة ومساج"
   service_categories?: string[]; // الأقسام والتخصصات المؤهل لها (مثل: ['حلاقة', 'تنظيف بشرة'] أو ['ALL'])
@@ -615,6 +808,8 @@ export interface ServiceBooking {
   booking_number: string;
   store_id: string;
   store_name?: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
   customer_id?: string;
   customer_name: string;
   customer_phone: string;
@@ -633,6 +828,7 @@ export interface ServiceBooking {
   status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show';
   customer_notes?: string;
   notes?: string;
+  booking_source?: 'customer_app' | 'phone_call' | 'walk_in' | 'cashier';
   loyalty_points_earned?: number;
   points_to_earn?: number;
   created_at: string;

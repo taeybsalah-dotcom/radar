@@ -31,6 +31,9 @@ interface NotificationCenterModalProps {
   onClose: () => void;
   portalName?: string;
   portalFilter?: string;
+  storeId?: string;
+  userPhone?: string;
+  userId?: string;
 }
 
 export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = ({
@@ -38,21 +41,30 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
   onClose,
   portalName = 'المنصة',
   portalFilter,
+  storeId,
+  userPhone,
+  userId,
 }) => {
   const [notifications, setNotifications] = useState<InboxNotification[]>([]);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'commissions'>('all');
 
+  const scope = React.useMemo(
+    () => ({
+      portal: portalFilter,
+      storeId,
+      userPhone,
+      userId,
+    }),
+    [portalFilter, storeId, userPhone, userId]
+  );
+
   useEffect(() => {
-    setNotifications(getInboxNotifications(portalFilter));
+    setNotifications(getInboxNotifications(scope));
     const unsubscribe = subscribeToInboxUpdates((list) => {
-      if (!portalFilter || portalFilter === 'all') {
-        setNotifications(list);
-      } else {
-        setNotifications(list.filter((n) => !n.portal || n.portal === portalFilter || n.portal === 'all'));
-      }
-    });
+      setNotifications(list);
+    }, scope);
     return () => unsubscribe();
-  }, [portalFilter]);
+  }, [scope]);
 
   if (!isOpen) return null;
 
@@ -168,7 +180,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
           <div className="flex items-center gap-1.5">
             {unreadCount > 0 && (
               <button
-                onClick={() => markAllNotificationsAsRead(portalFilter)}
+                onClick={() => markAllNotificationsAsRead(scope)}
                 className="p-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-bold flex items-center gap-1 transition"
                 title="تحديد الكل كمقروء"
               >
@@ -180,7 +192,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
               <button
                 onClick={() => {
                   if (window.confirm('هل أنت متأكد من رغبتك في مسح كافة الإشعارات؟')) {
-                    clearAllInboxNotifications(portalFilter);
+                    clearAllInboxNotifications(scope);
                   }
                 }}
                 className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 transition"
@@ -210,7 +222,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
             filteredNotifications.map((n) => (
               <div
                 key={n.id}
-                onClick={() => !n.read && markNotificationAsRead(n.id)}
+                onClick={() => !n.read && markNotificationAsRead(n.id, scope)}
                 className={`pt-3 first:pt-0 rounded-2xl p-3 transition cursor-pointer relative group ${
                   n.read ? 'bg-slate-900/40 hover:bg-slate-800/40' : 'bg-slate-800/60 hover:bg-slate-800 border border-amber-500/20'
                 }`}
@@ -233,7 +245,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteInboxNotification(n.id);
+                        deleteInboxNotification(n.id, scope);
                       }}
                       className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 flex items-center justify-center transition"
                       title="حذف هذا الإشعار"

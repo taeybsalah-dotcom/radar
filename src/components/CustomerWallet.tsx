@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Store,
   Customer,
@@ -15,6 +15,8 @@ import {
   StoreSpecialist,
   ServiceBooking,
   StoreWallet,
+  StoreBranch,
+  getStoreActiveModules,
 } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
@@ -22,7 +24,10 @@ import { playBeepSound } from '../lib/sound';
 import { CustomerLoginGate } from './CustomerLoginGate';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
+import { checkBranchOpenStatus } from '../lib/branchUtils';
+import { saveActiveStoreBranding } from '../lib/storeBranding';
 import {
+  Building2,
   Sparkles,
   QrCode,
   Flame,
@@ -67,6 +72,7 @@ import {
   BookmarkCheck,
 } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
+import { saveInboxNotification, clearAllInboxNotifications } from '../lib/notifications';
 
 interface CustomerWalletProps {
   store: Store;
@@ -76,11 +82,156 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [store, setStore] = useState<Store>(initialStore);
 
   useEffect(() => {
-    if (initialStore) setStore(initialStore);
+    if (initialStore) {
+      setStore(initialStore);
+      saveActiveStoreBranding(initialStore);
+    }
   }, [initialStore]);
 
-  const brandPrimary = store?.primary_color || '#0F172A';
-  const brandSecondary = store?.secondary_color || '#d4af37';
+  const activeModules = useMemo(() => getStoreActiveModules(store), [store]);
+
+  // 🎨 Luxury Brand Color Engine & Fallback Harmonizer
+  const brandColors = useMemo(() => {
+    const rawPrimary = (store?.primary_color || '').trim();
+    const rawSecondary = (store?.secondary_color || '').trim();
+
+    // Default ultra-luxury palette
+    const defaultPrimary = '#07070B';
+    const defaultSecondary = '#D4AF37';
+
+    // Helper: validate hex format
+    const isValidColor = (c: string) => /^#([0-9A-F]{3}){1,2}$/i.test(c);
+
+    const safePrimary = isValidColor(rawPrimary) ? rawPrimary : defaultPrimary;
+    const safeSecondary = isValidColor(rawSecondary) ? rawSecondary : defaultSecondary;
+
+    // Convert hex to rgb
+    const hexToRgb = (hex: string) => {
+      let clean = hex.replace('#', '').trim();
+      if (clean.length === 3) {
+        clean = clean.split('').map((c) => c + c).join('');
+      }
+      if (clean.length !== 6) return { r: 212, g: 175, b: 55 }; // fallback gold
+      const num = parseInt(clean, 16);
+      if (isNaN(num)) return { r: 212, g: 175, b: 55 };
+      return {
+        r: (num >> 16) & 255,
+        g: (num >> 8) & 255,
+        b: num & 255,
+      };
+    };
+
+    const rgbToHex = (r: number, g: number, b: number) => {
+      const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+      return '#' + [clamp(r), clamp(g), clamp(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+    };
+
+    const rgbToHsl = (r: number, g: number, b: number) => {
+      r /= 255;
+      g /= 255;
+      b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h = 0, s = 0, l = (max + min) / 2;
+
+      if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+    };
+
+    const hslToRgb = (h: number, s: number, l: number) => {
+      h = (h % 360) / 360;
+      s = Math.max(0, Math.min(100, s)) / 100;
+      l = Math.max(0, Math.min(100, l)) / 100;
+
+      if (s === 0) {
+        const val = Math.round(l * 255);
+        return { r: val, g: val, b: val };
+      }
+
+      const hue2rgb = (p: number, q: number, t: number) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1 / 6) return p + (q - p) * 6 * t;
+        if (t < 1 / 2) return q;
+        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+        return p;
+      };
+
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      const r = Math.round(hue2rgb(p, q, h + 1 / 3) * 255);
+      const g = Math.round(hue2rgb(p, q, h) * 255);
+      const b = Math.round(hue2rgb(p, q, h - 1 / 3) * 255);
+      return { r, g, b };
+    };
+
+    // Calculate harmonious palette
+    const secRgb = hexToRgb(safeSecondary);
+    const secHsl = rgbToHsl(secRgb.r, secRgb.g, secRgb.b);
+
+    const priRgb = hexToRgb(safePrimary);
+    const priHsl = rgbToHsl(priRgb.r, priRgb.g, priRgb.b);
+
+    // 1. Text & Icon on Dark (for "إظهار الـ QR" button)
+    // If merchant color is too dark (< 45% lightness), lift it so it shines legibly on dark background
+    let textL = secHsl.l;
+    if (textL < 45) textL = 68;
+    if (textL > 90) textL = 80;
+    const textS = Math.min(secHsl.s, 85);
+    const textOnDarkRgb = hslToRgb(secHsl.h, textS, textL);
+    const textOnDarkHex = rgbToHex(textOnDarkRgb.r, textOnDarkRgb.g, textOnDarkRgb.b);
+
+    // 2. Progress Bar Fill Color
+    // The bar sits on the gold VIP card. It must have rich contrast and saturation.
+    // If merchant color is chosen, tone lightness between 32% and 52% so it stands out proudly
+    let barL = secHsl.l;
+    if (barL > 55) barL = 48;
+    if (barL < 25) barL = 35;
+    const barS = Math.max(secHsl.s, 50);
+    const barRgb = hslToRgb(secHsl.h, barS, barL);
+    const barHex = rgbToHex(barRgb.r, barRgb.g, barRgb.b);
+
+    // Progress bar gradient: deep tone to vibrant merchant accent
+    const progressGradient = `linear-gradient(90deg, #110e05 0%, ${barHex} 70%, ${textOnDarkHex} 100%)`;
+
+    // 3. "كيف أجمع نقاط؟" frosted button tint
+    const howButtonBg = `rgba(${priRgb.r}, ${priRgb.g}, ${priRgb.b}, 0.14)`;
+    const howButtonBorder = `rgba(${priRgb.r}, ${priRgb.g}, ${priRgb.b}, 0.22)`;
+
+    // 4. Floating FAB & Card gradients
+    const cardGradient = `linear-gradient(135deg, #7a5e1c 0%, #edd98b 24%, ${safeSecondary} 50%, #faeec7 76%, #89671d 100%)`;
+    const fabGradient = `linear-gradient(135deg, #ecd98a 0%, ${safeSecondary} 50%, #82631a 100%)`;
+
+    return {
+      primary: safePrimary,
+      secondary: safeSecondary,
+      cardGradient,
+      progressGradient,
+      progressBarColor: barHex,
+      progressGlow: `${textOnDarkHex}60`,
+      qrButtonBg: '#0e0e14',
+      qrButtonText: textOnDarkHex,
+      qrButtonBorder: `${textOnDarkHex}45`,
+      qrButtonGlow: `${textOnDarkHex}35`,
+      howButtonBg,
+      howButtonBorder,
+      howButtonText: '#1a1405',
+      fabGradient,
+      glow: `${safeSecondary}60`,
+      buttonBg: safeSecondary,
+    };
+  }, [store?.primary_color, store?.secondary_color]);
+
+  const brandPrimary = brandColors.primary;
+  const brandSecondary = brandColors.secondary;
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
@@ -112,13 +263,29 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [pendingAuthAction, setPendingAuthAction] = useState<PendingAuthAction | null>(null);
 
   const [activeTab, setActiveTab] = useState<'pass' | 'menu' | 'services' | 'perks' | 'tickets' | 'tiers'>(() => {
-    try {
-      const session = LoyaltyService.getCustomerSession(initialStore?.id, initialStore?.slug);
-      const profile = LoyaltyService.getCustomerProfile(initialStore?.id, initialStore?.slug);
-      if (!session && !profile?.phone) return 'menu';
-    } catch {}
-    return 'pass';
+    const mods = getStoreActiveModules(initialStore);
+    if (mods.loyalty) return 'pass';
+    if (mods.orders) return 'menu';
+    if (mods.bookings) return 'services';
+    return 'tickets';
   });
+
+  // 🎛️ Dynamic Redirection if an active module is disabled by Merchant or Owner
+  useEffect(() => {
+    if ((activeTab === 'pass' || activeTab === 'perks' || activeTab === 'tiers') && !activeModules.loyalty) {
+      if (activeModules.orders) setActiveTab('menu');
+      else if (activeModules.bookings) setActiveTab('services');
+      else setActiveTab('tickets');
+    } else if (activeTab === 'menu' && !activeModules.orders) {
+      if (activeModules.loyalty) setActiveTab('pass');
+      else if (activeModules.bookings) setActiveTab('services');
+      else setActiveTab('tickets');
+    } else if (activeTab === 'services' && !activeModules.bookings) {
+      if (activeModules.loyalty) setActiveTab('pass');
+      else if (activeModules.orders) setActiveTab('menu');
+      else setActiveTab('tickets');
+    }
+  }, [activeModules.loyalty, activeModules.orders, activeModules.bookings, activeTab]);
   const [specialDateMonth, setSpecialDateMonth] = useState('1');
   const [specialDateDay, setSpecialDateDay] = useState('1');
   const [specialDateType, setSpecialDateType] = useState('يوم ميلادي');
@@ -133,10 +300,29 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       const finalType = specialDateType === 'أخرى' ? specialDateTypeOther.trim() : specialDateType;
       if (!finalType) throw new Error('يرجى تحديد نوع المناسبة');
       const dateStr = `${specialDateMonth.padStart(2, '0')}-${specialDateDay.padStart(2, '0')}`;
+
+      // 🛡️ Immediately persist in localStorage cache so it can never reappear upon reload
+      if (store?.id && customer.phone) {
+        const payload = JSON.stringify({ date: dateStr, type: finalType });
+        const normP = normalizePhone(customer.phone);
+        localStorage.setItem(`radar_cust_special_date_${store.id}_${normP}`, payload);
+        localStorage.setItem(`radar_cust_special_date_${store.id}_${customer.phone}`, payload);
+        if (store.slug) {
+          localStorage.setItem(`radar_cust_special_date_${store.slug}_${normP}`, payload);
+          localStorage.setItem(`radar_cust_special_date_${store.slug}_${customer.phone}`, payload);
+        }
+      }
+
       const updated = await LoyaltyService.updateCustomerSpecialDate(customer.id, dateStr, finalType);
-      setCustomer(updated);
+      const fullyUpdated: Customer = {
+        ...customer,
+        ...updated,
+        special_date: dateStr,
+        special_date_type: finalType,
+      };
+      setCustomer(fullyUpdated);
       setShowSpecialDateForm(false);
-      alert('تم حفظ يومك المميز بنجاح! شكراً لك 🎉');
+      alert('تم حفظ وتوثيق يومك المميز بنجاح! شكراً لك 🎉');
     } catch (e: any) {
       alert(e.message || 'حدث خطأ أثناء الحفظ');
     }
@@ -149,6 +335,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [pastOrders, setPastOrders] = useState<WhatsAppOrderPayload[]>([]);
   const [showPastOrdersModal, setShowPastOrdersModal] = useState(false);
+
+  const [branches, setBranches] = useState<StoreBranch[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<StoreBranch | null>(null);
+  const branchStatus = checkBranchOpenStatus(selectedBranch);
 
   const [specialists, setSpecialists] = useState<StoreSpecialist[]>([]);
   const [storeBookings, setStoreBookings] = useState<ServiceBooking[]>([]);
@@ -204,11 +394,21 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   storeRef.current = store;
   const customerRef = useRef<Customer | null>(customer);
   customerRef.current = customer;
+  const pastOrdersRef = useRef<WhatsAppOrderPayload[]>(pastOrders);
+  pastOrdersRef.current = pastOrders;
+  const storeBookingsRef = useRef<ServiceBooking[]>(storeBookings);
+  storeBookingsRef.current = storeBookings;
+  const orderSuccessPayloadRef = useRef<WhatsAppOrderPayload | null>(orderSuccessPayload);
+  orderSuccessPayloadRef.current = orderSuccessPayload;
+  const bookingSuccessDataRef = useRef<ServiceBooking | null>(bookingSuccessData);
+  bookingSuccessDataRef.current = bookingSuccessData;
 
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
 
   const [isFullscreenQR, setIsFullscreenQR] = useState(false);
+  const [showEmbeddedQR, setShowEmbeddedQR] = useState(false);
+  const [showHowToEarnPoints, setShowHowToEarnPoints] = useState(false);
 
   const [purchasingPrivilege, setPurchasingPrivilege] = useState<Privilege | null>(null);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
@@ -328,9 +528,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       const curCust = customerRef.current;
 
       if (event.type === 'SCAN_REJECTED') {
-        const isTargetCustomer =
-          event.storeId === store?.id ||
-          (curCust && event.phone && normalizePhone(event.phone) === normalizePhone(curCust.phone));
+        const isTargetCustomer = Boolean(
+          curCust &&
+          event.phone &&
+          normalizePhone(event.phone) === normalizePhone(curCust.phone)
+        );
         if (isTargetCustomer) {
           playBeepSound('error');
           setCelebrationModal({
@@ -339,6 +541,46 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             title: 'تم رفض المسح من الكاشير ❌',
             subtitle: event.error || 'عفواً، لا يمكن استخدام هذا الباركود هنا لأنه يتبع لمتجر آخر',
           });
+        }
+        return;
+      }
+
+      if (event.type === 'CUSTOM_NOTIFICATION') {
+        const isTargetCustomer =
+          event.targetType === 'all_customers' ||
+          (curCust !== null &&
+            ((Boolean(event.phone) && normalizePhone(event.phone!) === normalizePhone(curCust.phone)) ||
+              event.targetId === curCust.id ||
+              event.targetId === curCust.phone));
+
+        if (isTargetCustomer && (event.storeId === store?.id || event.storeId === 'all' || event.storeId === 'global')) {
+          playBeepSound(event.soundType || 'notification');
+          setCelebrationModal({
+            isOpen: true,
+            type: 'POINTS_EARNED',
+            title: event.title || 'إشعار جديد من المتجر 🔔',
+            subtitle: event.message || '',
+          });
+
+          if (curCust?.phone) {
+            saveInboxNotification(
+              {
+                id: event.eventId,
+                title: event.title || 'إشعار من المتجر 🔔',
+                body: event.message || '',
+                soundType: event.soundType || 'notification',
+                targetType: 'customer',
+                storeId: curStore.id,
+                userPhone: curCust.phone,
+                portal: 'customer',
+              },
+              {
+                portal: 'customer',
+                storeId: curStore.id,
+                userPhone: curCust.phone,
+              }
+            );
+          }
         }
         return;
       }
@@ -373,6 +615,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   : c
               )
             );
+
+            // 📬 Save isolated inbox notification for this customer
+            if (curCust?.phone) {
+              saveInboxNotification(
+                {
+                  title: 'استبدال مكافأة بنجاح 🎁',
+                  body: `تم استبدال: "${event.rewardTitle || currentSelected?.privilege_title || 'الامتياز'}" بنجاح!`,
+                  soundType: 'redeem',
+                  targetType: 'customer',
+                  storeId: curStore.id,
+                  userPhone: curCust.phone,
+                  portal: 'customer',
+                },
+                {
+                  portal: 'customer',
+                  storeId: curStore.id,
+                  userPhone: curCust.phone,
+                }
+              );
+            }
           }
           refreshCustomerData();
           return;
@@ -399,6 +661,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             });
             if (event.newBalance !== undefined && curCust) {
               setCustomer((prev) => prev ? { ...prev, wallet_balance: event.newBalance! } : prev);
+            }
+
+            // 📬 Save isolated inbox notification for this customer
+            if (curCust?.phone) {
+              saveInboxNotification(
+                {
+                  title: 'نقاط ولاء جديدة 🌟',
+                  body: `تمت إضافة +${event.points} نقطة بنجاح! رصيدك الجديد: ${event.newBalance ?? 0} نقطة.`,
+                  soundType: 'success',
+                  targetType: 'customer',
+                  storeId: curStore.id,
+                  userPhone: curCust.phone,
+                  portal: 'customer',
+                },
+                {
+                  portal: 'customer',
+                  storeId: curStore.id,
+                  userPhone: curCust.phone,
+                }
+              );
             }
           }
           refreshCustomerData();
@@ -428,10 +710,44 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           return;
         }
 
-        if (event.type === 'STORE_UPDATED') {
-          LoyaltyService.resolveStore(store.id || store.slug).then((fresh) => {
-            if (fresh) setStore(fresh);
+        if (
+          event.type === 'STORE_UPDATED' ||
+          event.type === 'BRANCHES_UPDATED' ||
+          event.type === 'CATALOG_UPDATED' ||
+          event.type === 'BOOKING_CREATED' ||
+          event.type === 'BOOKING_STATUS_UPDATED' ||
+          event.type === 'BOOKINGS_UPDATED'
+        ) {
+          // 🔄 Instant live reload of catalog items (Menu / Products / Services)
+          LoyaltyService.getCatalogItems(store.id).then((cat) => {
+            if (cat && Array.isArray(cat)) setCatalogItems(cat);
           }).catch(() => {});
+
+          // 🔄 Instant live reload of specialists
+          LoyaltyService.getStoreSpecialists(store.id).then((specs) => {
+            if (specs && Array.isArray(specs)) setSpecialists(specs);
+          }).catch(() => {});
+
+          // 🔄 Instant live reload of customer bookings
+          const myCleanPhone = customerRef.current?.phone || guestPhone || '';
+          LoyaltyService.getStoreBookings(store.id, myCleanPhone).then((bks) => {
+            if (bks && Array.isArray(bks)) setStoreBookings(bks);
+          }).catch(() => {});
+
+          if (event.type === 'STORE_UPDATED' || event.type === 'BRANCHES_UPDATED') {
+            LoyaltyService.resolveStore(store.id || store.slug).then((fresh) => {
+              if (fresh) setStore(fresh);
+            }).catch(() => {});
+            LoyaltyService.getStoreBranches(store.id).then((brs) => {
+              if (brs && Array.isArray(brs)) {
+                setBranches(brs);
+                setSelectedBranch((prev) => {
+                  if (!prev) return brs.find((b) => b.is_main) || brs[0] || null;
+                  return brs.find((b) => b.id === prev.id) || brs.find((b) => b.is_main) || brs[0] || null;
+                });
+              }
+            }).catch(() => {});
+          }
           return;
         }
       }
@@ -449,7 +765,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       const savedPhone = LoyaltyService.getCustomerSession(store.id, store.slug);
       const freshCust = savedPhone ? await LoyaltyService.getCustomer(store.id, savedPhone) : null;
 
-      const [freshStore, t, p, cat, specs, bks, freshCoupons] = await Promise.all([
+      const [freshStore, t, p, cat, specs, bks, freshCoupons, freshBranches] = await Promise.all([
         LoyaltyService.resolveStore(store.id || store.slug),
         LoyaltyService.getTiers(store.id),
         LoyaltyService.getPrivileges(store.id),
@@ -457,6 +773,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         LoyaltyService.getStoreSpecialists(store.id),
         LoyaltyService.getStoreBookings(store.id, freshCust?.phone),
         freshCust ? LoyaltyService.getCustomerCoupons(freshCust.id, store.id, freshCust.phone) : Promise.resolve([]),
+        LoyaltyService.getStoreBranches(store.id),
       ]);
 
       if (freshStore) setStore(freshStore);
@@ -467,7 +784,36 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       setStoreBookings(bks || []);
       if (freshCoupons) setCustomerCoupons(freshCoupons);
 
+      if (freshBranches && Array.isArray(freshBranches)) {
+        setBranches(freshBranches);
+        if (freshBranches.length > 0) {
+          const mainBranch = freshBranches.find((b) => b.is_main) || freshBranches[0];
+          setSelectedBranch(mainBranch);
+        }
+      }
+
       if (freshCust) {
+        if (!freshCust.special_date && freshCust.phone) {
+          const normP = normalizePhone(freshCust.phone);
+          const cached =
+            localStorage.getItem(`radar_cust_special_date_${store.id}_${normP}`) ||
+            (store.slug ? localStorage.getItem(`radar_cust_special_date_${store.slug}_${normP}`) : null) ||
+            localStorage.getItem(`radar_cust_special_date_${store.id}_${freshCust.phone}`) ||
+            (store.slug ? localStorage.getItem(`radar_cust_special_date_${store.slug}_${freshCust.phone}`) : null);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached);
+              freshCust.special_date = (typeof parsed === 'object' && parsed !== null && parsed.date) ? parsed.date : String(parsed);
+              freshCust.special_date_type = (typeof parsed === 'object' && parsed !== null && parsed.type) ? parsed.type : 'يوم ميلادي';
+            } catch {
+              freshCust.special_date = cached;
+              freshCust.special_date_type = 'يوم ميلادي';
+            }
+          }
+        }
+        if (freshCust.special_date) {
+          setShowSpecialDateForm(false);
+        }
         setCustomer(freshCust);
         setSavedProfile({ name: freshCust.name || '', phone: freshCust.phone });
         setGuestName(freshCust.name || '');
@@ -506,6 +852,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         LoyaltyService.getCustomerCoupons(customer.id, store.id, customer.phone),
       ]);
       if (freshCust) {
+        if (!freshCust.special_date && customer?.special_date) {
+          freshCust.special_date = customer.special_date;
+          freshCust.special_date_type = customer.special_date_type;
+        }
         setCustomer(freshCust);
         lastPointsRef.current = freshCust.wallet_balance;
       }
@@ -535,6 +885,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         if (!isSubscribed) return;
 
         if (freshCust) {
+          if (!freshCust.special_date && customer?.special_date) {
+            freshCust.special_date = customer.special_date;
+            freshCust.special_date_type = customer.special_date_type;
+          }
           if (lastPointsRef.current !== null && freshCust.wallet_balance > lastPointsRef.current) {
             const pointsGained = freshCust.wallet_balance - lastPointsRef.current;
             lastPointsRef.current = freshCust.wallet_balance;
@@ -675,61 +1029,83 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   }, [customer?.id, currentQRToken?.token_id, selectedRewardPass, selectedCouponForQR]);
 
   useEffect(() => {
-    if (!store?.id || !customer?.phone) return;
+    if (!store?.id) return;
+    const effectivePhone = customer?.phone || orderSuccessPayload?.customer_phone || (bookingSuccessData as any)?.customer_phone || guestPhone;
+    if (!effectivePhone && !orderSuccessPayload && !bookingSuccessData) return;
     
     // Fetch initial orders & bookings directly from live Supabase
     let isCancelled = false;
     let channel: any = null;
 
+    const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
     LoyaltyService.resolveStore(store.id).then((resolvedStore) => {
       if (isCancelled) return;
-      const targetStoreId = resolvedStore?.id || store.id;
+      const validStoreUuid = resolvedStore?.id && isUuid(resolvedStore.id)
+        ? resolvedStore.id
+        : isUuid(store.id)
+        ? store.id
+        : null;
 
-      LoyaltyService.getCustomerOrders(store.id, customer.phone).then((orders) => {
-        if (!isCancelled) setPastOrders(orders);
-      }).catch(() => {});
+      if (!validStoreUuid) return;
 
-      LoyaltyService.getStoreBookings(store.id, customer.phone).then((bks) => {
-        if (!isCancelled) setStoreBookings(bks);
-      }).catch(() => {});
+      if (effectivePhone) {
+        LoyaltyService.getCustomerOrders(validStoreUuid, effectivePhone).then((orders) => {
+          if (!isCancelled) setPastOrders(orders);
+        }).catch(() => {});
 
-      // Listen to live changes with resolved store UUID
+        LoyaltyService.getStoreBookings(validStoreUuid, effectivePhone).then((bks) => {
+          if (!isCancelled) setStoreBookings(bks);
+        }).catch(() => {});
+      }
+
+      // Listen to live changes with verified store UUID filter
       const supabase = getSupabaseClient();
       if (!supabase) return;
 
-      const normPhone = (p: string) => (p || '').replace(/\D/g, '').slice(-9);
-      const targetNormPhone = normPhone(customer.phone);
+      const normPhone = (p: string | null | undefined) => (p || '').replace(/\D/g, '').slice(-9);
+      const targetNormPhone = normPhone(effectivePhone || customerRef.current?.phone || guestPhone || '');
 
       channel = supabase
-        .channel('customer-live-' + customer.phone)
+        .channel('customer-live-' + (targetNormPhone || 'guest') + '-' + validStoreUuid)
         .on(
           'postgres_changes',
           {
             event: '*',
             schema: 'public',
             table: 'store_orders',
-            filter: `store_id=eq.${targetStoreId}`,
+            filter: `store_id=eq.${validStoreUuid}`,
           },
           (payload: any) => {
             const updated = payload.new;
             if (!updated) return;
-            if (normPhone(updated.customer_phone) === targetNormPhone) {
-              setPastOrders((prev) => [
-                updated,
-                ...prev.filter(
-                  (o: any) => o.id !== updated.id && (o.order_number || o.order_id) !== (updated.order_number || updated.order_id)
-                ),
-              ]);
+            const updatedPhone = normPhone(updated.customer_phone);
+            const myCleanPhone = normPhone(effectivePhone || customerRef.current?.phone || guestPhone || '');
+
+            const activeOrder = orderSuccessPayloadRef.current;
+            const activeOrderId = activeOrder?.order_id || (activeOrder as any)?.id || (activeOrder as any)?.order_number;
+
+            const isMatchingActive = Boolean(activeOrderId && (activeOrderId === updated.order_number || activeOrderId === updated.id));
+            const isMatchingPhone = Boolean(myCleanPhone && updatedPhone && myCleanPhone === updatedPhone);
+            const isExistingInList = pastOrdersRef.current.some((o: any) => o.id === updated.id || (o.order_number && o.order_number === updated.order_number));
+
+            if (isMatchingActive || isMatchingPhone || isExistingInList) {
+              setPastOrders((prev) => {
+                const exists = prev.some((o: any) => o.id === updated.id || (o.order_number && o.order_number === updated.order_number));
+                if (exists) {
+                  return prev.map((o: any) => (o.id === updated.id || o.order_number === updated.order_number) ? { ...o, ...updated } : o);
+                }
+                return [updated, ...prev];
+              });
 
               // ⚡ Instant live update on active order confirmation modal
               setOrderSuccessPayload((prev) => {
                 if (!prev) return prev;
-                if (
-                  prev.order_id === updated.order_number ||
-                  (prev as any).id === updated.id
-                ) {
+                const prevId = prev.order_id || (prev as any).id || (prev as any).order_number;
+                if (prevId === updated.order_number || prevId === updated.id) {
                   return {
                     ...prev,
+                    ...updated,
                     status: updated.status,
                   };
                 }
@@ -748,52 +1124,130 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             event: '*',
             schema: 'public',
             table: 'service_bookings',
-            filter: `store_id=eq.${targetStoreId}`,
+            filter: `store_id=eq.${validStoreUuid}`,
           },
           (payload: any) => {
             const updated = payload.new;
             if (!updated) return;
-            if (normPhone(updated.customer_phone) === targetNormPhone) {
-              setStoreBookings((prev) => [
-                updated,
-                ...prev.filter(
-                  (b) =>
-                    b.id !== updated.id &&
-                    b.booking_number !== updated.booking_number
-                ),
-              ]);
+            const updatedPhone = normPhone(updated.customer_phone);
+            const myCleanPhone = normPhone(effectivePhone || customerRef.current?.phone || guestPhone || '');
+
+            const activeBooking = bookingSuccessDataRef.current;
+            const activeBookingId = activeBooking?.id || activeBooking?.booking_number;
+
+            const isMatchingActive = Boolean(activeBookingId && (activeBookingId === updated.id || activeBookingId === updated.booking_number));
+            const isMatchingPhone = Boolean(myCleanPhone && updatedPhone && myCleanPhone === updatedPhone);
+            const isExistingInList = storeBookingsRef.current.some((b: any) => b.id === updated.id || (b.booking_number && b.booking_number === updated.booking_number));
+
+            if (isMatchingActive || isMatchingPhone || isExistingInList) {
+              setStoreBookings((prev) => {
+                const exists = prev.some((b: any) => b.id === updated.id || (b.booking_number && b.booking_number === updated.booking_number));
+                if (exists) {
+                  return prev.map((b: any) => (b.id === updated.id || b.booking_number === updated.booking_number) ? { ...b, ...updated } : b);
+                }
+                return [{ ...updated }, ...prev];
+              });
+
+              // ⚡ Instant live update on active booking confirmation modal
+              setBookingSuccessData((prev) => {
+                if (!prev) return prev;
+                const prevId = prev.id || prev.booking_number;
+                if (prevId === updated.id || prevId === updated.booking_number) {
+                  return {
+                    ...prev,
+                    ...updated,
+                    status: updated.status,
+                  };
+                }
+                return prev;
+              });
+
               if (payload.eventType === 'UPDATE') {
                 try { playBeepSound('notification'); } catch {}
               }
             }
           }
         )
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'store_customers', filter: 'phone=eq.' + customer.phone }, () => {
-          // ⚡ Instant push update when cashier adds points or edits customer
-          LoyaltyService.getCustomer(store.id, customer.phone).then((fresh) => {
-            if (fresh && !isCancelled) {
-              setCustomer(fresh);
-              lastPointsRef.current = fresh.wallet_balance;
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'catalog_items',
+            filter: `store_id=eq.${validStoreUuid}`,
+          },
+          (payload: any) => {
+            // ⚡ Instant live update on menu / catalog items across all devices
+            if (payload.eventType === 'INSERT' && payload.new) {
+              setCatalogItems((prev) => {
+                if (prev.some((it) => it.id === payload.new.id)) return prev;
+                return [payload.new, ...prev];
+              });
+            } else if (payload.eventType === 'UPDATE' && payload.new) {
+              setCatalogItems((prev) =>
+                prev.map((it) => (it.id === payload.new.id ? { ...it, ...payload.new } : it))
+              );
+            } else if (payload.eventType === 'DELETE' && payload.old) {
+              setCatalogItems((prev) => prev.filter((it) => it.id !== payload.old.id));
+            } else {
+              LoyaltyService.getCatalogItems(store.id).then((fresh) => {
+                if (fresh && Array.isArray(fresh)) setCatalogItems(fresh);
+              }).catch(() => {});
             }
-          });
+          }
+        )
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'store_customers', filter: 'phone=eq.' + (customer?.phone || '') }, () => {
+          // ⚡ Instant push update when cashier adds points or edits customer
+          if (customer?.phone) {
+            LoyaltyService.getCustomer(store.id, customer.phone).then((fresh) => {
+              if (fresh && !isCancelled) {
+                setCustomer(fresh);
+                lastPointsRef.current = fresh.wallet_balance;
+              }
+            });
+          }
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_coupons', filter: 'customer_phone=eq.' + customer.phone }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'customer_coupons', filter: 'customer_phone=eq.' + (effectivePhone || customer?.phone || '') }, () => {
           // ⚡ Instant push update when a coupon is redeemed or added
-          LoyaltyService.getCustomerCoupons(customer.id, store.id, customer.phone).then((freshCoupons) => {
-            if (freshCoupons && !isCancelled) setCustomerCoupons(freshCoupons);
-          });
+          if (customer?.id && (effectivePhone || customer?.phone)) {
+            LoyaltyService.getCustomerCoupons(customer.id, store.id, (effectivePhone || customer?.phone)!).then((freshCoupons) => {
+              if (freshCoupons && !isCancelled) setCustomerCoupons(freshCoupons);
+            });
+          }
         })
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'stores',
+            filter: `id=eq.${validStoreUuid}`,
+          },
+          (payload: any) => {
+            if (payload.new && !isCancelled) {
+              setStore((prev) => ({ ...prev, ...payload.new }));
+            }
+          }
+        )
         .subscribe();
     });
 
     // ⚡ Cross-Device Event Bus listener for instant POS <-> Customer sync
     const normPhone = (p: string) => (p || '').replace(/\D/g, '').slice(-9);
-    const targetNormPhone = normPhone(customer.phone);
+    const targetNormPhone = normPhone(effectivePhone || customer?.phone || '');
 
     const unsubscribeEvents = LoyaltyEvents.listen((event) => {
       if (event.type === 'ORDER_STATUS_UPDATED' && event.orderData) {
         const orderPhone = normPhone(event.phone || event.orderData.customer_phone);
-        if (orderPhone === targetNormPhone) {
+        const myCleanPhone = normPhone(effectivePhone || customerRef.current?.phone || guestPhone || '');
+        const activeOrder = orderSuccessPayloadRef.current;
+        const activeOrderId = activeOrder?.order_id || (activeOrder as any)?.id || (activeOrder as any)?.order_number;
+
+        const isMatchingActive = Boolean(activeOrderId && (activeOrderId === event.orderData.order_number || activeOrderId === event.orderData.id));
+        const isMatchingPhone = Boolean(myCleanPhone && orderPhone && myCleanPhone === orderPhone);
+        const isExistingInList = pastOrdersRef.current.some((o: any) => o.id === event.orderData.id || (o.order_number && o.order_number === event.orderData.order_number));
+
+        if (isMatchingActive || isMatchingPhone || isExistingInList) {
           const updated = event.orderData;
           setPastOrders((prev) => [
             updated,
@@ -803,10 +1257,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           ]);
           setOrderSuccessPayload((prev) => {
             if (!prev) return prev;
-            if (
-              prev.order_id === updated.order_number ||
-              (prev as any).id === updated.id
-            ) {
+            const prevId = prev.order_id || (prev as any).id || (prev as any).order_number;
+            if (prevId === updated.order_number || prevId === updated.id) {
               return {
                 ...prev,
                 status: updated.status,
@@ -820,7 +1272,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
       if (event.type === 'BOOKING_STATUS_UPDATED' && event.bookingData) {
         const bPhone = normPhone(event.phone || event.bookingData.customer_phone);
-        if (bPhone === targetNormPhone) {
+        const myCleanPhone = normPhone(effectivePhone || customerRef.current?.phone || guestPhone || '');
+        const activeBooking = bookingSuccessDataRef.current;
+        const activeBookingId = activeBooking?.id || activeBooking?.booking_number;
+
+        const isMatchingActive = Boolean(activeBookingId && (activeBookingId === event.bookingData.id || activeBookingId === event.bookingData.booking_number));
+        const isMatchingPhone = Boolean(myCleanPhone && bPhone && myCleanPhone === bPhone);
+        const isExistingInList = storeBookingsRef.current.some((b: any) => b.id === event.bookingData.id || (b.booking_number && b.booking_number === event.bookingData.booking_number));
+
+        if (isMatchingActive || isMatchingPhone || isExistingInList) {
           const updated = event.bookingData;
           setStoreBookings((prev) => [
             updated,
@@ -830,6 +1290,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 b.booking_number !== updated.booking_number
             ),
           ]);
+          setBookingSuccessData((prev) => {
+            if (!prev) return prev;
+            const prevId = prev.id || prev.booking_number;
+            if (prevId === updated.id || prevId === updated.booking_number) {
+              return {
+                ...prev,
+                ...updated,
+                status: updated.status,
+              };
+            }
+            return prev;
+          });
           try { playBeepSound('notification'); } catch {}
         }
       }
@@ -842,9 +1314,37 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         getSupabaseClient()?.removeChannel(channel);
       }
     };
-  }, [store?.id, customer?.phone]);
+  }, [store?.id, customer?.phone, orderSuccessPayload?.order_id, (orderSuccessPayload as any)?.id, bookingSuccessData?.id, bookingSuccessData?.booking_number, guestPhone]);
 
   const handleCustomerAuthenticated = async (authCustomer: Customer) => {
+    // 🛡️ Root-level reset of previous customer state to prevent data leak
+    setCustomerCoupons([]);
+    setStoreBookings([]);
+    setPastOrders([]);
+    setSelectedCouponForQR(null);
+
+    if (!authCustomer.special_date && authCustomer.phone) {
+      const normP = normalizePhone(authCustomer.phone);
+      const cached =
+        localStorage.getItem(`radar_cust_special_date_${store.id}_${normP}`) ||
+        (store.slug ? localStorage.getItem(`radar_cust_special_date_${store.slug}_${normP}`) : null) ||
+        localStorage.getItem(`radar_cust_special_date_${store.id}_${authCustomer.phone}`) ||
+        (store.slug ? localStorage.getItem(`radar_cust_special_date_${store.slug}_${authCustomer.phone}`) : null);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          authCustomer.special_date = (typeof parsed === 'object' && parsed !== null && parsed.date) ? parsed.date : String(parsed);
+          authCustomer.special_date_type = (typeof parsed === 'object' && parsed !== null && parsed.type) ? parsed.type : 'يوم ميلادي';
+        } catch {
+          authCustomer.special_date = cached;
+          authCustomer.special_date_type = 'يوم ميلادي';
+        }
+      }
+    }
+    if (authCustomer.special_date) {
+      setShowSpecialDateForm(false);
+    }
+
     setCustomer(authCustomer);
     setSavedProfile({ name: authCustomer.name || '', phone: authCustomer.phone });
     setGuestName(authCustomer.name || '');
@@ -855,12 +1355,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setShowLoginModal(false);
 
     try {
-      const [cpns, bks] = await Promise.all([
+      const [cpns, bks, ords] = await Promise.all([
         LoyaltyService.getCustomerCoupons(authCustomer.id, store.id, authCustomer.phone),
         LoyaltyService.getStoreBookings(store.id, authCustomer.phone),
+        LoyaltyService.getCustomerOrders(store.id, authCustomer.phone),
       ]);
       setCustomerCoupons(cpns);
       if (bks) setStoreBookings(bks);
+      if (ords && Array.isArray(ords)) setPastOrders(ords);
     } catch (e) {
       console.error(e);
     }
@@ -887,14 +1389,35 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   };
 
   const handleLogout = () => {
+    const phoneToPurge = customer?.phone || savedProfile?.phone || guestPhone;
     LoyaltyService.clearCustomerSession(store.id, store.slug);
+
+    if (phoneToPurge) {
+      clearAllInboxNotifications({
+        portal: 'customer',
+        storeId: store.id,
+        userPhone: phoneToPurge,
+      });
+    }
+
+    // 🛡️ Comprehensive State Reset to prevent any Cross-User Data Leaks
     setCustomer(null);
     setSavedProfile(null);
     setGuestName('');
     setGuestPhone('');
     setSelectedCouponForQR(null);
-    setCurrentQRToken(null);
-    setActiveTab('menu');
+    setPastOrders([]);
+    setStoreBookings([]);
+    setCustomerCoupons([]);
+    setCartItems([]);
+    setOrderSuccessPayload(null);
+    setBookingSuccessData(null);
+    setCelebrationModal(null);
+
+    if (activeModules.orders) setActiveTab('menu');
+    else if (activeModules.bookings) setActiveTab('services');
+    else if (activeModules.loyalty) setActiveTab('pass');
+    else setActiveTab('tickets');
   };
 
   const openEditName = () => {
@@ -1277,13 +1800,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       const createdBooking = await LoyaltyService.createServiceBooking({
         store_id: store.id,
         store_name: store.name,
+        branch_id: selectedBranch?.id || null,
+        branch_name: selectedBranch?.name || null,
         customer_id: targetCustomer.id,
         customer_name: targetCustomer.name || 'عميل المتجر',
         customer_phone: targetCustomer.phone,
         service_id: selectedBookingService.id,
         service_name: selectedBookingService.name,
         service_category: selectedBookingService.category,
-        service_price: selectedBookingService.price,
+        service_price: finalPrice,
         selected_modifiers: flatModifiers,
         total_price: finalPrice,
         service_duration_minutes: selectedBookingService.duration_minutes || 30,
@@ -1294,7 +1819,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         status: 'pending',
         points_to_earn: Math.floor(finalPrice * (store.points_per_riyal || 1)),
         notes: bookingNotes.trim() || undefined,
-      });
+        booking_source: 'customer_app',
+      } as any);
 
       setStoreBookings((prev) => [createdBooking, ...prev]);
       setBookingSuccessData(createdBooking);
@@ -1442,6 +1968,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const handleAddCustomizedItemToCart = () => {
     if (!itemToCustomize) return;
 
+    if (selectedBranch && !branchStatus.isOpen) {
+      alert(`عفواً، فرع "${selectedBranch.name}" مغلق حالياً ولا يستقبل طلبات جديدة.\n${branchStatus.reason || ''}`);
+      return;
+    }
+
     if (itemToCustomize.modifier_groups) {
       for (const group of itemToCustomize.modifier_groups) {
         if (group.required) {
@@ -1479,6 +2010,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   };
 
   const handleQuickAddToCart = (item: CatalogItem) => {
+    if (selectedBranch && !branchStatus.isOpen) {
+      alert(`عفواً، فرع "${selectedBranch.name}" مغلق حالياً ولا يستقبل طلبات جديدة.\n${branchStatus.reason || ''}`);
+      return;
+    }
+
     if (item.modifier_groups && item.modifier_groups.length > 0) {
       handleOpenCustomizeModal(item);
       return;
@@ -1522,6 +2058,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const executeDirectOrderSubmission = async (targetCustomer: Customer) => {
     if (cartItems.length === 0 || submittingOrder) return;
+
+    if (selectedBranch && !branchStatus.isOpen) {
+      alert(`عفواً، فرع "${selectedBranch.name}" مغلق حالياً ولا يستقبل طلبات فورية.\n${branchStatus.reason || ''}`);
+      return;
+    }
+
     setSubmittingOrder(true);
 
     try {
@@ -1532,6 +2074,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         order_id: orderId,
         store_id: store.id,
         store_name: store.name,
+        branch_id: selectedBranch?.id || null,
+        branch_name: selectedBranch?.name || null,
         customer_name: targetCustomer.name || 'عميل المتجر',
         customer_phone: targetCustomer.phone,
         customer_tier: currentTierObj?.tier_name,
@@ -1555,6 +2099,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         total_price: cartGrandTotal,
         notes: generalOrderNotes.trim(),
         loyalty_points_earned: estimatedLoyaltyPoints,
+        order_source: 'customer_app',
+        payment_method: 'pay_at_store',
+        payment_status: 'pending',
         status: 'pending',
         points_awarded: false,
         created_at: new Date().toISOString(),
@@ -1591,6 +2138,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const handleSubmitOrder = async () => {
     if (cartItems.length === 0 || submittingOrder) return;
+
+    if (selectedBranch && !branchStatus.isOpen) {
+      alert(`عفواً، فرع "${selectedBranch.name}" مغلق حالياً ولا يستقبل طلبات فورية.\n${branchStatus.reason || ''}`);
+      return;
+    }
 
     if (!customer) {
       setPendingAuthAction({ type: 'SUBMIT_ORDER' });
@@ -1635,15 +2187,41 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      <div className="bg-slate-900/90 backdrop-blur-2xl px-4 py-3 rounded-2xl border border-slate-800 flex items-center justify-between gap-3 shadow-xl">
-        <div className="flex items-center space-x-3 rtl:space-x-reverse">
-          <div className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700/60 flex items-center justify-center font-bold text-slate-300 shrink-0">
-            <User className="w-4 h-4 text-slate-300" />
+      {/* 👑 02 - Frosted Glass Luxury Capsule Header with Merchant Brand Logo */}
+      <div className="frosted-glass-capsule px-3.5 py-2.5 rounded-2xl flex items-center justify-between gap-3 shadow-2xl relative z-20">
+        <div className="flex items-center space-x-3 rtl:space-x-reverse min-w-0">
+          {/* Merchant Brand Logo replacing generic customer avatar */}
+          <div
+            className="w-11 h-11 rounded-2xl overflow-hidden flex items-center justify-center shrink-0 border shadow-lg relative p-0.5"
+            style={{
+              borderColor: `${brandSecondary}60`,
+              background: `radial-gradient(circle, ${brandSecondary}25 0%, rgba(15,23,42,0.9) 100%)`,
+            }}
+          >
+            {store.logo_url ? (
+              <img
+                src={store.logo_url}
+                alt={store.name}
+                className="w-full h-full object-cover rounded-xl"
+              />
+            ) : (
+              <span className="font-serif font-black text-lg" style={{ color: brandSecondary }}>
+                {store.name.slice(0, 1)}
+              </span>
+            )}
+            <span
+              className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-slate-950 flex items-center justify-center text-[7px]"
+              style={{ backgroundColor: brandSecondary, color: '#000' }}
+            >
+              👑
+            </span>
           </div>
-          <div>
+
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-white text-sm sm:text-base">
-                {customer?.name || savedProfile?.name || (guestName.trim() ? guestName : 'زائر كريم')}
+              <span className="text-[11px] text-slate-400 font-medium">مرحباً بك،</span>
+              <span className="font-black text-white text-sm sm:text-base truncate">
+                {customer?.name || savedProfile?.name || (guestName.trim() ? guestName : 'ضيف رادار')}
               </span>
               {(customer || savedProfile) && (
                 <button
@@ -1652,27 +2230,53 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   style={{ color: brandSecondary }}
                   title="تعديل الاسم"
                 >
-                  <Edit3 className="w-3.5 h-3.5" />
+                  <Edit3 className="w-3 h-3" />
                 </button>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 font-mono" dir="ltr">
-              {customer?.phone || savedProfile?.phone || (guestPhone.trim() ? guestPhone : `متجر ${store.name}`)}
-            </p>
+            <div className="flex items-center gap-2">
+              <span
+                className="text-[10px] font-bold px-2 py-0.5 rounded-full font-mono border"
+                style={{
+                  backgroundColor: `${brandSecondary}15`,
+                  borderColor: `${brandSecondary}35`,
+                  color: brandSecondary,
+                }}
+              >
+                {currentTierObj?.tier_name ? `عضو ${currentTierObj.tier_name}` : `متجر ${store.name}`}
+              </span>
+              <p className="text-[10px] text-slate-400 font-mono truncate" dir="ltr">
+                {customer?.phone || savedProfile?.phone || (guestPhone.trim() ? guestPhone : '')}
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 rtl:space-x-reverse">
+        <div className="flex items-center space-x-2 rtl:space-x-reverse shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowPastOrdersModal(true)}
+            className="w-10 h-10 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-amber-400 flex items-center justify-center transition shadow-md relative"
+            title="سجل طلباتي ومتابعة الطلب 🕒"
+          >
+            <Clock className="w-4 h-4" />
+            {pastOrders.some((o) => o.status === 'pending' || o.status === 'preparing' || o.status === 'ready') && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            )}
+          </button>
+
           <NotificationBell
             portalName={store.name || 'محفظة العميل'}
             portalFilter="customer"
-            buttonClassName="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/60 text-slate-300 hover:text-white p-0"
+            storeId={store.id}
+            userPhone={customer?.phone || savedProfile?.phone || guestPhone}
+            buttonClassName="w-10 h-10 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white p-0 shadow-md"
           />
 
           {(customer || savedProfile) ? (
             <button
               onClick={handleLogout}
-              className="w-9 h-9 rounded-xl bg-slate-800/80 hover:bg-rose-950/60 border border-slate-700/60 hover:border-rose-500/40 text-slate-300 hover:text-rose-300 flex items-center justify-center transition"
+              className="w-10 h-10 rounded-2xl bg-white/5 hover:bg-rose-950/60 border border-white/10 hover:border-rose-500/40 text-slate-300 hover:text-rose-300 flex items-center justify-center transition shadow-md"
               title="تسجيل الخروج"
             >
               <LogOut className="w-4 h-4" />
@@ -1684,15 +2288,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 setPendingAuthAction({ type: 'SHOW_QR' });
                 setShowLoginModal(true);
               }}
-              className="px-2.5 py-1.5 rounded-xl border font-bold text-[11px] flex items-center gap-1 transition active:scale-95 shadow"
+              className="px-3 py-2 rounded-2xl border font-black text-xs flex items-center gap-1.5 transition active:scale-95 shadow-lg"
               style={{
-                backgroundColor: `${brandSecondary}20`,
-                borderColor: `${brandSecondary}40`,
-                color: brandSecondary,
+                backgroundColor: brandSecondary,
+                borderColor: brandSecondary,
+                color: '#000000',
               }}
             >
-              <QrCode className="w-3.5 h-3.5" />
-              <span>بطاقتي</span>
+              <QrCode className="w-4 h-4" />
+              <span>دخول / بطاقتي</span>
             </button>
           )}
         </div>
@@ -1740,19 +2344,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {activeTab === 'pass' && (
+      {activeTab === 'pass' && activeModules.loyalty && (
         <div className="space-y-4 animate-fade-in">
           
+          {/* 🌟 03 - Edge-to-Edge Hero Banner */}
           <div
-            className="relative group select-none"
+            className="relative group select-none -mx-4 sm:mx-0 overflow-hidden shadow-2xl"
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >
             <div
-              className="relative rounded-3xl border border-slate-800 shadow-2xl overflow-hidden min-h-[175px] sm:min-h-[195px] flex flex-col justify-end p-5 sm:p-6 transition-all duration-500"
+              className="relative min-h-[200px] sm:min-h-[230px] flex flex-col justify-end p-5 sm:p-6 transition-all duration-500 rounded-none sm:rounded-3xl border-y sm:border border-white/10"
               style={{
-                backgroundColor: store.primary_color || '#0F172A',
-                borderColor: `${store.secondary_color || '#d4af37'}30`,
+                backgroundColor: store.primary_color || '#07070B',
               }}
             >
               <img
@@ -1763,18 +2367,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 loading="lazy"
               />
 
-              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/60 to-black/25 pointer-events-none"></div>
+              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/20 pointer-events-none"></div>
 
               <div
                 key={`content-${activeSlide.id || safeSlideIndex}`}
-                className="relative z-10 space-y-1.5 text-right animate-fade-in"
+                className="relative z-10 space-y-2 text-right animate-fade-in"
               >
                 {activeSlide.badge_text && (
                   <div>
                     <span
-                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black shadow-md border border-white/10"
+                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black shadow-lg"
                       style={{
-                        backgroundColor: store.secondary_color || '#d4af37',
+                        backgroundColor: brandSecondary,
                         color: '#000000',
                       }}
                     >
@@ -1784,15 +2388,30 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </div>
                 )}
 
-                <h2 className="font-black text-white text-base sm:text-lg leading-tight tracking-tight drop-shadow-md">
+                <h2 className="font-serif font-black text-white text-lg sm:text-2xl leading-tight tracking-tight drop-shadow-lg">
                   {activeSlide.title || store.name}
                 </h2>
 
                 {activeSlide.quote && (
-                  <p className="text-[11px] sm:text-xs text-slate-200 leading-relaxed font-normal drop-shadow-sm max-w-[95%] line-clamp-2">
+                  <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-normal drop-shadow-md max-w-[95%] line-clamp-2">
                     "{activeSlide.quote}"
                   </p>
                 )}
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('menu')}
+                    className="px-4 py-1.5 rounded-full font-black text-xs shadow-lg flex items-center gap-1.5 hover:scale-105 active:scale-95 transition"
+                    style={{
+                      backgroundColor: brandSecondary,
+                      color: '#000000',
+                    }}
+                  >
+                    <span>اطلب الآن</span>
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
 
               {showcaseSlides.length > 1 && (
@@ -1805,125 +2424,140 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         e.stopPropagation();
                         setCurrentSlideIndex(idx);
                       }}
-                      className={`h-2 rounded-full transition-all duration-300 ${
+                      className={`h-1.5 rounded-full transition-all duration-300 ${
                         safeSlideIndex === idx
                           ? 'w-6 shadow-md'
                           : 'w-2 bg-white/40 hover:bg-white/70'
                       }`}
                       style={{
-                        backgroundColor: safeSlideIndex === idx ? (store.secondary_color || '#F59E0B') : undefined,
+                        backgroundColor: safeSlideIndex === idx ? brandSecondary : undefined,
                       }}
                       aria-label={`Slide ${idx + 1}`}
                     ></button>
                   ))}
                 </div>
               )}
-
             </div>
           </div>
 
-          {!customer && (
-            <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl text-center space-y-3.5 shadow-xl">
-              <div
-                className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-lg border"
-                style={{
-                  backgroundColor: `${brandSecondary}20`,
-                  borderColor: `${brandSecondary}40`,
-                  color: brandSecondary,
-                }}
-              >
-                👑
-              </div>
-              <div className="space-y-1">
-                <h3 className="text-base font-black text-white">بطاقة العضوية والولاء الرقمية</h3>
-                <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">
-                  سجّل رقم جوالك لفتح بطاقتك الخاصة بمتجر <strong className="text-white">{store.name}</strong>، لتكسب النقاط وتستبدل الجوائز مع كل زيارة!
-                </p>
-              </div>
+          {/* 🌟 04 - VIP Gold Pass (Authentic Pass Silhouette & Proportions matching Approved Preview) */}
+          <div className="relative group select-none -mt-10 sm:-mt-12 z-20">
+            {/* Ambient Gold Glow Behind Card */}
+            <div
+              className="absolute -inset-1 rounded-[30px] blur-xl opacity-35 group-hover:opacity-60 transition duration-700 pointer-events-none"
+              style={{
+                background: `radial-gradient(circle, ${brandSecondary}70 0%, transparent 70%)`,
+              }}
+            ></div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setPendingAuthAction({ type: 'SHOW_QR' });
-                  setShowLoginModal(true);
-                }}
-                style={{
-                  backgroundColor: brandSecondary,
-                  color: '#000000',
-                }}
-                className="w-full py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xl flex items-center justify-center gap-2 transition hover:scale-[1.02] active:scale-95"
-              >
-                <QrCode className="w-4 h-4" />
-                <span>تسجيل الدخول / فتح بطاقتي 🚀</span>
-              </button>
-            </div>
-          )}
+            <div
+              className="relative rounded-[28px] p-5 sm:p-6 text-slate-950 transition-all duration-300"
+              style={{
+                background: `linear-gradient(135deg, #6b5314 0%, #e9d27a 26%, ${brandSecondary} 50%, #f3e3a0 74%, #8a6a1f 100%)`,
+                boxShadow: `0 20px 45px -10px rgba(0, 0, 0, 0.75), inset 0 1px 1px rgba(255, 255, 255, 0.65), inset 0 -1px 2px rgba(0, 0, 0, 0.35)`,
+                border: '1px solid rgba(255, 255, 255, 0.3)',
+              }}
+            >
+              {/* Card Top Row: Merchant Info (Right) & Circular Black Logo Badge (Left in RTL) */}
+              <div className="relative z-10 flex items-center justify-between gap-3">
+                <div className="text-right">
+                  <h3 className="font-serif font-black text-base sm:text-lg text-[#110e05] tracking-tight leading-tight">
+                    {store.name}
+                  </h3>
+                  <p className="text-[11px] font-bold text-[#110e05]/75 font-mono mt-0.5">
+                    {currentTierObj?.tier_name ? `VIP ${currentTierObj.tier_name}` : 'VIP GOLD'} · PASS ID {customer?.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-DEMO01'}
+                  </p>
+                </div>
 
-          <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl space-y-3.5 shadow-xl">
-            
-            <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80">
-              <div>
-                <span className="text-[11px] text-slate-400 block font-medium">رصيدك الحالي</span>
-                <div className="flex items-baseline space-x-2 rtl:space-x-reverse mt-0.5">
-                  <span
-                    className="text-3xl font-black font-mono tracking-tight"
-                    style={{ color: brandSecondary }}
-                  >
-                    {customer?.wallet_balance?.toLocaleString() ?? 0}
-                  </span>
-                  <span className="text-xs text-slate-300 font-bold">نقطة</span>
+                {/* Circular Black Merchant Logo Badge */}
+                <div className="w-11 h-11 rounded-full bg-[#110e05] border-2 border-white/20 flex items-center justify-center shrink-0 shadow-lg overflow-hidden text-[#E3B94A] font-black text-sm">
+                  {store.logo_url ? (
+                    <img
+                      src={store.logo_url}
+                      alt={store.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span>{store.name.slice(0, 1)}</span>
+                  )}
                 </div>
               </div>
 
-              <div
-                className="w-11 h-11 rounded-2xl border flex items-center justify-center shrink-0 shadow-inner"
-                style={{
-                  backgroundColor: `${brandSecondary}18`,
-                  borderColor: `${brandSecondary}35`,
-                  color: brandSecondary,
-                }}
-              >
-                <Coins className="w-6 h-6" />
-              </div>
-            </div>
-
-            <div className="space-y-2 pt-0.5">
-              <div className="flex justify-between items-center text-xs font-semibold">
-                <span className="text-slate-300 flex items-center gap-1.5">
-                  <span className="text-slate-400">مكانتك:</span>
-                  <strong className="text-white flex items-center gap-1 font-bold">
-                    <span>👑</span>
-                    <span>{currentTierObj?.tier_name}</span>
-                  </strong>
-                </span>
-
-                {nextTierObj ? (
-                  <span className="text-slate-400 text-[11px]">
-                    باقي <strong className="font-mono" style={{ color: brandSecondary }}>{xpNeeded} XP</strong> للوصول إلى{' '}
-                    <strong className="text-white">{nextTierObj.tier_name}</strong>
-                  </span>
-                ) : (
-                  <span className="font-bold text-[11px] flex items-center gap-1" style={{ color: brandSecondary }}>
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>وصلت لأعلى مستوى ملكي! 👑</span>
-                  </span>
-                )}
+              {/* Massive Points Display (Exact Match to Prototype & Reference Images) */}
+              <div className="relative z-10 my-3 text-center">
+                <div className="text-[44px] sm:text-[48px] font-black font-mono tracking-tight text-[#110e05] leading-none">
+                  {customer?.wallet_balance?.toLocaleString() ?? '0'}
+                </div>
+                <div className="text-xs font-black text-[#110e05]/80 mt-0.5">
+                  نقطة
+                </div>
               </div>
 
-              <div className="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-800 shadow-inner">
-                <div
-                  className="h-full rounded-full transition-all duration-1000 ease-out shadow-sm"
-                  style={{
-                    width: `${progressPercent}%`,
-                    background: `linear-gradient(to right, ${brandPrimary}, ${brandSecondary})`,
-                    boxShadow: `0 0 10px ${brandSecondary}50`,
+              {/* Progress Bar & XP Remaining (Compact & Sleek Track) */}
+              <div className="relative z-10 space-y-1.5 my-2">
+                <div className="w-full h-2 bg-[#110e05]/20 rounded-full overflow-hidden p-[1px] border border-[#110e05]/15 shadow-inner">
+                  <div
+                    className="h-full rounded-full transition-all duration-700 shadow-sm"
+                    style={{
+                      width: `${progressPercent}%`,
+                      background: brandColors.progressGradient,
+                      boxShadow: `0 0 10px ${brandColors.progressGlow}`,
+                    }}
+                  ></div>
+                </div>
+                <div className="text-center text-[11px] font-bold text-[#110e05]/80">
+                  {nextTierObj ? (
+                    <span>
+                      باقي <strong className="font-mono font-black">{xpNeeded} XP</strong> للوصول إلى {nextTierObj.tier_name}
+                    </span>
+                  ) : (
+                    <span>وصلت لأعلى مستوى ملكي 👑</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Bottom Interactive Pill Buttons (Exact Match to Prototype & Images) */}
+              <div className="relative z-10 mt-4 pt-1 flex items-center justify-between gap-2.5">
+                {/* 1. Right Button (RTL): "كيف أجمع نقاط؟" */}
+                <button
+                  type="button"
+                  onClick={() => setShowHowToEarnPoints(true)}
+                  className="flex-1 py-2.5 px-3 rounded-full font-black text-xs transition active:scale-95 shadow-sm text-center border border-black/10 bg-[#110e05]/12 text-[#110e05] hover:bg-[#110e05]/20"
+                >
+                  كيف أجمع نقاط؟
+                </button>
+
+                {/* 2. Left Button (RTL): "إظهار الـ QR" / "إخفاء الرمز" */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!customer) {
+                      setPendingAuthAction({ type: 'SHOW_QR' });
+                      setShowLoginModal(true);
+                    } else {
+                      setShowEmbeddedQR(!showEmbeddedQR);
+                    }
                   }}
-                ></div>
+                  className="flex-1 py-2.5 px-3 rounded-full font-black text-xs transition active:scale-95 shadow-md flex items-center justify-center gap-1.5 text-center bg-[#110e05] border border-black/30 hover:bg-black"
+                  style={{
+                    color: brandColors.qrButtonText,
+                    boxShadow: `0 4px 14px ${brandColors.qrButtonGlow}`,
+                  }}
+                >
+                  <QrCode className="w-3.5 h-3.5" />
+                  <span>
+                    {selectedCouponForQR
+                      ? 'العودة لـ QR الزيارة'
+                      : showEmbeddedQR
+                      ? 'إخفاء الرمز'
+                      : 'إظهار الـ QR'}
+                  </span>
+                </button>
               </div>
             </div>
-
           </div>
 
+          {/* Active Privilege/Coupon Notice if selected */}
           {selectedCouponForQR && (
             <div
               className="p-3.5 rounded-2xl border flex items-center justify-between gap-3 animate-fade-in shadow-lg"
@@ -1959,209 +2593,273 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           )}
 
-          <div className="relative group">
-            
-            <div
-              className="absolute -inset-1 rounded-3xl blur-xl opacity-20 group-hover:opacity-40 transition duration-700 pointer-events-none"
-              style={{
-                background: `radial-gradient(circle, ${brandSecondary}40 0%, transparent 70%)`,
-              }}
-            ></div>
-
-            <div className="glass-qr-shield rounded-3xl p-5 sm:p-6 relative overflow-hidden backdrop-blur-2xl shadow-2xl flex flex-col items-center space-y-4 border border-slate-800 bg-slate-900/90">
-              
-              <div className="w-full flex items-center justify-between gap-2 text-xs">
-                <div className="flex items-center space-x-1.5 rtl:space-x-reverse text-slate-300 text-[11px] font-bold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>{selectedCouponForQR ? '🎟️ رمز صرف الهدية / الامتياز' : 'امسح الباركود لتسجيل زيارتك وكسب النقاط'}</span>
-                </div>
-
-                {selectedCouponForQR ? (
-                  <div className="flex items-center space-x-1.5 rtl:space-x-reverse bg-emerald-950/80 border border-emerald-500/40 px-3 py-1 rounded-full text-[10px] text-emerald-300 font-bold shadow-inner">
-                    <span>✨ رمز جاهز للصرف</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center space-x-1.5 rtl:space-x-reverse bg-slate-950 border border-slate-800 px-3 py-1 rounded-full text-[10px] text-slate-300 font-mono shadow-inner">
-                    <Clock className="w-3 h-3" style={{ color: brandSecondary }} />
-                    <span>يتجدد:</span>
-                    <strong className="font-bold" style={{ color: brandSecondary }}>{timeLeft}s</strong>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (customer) {
-                          regenerateToken(customer, null);
-                          playBeepSound('success');
-                        }
-                      }}
-                      className="p-1 hover:text-white transition text-slate-400 hover:rotate-180 duration-300"
-                      title="تحديث الرمز فوراً"
-                    >
-                      <RefreshCw className="w-2.5 h-2.5" />
-                    </button>
-                  </div>
-                )}
+          {/* 🌟 Dedicated Coupon Redemption Card (يظهر الكوبون تحت الشريط جاهزاً للصرف فوراً) */}
+          {selectedCouponForQR && (
+            <div className="p-6 rounded-3xl bg-slate-900/95 border border-slate-800 backdrop-blur-2xl text-center space-y-4 shadow-2xl animate-fade-in">
+              <div className="flex items-center justify-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <p className="text-xs font-black text-emerald-400 font-mono">
+                  🎟️ أبرز هذا الرمز للكاشير لصرف الامتياز فوراً
+                </p>
               </div>
 
-              <div className="relative p-3">
-                
-                <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 rounded-tr-lg pointer-events-none" style={{ borderColor: `${brandSecondary}cc` }}></div>
-                <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 rounded-tl-lg pointer-events-none" style={{ borderColor: `${brandSecondary}cc` }}></div>
-                <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 rounded-br-lg pointer-events-none" style={{ borderColor: `${brandSecondary}cc` }}></div>
-                <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 rounded-bl-lg pointer-events-none" style={{ borderColor: `${brandSecondary}cc` }}></div>
+              {/* Large High-Contrast White QR Card */}
+              <div
+                onClick={() => setIsFullscreenQR(true)}
+                className="w-56 h-56 mx-auto p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 transition-transform border-4 border-slate-800 relative group/qr"
+                title="انقر لتكبير الكود"
+              >
+                <QRCodeSVG
+                  value={isCouponFrozen ? 'FROZEN' : selectedCouponForQR.coupon_code}
+                  size={190}
+                  level="M"
+                  includeMargin={false}
+                />
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/qr:opacity-100 transition-opacity rounded-3xl flex items-center justify-center text-white text-xs font-bold gap-1">
+                  <Maximize2 className="w-4 h-4" />
+                  <span>تكبير الرمز</span>
+                </div>
+              </div>
 
-                <div
-                  onClick={() => setIsFullscreenQR(true)}
-                  className={`relative p-3.5 rounded-3xl bg-white shadow-2xl cursor-pointer transition-all duration-300 hover:scale-[1.02] overflow-hidden ${
-                    isCouponFrozen ? 'opacity-30 grayscale blur-[1px]' : ''
-                  }`}
-                  title="انقر لتكبير الباركود بملء الشاشة"
+              {/* Coupon Code Box with Copy */}
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black/60 border border-white/10 shadow-inner">
+                <span className="text-[11px] text-slate-400 font-medium">رمز الكوبون:</span>
+                <span className="text-sm font-black text-amber-400 font-mono tracking-wider">
+                  {selectedCouponForQR.coupon_code}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(selectedCouponForQR.coupon_code, `cpn-${selectedCouponForQR.id}`)}
+                  className="text-[10px] bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg text-slate-200 transition font-sans font-bold"
                 >
-                  <QRCodeSVG
-                    value={qrDataPayload}
-                    size={210}
-                    level="M"
-                    includeMargin={true}
-                  />
-
-                  <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[11px] font-bold gap-1 rounded-3xl">
-                    <Maximize2 className="w-4 h-4" style={{ color: brandSecondary }} />
-                    <span>تكبير</span>
-                  </div>
-                </div>
+                  {copiedCodeKey === `cpn-${selectedCouponForQR.id}` ? '✓ تم النسخ' : 'نسخ'}
+                </button>
               </div>
 
-              <div className="w-full pt-2.5 border-t border-slate-800 flex items-center justify-between text-[11px] font-mono">
-                <div className="flex items-center space-x-1.5 rtl:space-x-reverse text-slate-300">
-                  <span className="text-slate-400">
-                    {selectedCouponForQR ? 'كود الكوبون:' : 'كود العضو:'}
-                  </span>
-                  <span className="font-bold text-white tracking-wider">
-                    {selectedCouponForQR
-                      ? selectedCouponForQR.coupon_code
-                      : customer?.phone
-                      ? `VIP-${customer.phone.slice(-6)}`
-                      : 'VIP-89010'}
-                  </span>
-                  <button
-                    onClick={() =>
-                      copyToClipboard(
-                        selectedCouponForQR
-                          ? selectedCouponForQR.coupon_code
-                          : customer?.phone
-                          ? `VIP-${customer.phone.slice(-6)}`
-                          : 'VIP-89010',
-                        'vip-id'
-                      )
-                    }
-                    className="text-slate-400 hover:text-white p-0.5 transition"
-                    title="نسخ الكود"
-                  >
-                    {copiedCodeKey === 'vip-id' ? (
-                      <Check className="w-3 h-3 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3 h-3" />
-                    )}
-                  </button>
+              {/* Time lock notice if frozen */}
+              {isCouponFrozen && (
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs text-center font-bold">
+                  {timeLockCheck.message || 'عذراً، هذا الكوبون غير متاح للصرف في الوقت الحالي ⏰'}
                 </div>
-
-                <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-sans font-semibold">
-                  <span>● جاهز للمسح</span>
-                </div>
-              </div>
-
-              {selectedCouponForQR ? (
-                <p className="text-xs font-bold text-center pt-0.5" style={{ color: brandSecondary }}>
-                  أبرز هذا الباركود للكاشير لصرف وتسليم طلبك فوراً 🎁
-                </p>
-              ) : (
-                <p className="text-[10px] text-slate-400 text-center font-medium pt-0.5">
-                  أبرز الرمز للكاشير عند الدفع لكسب النقاط واستبدال الامتيازات
-                </p>
               )}
 
+              {/* Validity and Details */}
+              <div className="text-[11px] text-slate-400 space-y-1 pt-1 border-t border-slate-800/80">
+                <p>
+                  صالح للاستخدام لمرة واحدة لدى متجر <strong className="text-white">{store.name}</strong>
+                </p>
+                <p className="font-mono text-slate-500">
+                  ساعات الصرف: {selectedCouponForQR.valid_start_time ? `${selectedCouponForQR.valid_start_time} - ${selectedCouponForQR.valid_end_time}` : 'متاح 24/7'}
+                </p>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* 🌟 Member Regular QR Code Card (Shows smoothly when clicking "إظهار الـ QR") */}
+          {!selectedCouponForQR && showEmbeddedQR && (
+            <div className="p-6 rounded-3xl bg-slate-900/95 border border-slate-800 backdrop-blur-2xl text-center space-y-4 shadow-2xl animate-fade-in">
+              <p className="text-xs font-bold text-slate-300">
+                أبرز الرمز للكاشير لتسجيل زيارتك وكسب النقاط
+              </p>
+
+              {/* Large High-Contrast White QR Card */}
+              <div
+                onClick={() => setIsFullscreenQR(true)}
+                className="w-56 h-56 mx-auto p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 transition-transform border-4 border-slate-800 relative group/qr"
+                title="انقر لتكبير الكود"
+              >
+                <QRCodeSVG
+                  value={qrDataPayload}
+                  size={190}
+                  level="M"
+                  includeMargin={false}
+                />
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/qr:opacity-100 transition-opacity rounded-3xl flex items-center justify-center text-white text-xs font-bold gap-1">
+                  <Maximize2 className="w-4 h-4" />
+                  <span>تكبير الرمز</span>
+                </div>
+              </div>
+
+              {/* Countdown Timer and Refresh */}
+              <div className="flex items-center justify-center gap-2 text-xs text-slate-400 font-mono">
+                <span>يتجدد خلال</span>
+                <strong className="text-white font-black" style={{ color: brandSecondary }}>
+                  {timeLeft} ثانية
+                </strong>
+                <span>·</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (customer) {
+                      regenerateToken(customer, null);
+                      playBeepSound('success');
+                    }
+                  }}
+                  className="hover:text-white transition flex items-center gap-1 font-sans text-slate-400 hover:underline"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>اضغط لتحديثه</span>
+                </button>
+              </div>
+
+              <p className="text-[10px] text-slate-500 font-medium">
+                كود العضو: {customer?.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-DEMO01'}
+              </p>
+            </div>
+          )}
+
+          {!customer && (
+            <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl text-center space-y-3.5 shadow-xl">
+              <div
+                className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-lg border"
+                style={{
+                  backgroundColor: `${brandSecondary}20`,
+                  borderColor: `${brandSecondary}40`,
+                  color: brandSecondary,
+                }}
+              >
+                👑
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-black text-white">بطاقة العضوية والولاء الرقمية</h3>
+                <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">
+                  سجّل رقم جوالك لربط بطاقتك الخاصة بمتجر <strong className="text-white">{store.name}</strong>، لتكسب النقاط وتستبدل الجوائز مع كل زيارة!
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingAuthAction({ type: 'SHOW_QR' });
+                  setShowLoginModal(true);
+                }}
+                style={{
+                  backgroundColor: brandSecondary,
+                  color: '#000000',
+                }}
+                className="w-full py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xl flex items-center justify-center gap-2 transition hover:scale-[1.02] active:scale-95"
+              >
+                <QrCode className="w-4 h-4" />
+                <span>تسجيل الدخول / فتح بطاقتي 🚀</span>
+              </button>
+            </div>
+          )}
 
         </div>
       )}
 
-      {activeTab === 'menu' && (
-        <div className="space-y-4 animate-fade-in">
-          <div className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl space-y-3 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                  <ShoppingBag className="w-5 h-5" style={{ color: brandSecondary }} />
-                  <span>المنيو والمنتجات 🍔</span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  اختر وجباتك ومشروباتك، خصّص إضافاتك، واطلب بكل سهولة
-                </p>
+      {activeTab === 'menu' && activeModules.orders && (
+        <div className="space-y-3.5 animate-fade-in">
+          {/* 🌟 05 & 07 - Category Pills & Search Row */}
+          <div className="space-y-3.5">
+            {/* Search Bar + Floating Orders Icon Row */}
+            <div className="flex items-center gap-2.5">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  placeholder="ابحث عن وجبتك أو مشروبك المفضل..."
+                  className="w-full bg-white/5 border border-white/10 rounded-full pr-11 pl-10 py-3 text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none focus:border-white/30 backdrop-blur-xl transition shadow-inner"
+                />
+                <Search className="w-4 h-4 text-slate-400 absolute right-4 top-3.5 pointer-events-none" />
+                {catalogSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setCatalogSearch('')}
+                    className="absolute left-3.5 top-3 p-0.5 rounded-full bg-white/10 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
-              <span
-                className="text-xs px-3 py-1 rounded-full border font-mono font-bold bg-slate-950"
-                style={{ color: brandSecondary, borderColor: `${brandSecondary}40` }}
-              >
-                {filteredCatalogItems.length} صنف
-              </span>
-            </div>
 
-            <div className="relative">
-              <input
-                type="text"
-                value={catalogSearch}
-                onChange={(e) => setCatalogSearch(e.target.value)}
-                placeholder="ابحث عن وجبة، مشروب، أو صنف..."
-                className="w-full bg-slate-950/90 border border-slate-800 rounded-2xl pr-10 pl-10 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-slate-600 transition"
-              />
-              <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3 pointer-events-none" />
-              {catalogSearch && (
+              {/* Floating Orders Badge / Quick Access */}
+              {pastOrders.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setCatalogSearch('')}
-                  className="absolute left-3 top-2.5 p-0.5 rounded-full bg-slate-800 text-slate-400 hover:text-white"
+                  onClick={() => setShowPastOrdersModal(true)}
+                  className="w-11 h-11 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center shrink-0 relative transition shadow-md active:scale-95"
+                  title="سجل طلباتي السابقة"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <ShoppingBag className="w-5 h-5" style={{ color: brandSecondary }} />
+                  <span
+                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black flex items-center justify-center shadow-lg text-black"
+                    style={{ backgroundColor: brandSecondary }}
+                  >
+                    {pastOrders.length}
+                  </span>
                 </button>
               )}
             </div>
 
-            {pastOrders.length > 0 && (
-              <div className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 text-xs">
-                <div className="flex items-center gap-2">
-                  <RotateCcw className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span className="text-slate-300 font-bold">لديك ({pastOrders.length}) طلبات سابقة</span>
+            {/* Branch Selector if multiple branches */}
+            {branches.length > 1 && (
+              <div className="space-y-1.5 p-2.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md">
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="flex items-center gap-1.5 text-slate-300 text-[11px]">
+                    <Building2 className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
+                    <span>فرع الطلب:</span>
+                  </span>
+                  {selectedBranch && (
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-black border flex items-center gap-1 ${
+                      branchStatus.isOpen
+                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                        : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${branchStatus.isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                      <span>{branchStatus.isOpen ? 'مفتوح للطلبات' : 'مغلق حالياً'}</span>
+                    </span>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowPastOrdersModal(true)}
-                  style={{ color: brandSecondary }}
-                  className="font-black hover:underline flex items-center gap-1 text-[11px] bg-slate-900 px-2.5 py-1 rounded-xl border border-slate-800"
-                >
-                  <span>طلباتي 📋</span>
-                </button>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none pt-1">
+                  {branches.map((b) => {
+                    const isSel = selectedBranch?.id === b.id;
+                    const bStatus = checkBranchOpenStatus(b);
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setSelectedBranch(b)}
+                        className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border ${
+                          isSel
+                            ? 'bg-slate-800 text-white shadow-md'
+                            : 'bg-white/[0.04] text-slate-400 border-white/[0.06] hover:text-white'
+                        }`}
+                        style={isSel ? { borderColor: brandSecondary, color: '#ffffff' } : undefined}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${bStatus.isOpen ? 'bg-emerald-400' : 'bg-rose-500'}`} />
+                        <span>{b.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
+            {/* Floating Glowing Category Pills (05) */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-none text-xs">
               <button
                 type="button"
                 onClick={() => setSelectedCategory('ALL')}
                 style={
                   selectedCategory === 'ALL'
                     ? {
-                        backgroundColor: brandSecondary,
+                        background: `linear-gradient(135deg, ${brandSecondary}, ${brandSecondary}dd)`,
                         color: '#000000',
+                        boxShadow: `0 4px 15px -2px ${brandSecondary}70`,
                       }
                     : undefined
                 }
-                className={`px-3.5 py-1.5 rounded-full font-bold transition whitespace-nowrap ${
+                className={`px-4 py-2 rounded-full font-black transition whitespace-nowrap flex items-center gap-1.5 ${
                   selectedCategory === 'ALL'
-                    ? 'shadow-md font-black'
-                    : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800'
+                    ? 'scale-105'
+                    : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
                 }`}
               >
-                🌟 الكل ({catalogItems.filter((i) => i.is_available && i.item_type !== 'service').length})
+                <span>🌟</span>
+                <span>الكل ({catalogItems.filter((i) => i.is_available && i.item_type !== 'service').length})</span>
               </button>
               {catalogCategories.map((cat) => {
                 const count = catalogItems.filter((i) => i.is_available && i.item_type !== 'service' && i.category === cat).length;
@@ -2174,47 +2872,37 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     style={
                       isSelected
                         ? {
-                            backgroundColor: brandSecondary,
+                            background: `linear-gradient(135deg, ${brandSecondary}, ${brandSecondary}dd)`,
                             color: '#000000',
+                            boxShadow: `0 4px 15px -2px ${brandSecondary}70`,
                           }
                         : undefined
                     }
-                    className={`px-3.5 py-1.5 rounded-full font-bold transition whitespace-nowrap ${
+                    className={`px-4 py-2 rounded-full font-black transition whitespace-nowrap flex items-center gap-1.5 ${
                       isSelected
-                        ? 'shadow-md font-black'
-                        : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800'
+                        ? 'scale-105'
+                        : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
                     }`}
                   >
-                    {cat} ({count})
+                    <span>🍽️</span>
+                    <span>{cat} ({count})</span>
                   </button>
                 );
               })}
             </div>
           </div>
 
+          {/* 🌟 06 - Luxury Product Cards in 2-Column Grid */}
           {filteredCatalogItems.length === 0 ? (
-            <div className="py-14 text-center text-slate-400 border border-dashed border-slate-800 rounded-3xl bg-slate-950/40 space-y-3">
+            <div className="py-14 text-center text-slate-400 border border-dashed border-white/10 rounded-3xl bg-white/[0.02] space-y-3">
               <ShoppingBag className="w-12 h-12 mx-auto text-slate-600 mb-1" />
-              <h4 className="text-base font-bold text-white">لا توجد أصناف في المنيو حالياً</h4>
+              <h4 className="text-base font-bold text-white">لا توجد أصناف في هذا القسم حالياً</h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                {catalogSearch
-                  ? 'جرب البحث بكلمات أخرى أو اختر قسماً مختلفاً'
-                  : 'سيقوم متجر ' + store.name + ' بإضافة قائمة المنيو قريباً'}
+                {catalogSearch ? 'جرب البحث بكلمات أخرى' : `سيتم تحديث قائمة ${store.name} قريباً`}
               </p>
-              {catalogSearch && (
-                <button
-                  onClick={() => {
-                    setCatalogSearch('');
-                    setSelectedCategory('ALL');
-                  }}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition"
-                >
-                  إعادة ضبط البحث
-                </button>
-              )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3.5">
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 pt-1">
               {filteredCatalogItems.map((item) => {
                 const hasModifiers = item.modifier_groups && item.modifier_groups.length > 0;
                 const cartCountForItem = cartItems
@@ -2225,100 +2913,87 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 return (
                   <div
                     key={item.id}
-                    className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition-all duration-300 shadow-xl flex gap-3.5 relative overflow-hidden group"
+                    className="frosted-glass-capsule rounded-[22px] overflow-hidden flex flex-col justify-between transition-all duration-300 hover:border-white/20 shadow-xl group/card relative"
                   >
-                    <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 shrink-0 relative">
+                    {/* Item Image with Floating Points Badge */}
+                    <div className="relative h-28 sm:h-32 w-full overflow-hidden bg-black/40">
                       {item.image_url ? (
                         <img
                           src={item.image_url}
                           alt={item.name}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                          className="w-full h-full object-cover group-hover/card:scale-105 transition-transform duration-500"
                           loading="lazy"
                         />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-3xl text-slate-600">
+                        <div className="w-full h-full flex items-center justify-center text-3xl">
                           🍔
                         </div>
                       )}
-                      {cartCountForItem > 0 && (
+
+                      {/* Earned Points Badge (Top Right) */}
+                      {earnedPoints > 0 && (
                         <div
-                          className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-lg font-black text-[10px] text-black shadow-md"
+                          className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-black text-black shadow-lg"
                           style={{ backgroundColor: brandSecondary }}
                         >
-                          {cartCountForItem} في السلة
+                          +{earnedPoints} نقطة
                         </div>
                       )}
+
+                      {/* Cart Quantity Badge (Top Left) */}
+                      {cartCountForItem > 0 && (
+                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-black shadow-lg">
+                          {cartCountForItem} بالسلة
+                        </div>
+                      )}
+
+                      {/* Floating Circular Action (+) Button overlapping image */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (hasModifiers) handleOpenCustomizeModal(item);
+                          else handleQuickAddToCart(item);
+                        }}
+                        className="absolute bottom-2 left-2 w-9 h-9 rounded-full flex items-center justify-center shadow-2xl transition transform active:scale-90 hover:scale-110 z-10"
+                        style={{
+                          backgroundColor: brandSecondary,
+                          color: '#000000',
+                          boxShadow: `0 4px 14px rgba(0,0,0,0.6)`,
+                        }}
+                        title={hasModifiers ? 'تخصيص الصنف' : 'إضافة سريعة'}
+                      >
+                        {hasModifiers ? <Sparkles className="w-4 h-4" /> : <Plus className="w-5 h-5 stroke-[2.5]" />}
+                      </button>
                     </div>
 
-                    <div className="flex-1 flex flex-col justify-between min-w-0">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span
-                            className="text-[10px] px-2 py-0.5 rounded-md font-bold"
-                            style={{
-                              backgroundColor: '#10B98120',
-                              color: '#34D399',
-                              border: '1px solid #10B98140',
-                            }}
-                          >
-                            🍽️ {item.category || 'وجبة'}
-                          </span>
-                          {earnedPoints > 0 && (
-                            <span className="text-[10px] text-amber-300 font-mono font-bold">
-                              +{earnedPoints} نقطة
-                            </span>
-                          )}
-                        </div>
-
-                        <h4 className="font-extrabold text-white text-sm sm:text-base leading-tight">
+                    {/* Item Info (Name, Description, Price) */}
+                    <div className="p-3 flex-1 flex flex-col justify-between space-y-2">
+                      <div>
+                        <h4 className="font-extrabold text-white text-xs sm:text-sm line-clamp-1 leading-tight">
                           {item.name}
                         </h4>
-
                         {item.description && (
-                          <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                          <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5 leading-relaxed">
                             {item.description}
                           </p>
                         )}
                       </div>
 
-                      <div className="pt-2 flex items-center justify-between gap-2 mt-1">
+                      <div className="flex items-baseline justify-between pt-1 border-t border-white/5">
                         <div className="flex items-baseline gap-1">
                           <span
-                            className="text-base sm:text-lg font-black font-mono tracking-tight"
+                            className="font-mono font-black text-sm sm:text-base tracking-tight"
                             style={{ color: brandSecondary }}
                           >
                             {item.price}
                           </span>
-                          <span className="text-[11px] text-slate-400 font-bold">ر.س</span>
+                          <span className="text-[10px] text-slate-400 font-bold">ر.س</span>
                         </div>
 
-                        {hasModifiers ? (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenCustomizeModal(item)}
-                            style={{
-                              backgroundColor: brandSecondary,
-                              color: '#000000',
-                            }}
-                            className="px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1 shadow-md hover:brightness-110 transition active:scale-95"
-                          >
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span>تخصيص وإضافة</span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleQuickAddToCart(item)}
-                            style={{
-                              backgroundColor: brandSecondary,
-                              color: '#000000',
-                            }}
-                            className="px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1 shadow-md hover:brightness-110 transition active:scale-95"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>إضافة</span>
-                          </button>
-                        )}
+                        <span className="text-[9px] text-slate-500 font-mono">
+                          {item.category || 'وجبة'}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -2329,790 +3004,1007 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {activeTab === 'services' && (
-        <div className="space-y-4 animate-fade-in">
-          <div className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl space-y-3 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div>
+      {activeTab === 'services' && activeModules.bookings && (() => {
+        const hasModifiers = Boolean(
+          selectedBookingService?.modifier_groups && selectedBookingService.modifier_groups.length > 0
+        );
+
+        const bookingStepsList: { step: 1 | 2 | 3 | 4 | 5; label: string }[] = [
+          { step: 1, label: 'الخدمة' },
+          ...(hasModifiers ? [{ step: 2 as const, label: 'الإضافات' }] : []),
+          { step: 3, label: 'المختص' },
+          { step: 4, label: 'الموعد' },
+          { step: 5, label: 'التأكيد' },
+        ];
+
+        const currentStepIdx = Math.max(0, bookingStepsList.findIndex((s) => s.step === bookingStep));
+        const progressPercent = bookingStepsList.length > 1
+          ? (currentStepIdx / (bookingStepsList.length - 1)) * 100
+          : 0;
+
+        return (
+          <div className="space-y-4 animate-fade-in pb-36">
+            {/* Header Card */}
+            <div className="p-3.5 sm:p-4 rounded-3xl bg-slate-900/80 border border-white/[0.08] backdrop-blur-xl space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
                 <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-blue-400" />
-                  <span>حجز المواعيد والخدمات 📅</span>
+                  <Calendar className="w-5 h-5" style={{ color: brandSecondary }} />
+                  <span>حجز المواعيد والخدمات</span>
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  احجز موعدك بسهولة، اختر الإضافات والمختص والوقت المناسب، وأكد حجزك عبر الواتساب
-                </p>
               </div>
-              <span className="text-xs px-3 py-1 rounded-full border font-mono font-bold bg-blue-950 text-blue-300 border-blue-800">
-                {availableServiceItems.length} خدمة
-              </span>
-            </div>
 
-            {!bookingSuccessData && (
-              <div className="grid grid-cols-5 gap-1 pt-1 text-[10px] sm:text-[11px] font-bold text-center">
-                {[
-                  { step: 1, label: '1. الخدمة' },
-                  { step: 2, label: '2. الإضافات' },
-                  { step: 3, label: '3. المختص' },
-                  { step: 4, label: '4. الموعد' },
-                  { step: 5, label: '5. التأكيد' },
-                ].map((s) => {
-                  const isCurrent = bookingStep === s.step;
-                  const isPast = bookingStep > s.step;
-                  const isModifiersStep = s.step === 2;
-                  const hasModifiers = Boolean(
-                    selectedBookingService?.modifier_groups && selectedBookingService.modifier_groups.length > 0
-                  );
+              {/* 🏢 Smart Branch Capsule (Only visible when multiple branches exist) */}
+              {branches.length > 1 && (
+                <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md">
+                  <div className="flex items-center gap-1.5 px-2 text-slate-400 text-xs font-bold shrink-0">
+                    <Building2 className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
+                    <span>الفرع:</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
+                    {branches.map((b) => {
+                      const isSel = selectedBranch?.id === b.id;
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => setSelectedBranch(b)}
+                          className={`px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 border ${
+                            isSel
+                              ? 'text-black shadow-md font-black scale-[1.02]'
+                              : 'bg-white/[0.04] text-slate-400 hover:text-white border-white/[0.06] hover:bg-white/[0.08]'
+                          }`}
+                          style={isSel ? { backgroundColor: brandSecondary, borderColor: brandSecondary } : undefined}
+                        >
+                          <span>{b.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
-                  return (
-                    <button
-                      key={s.step}
-                      type="button"
-                      disabled={s.step > 1 && !selectedBookingService}
-                      onClick={() => {
-                        if (s.step === 1) setBookingStep(1);
-                        if (s.step === 2 && selectedBookingService) {
-                          if (hasModifiers) setBookingStep(2);
-                        }
-                        if (s.step === 3 && selectedBookingService) setBookingStep(3);
-                        if (s.step === 4 && selectedBookingService) setBookingStep(4);
-                        if (s.step === 5 && selectedBookingService) setBookingStep(5);
+              {/* 🚀 Sleek Horizontal Stepper */}
+              {!bookingSuccessData && (
+                <div className="pt-1 pb-1 px-1">
+                  <div className="relative flex items-center justify-between">
+                    {/* Background track line */}
+                    <div className="absolute top-3.5 left-4 right-4 h-0.5 bg-white/[0.08] -translate-y-1/2 z-0" />
+                    {/* Active progress track line */}
+                    <div
+                      className="absolute top-3.5 right-4 h-0.5 -translate-y-1/2 z-0 transition-all duration-500 ease-out"
+                      style={{
+                        width: `calc(${progressPercent}% * 0.85)`,
+                        background: `linear-gradient(to left, ${brandSecondary}, ${brandSecondary}99)`,
                       }}
-                      className={`py-1.5 rounded-xl transition ${
-                        isCurrent
-                          ? 'bg-blue-600 text-white shadow-md'
-                          : isPast
-                          ? 'bg-blue-950/60 text-blue-300 border border-blue-800/40'
-                          : isModifiersStep && !hasModifiers && selectedBookingService
-                          ? 'bg-slate-950/40 text-slate-600 opacity-40 line-through'
-                          : 'bg-slate-950 text-slate-500'
-                      }`}
-                    >
-                      {s.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                    />
 
-          {bookingSuccessData ? (
-            <div className="p-6 rounded-3xl bg-slate-900 border border-emerald-500/40 text-center space-y-4 shadow-2xl animate-fade-in">
-              <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto text-3xl shadow-inner">
-                🎉
-              </div>
-              <div>
-                <span className="px-3 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-wider">
-                  تم تسجيل الحجز بنجاح
-                </span>
-                <h3 className="text-lg font-black text-white mt-1">
-                  موعدك مؤكد برقم #{bookingSuccessData.booking_number}
-                </h3>
-              </div>
+                    {bookingStepsList.map((s, idx) => {
+                      const isCurrent = bookingStep === s.step;
+                      const isPast = bookingStep > s.step;
+                      const canClick =
+                        s.step === 1 ||
+                        (s.step <= bookingStep) ||
+                        (s.step === 2 && selectedBookingService && hasModifiers) ||
+                        (s.step === 3 && selectedBookingService) ||
+                        (s.step === 4 && selectedBookingService) ||
+                        (s.step === 5 && selectedBookingService && selectedBookingTime);
 
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-xs space-y-2 text-right">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">الخدمة:</span>
-                  <span className="font-bold text-white">{bookingSuccessData.service_name}</span>
-                </div>
-                {bookingSuccessData.selected_modifiers && bookingSuccessData.selected_modifiers.length > 0 && (
-                  <div className="flex justify-between items-start gap-2">
-                    <span className="text-slate-400 shrink-0">الإضافات والترقيات:</span>
-                    <span className="font-bold text-blue-300 text-left">
-                      {bookingSuccessData.selected_modifiers.map((m) => m.name).join('، ')}
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-slate-400">المختص:</span>
-                  <span className="font-bold text-blue-400">{bookingSuccessData.specialist_name || 'أي مختص متاح'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">التاريخ والوقت:</span>
-                  <span className="font-mono font-bold text-white">{bookingSuccessData.booking_date} | {bookingSuccessData.booking_time}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">مدة الخدمة:</span>
-                  <span className="font-bold text-slate-300">{bookingSuccessData.duration_minutes} دقيقة</span>
-                </div>
-                <div className="flex justify-between border-t border-slate-900 pt-2">
-                  <span className="text-slate-400">المبلغ الإجمالي:</span>
-                  <span className="font-mono font-black text-amber-400">{bookingSuccessData.total_price} ر.س</span>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-1">
-                
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setBookingSuccessData(null);
-                    setSelectedBookingService(null);
-                    setSelectedServiceModifiers({});
-                    setSelectedBookingSpecialist(null);
-                    setBookingStep(1);
-                  }}
-                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
-                >
-                  حجز موعد آخر
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {bookingStep === 1 && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between px-1">
-                    <span className="text-xs font-bold text-slate-300">الخطوة 1: اختر الخدمة المطلوبة للحجز:</span>
-                  </div>
-
-                  {availableServiceItems.length === 0 ? (
-                    <div className="p-8 text-center bg-slate-900/60 rounded-3xl border border-slate-800 space-y-2">
-                      <Scissors className="w-8 h-8 text-slate-600 mx-auto" />
-                      <p className="text-xs text-slate-400">لا توجد خدمات متاحة للحجز حالياً.</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-3">
-                      {availableServiceItems.map((srv) => {
-                        const isSelected = selectedBookingService?.id === srv.id;
-                        const earnedPoints = Math.floor(srv.price * (store.points_per_riyal || 1));
-                        const hasModifiers = Boolean(srv.modifier_groups && srv.modifier_groups.length > 0);
-
-                        return (
+                      return (
+                        <button
+                          key={s.step}
+                          type="button"
+                          disabled={!canClick}
+                          onClick={() => {
+                            if (canClick) setBookingStep(s.step);
+                          }}
+                          className={`relative z-10 flex flex-col items-center gap-1.5 transition-all duration-300 ${
+                            !canClick ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:scale-105'
+                          }`}
+                        >
                           <div
-                            key={srv.id}
-                            onClick={() => handleSelectServiceForBooking(srv)}
-                            className={`p-4 rounded-2xl border cursor-pointer transition flex items-center justify-between gap-3 shadow-md ${
-                              isSelected
-                                ? 'bg-blue-950/50 border-blue-500 shadow-blue-500/10'
-                                : 'bg-slate-900/90 border-slate-800 hover:border-slate-700'
+                            className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-black transition-all duration-300 ${
+                              isCurrent
+                                ? 'text-black shadow-lg scale-110'
+                                : isPast
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm'
+                                : 'bg-slate-900 text-slate-500 border border-white/10'
                             }`}
+                            style={
+                              isCurrent
+                                ? {
+                                    backgroundColor: brandSecondary,
+                                    boxShadow: `0 4px 14px ${brandSecondary}50`,
+                                  }
+                                : undefined
+                            }
                           >
-                            <div className="flex items-center space-x-3 rtl:space-x-reverse min-w-0">
-                              {srv.image_url ? (
-                                <img
-                                  src={srv.image_url}
-                                  alt={srv.name}
-                                  className="w-14 h-14 rounded-xl object-cover border border-slate-700 shrink-0"
-                                />
-                              ) : (
-                                <div className="w-14 h-14 rounded-xl bg-blue-950/60 border border-blue-800/60 flex items-center justify-center text-2xl shrink-0">
-                                  💇‍♂️
+                            {isPast ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : idx + 1}
+                          </div>
+                          <span
+                            className={`text-[10px] sm:text-[11px] font-bold tracking-tight transition-colors duration-200 ${
+                              isCurrent
+                                ? 'font-black'
+                                : isPast
+                                ? 'text-slate-300'
+                                : 'text-slate-500'
+                            }`}
+                            style={isCurrent ? { color: brandSecondary } : undefined}
+                          >
+                            {s.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {bookingSuccessData ? (
+              <div className="p-6 rounded-3xl bg-white/[0.03] border border-emerald-500/40 text-center space-y-4 shadow-2xl backdrop-blur-xl animate-fade-in">
+                <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto text-3xl shadow-inner">
+                  {bookingSuccessData.status === 'confirmed' ? '✅' : bookingSuccessData.status === 'cancelled' ? '❌' : '⏳'}
+                </div>
+                <div>
+                  <span
+                    className={`px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                      bookingSuccessData.status === 'confirmed'
+                        ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
+                        : bookingSuccessData.status === 'cancelled'
+                        ? 'bg-rose-500/15 border border-rose-500/30 text-rose-400'
+                        : 'border animate-pulse'
+                    }`}
+                    style={
+                      bookingSuccessData.status !== 'confirmed' && bookingSuccessData.status !== 'cancelled'
+                        ? {
+                            backgroundColor: `${brandSecondary}20`,
+                            borderColor: `${brandSecondary}40`,
+                            color: brandSecondary,
+                          }
+                        : undefined
+                    }
+                  >
+                    {bookingSuccessData.status === 'confirmed'
+                      ? 'تم تأكيد الموعد رسمياً ✅'
+                      : bookingSuccessData.status === 'cancelled'
+                      ? 'تم الاعتذار عن الموعد ❌'
+                      : 'تم استلام الحجز وبانتظار التأكيد ⏳'}
+                  </span>
+                  <h3 className="text-lg font-black text-white mt-1">
+                    حجز موعد برقم <span dir="ltr" className="font-mono" style={{ color: brandSecondary }}>#{bookingSuccessData.booking_number}</span>
+                  </h3>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.07] text-xs space-y-2 text-right">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">الخدمة:</span>
+                    <span className="font-bold text-white">{bookingSuccessData.service_name}</span>
+                  </div>
+                  {bookingSuccessData.selected_modifiers && bookingSuccessData.selected_modifiers.length > 0 && (
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-slate-400 shrink-0">الإضافات والترقيات:</span>
+                      <span className="font-bold text-left" style={{ color: brandSecondary }}>
+                        {bookingSuccessData.selected_modifiers.map((m: any) => m.name).join('، ')}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">المختص:</span>
+                    <span className="font-bold text-white">{bookingSuccessData.specialist_name || 'أي مختص متاح'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">التاريخ والوقت:</span>
+                    <span dir="ltr" className="font-mono font-bold text-white">{bookingSuccessData.booking_date} | {bookingSuccessData.booking_time}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">مدة الخدمة:</span>
+                    <span className="font-bold text-slate-300">{bookingSuccessData.duration_minutes} دقيقة</span>
+                  </div>
+                  <div className="flex justify-between border-t border-white/[0.07] pt-2">
+                    <span className="text-slate-400">المبلغ الإجمالي:</span>
+                    <span className="font-mono font-black text-sm" style={{ color: brandSecondary }}>{bookingSuccessData.total_price} ر.س</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBookingSuccessData(null);
+                      setSelectedBookingService(null);
+                      setSelectedServiceModifiers({});
+                      setSelectedBookingSpecialist(null);
+                      setBookingStep(1);
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-slate-200 text-xs font-bold transition border border-white/10"
+                  >
+                    حجز موعد آخر
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* 💇 Step 1: Select Service (Luxury Frosted Glass Cards with Circular Image) */}
+                {bookingStep === 1 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-xs font-bold text-slate-300">الخطوة 1: اختر الخدمة المطلوبة للحجز:</span>
+                    </div>
+
+                    {availableServiceItems.length === 0 ? (
+                      <div className="p-8 text-center bg-white/[0.02] rounded-3xl border border-white/[0.07] space-y-2">
+                        <Scissors className="w-8 h-8 text-slate-600 mx-auto" />
+                        <p className="text-xs text-slate-400">لا توجد خدمات متاحة للحجز حالياً.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-2.5">
+                        {availableServiceItems.map((srv) => {
+                          const isSelected = selectedBookingService?.id === srv.id;
+                          const earnedPoints = Math.floor(srv.price * (store.points_per_riyal || 1));
+                          const hasServiceModifiers = Boolean(srv.modifier_groups && srv.modifier_groups.length > 0);
+
+                          return (
+                            <div
+                              key={srv.id}
+                              onClick={() => handleSelectServiceForBooking(srv)}
+                              className={`p-3.5 sm:p-4 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between gap-3 backdrop-blur-md ${
+                                isSelected
+                                  ? 'shadow-lg ring-1'
+                                  : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15'
+                              }`}
+                              style={
+                                isSelected
+                                  ? {
+                                      backgroundColor: `${brandSecondary}12`,
+                                      borderColor: `${brandSecondary}70`,
+                                      boxShadow: `0 8px 24px ${brandSecondary}20`,
+                                    }
+                                  : undefined
+                              }
+                            >
+                              <div className="flex items-center space-x-3.5 rtl:space-x-reverse min-w-0">
+                                {/* Luxury Circular Avatar/Image */}
+                                <div className="relative shrink-0">
+                                  {srv.image_url ? (
+                                    <img
+                                      src={srv.image_url}
+                                      alt={srv.name}
+                                      className="w-13 h-13 sm:w-14 sm:h-14 rounded-full object-cover border shadow-md"
+                                      style={{ borderColor: `${brandSecondary}40` }}
+                                    />
+                                  ) : (
+                                    <div
+                                      className="w-13 h-13 sm:w-14 sm:h-14 rounded-full border flex items-center justify-center text-2xl shadow-inner"
+                                      style={{
+                                        background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`,
+                                        borderColor: `${brandSecondary}40`,
+                                      }}
+                                    >
+                                      💇‍♂️
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                              <div className="space-y-0.5 min-w-0">
-                                <h4 className="text-sm font-bold text-white truncate">{srv.name}</h4>
-                                <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
-                                  <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
-                                    {srv.category}
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/30 font-bold flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    <span>{srv.duration_minutes || 30} دقيقة</span>
-                                  </span>
-                                  {hasModifiers && (
-                                    <span className="px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 font-bold">
-                                      ✨ إضافات وترقيات ({srv.modifier_groups?.length})
+
+                                <div className="space-y-1 min-w-0">
+                                  <h4 className="text-sm font-black text-white truncate">{srv.name}</h4>
+                                  <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                                    {srv.category && (
+                                      <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-300 border border-white/[0.08] font-bold">
+                                        {srv.category}
+                                      </span>
+                                    )}
+                                    <span className="px-2 py-0.5 rounded-full bg-white/[0.04] text-slate-300 border border-white/[0.06] font-medium flex items-center gap-1">
+                                      <Clock className="w-3 h-3" style={{ color: brandSecondary }} />
+                                      <span>{srv.duration_minutes || 30} دقيقة</span>
                                     </span>
-                                  )}
-                                  {earnedPoints > 0 && (
-                                    <span className="text-amber-400 font-mono font-bold">+{earnedPoints} نقطة</span>
+                                    {hasServiceModifiers && (
+                                      <span className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 font-bold">
+                                        ✨ إضافات ({srv.modifier_groups?.length})
+                                      </span>
+                                    )}
+                                    {earnedPoints > 0 && (
+                                      <span className="font-mono font-bold" style={{ color: brandSecondary }}>+{earnedPoints} نقطة</span>
+                                    )}
+                                  </div>
+                                  {srv.description && (
+                                    <p className="text-[11px] text-slate-400 line-clamp-1">{srv.description}</p>
                                   )}
                                 </div>
-                                {srv.description && (
-                                  <p className="text-[11px] text-slate-400 line-clamp-1">{srv.description}</p>
-                                )}
+                              </div>
+
+                              <div className="text-left shrink-0 pl-1">
+                                <div className="text-base font-black font-mono" style={{ color: brandSecondary }}>
+                                  {srv.price} <span className="text-[10px] text-slate-400 font-bold">ر.س</span>
+                                </div>
+                                <span
+                                  className="inline-block mt-1 text-[11px] text-slate-300 font-bold bg-white/[0.05] px-2.5 py-1 rounded-full border border-white/10 transition"
+                                >
+                                  {hasServiceModifiers ? 'تخصيص وحجز ➔' : 'اختر الخدمة ➔'}
+                                </span>
                               </div>
                             </div>
-
-                            <div className="text-left shrink-0">
-                              <div className="text-base font-black font-mono text-amber-400">{srv.price} ر.س</div>
-                              <span className="text-[11px] text-blue-400 font-bold hover:underline">
-                                {hasModifiers ? 'تخصيص وحجز ➔' : 'اختر الخدمة ➔'}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {bookingStep === 2 && selectedBookingService && (
-                <div className="space-y-4 animate-fade-in">
-                  <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400">الخدمة الأساسية:</span>
-                      <strong className="text-white">{selectedBookingService.name}</strong>
-                      <span className="text-amber-400 font-mono font-bold">({selectedBookingService.price} ر.س)</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setBookingStep(1)}
-                      className="text-slate-400 hover:text-white font-bold"
-                    >
-                      تغيير الخدمة
-                    </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
+                )}
 
-                  <div className="flex items-center justify-between px-1">
-                    <span className="text-xs font-bold text-slate-300">الخطوة 2: حدد الإضافات والترقيات لجلسة الخدمة:</span>
-                    <span className="text-[10px] text-slate-500">(اختياري أو حسب الرغبة)</span>
-                  </div>
-
-                  {selectedBookingService.modifier_groups && selectedBookingService.modifier_groups.length > 0 ? (
-                    <div className="space-y-3">
-                      {selectedBookingService.modifier_groups.map((group) => {
-                        const currentSelected = selectedServiceModifiers[group.id] || [];
-
-                        return (
-                          <div
-                            key={group.id}
-                            className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5"
-                          >
-                            <div className="flex items-center justify-between">
-                              <h4 className="text-xs font-black text-white flex items-center gap-1.5">
-                                <span>{group.name}</span>
-                                {group.required && (
-                                  <span className="text-[10px] text-rose-400 font-bold bg-rose-500/15 px-1.5 py-0.5 rounded">
-                                    إجباري
-                                  </span>
-                                )}
-                              </h4>
-                              <span className="text-[10px] text-slate-400">
-                                {group.allow_multiple
-                                  ? group.max_selections
-                                    ? `حد أقصى ${group.max_selections}`
-                                    : 'اختيارات متعددة'
-                                  : 'اختر واحداً'}
-                              </span>
-                            </div>
-
-                            <div className="space-y-1.5">
-                              {group.options.map((option) => {
-                                const isSelected = currentSelected.some((o) => o.id === option.id);
-
-                                return (
-                                  <div
-                                    key={option.id}
-                                    onClick={() => handleToggleServiceModifierOption(group, option)}
-                                    className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition ${
-                                      isSelected
-                                        ? 'bg-blue-950/60 border-blue-500 text-white'
-                                        : 'bg-slate-900 hover:bg-slate-850 border-slate-800 text-slate-300'
-                                    }`}
-                                  >
-                                    <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
-                                      <div
-                                        className={`w-4 h-4 rounded-${group.allow_multiple ? 'md' : 'full'} border flex items-center justify-center transition shrink-0 ${
-                                          isSelected
-                                            ? 'border-transparent bg-blue-500 text-white'
-                                            : 'border-slate-600 bg-slate-900'
-                                        }`}
-                                      >
-                                        {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
-                                      </div>
-                                      <span className="text-xs font-bold">{option.name}</span>
-                                    </div>
-
-                                    <span
-                                      className={`text-xs font-mono font-bold ${
-                                        option.price_delta > 0 ? 'text-amber-400' : 'text-slate-400'
-                                      }`}
-                                    >
-                                      {option.price_delta > 0 ? `+${option.price_delta} ر.س` : 'مجاناً'}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400">
-                      لا توجد إضافات مخصصة لهذه الخدمة. يمكنك المتابعة مباشرة لاختيار المختص.
-                    </div>
-                  )}
-
-                  <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
-                    <div>
-                      <span className="text-[11px] text-slate-400 block">الإجمالي الحالي للخدمة:</span>
-                      <strong className="text-base font-black font-mono text-amber-400">
-                        {calculateServiceBookingPrice()} ر.س
-                      </strong>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setBookingStep(3)}
-                      className="py-2.5 px-5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-md transition flex items-center gap-1.5"
-                    >
-                      <span>متابعة لاختيار المختص ➔</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {bookingStep === 3 && selectedBookingService && (() => {
-                const serviceCategory = selectedBookingService.category?.trim();
-                const qualifiedSpecialists = specialists.filter((s) => {
-                  if (s.is_active === false) return false;
-                  if (!s.service_categories || s.service_categories.length === 0 || s.service_categories.includes('ALL')) {
-                    return true;
-                  }
-                  return s.service_categories.includes(serviceCategory);
-                });
-
-                const hasModifiers = Boolean(
-                  selectedBookingService.modifier_groups && selectedBookingService.modifier_groups.length > 0
-                );
-
-                return (
-                  <div className="space-y-3 animate-fade-in">
-                    <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
+                {/* ✨ Step 2: Modifiers & Extras */}
+                {bookingStep === 2 && selectedBookingService && (
+                  <div className="space-y-4 animate-fade-in">
+                    <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
-                        <span className="text-slate-400">الخدمة:</span>
+                        <span className="text-slate-400">الخدمة الأساسية:</span>
                         <strong className="text-white">{selectedBookingService.name}</strong>
-                        <span className="text-blue-400 font-mono">({selectedBookingService.duration_minutes || 30} د)</span>
-                        <span className="text-amber-400 font-mono font-bold">({calculateServiceBookingPrice()} ر.س)</span>
+                        <span className="font-mono font-bold" style={{ color: brandSecondary }}>({selectedBookingService.price} ر.س)</span>
                       </div>
                       <button
                         type="button"
-                        onClick={() => setBookingStep(hasModifiers ? 2 : 1)}
+                        onClick={() => setBookingStep(1)}
                         className="text-slate-400 hover:text-white font-bold"
                       >
-                        {hasModifiers ? 'تعديل الإضافات' : 'تغيير الخدمة'}
+                        تغيير الخدمة
                       </button>
                     </div>
 
                     <div className="flex items-center justify-between px-1">
-                      <span className="text-xs font-bold text-slate-300 block">الخطوة 3: حدد المختص المؤهل في قسم ({serviceCategory}):</span>
-                      <span className="text-[10px] text-blue-300 bg-blue-950/60 px-2 py-0.5 rounded border border-blue-800/40">
-                        {qualifiedSpecialists.length} مختص متاح
-                      </span>
+                      <span className="text-xs font-bold text-slate-300">الخطوة 2: حدد الإضافات والترقيات لجلسة الخدمة:</span>
+                      <span className="text-[10px] text-slate-500">(اختياري أو حسب الرغبة)</span>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2.5">
-                      <div
-                        onClick={() => {
-                          setSelectedBookingSpecialist(null);
-                          setBookingStep(4);
-                        }}
-                        className={`p-3.5 rounded-2xl border cursor-pointer transition flex items-center justify-between ${
-                          selectedBookingSpecialist === null
-                            ? 'bg-blue-950/50 border-blue-500 text-white'
-                            : 'bg-slate-900/90 border-slate-800 hover:border-slate-700 text-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-3 rtl:space-x-reverse">
-                          <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 text-lg">
-                            ⚡
-                          </div>
-                          <div>
-                            <h4 className="text-xs font-bold text-white">أي مختص متاح في قسم ({serviceCategory})</h4>
-                            <p className="text-[10px] text-slate-400">سيتم التنسيق مع أول موظف متاح فور حضورك (الأسرع للحجز)</p>
-                          </div>
-                        </div>
-                        <span className="text-xs font-bold text-blue-400">اختيار ➔</span>
-                      </div>
+                    {selectedBookingService.modifier_groups && selectedBookingService.modifier_groups.length > 0 ? (
+                      <div className="space-y-3">
+                        {selectedBookingService.modifier_groups.map((group) => {
+                          const currentSelected = selectedServiceModifiers[group.id] || [];
 
-                      {qualifiedSpecialists.map((spec) => {
-                        const isSelected = selectedBookingSpecialist?.id === spec.id;
-                        return (
-                          <div
-                            key={spec.id}
-                            onClick={() => {
-                              setSelectedBookingSpecialist(spec);
-                              setBookingStep(4);
-                            }}
-                            className={`p-3.5 rounded-2xl border cursor-pointer transition flex items-center justify-between ${
-                              isSelected
-                                ? 'bg-blue-950/50 border-blue-500 text-white'
-                                : 'bg-slate-900/90 border-slate-800 hover:border-slate-700 text-slate-300'
-                            }`}
-                          >
-                            <div className="flex items-center space-x-3 rtl:space-x-reverse min-w-0">
-                              {spec.avatar_url ? (
-                                <img
-                                  src={spec.avatar_url}
-                                  alt={spec.name}
-                                  className="w-10 h-10 rounded-xl object-cover border border-slate-700 shrink-0"
-                                />
-                              ) : (
-                                <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-blue-400 text-sm shrink-0">
-                                  {spec.name.slice(0, 1)}
-                                </div>
-                              )}
-                              <div className="min-w-0 space-y-0.5">
-                                <h4 className="text-xs font-bold text-white truncate">{spec.name}</h4>
-                                <p className="text-[10px] text-blue-300">{spec.specialty || 'أخصائي خدمة'}</p>
-                                {spec.service_categories && spec.service_categories.length > 0 && (
-                                  <div className="flex items-center gap-1 flex-wrap pt-0.5">
-                                    {spec.service_categories.map((cat, idx) => (
+                          return (
+                            <div
+                              key={group.id}
+                              className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md space-y-2.5"
+                            >
+                              <div className="flex items-center justify-between">
+                                <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                                  <span>{group.name}</span>
+                                  {group.required && (
+                                    <span className="text-[10px] text-rose-400 font-bold bg-rose-500/15 px-1.5 py-0.5 rounded">
+                                      إجباري
+                                    </span>
+                                  )}
+                                </h4>
+                                <span className="text-[10px] text-slate-400">
+                                  {group.allow_multiple
+                                    ? group.max_selections
+                                      ? `حد أقصى ${group.max_selections}`
+                                      : 'اختيارات متعددة'
+                                    : 'اختر واحداً'}
+                                </span>
+                              </div>
+
+                              <div className="space-y-1.5">
+                                {group.options.map((option) => {
+                                  const isSelected = currentSelected.some((o) => o.id === option.id);
+
+                                  return (
+                                    <div
+                                      key={option.id}
+                                      onClick={() => handleToggleServiceModifierOption(group, option)}
+                                      className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                                        isSelected
+                                          ? 'text-white'
+                                          : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.06] text-slate-300'
+                                      }`}
+                                      style={
+                                        isSelected
+                                          ? {
+                                              backgroundColor: `${brandSecondary}15`,
+                                              borderColor: `${brandSecondary}60`,
+                                            }
+                                          : undefined
+                                      }
+                                    >
+                                      <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
+                                        <div
+                                          className={`w-4 h-4 rounded-${group.allow_multiple ? 'md' : 'full'} border flex items-center justify-center transition shrink-0 ${
+                                            isSelected
+                                              ? 'border-transparent text-black'
+                                              : 'border-slate-600 bg-slate-900'
+                                          }`}
+                                          style={
+                                            isSelected
+                                              ? {
+                                                  backgroundColor: brandSecondary,
+                                                  borderColor: brandSecondary,
+                                                }
+                                              : undefined
+                                          }
+                                        >
+                                          {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                        </div>
+                                        <span className="text-xs font-bold">{option.name}</span>
+                                      </div>
+
                                       <span
-                                        key={idx}
-                                        className="text-[9px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/50"
+                                        className="text-xs font-mono font-bold"
+                                        style={option.price_delta > 0 ? { color: brandSecondary } : { color: '#94a3b8' }}
                                       >
-                                        {cat === 'ALL' ? '⭐ جميع الأقسام' : cat}
+                                        {option.price_delta > 0 ? `+${option.price_delta} ر.س` : 'مجاناً'}
                                       </span>
-                                    ))}
-                                  </div>
-                                )}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
-                            <span className="text-xs font-bold text-blue-400 shrink-0">اختيار ➔</span>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center text-xs text-slate-400">
+                        لا توجد إضافات مخصصة لهذه الخدمة. يمكنك المتابعة مباشرة لاختيار المختص.
+                      </div>
+                    )}
 
-                      {qualifiedSpecialists.length === 0 && (
-                        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs text-center space-y-1">
-                          <p className="font-bold">جميع مقدمي الخدمة متاحون لخدمتك في هذا القسم</p>
-                          <p className="text-[11px] text-amber-400/80">اختر "أي مختص متاح" للمتابعة وتأكيد موعدك مباشرة.</p>
-                        </div>
-                      )}
+                    <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md flex items-center justify-between">
+                      <div>
+                        <span className="text-[11px] text-slate-400 block">الإجمالي الحالي للخدمة:</span>
+                        <strong className="text-base font-black font-mono" style={{ color: brandSecondary }}>
+                          {calculateServiceBookingPrice()} ر.س
+                        </strong>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setBookingStep(3)}
+                        className="py-2.5 px-5 rounded-xl text-black font-black text-xs shadow-md transition flex items-center gap-1.5"
+                        style={{
+                          backgroundColor: brandSecondary,
+                          boxShadow: `0 6px 18px ${brandSecondary}40`,
+                        }}
+                      >
+                        <span>متابعة لاختيار المختص ➔</span>
+                      </button>
                     </div>
                   </div>
-                );
-              })()}
+                )}
 
-              {bookingStep === 4 && selectedBookingService && (() => {
-                const selectedDateObj = new Date(selectedBookingDate + 'T00:00:00');
-                const dayOfWeekIndex = selectedDateObj.getDay();
-                const dayKey = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeekIndex];
-                const dayArabicName = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'][dayOfWeekIndex];
+                {/* 👤 Step 3: Select Specialist */}
+                {bookingStep === 3 && selectedBookingService && (() => {
+                  const serviceCategory = selectedBookingService.category?.trim();
+                  const qualifiedSpecialists = specialists.filter((s) => {
+                    if (s.is_active === false) return false;
+                    if (!s.service_categories || s.service_categories.length === 0 || s.service_categories.includes('ALL')) {
+                      return true;
+                    }
+                    return s.service_categories.includes(serviceCategory);
+                  });
 
-                const isSpecialistOffToday = Boolean(
-                  selectedBookingSpecialist &&
-                  selectedBookingSpecialist.working_days &&
-                  !selectedBookingSpecialist.working_days.includes(dayKey)
-                );
+                  const hasServiceModifiers = Boolean(
+                    selectedBookingService.modifier_groups && selectedBookingService.modifier_groups.length > 0
+                  );
 
-                const rawStart = selectedBookingSpecialist?.working_hours?.start || '10:00';
-                const rawEnd = selectedBookingSpecialist?.working_hours?.end || '22:00';
-                const startHour = parseInt(rawStart.split(':')[0], 10) || 10;
-                const endHour = parseInt(rawEnd.split(':')[0], 10) || 22;
+                  return (
+                    <div className="space-y-3 animate-fade-in">
+                      <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-400">الخدمة:</span>
+                          <strong className="text-white">{selectedBookingService.name}</strong>
+                          <span className="text-slate-400 font-mono">({selectedBookingService.duration_minutes || 30} د)</span>
+                          <span className="font-mono font-bold" style={{ color: brandSecondary }}>({calculateServiceBookingPrice()} ر.س)</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBookingStep(hasServiceModifiers ? 2 : 1)}
+                          className="text-slate-400 hover:text-white font-bold"
+                        >
+                          {hasServiceModifiers ? 'تعديل الإضافات' : 'تغيير الخدمة'}
+                        </button>
+                      </div>
 
-                const generatedSlots: string[] = [];
-                for (let h = startHour; h < endHour; h++) {
-                  const formattedHour = h < 10 ? `0${h}:00` : `${h}:00`;
-                  generatedSlots.push(formattedHour);
-                }
+                      <div className="flex items-center justify-between px-1">
+                        <span className="text-xs font-bold text-slate-300 block">الخطوة 3: حدد المختص المؤهل في قسم ({serviceCategory}):</span>
+                        <span
+                          className="text-[10px] px-2 py-0.5 rounded-full border font-bold"
+                          style={{
+                            color: brandSecondary,
+                            backgroundColor: `${brandSecondary}15`,
+                            borderColor: `${brandSecondary}30`,
+                          }}
+                        >
+                          {qualifiedSpecialists.length} مختص متاح
+                        </span>
+                      </div>
 
-                const getSlotInfo = (slot: string) => {
-                  if (isSpecialistOffToday) {
-                    return { isBooked: true, label: 'إجازة 🏖️', canBook: false };
+                      <div className="grid grid-cols-1 gap-2.5">
+                        {/* Express / Any Available Specialist */}
+                        <div
+                          onClick={() => {
+                            setSelectedBookingSpecialist(null);
+                            setBookingStep(4);
+                          }}
+                          className={`p-3.5 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between backdrop-blur-md ${
+                            selectedBookingSpecialist === null
+                              ? 'shadow-lg ring-1'
+                              : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15'
+                          }`}
+                          style={
+                            selectedBookingSpecialist === null
+                              ? {
+                                  backgroundColor: `${brandSecondary}12`,
+                                  borderColor: `${brandSecondary}70`,
+                                  boxShadow: `0 8px 24px ${brandSecondary}20`,
+                                }
+                              : undefined
+                          }
+                        >
+                          <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+                            <div
+                              className="w-12 h-12 rounded-full border flex items-center justify-center text-xl shadow-inner shrink-0"
+                              style={{
+                                background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`,
+                                borderColor: `${brandSecondary}40`,
+                                color: brandSecondary,
+                              }}
+                            >
+                              ⚡
+                            </div>
+                            <div>
+                              <h4 className="text-xs sm:text-sm font-black text-white">أي مختص متاح في قسم ({serviceCategory})</h4>
+                              <p className="text-[10px] text-slate-400 mt-0.5">سيتم التنسيق مع أول موظف متاح فور حضورك (الأسرع للحجز)</p>
+                            </div>
+                          </div>
+                          <span
+                            className="text-xs font-black shrink-0 px-3 py-1.5 rounded-full border"
+                            style={{
+                              color: brandSecondary,
+                              backgroundColor: `${brandSecondary}15`,
+                              borderColor: `${brandSecondary}30`,
+                            }}
+                          >
+                            اختيار ➔
+                          </span>
+                        </div>
+
+                        {/* Specific Specialists */}
+                        {qualifiedSpecialists.map((spec) => {
+                          const isSelected = selectedBookingSpecialist?.id === spec.id;
+                          return (
+                            <div
+                              key={spec.id}
+                              onClick={() => {
+                                setSelectedBookingSpecialist(spec);
+                                setBookingStep(4);
+                              }}
+                              className={`p-3.5 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between backdrop-blur-md ${
+                                isSelected
+                                  ? 'shadow-lg ring-1'
+                                  : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15'
+                              }`}
+                              style={
+                                isSelected
+                                  ? {
+                                      backgroundColor: `${brandSecondary}12`,
+                                      borderColor: `${brandSecondary}70`,
+                                      boxShadow: `0 8px 24px ${brandSecondary}20`,
+                                    }
+                                  : undefined
+                              }
+                            >
+                              <div className="flex items-center space-x-3.5 rtl:space-x-reverse min-w-0">
+                                {spec.avatar_url ? (
+                                  <img
+                                    src={spec.avatar_url}
+                                    alt={spec.name}
+                                    className="w-12 h-12 rounded-full object-cover border shrink-0 shadow-md"
+                                    style={{ borderColor: `${brandSecondary}40` }}
+                                  />
+                                ) : (
+                                  <div
+                                    className="w-12 h-12 rounded-full border flex items-center justify-center font-serif font-black text-base shrink-0 shadow-inner"
+                                    style={{
+                                      background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`,
+                                      borderColor: `${brandSecondary}40`,
+                                      color: brandSecondary,
+                                    }}
+                                  >
+                                    {spec.name.slice(0, 1)}
+                                  </div>
+                                )}
+                                <div className="min-w-0 space-y-0.5">
+                                  <h4 className="text-xs sm:text-sm font-black text-white truncate">{spec.name}</h4>
+                                  <p className="text-[10px]" style={{ color: brandSecondary }}>{spec.specialty || 'أخصائي خدمة'}</p>
+                                  {spec.service_categories && spec.service_categories.length > 0 && (
+                                    <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                                      {spec.service_categories.map((cat, idx) => (
+                                        <span
+                                          key={idx}
+                                          className="text-[9px] px-2 py-0.2 rounded-full bg-white/[0.05] text-slate-300 border border-white/[0.06]"
+                                        >
+                                          {cat === 'ALL' ? '⭐ جميع الأقسام' : cat}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <span className="text-xs font-bold text-slate-300 bg-white/[0.05] px-3 py-1.5 rounded-full border border-white/10 shrink-0 transition">
+                                اختيار ➔
+                              </span>
+                            </div>
+                          );
+                        })}
+
+                        {qualifiedSpecialists.length === 0 && (
+                          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs text-center space-y-1">
+                            <p className="font-bold">جميع مقدمي الخدمة متاحون لخدمتك في هذا القسم</p>
+                            <p className="text-[11px] text-amber-400/80">اختر "أي مختص متاح" للمتابعة وتأكيد موعدك مباشرة.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 📅 Step 4: Date & Time Slot Selection */}
+                {bookingStep === 4 && selectedBookingService && (() => {
+                  const selectedDateObj = new Date(selectedBookingDate + 'T00:00:00');
+                  const dayOfWeekIndex = selectedDateObj.getDay();
+                  const dayKey = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeekIndex];
+                  const dayArabicName = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'][dayOfWeekIndex];
+
+                  const isSpecialistOffToday = Boolean(
+                    selectedBookingSpecialist &&
+                    selectedBookingSpecialist.working_days &&
+                    !selectedBookingSpecialist.working_days.includes(dayKey)
+                  );
+
+                  const rawStart = selectedBookingSpecialist?.working_hours?.start || '10:00';
+                  const rawEnd = selectedBookingSpecialist?.working_hours?.end || '22:00';
+                  const startHour = parseInt(rawStart.split(':')[0], 10) || 10;
+                  const endHour = parseInt(rawEnd.split(':')[0], 10) || 22;
+
+                  const generatedSlots: string[] = [];
+                  for (let h = startHour; h < endHour; h++) {
+                    const formattedHour = h < 10 ? `0${h}:00` : `${h}:00`;
+                    generatedSlots.push(formattedHour);
                   }
 
-                  if (selectedBookingSpecialist) {
-                    const existingBooking = storeBookings.find(
-                      (b) =>
-                        b.status !== 'cancelled' &&
-                        b.booking_date === selectedBookingDate &&
-                        b.booking_time === slot &&
-                        (b.specialist_id === selectedBookingSpecialist.id || !b.specialist_id)
-                    );
-
-                    if (existingBooking) {
-                      return { isBooked: true, label: 'محجوز 🔒', canBook: false };
+                  const getSlotInfo = (slot: string) => {
+                    if (isSpecialistOffToday) {
+                      return { isBooked: true, label: 'إجازة 🏖️', canBook: false };
                     }
-                    return { isBooked: false, label: 'متاح ✨', canBook: true };
-                  } else {
-                    if (specialists.length === 0) {
+
+                    if (selectedBookingSpecialist) {
+                      const existingBooking = storeBookings.find(
+                        (b) =>
+                          b.status !== 'cancelled' &&
+                          b.booking_date === selectedBookingDate &&
+                          b.booking_time === slot &&
+                          (b.specialist_id === selectedBookingSpecialist.id || !b.specialist_id)
+                      );
+
+                      if (existingBooking) {
+                        return { isBooked: true, label: 'محجوز 🔒', canBook: false };
+                      }
+                      return { isBooked: false, label: 'متاح ✨', canBook: true };
+                    } else {
+                      if (specialists.length === 0) {
+                        const bookedCount = storeBookings.filter(
+                          (b) =>
+                            b.status !== 'cancelled' &&
+                            b.booking_date === selectedBookingDate &&
+                            b.booking_time === slot
+                        ).length;
+                        const maxConcurrent = 5;
+                        const isBooked = bookedCount >= maxConcurrent;
+                        return {
+                          isBooked,
+                          label: isBooked ? 'مكتمل 🔒' : 'متاح ✨',
+                          canBook: !isBooked,
+                        };
+                      }
+
+                      const activeWorkingSpecs = specialists.filter(
+                        (s) =>
+                          s.is_active !== false &&
+                          (!s.working_days || s.working_days.includes(dayKey))
+                      );
+
+                      if (activeWorkingSpecs.length === 0) {
+                        return { isBooked: true, label: 'إجازة 🏖️', canBook: false };
+                      }
+
                       const bookedCount = storeBookings.filter(
                         (b) =>
                           b.status !== 'cancelled' &&
                           b.booking_date === selectedBookingDate &&
-                          b.booking_time === slot
+                          b.booking_time === slot &&
+                          b.specialist_id &&
+                          activeWorkingSpecs.some((s) => s.id === b.specialist_id)
                       ).length;
-                      const maxConcurrent = 5;
-                      const isBooked = bookedCount >= maxConcurrent;
+
+                      const isFullyBooked = bookedCount >= activeWorkingSpecs.length;
+                      if (isFullyBooked) {
+                        return { isBooked: true, label: 'محجوز بالكامل 🔒', canBook: false };
+                      }
                       return {
-                        isBooked,
-                        label: isBooked ? 'مكتمل 🔒' : 'متاح ✨',
-                        canBook: !isBooked,
+                        isBooked: false,
+                        label: `${activeWorkingSpecs.length - bookedCount} متاح ✨`,
+                        canBook: true,
                       };
                     }
+                  };
 
-                    const activeWorkingSpecs = specialists.filter(
-                      (s) =>
-                        s.is_active !== false &&
-                        (!s.working_days || s.working_days.includes(dayKey))
-                    );
+                  const currentSlotCheck = getSlotInfo(selectedBookingTime);
+                  const canProceed = currentSlotCheck.canBook && !isSpecialistOffToday;
 
-                    if (activeWorkingSpecs.length === 0) {
-                      return { isBooked: true, label: 'إجازة 🏖️', canBook: false };
-                    }
-
-                    const bookedCount = storeBookings.filter(
-                      (b) =>
-                        b.status !== 'cancelled' &&
-                        b.booking_date === selectedBookingDate &&
-                        b.booking_time === slot &&
-                        b.specialist_id &&
-                        activeWorkingSpecs.some((s) => s.id === b.specialist_id)
-                    ).length;
-
-                    const isFullyBooked = bookedCount >= activeWorkingSpecs.length;
-                    if (isFullyBooked) {
-                      return { isBooked: true, label: 'محجوز بالكامل 🔒', canBook: false };
-                    }
-                    return {
-                      isBooked: false,
-                      label: `${activeWorkingSpecs.length - bookedCount} متاح ✨`,
-                      canBook: true,
-                    };
-                  }
-                };
-
-                const currentSlotCheck = getSlotInfo(selectedBookingTime);
-                const canProceed = currentSlotCheck.canBook && !isSpecialistOffToday;
-
-                return (
-                  <div className="space-y-4 animate-fade-in">
-                    <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="text-slate-400">المختص:</span>
-                        <strong className="text-blue-400">{selectedBookingSpecialist?.name || 'أي مختص متاح (الأسرع)'}</strong>
+                  return (
+                    <div className="space-y-4 animate-fade-in">
+                      <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-400">المختص:</span>
+                          <strong style={{ color: brandSecondary }}>{selectedBookingSpecialist?.name || 'أي مختص متاح (الأسرع)'}</strong>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBookingStep(3)}
+                          className="text-slate-400 hover:text-white font-bold"
+                        >
+                          تغيير المختص
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setBookingStep(3)}
-                        className="text-slate-400 hover:text-white font-bold"
-                      >
-                        تغيير المختص
-                      </button>
-                    </div>
 
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-300 block px-1">الخطوة 4: اختر يوم ووقت الحضور:</span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        ساعات العمل: {rawStart} - {rawEnd}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] text-slate-400 block">اختر اليوم:</label>
-                      <div className="flex gap-2 overflow-x-auto pb-1">
-                        {Array.from({ length: 7 }).map((_, i) => {
-                          const d = new Date();
-                          d.setDate(d.getDate() + i);
-                          const iso = d.toISOString().split('T')[0];
-                          const dayName = i === 0 ? 'اليوم' : i === 1 ? 'غداً' : d.toLocaleDateString('ar-SA', { weekday: 'short' });
-                          const dateFormatted = d.toLocaleDateString('ar-SA', { day: 'numeric', month: 'short' });
-                          const isSelected = selectedBookingDate === iso;
-
-                          return (
-                            <button
-                              key={iso}
-                              type="button"
-                              onClick={() => setSelectedBookingDate(iso)}
-                              className={`p-2.5 rounded-2xl text-center shrink-0 min-w-[72px] border transition ${
-                                isSelected
-                                  ? 'bg-blue-600 text-white border-blue-500 shadow-md font-bold'
-                                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                              }`}
-                            >
-                              <span className="text-[11px] block">{dayName}</span>
-                              <span className="text-xs font-bold block mt-0.5">{dateFormatted}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {isSpecialistOffToday && selectedBookingSpecialist && (
-                      <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
-                        <span>
-                          المختص ({selectedBookingSpecialist.name}) في إجازة أسبوعية يوم ({dayArabicName}). يرجى اختيار يوم آخر أو اختيار &quot;أي مختص متاح&quot;.
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <label className="text-[11px] text-slate-400 block">
-                          اختر الموعد المناسب ({selectedBookingDate}):
-                        </label>
-                        <span className="text-[10px] text-slate-500">
-                          (المواعيد المحجوزة تُغلق تلقائياً 🔒)
+                        <span className="text-xs font-bold text-slate-300 block px-1">الخطوة 4: اختر يوم ووقت الحضور:</span>
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          ساعات العمل: {rawStart} - {rawEnd}
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-4 gap-2">
-                        {generatedSlots.map((slot) => {
-                          const slotInfo = getSlotInfo(slot);
-                          const isSelected = selectedBookingTime === slot && slotInfo.canBook;
+                      {/* Day Selector */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] text-slate-400 block">اختر اليوم:</label>
+                        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                          {Array.from({ length: 7 }).map((_, i) => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + i);
+                            const iso = d.toISOString().split('T')[0];
+                            const dayName = i === 0 ? 'اليوم' : i === 1 ? 'غداً' : d.toLocaleDateString('ar-SA', { weekday: 'short' });
+                            const dateFormatted = d.toLocaleDateString('ar-SA', { day: 'numeric', month: 'short' });
+                            const isSelected = selectedBookingDate === iso;
 
-                          if (!slotInfo.canBook) {
+                            return (
+                              <button
+                                key={iso}
+                                type="button"
+                                onClick={() => setSelectedBookingDate(iso)}
+                                className={`p-2.5 rounded-2xl text-center shrink-0 min-w-[72px] border transition-all duration-200 ${
+                                  isSelected
+                                    ? 'text-black shadow-lg font-black scale-105'
+                                    : 'bg-white/[0.03] border-white/[0.07] text-slate-300 hover:text-white hover:border-white/20'
+                                }`}
+                                style={
+                                  isSelected
+                                    ? {
+                                        backgroundColor: brandSecondary,
+                                        borderColor: brandSecondary,
+                                        boxShadow: `0 4px 14px ${brandSecondary}40`,
+                                      }
+                                    : undefined
+                                }
+                              >
+                                <span className="text-[11px] block">{dayName}</span>
+                                <span className="text-xs font-bold block mt-0.5">{dateFormatted}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {isSpecialistOffToday && selectedBookingSpecialist && (
+                        <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 shrink-0" style={{ color: brandSecondary }} />
+                          <span>
+                            المختص ({selectedBookingSpecialist.name}) في إجازة أسبوعية يوم ({dayArabicName}). يرجى اختيار يوم آخر أو اختيار &quot;أي مختص متاح&quot;.
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Time Slots Grid */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-slate-400 block">
+                            اختر الموعد المناسب ({selectedBookingDate}):
+                          </label>
+                          <span className="text-[10px] text-slate-500">
+                            (المواعيد المحجوزة تُغلق تلقائياً 🔒)
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-4 gap-2">
+                          {generatedSlots.map((slot) => {
+                            const slotInfo = getSlotInfo(slot);
+                            const isSelected = selectedBookingTime === slot && slotInfo.canBook;
+
+                            if (!slotInfo.canBook) {
+                              return (
+                                <button
+                                  key={slot}
+                                  type="button"
+                                  disabled={true}
+                                  className="py-2.5 px-1.5 rounded-xl border border-white/[0.04] bg-white/[0.01] text-slate-600 line-through cursor-not-allowed flex flex-col items-center justify-center opacity-40 transition"
+                                  title="هذا الموعد محجوز مسبقاً وغير متاح"
+                                >
+                                  <span className="font-mono text-xs font-bold">{slot}</span>
+                                  <span className="text-[9px] text-rose-400 font-sans mt-0.5">{slotInfo.label}</span>
+                                </button>
+                              );
+                            }
+
                             return (
                               <button
                                 key={slot}
                                 type="button"
-                                disabled={true}
-                                className="py-2.5 px-1.5 rounded-xl border border-slate-850 bg-slate-950/40 text-slate-600 line-through cursor-not-allowed flex flex-col items-center justify-center opacity-60 transition"
-                                title="هذا الموعد محجوز مسبقاً وغير متاح"
+                                onClick={() => setSelectedBookingTime(slot)}
+                                className={`py-2.5 px-1.5 rounded-xl border flex flex-col items-center justify-center transition-all duration-200 shadow-sm ${
+                                  isSelected
+                                    ? 'text-black shadow-md scale-[1.02] font-black'
+                                    : 'bg-white/[0.03] border-white/[0.07] text-slate-200 hover:text-white'
+                                }`}
+                                style={
+                                  isSelected
+                                    ? {
+                                        backgroundColor: brandSecondary,
+                                        borderColor: brandSecondary,
+                                        boxShadow: `0 4px 14px ${brandSecondary}40`,
+                                      }
+                                    : undefined
+                                }
                               >
                                 <span className="font-mono text-xs font-bold">{slot}</span>
-                                <span className="text-[9px] text-rose-400 font-sans mt-0.5">{slotInfo.label}</span>
+                                <span className={`text-[9px] mt-0.5 font-sans ${isSelected ? 'text-black font-black' : 'text-emerald-400'}`}>
+                                  {isSelected ? 'محدد ✓' : slotInfo.label}
+                                </span>
                               </button>
                             );
-                          }
-
-                          return (
-                            <button
-                              key={slot}
-                              type="button"
-                              onClick={() => setSelectedBookingTime(slot)}
-                              className={`py-2.5 px-1.5 rounded-xl border flex flex-col items-center justify-center transition shadow-sm ${
-                                isSelected
-                                  ? 'bg-blue-600 text-white border-blue-500 shadow-md scale-[1.02]'
-                                  : 'bg-slate-950 border-slate-800 text-slate-200 hover:border-blue-400 hover:text-white'
-                              }`}
-                            >
-                              <span className="font-mono text-xs font-bold">{slot}</span>
-                              <span className={`text-[9px] mt-0.5 font-sans ${isSelected ? 'text-blue-200 font-bold' : 'text-emerald-400'}`}>
-                                {isSelected ? 'محدد ✓' : slotInfo.label}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={!canProceed}
-                      onClick={() => setBookingStep(5)}
-                      className="w-full py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-lg transition mt-2 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      <span>{canProceed ? `متابعة لتأكيد موعد الساعة (${selectedBookingTime}) ➔` : 'يرجى تحديد موعد متاح للمتابعة'}</span>
-                    </button>
-                  </div>
-                );
-              })()}
-
-              {bookingStep === 5 && selectedBookingService && (() => {
-                const finalTotalPrice = calculateServiceBookingPrice();
-                const flatModifiers = getFlatSelectedServiceModifiers();
-                const pointsToEarn = Math.floor(finalTotalPrice * (store.points_per_riyal || 1));
-
-                return (
-                  <div className="space-y-4 animate-fade-in">
-                    <div className="p-4 rounded-3xl bg-slate-950 border border-slate-800 space-y-3 text-xs">
-                      <h4 className="font-bold text-white text-sm pb-2 border-b border-slate-900 flex items-center gap-1.5">
-                        <BookmarkCheck className="w-4 h-4 text-blue-400" />
-                        <span>ملخص تفاصيل الموعد والخدمة:</span>
-                      </h4>
-
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">الخدمة:</span>
-                        <strong className="text-white">{selectedBookingService.name}</strong>
-                      </div>
-
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">القسم:</span>
-                        <span className="font-bold text-slate-300">{selectedBookingService.category}</span>
-                      </div>
-
-                      {flatModifiers.length > 0 && (
-                        <div className="pt-2 pb-1 border-t border-slate-900 space-y-1.5">
-                          <span className="text-slate-400 block font-bold">الإضافات والترقيات المختارة:</span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {flatModifiers.map((mod, idx) => (
-                              <span
-                                key={idx}
-                                className="px-2 py-1 rounded-lg bg-blue-950/70 border border-blue-800/60 text-blue-200 text-[11px] font-bold flex items-center gap-1"
-                              >
-                                <span>{mod.name}</span>
-                                <span className="text-amber-400 font-mono">
-                                  {mod.price_delta > 0 ? `(+${mod.price_delta} ر.س)` : '(مجاناً)'}
-                                </span>
-                              </span>
-                            ))}
-                          </div>
+                          })}
                         </div>
-                      )}
-
-                      <div className="flex justify-between pt-2 border-t border-slate-900">
-                        <span className="text-slate-400">المختص المطلوب:</span>
-                        <strong className="text-blue-400">{selectedBookingSpecialist?.name || 'أي مختص متاح'}</strong>
                       </div>
-
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">اليوم والوقت:</span>
-                        <strong className="text-white font-mono">{selectedBookingDate} في تمام {selectedBookingTime}</strong>
-                      </div>
-
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">مدة الجلسة المتوقعة:</span>
-                        <strong className="text-slate-300">{selectedBookingService.duration_minutes || 30} دقيقة</strong>
-                      </div>
-
-                      <div className="flex justify-between pt-2 border-t border-slate-900">
-                        <span className="text-slate-400">السعر الإجمالي النهائي:</span>
-                        <span className="text-base font-black font-mono text-amber-400">{finalTotalPrice} ر.س</span>
-                      </div>
-
-                      <div className="flex justify-between">
-                        <span className="text-slate-400">النقاط المكتسبة بعد الحضور:</span>
-                        <span className="text-xs font-bold text-amber-300">+{pointsToEarn} نقطة ولاء ✨</span>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-slate-300 block">ملاحظات إضافية للمتجر (اختياري):</label>
-                      <textarea
-                        value={bookingNotes}
-                        onChange={(e) => setBookingNotes(e.target.value)}
-                        placeholder="مثال: يرجى تجهيز كرسي خاص، أو أي تفاصيل تخص طلبك..."
-                        rows={2}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-blue-400"
-                      />
-                    </div>
-
-                    <div className="space-y-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={handleConfirmServiceBooking}
-                        disabled={bookingSubmitting}
-                        className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition disabled:opacity-50"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                        <span>{bookingSubmitting ? 'جاري تسجيل الموعد...' : 'تأكيد الحجز المباشر ✅'}</span>
-                      </button>
 
                       <button
                         type="button"
-                        onClick={() => setBookingStep(4)}
-                        className="w-full py-2 text-slate-400 hover:text-white text-xs text-center"
+                        disabled={!canProceed}
+                        onClick={() => setBookingStep(5)}
+                        className="w-full py-3.5 rounded-2xl text-black font-black text-xs shadow-lg transition mt-2 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{
+                          backgroundColor: brandSecondary,
+                          boxShadow: `0 8px 24px ${brandSecondary}35`,
+                        }}
                       >
-                        الرجوع لتعديل الموعد أو الوقت
+                        <span>{canProceed ? `متابعة لتأكيد موعد الساعة (${selectedBookingTime}) ➔` : 'يرجى تحديد موعد متاح للمتابعة'}</span>
                       </button>
                     </div>
-                  </div>
-                );
-              })()}
-            </>
-          )}
+                  );
+                })()}
 
-          <div className="mt-8 pt-6 border-t border-slate-800 space-y-4">
-              <h3 className="text-sm font-bold text-slate-300 flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-blue-400" />
+                {/* ✅ Step 5: Final Confirmation & Summary */}
+                {bookingStep === 5 && selectedBookingService && (() => {
+                  const finalTotalPrice = calculateServiceBookingPrice();
+                  const flatModifiers = getFlatSelectedServiceModifiers();
+                  const pointsToEarn = Math.floor(finalTotalPrice * (store.points_per_riyal || 1));
+
+                  return (
+                    <div className="space-y-4 animate-fade-in">
+                      <div className="p-4 sm:p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] backdrop-blur-xl space-y-3.5 text-xs shadow-xl">
+                        <h4 className="font-bold text-white text-sm pb-2 border-b border-white/[0.07] flex items-center gap-2">
+                          <BookmarkCheck className="w-4 h-4" style={{ color: brandSecondary }} />
+                          <span>ملخص تفاصيل الموعد والخدمة:</span>
+                        </h4>
+
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">الخدمة:</span>
+                          <strong className="text-white">{selectedBookingService.name}</strong>
+                        </div>
+
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">القسم:</span>
+                          <span className="font-bold text-slate-300">{selectedBookingService.category}</span>
+                        </div>
+
+                        {flatModifiers.length > 0 && (
+                          <div className="pt-2 pb-1 border-t border-white/[0.07] space-y-1.5">
+                            <span className="text-slate-400 block font-bold">الإضافات والترقيات المختارة:</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {flatModifiers.map((mod, idx) => (
+                                <span
+                                  key={idx}
+                                  className="px-2.5 py-1 rounded-full bg-white/[0.05] border border-white/[0.08] text-slate-200 text-[11px] font-bold flex items-center gap-1"
+                                >
+                                  <span>{mod.name}</span>
+                                  <span className="font-mono" style={{ color: brandSecondary }}>
+                                    {mod.price_delta > 0 ? `(+${mod.price_delta} ر.س)` : '(مجاناً)'}
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex justify-between pt-2 border-t border-white/[0.07]">
+                          <span className="text-slate-400">المختص المطلوب:</span>
+                          <strong style={{ color: brandSecondary }}>{selectedBookingSpecialist?.name || 'أي مختص متاح'}</strong>
+                        </div>
+
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">اليوم والوقت:</span>
+                          <strong dir="ltr" className="text-white font-mono">{selectedBookingDate} في تمام {selectedBookingTime}</strong>
+                        </div>
+
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">مدة الجلسة المتوقعة:</span>
+                          <strong className="text-slate-300">{selectedBookingService.duration_minutes || 30} دقيقة</strong>
+                        </div>
+
+                        <div className="flex justify-between pt-2 border-t border-white/[0.07]">
+                          <span className="text-slate-400">السعر الإجمالي النهائي:</span>
+                          <span className="text-base font-black font-mono" style={{ color: brandSecondary }}>{finalTotalPrice} ر.س</span>
+                        </div>
+
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">النقاط المكتسبة بعد الحضور:</span>
+                          <span className="text-xs font-bold" style={{ color: brandSecondary }}>+{pointsToEarn} نقطة ولاء ✨</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-slate-300 block">ملاحظات إضافية للمتجر (اختياري):</label>
+                        <textarea
+                          value={bookingNotes}
+                          onChange={(e) => setBookingNotes(e.target.value)}
+                          placeholder="مثال: يرجى تجهيز كرسي خاص، أو أي تفاصيل تخص طلبك..."
+                          rows={2}
+                          className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                        />
+                      </div>
+
+                      <div className="space-y-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={handleConfirmServiceBooking}
+                          disabled={bookingSubmitting}
+                          className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition disabled:opacity-50"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                          <span>{bookingSubmitting ? 'جاري تسجيل الموعد...' : 'تأكيد الحجز المباشر ✅'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setBookingStep(4)}
+                          className="w-full py-2 text-slate-400 hover:text-white text-xs text-center"
+                        >
+                          الرجوع لتعديل الموعد أو الوقت
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </>
+            )}
+
+            {/* 📋 Active and Past Bookings (مواعيدي السابقة والقادمة) */}
+            <div className="mt-8 pt-6 border-t border-white/[0.08] space-y-4">
+              <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                <Calendar className="w-4 h-4" style={{ color: brandSecondary }} />
                 <span>مواعيدي السابقة والقادمة (تحديث مباشر)</span>
               </h3>
               
               {customerServiceBookings.length === 0 ? (
-                <div className="py-8 text-center text-slate-400 space-y-2 bg-slate-900/50 rounded-2xl border border-slate-800/50">
+                <div className="py-8 text-center text-slate-400 space-y-2 bg-white/[0.02] rounded-3xl border border-white/[0.06]">
                   <Calendar className="w-8 h-8 mx-auto text-slate-600" />
                   <p className="text-xs">لا توجد مواعيد مسجلة برقمك حتى الآن.</p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3.5">
                   {customerServiceBookings.map((bk: any) => {
                     const isLive = ['pending', 'confirmed'].includes(bk.status);
                     const isConfirmed = bk.status === 'confirmed';
@@ -3121,23 +4013,30 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     return (
                       <div
                         key={bk.id}
-                        className={`p-5 rounded-3xl border transition-all duration-500 shadow-xl relative overflow-hidden ${
+                        className={`p-4 sm:p-5 rounded-3xl border transition-all duration-300 shadow-xl relative overflow-hidden backdrop-blur-xl ${
                           isLive 
-                            ? 'bg-slate-900/90 border-slate-700/80' 
-                            : 'bg-slate-950/80 border-slate-800/60 opacity-80'
+                            ? 'bg-[#0B0F19]/95 border-white/[0.12] ring-1 ring-white/[0.05]' 
+                            : 'bg-[#0B0F19]/70 border-white/[0.06] opacity-90'
                         }`}
                       >
                         {isLive && (
-                          <div className={`absolute top-0 right-0 left-0 h-1.5 ${isConfirmed ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+                          <div
+                            className={`absolute top-0 right-0 left-0 h-1.5 ${isConfirmed ? 'bg-emerald-500 shadow-[0_0_12px_#10B981]' : 'animate-pulse'}`}
+                            style={!isConfirmed ? { backgroundColor: brandSecondary, boxShadow: `0 0 12px ${brandSecondary}` } : undefined}
+                          />
                         )}
                         
-                        <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center justify-between mb-3.5">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[11px] px-3 py-1 rounded-full font-mono font-black bg-blue-950/60 text-blue-300 border border-blue-800/50">
+                            <span
+                              dir="ltr"
+                              className="text-[11px] px-3 py-1 rounded-full font-mono font-black bg-white/[0.05] border"
+                              style={{ color: brandSecondary, borderColor: `${brandSecondary}40` }}
+                            >
                               #{bk.booking_number}
                             </span>
                             {bk.service_category && (
-                              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
+                              <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-white/[0.06] text-slate-300 border border-white/[0.08] font-bold">
                                 {bk.service_category}
                               </span>
                             )}
@@ -3149,62 +4048,68 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                         {/* Live Tracking Progress Bar for Bookings */}
                         {isLive && (
-                          <div className="mb-5 bg-slate-950/50 p-4 rounded-2xl border border-slate-800/80">
-                            <div className="flex justify-between items-end mb-3">
+                          <div className="mb-4 bg-white/[0.02] p-3.5 rounded-2xl border border-white/[0.06]">
+                            <div className="flex justify-between items-end mb-2.5">
                               <div className="text-right">
-                                <h4 className={`text-sm font-black ${isConfirmed ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                  {isConfirmed ? '✅ تم تأكيد الحجز' : '⏳ قيد المراجعة في الاستقبال'}
+                                <h4
+                                  className={`text-xs sm:text-sm font-black ${isConfirmed ? 'text-emerald-400' : ''}`}
+                                  style={!isConfirmed ? { color: brandSecondary } : undefined}
+                                >
+                                  {isConfirmed ? '✅ تم تأكيد الحجز رسمياً' : '⏳ قيد المراجعة في الاستقبال'}
                                 </h4>
-                                <p className="text-[10px] text-slate-400 mt-1">
+                                <p className="text-[10px] text-slate-400 mt-0.5">
                                   {isConfirmed ? 'المختص بانتظارك في الموعد المحدد' : 'ننتظر تأكيد الصالون أو توفر المختص'}
                                 </p>
                               </div>
                               {isConfirmed && (
-                                <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center animate-bounce">
-                                  <Calendar className="w-5 h-5 text-emerald-400" />
+                                <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                                  <Calendar className="w-4 h-4" />
                                 </div>
                               )}
                             </div>
                             
-                            <div className="relative h-2 bg-slate-800 rounded-full overflow-hidden">
-                              <div className={`absolute top-0 right-0 bottom-0 transition-all duration-1000 ${isConfirmed ? 'w-full bg-emerald-500' : 'w-1/2 bg-amber-500'}`} />
+                            <div className="relative h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                              <div
+                                className={`absolute top-0 right-0 bottom-0 transition-all duration-1000 ${isConfirmed ? 'w-full bg-emerald-500' : 'w-1/2'}`}
+                                style={!isConfirmed ? { backgroundColor: brandSecondary } : undefined}
+                              />
                             </div>
                           </div>
                         )}
                         
                         {/* Cancelled State */}
                         {isCancelled && (
-                          <div className="mb-4 bg-rose-950/30 p-3 rounded-2xl border border-rose-900/50 text-center">
+                          <div className="mb-3.5 bg-rose-950/20 p-3 rounded-2xl border border-rose-500/30 text-center">
                             <span className="text-rose-400 font-bold text-xs">❌ نعتذر، تعذر قبول الحجز أو أن المختص غير متاح</span>
                           </div>
                         )}
 
-                        <div className="flex justify-between items-center bg-slate-950/40 p-3.5 rounded-2xl border border-slate-800/40">
-                          <div className="space-y-1.5">
+                        <div className="flex justify-between items-center bg-white/[0.02] p-3.5 rounded-2xl border border-white/[0.05]">
+                          <div className="space-y-1">
                             <div className="text-sm font-black text-white">
                               {bk.service_name || 'خدمة غير محددة'}
                             </div>
                             <div className="text-xs text-slate-400 flex items-center gap-1.5">
-                              <Clock className="w-3.5 h-3.5 text-blue-400" />
+                              <Clock className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
                               <span dir="ltr" className="font-mono text-slate-300">{bk.booking_date} | {bk.booking_time}</span>
                             </div>
                           </div>
                           <div className="text-left">
-                            <div className="text-sm font-black text-amber-400 font-mono">
-                              {bk.total_price} ر.س
+                            <div className="text-base font-black font-mono" style={{ color: brandSecondary }}>
+                              {bk.total_price} <span className="text-[10px] text-slate-400 font-bold">ر.س</span>
                             </div>
-                            <div className="text-[10px] text-slate-500 mt-1">
-                              المختص: <span className="text-slate-300">{bk.specialist_name || 'أي مختص متاح'}</span>
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              المختص: <span className="text-slate-200 font-medium">{bk.specialist_name || 'أي مختص متاح'}</span>
                             </div>
                           </div>
                         </div>
 
                         {!isLive && bk.status !== 'cancelled' && (
                           <div className="mt-3 text-center">
-                            <span className={`text-[10px] px-3 py-1 rounded-full font-bold ${
+                            <span className={`text-[10px] px-3 py-1 rounded-full font-bold inline-flex items-center gap-1 ${
                               bk.status === 'completed'
-                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-white/[0.05] text-slate-400 border border-white/[0.08]'
                             }`}>
                               {bk.status === 'completed' ? '🏁 تمت الخدمة ومكتمل' : '🏖️ العميل لم يحضر'}
                             </span>
@@ -3216,113 +4121,103 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               )}
             </div>
+          </div>
+        );
+      })()}
 
-        </div>
-      )}
-
-      {activeTab === 'perks' && (
-        <div className="space-y-5 animate-fade-in">
+      {activeTab === 'perks' && activeModules.loyalty && (
+        <div className="space-y-4 animate-fade-in">
           <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
-                <Gift className="w-5 h-5" style={{ color: brandSecondary }} />
-                <span>حصرياتك والقائمة السرية 💎</span>
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                استبدل رصيد نقاطك بامتيازات وهدايا حصرية مخصصة لك
-              </p>
-            </div>
-            <span
-              className="text-xs bg-slate-900 px-3 py-1 rounded-full border border-slate-800 font-mono font-bold"
-              style={{ color: brandSecondary }}
-            >
-              {privileges.filter((p) => p.is_active && !p.is_hidden).length} عروض
-            </span>
+            <h3 className="text-base sm:text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
+              <Gift className="w-5 h-5" style={{ color: brandSecondary }} />
+              <span>حصرياتك والقائمة السرية</span>
+            </h3>
           </div>
 
-          
           {!customer?.special_date && showSpecialDateForm && (
-            <div className="bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-5 sm:p-6 mb-6 shadow-2xl relative overflow-hidden">
-              <div className="absolute -top-10 -right-10 w-32 h-32 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
-              
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-2xl flex-shrink-0 shadow-inner" style={{ color: brandSecondary }}>
-                  🌟
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] backdrop-blur-md relative overflow-hidden space-y-2.5 shadow-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🎁</span>
+                  <h4 className="text-white font-black text-xs sm:text-sm">وثّق يومك المفضل</h4>
                 </div>
-                <div className="flex-1">
-                  <h4 className="text-white font-black text-sm sm:text-base">وثّق يومك المفضل!</h4>
-                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                    شاركنا أفضل أيام السنة بالنسبة لك (ميلادك، زواجك، أو أي مناسبة)، وخلي هديتك في يومك المميز علينا! 🎁
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-5 space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 pr-1">الشهر</label>
-                    <select
-                      value={specialDateMonth}
-                      onChange={(e) => setSpecialDateMonth(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 outline-none appearance-none"
-                    >
-                      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-slate-500 pr-1">اليوم</label>
-                    <select
-                      value={specialDateDay}
-                      onChange={(e) => setSpecialDateDay(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 outline-none appearance-none"
-                    >
-                      {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
-                        <option key={d} value={d}>{d}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-500 pr-1">المناسبة</label>
-                  <select
-                    value={specialDateType}
-                    onChange={(e) => setSpecialDateType(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 outline-none appearance-none"
-                  >
-                    <option value="يوم ميلادي">يوم ميلادي 🎂</option>
-                    <option value="يوم زواجي">يوم زواجي 💍</option>
-                    <option value="يوم الأم">يوم الأم 👩‍👧</option>
-                    <option value="يوم التخرج">يوم التخرج 🎓</option>
-                    <option value="أفضل يوم بحياتي">أفضل يوم بحياتي ✨</option>
-                    <option value="أخرى">أخرى (كتابة يدوية) ✍️</option>
-                  </select>
-                </div>
-
-                {specialDateType === 'أخرى' && (
-                  <div className="space-y-1 animate-fade-in">
-                    <label className="text-[10px] font-bold text-slate-500 pr-1">اكتب اسم المناسبة</label>
-                    <input
-                      type="text"
-                      value={specialDateTypeOther}
-                      onChange={(e) => setSpecialDateTypeOther(e.target.value)}
-                      placeholder="مثال: ذكرى تأسيس مشروعي"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 outline-none"
-                    />
-                  </div>
-                )}
-
                 <button
-                  onClick={handleSaveSpecialDate}
-                  disabled={isSubmittingSpecialDate || (specialDateType === 'أخرى' && !specialDateTypeOther.trim())}
-                  className="w-full mt-2 py-3 rounded-xl font-black text-black text-xs transition-all shadow-lg hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:hover:scale-100"
-                  style={{ backgroundColor: brandSecondary }}
+                  type="button"
+                  onClick={() => setShowSpecialDateForm(false)}
+                  className="text-slate-500 hover:text-slate-300 text-[10px] font-bold"
                 >
-                  {isSubmittingSpecialDate ? 'جاري الحفظ...' : 'اعتماد وحفظ المناسبة'}
+                  إخفاء
                 </button>
               </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                سجل يومك المميز مرة واحدة (ميلادك أو زواجك) وخلي هديتك علينا! (لا يمكن تعديله لاحقاً).
+              </p>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[9px] font-bold text-slate-400 block mb-0.5">الشهر</label>
+                  <select
+                    value={specialDateMonth}
+                    onChange={(e) => setSpecialDateMonth(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                  >
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[9px] font-bold text-slate-400 block mb-0.5">اليوم</label>
+                  <select
+                    value={specialDateDay}
+                    onChange={(e) => setSpecialDateDay(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                  >
+                    {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[9px] font-bold text-slate-400 block mb-0.5">المناسبة</label>
+                <select
+                  value={specialDateType}
+                  onChange={(e) => setSpecialDateType(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                >
+                  <option value="يوم ميلادي">يوم ميلادي 🎂</option>
+                  <option value="يوم زواجي">يوم زواجي 💍</option>
+                  <option value="يوم الأم">يوم الأم 👩‍👧</option>
+                  <option value="يوم التخرج">يوم التخرج 🎓</option>
+                  <option value="أفضل يوم بحياتي">أفضل يوم بحياتي ✨</option>
+                  <option value="أخرى">أخرى (كتابة يدوية) ✍️</option>
+                </select>
+              </div>
+
+              {specialDateType === 'أخرى' && (
+                <div className="animate-fade-in">
+                  <input
+                    type="text"
+                    value={specialDateTypeOther}
+                    onChange={(e) => setSpecialDateTypeOther(e.target.value)}
+                    placeholder="مثال: ذكرى تأسيس مشروعي"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                  />
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleSaveSpecialDate}
+                disabled={isSubmittingSpecialDate || (specialDateType === 'أخرى' && !specialDateTypeOther.trim())}
+                className="w-full py-2.5 rounded-xl font-black text-black text-xs transition shadow-md active:scale-95 disabled:opacity-50"
+                style={{ backgroundColor: brandSecondary }}
+              >
+                {isSubmittingSpecialDate ? 'جاري الاعتماد...' : 'اعتماد وحفظ المناسبة'}
+              </button>
             </div>
           )}
 
@@ -3387,6 +4282,20 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         : 'bg-slate-950/60 border-slate-800/80 backdrop-blur-sm'
                     }`}
                   >
+                    {priv.image_url && (
+                      <div className="w-full h-40 -mt-1 mb-3.5 rounded-2xl overflow-hidden bg-black/40 relative border border-slate-800/80 shadow-inner">
+                        <img
+                          src={priv.image_url}
+                          alt={priv.title}
+                          className="w-full h-full object-cover hover:scale-105 transition-transform duration-500"
+                          loading="lazy"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      </div>
+                    )}
+
                     <div className="space-y-3">
                       <div className="flex items-center justify-between gap-2">
                         {requiredTier && (
@@ -3532,19 +4441,90 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       )}
 
       {activeTab === 'tickets' && (
-        <div className="space-y-5 animate-fade-in">
-          <div className="flex items-center justify-between">
+        <div className="space-y-5 animate-fade-in pb-28">
+          {/* 👑 VIP Tier Progress & Rank Bar (مكانتي المدمجة) */}
+          <div
+            className="p-4 rounded-3xl border shadow-xl relative overflow-hidden backdrop-blur-md"
+            style={{
+              borderColor: `${brandSecondary}40`,
+              background: `linear-gradient(135deg, ${brandSecondary}15 0%, #0F172A 60%, #020617 100%)`,
+            }}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-lg shadow-inner"
+                  style={{
+                    backgroundColor: `${currentTierObj?.badge_color || brandSecondary}25`,
+                    color: currentTierObj?.badge_color || brandSecondary,
+                    border: `1px solid ${currentTierObj?.badge_color || brandSecondary}40`,
+                  }}
+                >
+                  <Crown className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-[11px] text-slate-400 font-medium">مكانتك ومستواك الحالي:</div>
+                  <div className="text-base font-black text-white flex items-center gap-2">
+                    <span>{currentTierObj?.tier_name || 'عضو مميز'}</span>
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full font-bold font-mono"
+                      style={{ backgroundColor: brandSecondary, color: '#000000' }}
+                    >
+                      {customer?.lifetime_xp || 0} XP
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {nextTierObj && (
+                <div className="text-left">
+                  <span className="text-[10px] text-slate-400 block font-medium">المستوى القادم:</span>
+                  <span className="text-xs font-bold text-amber-300 font-mono">
+                    {nextTierObj.tier_name}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Smart Visual Progress Bar */}
+            {nextTierObj ? (
+              <div className="space-y-1.5 mt-2 bg-slate-950/60 p-2.5 rounded-2xl border border-white/5">
+                <div className="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-800 p-0.5">
+                  <div
+                    className="h-full rounded-full transition-all duration-700 shadow-sm"
+                    style={{
+                      width: `${progressPercent}%`,
+                      backgroundColor: brandSecondary,
+                    }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[10px] font-mono text-slate-300">
+                  <span>نسبة التقدم: <strong className="text-white">{progressPercent}%</strong></span>
+                  <span className="text-amber-300 font-bold">
+                    باقي {xpNeeded} XP للوصول لـ {nextTierObj.tier_name} 🚀
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-[11px] text-emerald-400 font-bold mt-2 p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 shrink-0" />
+                <span>تهانينا! أنت حالياً في أعلى مستوى VIP متاح بالمتجر 👑</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
             <div>
               <h3 className="text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
                 <Ticket className="w-5 h-5" style={{ color: brandSecondary }} />
-                <span>امتيازاتي ومكافآتي المحفوظة ✨</span>
+                <span>عروضي وكوبوناتي المحفوظة 🎟️</span>
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                بطاقاتك الجاهزة للصرف الفوري عند الكاشير
+                العروض التي قمت بشرائها بنقاطك، جاهزة للصرف عند الكاشير
               </p>
             </div>
             <span className="text-xs bg-emerald-500/15 text-emerald-400 px-3 py-1 rounded-full border border-emerald-500/30 font-mono font-bold">
-              {activeCouponsCount} نشط
+              {activeCouponsCount} جاهز للصرف
             </span>
           </div>
 
@@ -3632,6 +4612,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         )}
                       </div>
 
+                      {coupon.privilege_image_url && (
+                        <div className="w-full h-32 rounded-xl overflow-hidden bg-black/40 relative border border-slate-800/80 my-2">
+                          <img
+                            src={coupon.privilege_image_url}
+                            alt={coupon.privilege_title}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                      )}
+
                       <h4 className="font-black text-base text-white">{coupon.privilege_title}</h4>
 
                       <div className="p-2.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1 text-[11px]">
@@ -3683,7 +4674,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {activeTab === 'tiers' && (
+      {activeTab === 'tiers' && activeModules.loyalty && (
         <div className="space-y-5 animate-fade-in">
           <div className="flex items-center justify-between">
             <div>
@@ -3772,153 +4763,267 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      <div className="fixed bottom-3 left-3 right-3 max-w-md mx-auto z-40">
-        <nav className="glass-dock rounded-3xl p-1.5 flex items-center justify-around shadow-[0_-8px_30px_rgba(0,0,0,0.4)] bg-slate-950/95 backdrop-blur-3xl border border-slate-800">
-          
-          <button
-            onClick={() => {
-              if (!customer) {
-                setPendingAuthAction({ type: 'SHOW_QR' });
-                setShowLoginModal(true);
-              } else {
-                setActiveTab('pass');
-              }
+      {/* 🌟 08 & Prototype - Floating Luxury Bottom Cart Pill */}
+      {cartItems.length > 0 && (
+        <div className="fixed bottom-24 left-4 right-4 max-w-md mx-auto z-40 animate-slide-up">
+          <div
+            onClick={() => setIsCartModalOpen(true)}
+            className="p-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 cursor-pointer hover:scale-[1.02] active:scale-95 transition-all duration-300 border border-white/20"
+            style={{
+              background: `linear-gradient(135deg, #6b5314 0%, #ecd98a 26%, ${brandSecondary} 50%, #f7ecc0 74%, #82631a 100%)`,
+              color: '#000000',
+              boxShadow: `0 12px 30px -4px ${brandSecondary}90, 0 4px 12px rgba(0,0,0,0.6)`,
             }}
-            style={
-              activeTab === 'pass'
-                ? {
-                    backgroundColor: brandSecondary,
-                    color: '#000000',
-                  }
-                : undefined
-            }
-            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 ${
-              activeTab === 'pass'
-                ? 'font-black shadow-lg scale-105'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
-            }`}
           >
-            <QrCode className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span>بطاقتي</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('menu')}
-            style={
-              activeTab === 'menu'
-                ? {
-                    backgroundColor: brandSecondary,
-                    color: '#000000',
-                  }
-                : undefined
-            }
-            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
-              activeTab === 'menu'
-                ? 'font-black shadow-lg scale-105'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
-            }`}
-          >
-            <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span>المنيو</span>
-            {cartItems.length > 0 && (
-              <span
-                className="absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm"
-                style={{ backgroundColor: brandSecondary }}
-              >
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-black/15 flex items-center justify-center font-mono font-black text-xs text-black">
                 {cartItems.reduce((sum, item) => sum + item.quantity, 0)}
-              </span>
-            )}
-          </button>
+              </div>
+              <div>
+                <span className="text-xs font-black block leading-tight">سلة طلباتك جاهزة</span>
+                <span className="text-[10px] font-bold text-black/75">
+                  ستكسب +{estimatedLoyaltyPoints} نقطة ولاء 👑
+                </span>
+              </div>
+            </div>
 
-          <button
-            onClick={() => setActiveTab('services')}
-            style={
-              activeTab === 'services'
-                ? {
-                    backgroundColor: brandSecondary,
-                    color: '#000000',
-                  }
-                : undefined
-            }
-            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 ${
-              activeTab === 'services'
-                ? 'font-black shadow-lg scale-105'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
-            }`}
-          >
-            <Calendar className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span>حجز موعد</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('perks')}
-            style={
-              activeTab === 'perks'
-                ? {
-                    backgroundColor: brandSecondary,
-                    color: '#000000',
-                  }
-                : undefined
-            }
-            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 ${
-              activeTab === 'perks'
-                ? 'font-black shadow-lg scale-105'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
-            }`}
-          >
-            <Gift className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span>حصرياتك</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('tickets')}
-            style={
-              activeTab === 'tickets'
-                ? {
-                    backgroundColor: brandSecondary,
-                    color: '#000000',
-                  }
-                : undefined
-            }
-            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
-              activeTab === 'tickets'
-                ? 'font-black shadow-lg scale-105'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
-            }`}
-          >
-            <Ticket className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span>امتيازاتي</span>
-            {activeCouponsCount > 0 && (
-              <span
-                className="absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm"
-                style={{ backgroundColor: brandSecondary }}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCartItems([]);
+                  try {
+                    localStorage.removeItem(`radar_cart_${store.id}`);
+                  } catch {}
+                }}
+                className="w-7 h-7 rounded-xl bg-black/20 hover:bg-black/35 active:scale-90 text-black flex items-center justify-center transition shrink-0"
+                title="إلغاء وإفراغ السلة ✕"
               >
-                {activeCouponsCount}
-              </span>
-            )}
-          </button>
+                <X className="w-4 h-4" />
+              </button>
 
-          <button
-            onClick={() => setActiveTab('tiers')}
-            style={
-              activeTab === 'tiers'
-                ? {
-                    backgroundColor: brandSecondary,
-                    color: '#000000',
+              <div className="text-left">
+                <span className="text-sm font-black font-mono leading-none block">
+                  {cartGrandTotal} ر.س
+                </span>
+                <span className="text-[9px] font-bold text-black/70">متابعة الطلب</span>
+              </div>
+              <div className="w-7 h-7 rounded-xl bg-black text-white flex items-center justify-center">
+                <ChevronLeft className="w-4 h-4" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🌟 09 - Floating Bottom Dock with ABSOLUTE FIXED CENTER FAB */}
+      <div className="fixed bottom-3 left-3 right-3 max-w-md mx-auto z-40">
+        <div className="relative">
+          {/* 🌟 CENTER FLOATING ACTION BUTTON (FAB): Absolutely Centered regardless of tabs */}
+          {activeModules.loyalty && (
+            <div className="absolute left-1/2 -translate-x-1/2 -top-5 sm:-top-6 z-50 flex flex-col items-center justify-center pointer-events-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!customer) {
+                    setPendingAuthAction({ type: 'SHOW_QR' });
+                    setShowLoginModal(true);
+                  } else {
+                    setActiveTab('pass');
                   }
-                : undefined
-            }
-            className={`flex-1 py-2 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 ${
-              activeTab === 'tiers'
-                ? 'font-black shadow-lg scale-105'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
-            }`}
-          >
-            <Crown className="w-4 h-4 sm:w-5 sm:h-5" />
-            <span>مكانتك</span>
-          </button>
-        </nav>
+                }}
+                className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex flex-col items-center justify-center transition-all duration-300 transform active:scale-90 ${
+                  activeTab === 'pass'
+                    ? 'scale-110 shadow-2xl ring-4 ring-slate-950'
+                    : 'hover:scale-105 shadow-xl ring-2 ring-slate-900/90'
+                }`}
+                style={{
+                  background: brandColors.fabGradient,
+                  boxShadow: `0 10px 28px -4px ${brandColors.glow}, 0 4px 12px rgba(0,0,0,0.6)`,
+                  color: '#000000',
+                }}
+                title="بطاقة العضوية والولاء الرقمية"
+              >
+                <div className="relative flex items-center justify-center">
+                  <QrCode className="w-6 h-6 sm:w-7 sm:h-7 stroke-[2.3] text-slate-950" />
+                  {activeTab === 'pass' && (
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-slate-950 animate-ping"></span>
+                  )}
+                </div>
+                <span className="text-[9px] font-black tracking-tight text-slate-950 leading-none mt-0.5">
+                  بطاقتي
+                </span>
+              </button>
+            </div>
+          )}
+
+          <nav className="glass-dock rounded-3xl p-1.5 flex items-center justify-between shadow-[0_-8px_30px_rgba(0,0,0,0.5)] bg-slate-950/95 backdrop-blur-3xl border border-white/10 relative">
+            {/* Right Side Group: Menu & Bookings */}
+            <div className="flex-1 flex items-center justify-around pl-8 rtl:pl-0 rtl:pr-1">
+              {activeModules.orders && (
+                <button
+                  onClick={() => setActiveTab('menu')}
+                  style={activeTab === 'menu' ? { color: brandSecondary } : undefined}
+                  className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                    activeTab === 'menu'
+                      ? 'font-black scale-105'
+                      : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                  }`}
+                >
+                  <ShoppingBag
+                    className="w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300"
+                    style={activeTab === 'menu' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
+                  />
+                  <span>المنيو</span>
+                  {activeTab === 'menu' && (
+                    <span
+                      className="w-1 h-1 rounded-full animate-fade-in"
+                      style={{ backgroundColor: brandSecondary, boxShadow: `0 0 6px ${brandSecondary}` }}
+                    />
+                  )}
+                  {cartItems.length > 0 && (
+                    <span
+                      className="absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm"
+                      style={{ backgroundColor: brandSecondary }}
+                    >
+                      {cartItems.reduce((sum, item) => sum + item.quantity, 0)}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {activeModules.bookings && (
+                <button
+                  onClick={() => setActiveTab('services')}
+                  style={activeTab === 'services' ? { color: brandSecondary } : undefined}
+                  className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                    activeTab === 'services'
+                      ? 'font-black scale-105'
+                      : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                  }`}
+                >
+                  <Calendar
+                    className="w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300"
+                    style={activeTab === 'services' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
+                  />
+                  <span>حجز موعد</span>
+                  {activeTab === 'services' && (
+                    <span
+                      className="w-1 h-1 rounded-full animate-fade-in"
+                      style={{ backgroundColor: brandSecondary, boxShadow: `0 0 6px ${brandSecondary}` }}
+                    />
+                  )}
+                </button>
+              )}
+            </div>
+
+            {/* Spacer for Absolute Center FAB Button */}
+            {activeModules.loyalty && (
+              <div className="w-16 h-10 shrink-0 pointer-events-none" />
+            )}
+
+            {/* Left Side Group: Tickets & Perks & Status */}
+            <div className="flex-1 flex items-center justify-around pr-8 rtl:pr-0 rtl:pl-1">
+              {activeModules.loyalty && (
+                <button
+                  onClick={() => setActiveTab('perks')}
+                  style={activeTab === 'perks' ? { color: brandSecondary } : undefined}
+                  className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                    activeTab === 'perks'
+                      ? 'font-black scale-105'
+                      : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                  }`}
+                >
+                  <Gift
+                    className="w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300"
+                    style={activeTab === 'perks' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
+                  />
+                  <span>العروض</span>
+                  {activeTab === 'perks' && (
+                    <span
+                      className="w-1 h-1 rounded-full animate-fade-in"
+                      style={{ backgroundColor: brandSecondary, boxShadow: `0 0 6px ${brandSecondary}` }}
+                    />
+                  )}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('tickets')}
+                style={activeTab === 'tickets' ? { color: brandSecondary } : undefined}
+                className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                  activeTab === 'tickets'
+                    ? 'font-black scale-105'
+                    : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                }`}
+              >
+                <Ticket
+                  className="w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300"
+                  style={activeTab === 'tickets' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
+                />
+                <span>حصرياتي</span>
+                {activeTab === 'tickets' && (
+                  <span
+                    className="w-1 h-1 rounded-full animate-fade-in"
+                    style={{ backgroundColor: brandSecondary, boxShadow: `0 0 6px ${brandSecondary}` }}
+                  />
+                )}
+                {activeCouponsCount > 0 && (
+                  <span
+                    className="absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm animate-pulse"
+                    style={{ backgroundColor: brandSecondary }}
+                  >
+                    {activeCouponsCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          </nav>
+        </div>
       </div>
+
+      {/* 🌟 04 (Image 4) - "كيف أجمع نقاط؟" Interactive Modal Bottom Sheet */}
+      {showHowToEarnPoints && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-sm rounded-t-[32px] sm:rounded-3xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-2xl relative text-center">
+            <h3 className="font-serif font-black text-xl text-white">
+              كيف تجمع نقاط؟
+            </h3>
+
+            <div className="space-y-3 text-right text-xs sm:text-sm text-slate-200 py-2">
+              <div className="flex items-start gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
+                <span className="font-bold text-amber-400 font-mono">1.</span>
+                <span>اطلب من المنيو أو زر المطعم وأبرز الباركود للكاشير عند المحاسبة.</span>
+              </div>
+              <div className="flex items-start gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
+                <span className="font-bold text-amber-400 font-mono">2.</span>
+                <span>كل ريال تدفعه = {store.points_per_riyal || 5} نقاط تضاف تلقائياً لمحفظتك.</span>
+              </div>
+              <div className="flex items-start gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
+                <span className="font-bold text-amber-400 font-mono">3.</span>
+                <span>استبدل نقاطك بمكافآت وهدايا حصرية من شاشة "العروض والامتيازات".</span>
+              </div>
+              <div className="flex items-start gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
+                <span className="font-bold text-amber-400 font-mono">4.</span>
+                <span>كل ما زادت نقاطك ارتقى مستواك وزادت مميزاتك الخاصة! 👑</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowHowToEarnPoints(false)}
+              className="w-full py-3.5 rounded-2xl font-black text-sm text-slate-950 transition active:scale-95 shadow-lg"
+              style={{
+                backgroundColor: brandSecondary,
+              }}
+            >
+              فهمت
+            </button>
+          </div>
+        </div>
+      )}
 
       {isFullscreenQR && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl animate-fade-in">
@@ -3972,16 +5077,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </button>
 
             <div className="text-center space-y-2">
-              <div
-                className="w-14 h-14 rounded-2xl border flex items-center justify-center text-3xl mx-auto"
-                style={{
-                  backgroundColor: `${brandSecondary}15`,
-                  borderColor: `${brandSecondary}30`,
-                  color: brandSecondary,
-                }}
-              >
-                🎁
-              </div>
+              {purchasingPrivilege.image_url ? (
+                <div className="w-full h-36 rounded-2xl overflow-hidden bg-black/40 mb-3 border border-slate-800/80 shadow-inner">
+                  <img
+                    src={purchasingPrivilege.image_url}
+                    alt={purchasingPrivilege.title}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              ) : (
+                <div
+                  className="w-14 h-14 rounded-2xl border flex items-center justify-center text-3xl mx-auto"
+                  style={{
+                    backgroundColor: `${brandSecondary}15`,
+                    borderColor: `${brandSecondary}30`,
+                    color: brandSecondary,
+                  }}
+                >
+                  🎁
+                </div>
+              )}
               <h3 className="text-lg font-black text-white">تأكيد فتح واستبدال الامتياز</h3>
               <p className="text-xs text-slate-300">
                 أنت على وشك فتح <strong style={{ color: brandSecondary }}>"{purchasingPrivilege.title}"</strong>
@@ -4200,7 +5315,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {cartItems.length > 0 && (
+      {cartItems.length > 0 && activeModules.orders && (
         <div className="fixed bottom-20 left-3 right-3 max-w-md mx-auto z-40 animate-slide-up">
           <div
             onClick={() => setIsCartModalOpen(true)}
@@ -4874,12 +5989,39 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
             </div>
 
-            <div className="p-4 bg-slate-950 border-t border-slate-800 shrink-0">
+            <div className="p-4 bg-slate-950 border-t border-slate-800 shrink-0 space-y-2.5">
+              {selectedBranch && (
+                <div className="flex items-center justify-between text-xs pb-0.5">
+                  <span className="text-slate-400 flex items-center gap-1.5 font-bold">
+                    <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                    <span>الفرع: {selectedBranch.name}</span>
+                  </span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-black border ${
+                    branchStatus.isOpen
+                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                      : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                  }`}>
+                    {branchStatus.isOpen ? '🟢 متاح للطلب' : '🔴 مغلق حالياً'}
+                  </span>
+                </div>
+              )}
+
+              {selectedBranch && !branchStatus.isOpen && (
+                <div className="p-2.5 rounded-xl bg-rose-950/50 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>عفواً، الفرع مغلق حالياً ولا يستقبل طلبات جديدة ({branchStatus.reason}).</span>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={handleSubmitOrder}
-                disabled={submittingOrder}
-                className="w-full py-3.5 rounded-2xl font-black text-sm text-white bg-emerald-600 hover:bg-emerald-500 shadow-xl shadow-emerald-600/25 flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-50"
+                disabled={submittingOrder || (Boolean(selectedBranch) && !branchStatus.isOpen)}
+                className={`w-full py-3.5 rounded-2xl font-black text-sm text-white flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-50 ${
+                  selectedBranch && !branchStatus.isOpen
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    : 'bg-emerald-600 hover:bg-emerald-500 shadow-xl shadow-emerald-600/25'
+                }`}
               >
                 {submittingOrder ? (
                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -4889,6 +6031,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <span>
                   {submittingOrder
                     ? 'جاري إرسال الطلب...'
+                    : selectedBranch && !branchStatus.isOpen
+                    ? 'الفرع مغلق حالياً 🔒'
                     : customer
                     ? 'تأكيد وإرسال الطلب للكاشير فوراً 🚀'
                     : 'إتمام الطلب وتأكيد الرقم 🚀'}

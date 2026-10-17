@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Store, StoreOnboardingPayload, MerchantLead, LeadStatus, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage, getStoreUnifiedStage } from '../types';
-import { LoyaltyService, normalizePhone } from '../lib/supabase';
+import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
@@ -23,6 +23,9 @@ import {
   Users,
   Palette,
   Phone,
+  ShoppingBag,
+  Calendar,
+  Layers,
   KeyRound,
   ArrowUpRight,
   TrendingUp,
@@ -55,6 +58,7 @@ import { SuperAdminPartnersConsole } from './SuperAdminPartnersConsole';
 import { SuperAdminBillingConsole } from './SuperAdminBillingConsole';
 import { SendNotificationModal } from './SendNotificationModal';
 import { NotificationBell } from './NotificationBell';
+import { clearAllInboxNotifications } from '../lib/notifications';
 import { playBeepSound } from '../lib/sound';
 
 interface SuperAdminDashboardProps {
@@ -93,6 +97,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   });
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState(false);
   const [isRefreshingData, setIsRefreshingData] = useState(false);
+  const isFetchingRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const [stores, setStores] = useState<Store[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -192,6 +205,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [editErrorMessage, setEditErrorMessage] = useState<string | null>(null);
   const [editSuccessMessage, setEditSuccessMessage] = useState<string | null>(null);
   const editFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 🎛️ Store Modules SaaS Control State (Owner & Merchant)
+  const [editOwnerEnableOrders, setEditOwnerEnableOrders] = useState(true);
+  const [editOwnerEnableBookings, setEditOwnerEnableBookings] = useState(true);
+  const [editOwnerEnableLoyalty, setEditOwnerEnableLoyalty] = useState(true);
+  const [editEnableOrders, setEditEnableOrders] = useState(true);
+  const [editEnableBookings, setEditEnableBookings] = useState(true);
+  const [editEnableLoyalty, setEditEnableLoyalty] = useState(true);
 
   // Success Onboarding Modal Card State
   const [onboardedResult, setOnboardedResult] = useState<{
@@ -381,6 +402,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     setIsAuthenticated(false);
     setAdminEmail('');
     setAdminPassword('');
+    clearAllInboxNotifications({ portal: 'super_admin' });
     await authLogout('super_admin');
   };
 
@@ -430,6 +452,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     setEditPointsPerRiyal(storeToEdit.points_per_riyal || 1.0);
     setEditLogoUrl(storeToEdit.logo_url || '');
     setEditLogoStats(null);
+    setEditOwnerEnableOrders(storeToEdit.owner_enable_orders !== false);
+    setEditOwnerEnableBookings(storeToEdit.owner_enable_bookings !== false);
+    setEditOwnerEnableLoyalty(storeToEdit.owner_enable_loyalty !== false);
+    setEditEnableOrders(storeToEdit.enable_orders !== false);
+    setEditEnableBookings(storeToEdit.enable_bookings !== false);
+    setEditEnableLoyalty(storeToEdit.enable_loyalty !== false);
     setEditErrorMessage(null);
     setEditSuccessMessage(null);
     setIsEditModalOpen(true);
@@ -482,6 +510,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         secondary_color: editSecondaryColor,
         points_per_riyal: editPointsPerRiyal,
         logo_url: editLogoUrl || editingStore.logo_url,
+        owner_enable_orders: editOwnerEnableOrders,
+        owner_enable_bookings: editOwnerEnableBookings,
+        owner_enable_loyalty: editOwnerEnableLoyalty,
+        enable_orders: editEnableOrders,
+        enable_bookings: editEnableBookings,
+        enable_loyalty: editEnableLoyalty,
       });
 
       if (updated) {
@@ -541,47 +575,70 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     }
   };
 
-  const loadStores = async () => {
-    if (stores.length === 0) {
+  const loadStores = async (isManual: boolean = false) => {
+    // 🛡️ Concurrency Guard: Prevent overlapping server queries
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (isManual && isMountedRef.current) {
+      setIsRefreshingData(true);
+    } else if (stores.length === 0 && isMountedRef.current) {
       setLoading(true);
     }
-    setIsRefreshingData(true);
+
+    // 🛡️ Fail-safe timeout: strictly ensures spinning and loading indicators revert to false
+    const safetyTimeout = setTimeout(() => {
+      isFetchingRef.current = false;
+      if (isMountedRef.current) {
+        setIsRefreshingData(false);
+        setLoading(false);
+      }
+    }, 6000);
+
     try {
       const [{ stores: validStores, analytics }, invs, leads] = await Promise.all([
         LoyaltyService.getSuperAdminStoresSummary(),
         LoyaltyService.getAllInvoices(),
         LoyaltyService.getAllLeads(),
       ]);
-      setStores(validStores);
-      setStoresAnalytics(analytics);
-      setAllInvoices(invs || {});
-      setAllLeads(leads || []);
+      if (isMountedRef.current) {
+        setStores(validStores);
+        setStoresAnalytics(analytics);
+        setAllInvoices(invs || {});
+        setAllLeads(leads || []);
+      }
     } catch (e) {
-      console.error(e);
+      console.error('Failed to load stores summary:', e);
     } finally {
-      setLoading(false);
-      setIsRefreshingData(false);
+      clearTimeout(safetyTimeout);
+      isFetchingRef.current = false;
+      if (isMountedRef.current) {
+        setLoading(false);
+        setIsRefreshingData(false);
+      }
     }
   };
 
   const debouncedLoadStores = useMemo(
     () =>
       debounce(() => {
-        loadStores();
-      }, 300),
+        loadStores(false);
+      }, 1000),
     []
   );
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    loadStores();
+    loadStores(false);
 
     const unsubscribe = LoyaltyEvents.listen((event: LoyaltyEventPayload) => {
       if (
         event.type === 'STORE_UPDATED' ||
         event.type === 'PAYMENT_COMPLETED' ||
         event.type === 'SUBSCRIPTION_UPDATED' ||
-        event.type === 'LEAD_UPDATED'
+        event.type === 'LEAD_UPDATED' ||
+        event.type === 'CUSTOMER_UPDATED' ||
+        event.type === 'COUPON_PURCHASED'
       ) {
         debouncedLoadStores();
       }
@@ -1122,7 +1179,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => loadStores()}
+              onClick={() => loadStores(true)}
               disabled={isRefreshingData}
               className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-2 border border-slate-700 shadow-sm"
               title="تحديث البيانات من السيرفر"
@@ -1512,6 +1569,51 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                             <span>•</span>
                             <span className="text-slate-400">المعامل: <strong className="text-emerald-400">{s.points_per_riyal}x</strong></span>
                           </div>
+
+                          {/* 🎛️ Active Modules SaaS Status Chips */}
+                          <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                            <span
+                              title={s.owner_enable_orders === false ? 'محظور من باقة المنصة (المالك)' : s.enable_orders === false ? 'معطل باختيار التاجر' : 'موديول الطلبات والمنيو نشط'}
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 ${
+                                s.owner_enable_orders === false
+                                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 line-through'
+                                  : s.enable_orders === false
+                                  ? 'bg-slate-800 text-slate-400 border-slate-700'
+                                  : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                              }`}
+                            >
+                              <ShoppingBag className="w-2.5 h-2.5" />
+                              <span>منيو {s.owner_enable_orders === false ? '🔒' : s.enable_orders === false ? '⏸️' : '✅'}</span>
+                            </span>
+
+                            <span
+                              title={s.owner_enable_bookings === false ? 'محظور من باقة المنصة (المالك)' : s.enable_bookings === false ? 'معطل باختيار التاجر' : 'موديول الحجوزات والمواعيد نشط'}
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 ${
+                                s.owner_enable_bookings === false
+                                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 line-through'
+                                  : s.enable_bookings === false
+                                  ? 'bg-slate-800 text-slate-400 border-slate-700'
+                                  : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                              }`}
+                            >
+                              <Calendar className="w-2.5 h-2.5" />
+                              <span>حجوزات {s.owner_enable_bookings === false ? '🔒' : s.enable_bookings === false ? '⏸️' : '✅'}</span>
+                            </span>
+
+                            <span
+                              title={s.owner_enable_loyalty === false ? 'محظور من باقة المنصة (المالك)' : s.enable_loyalty === false ? 'معطل باختيار التاجر' : 'موديول برنامج الولاء نشط'}
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 ${
+                                s.owner_enable_loyalty === false
+                                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 line-through'
+                                  : s.enable_loyalty === false
+                                  ? 'bg-slate-800 text-slate-400 border-slate-700'
+                                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              }`}
+                            >
+                              <Gift className="w-2.5 h-2.5" />
+                              <span>ولاء {s.owner_enable_loyalty === false ? '🔒' : s.enable_loyalty === false ? '⏸️' : '✅'}</span>
+                            </span>
+                          </div>
                         </div>
                       </div>
 
@@ -1630,7 +1732,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                       <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
                         <div>
                           <span className="text-[11px] text-slate-400 block font-sans">العملاء والزوار</span>
-                          <span className="text-lg font-black text-white font-mono">{stats.customerCount}</span>
+                          <span className="text-lg font-black text-white font-mono">{stats.customerCount.toLocaleString()}</span>
                         </div>
                         <Users className="w-4 h-4 text-blue-400" />
                       </div>
@@ -1640,18 +1742,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         <div>
                           <span className="text-[11px] text-slate-400 block font-sans">إجمالي المبيعات</span>
                           <span className="text-lg font-black text-emerald-400 font-mono">
-                            {stats.totalSales} <span className="text-[10px] text-emerald-300 font-normal">ر.س</span>
+                            {stats.totalSales.toLocaleString()} <span className="text-[10px] text-emerald-300 font-normal">ر.س</span>
                           </span>
                         </div>
                         <DollarSign className="w-4 h-4 text-emerald-400" />
                       </div>
 
-                      {/* 3. النقاط المصروفة */}
+                      {/* 3. النقاط الممنوحة */}
                       <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
                         <div>
-                          <span className="text-[11px] text-slate-400 block font-sans">النقاط المصروفة</span>
+                          <span className="text-[11px] text-slate-400 block font-sans">النقاط الممنوحة للعملاء</span>
                           <span className="text-lg font-black text-amber-400 font-mono">
-                            {stats.totalPoints} <span className="text-[10px] text-amber-300 font-normal">XP</span>
+                            +{stats.totalPoints.toLocaleString()} <span className="text-[10px] text-amber-300 font-normal">XP</span>
                           </span>
                         </div>
                         <Coins className="w-4 h-4 text-amber-400" />
@@ -1661,7 +1763,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                       <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
                         <div>
                           <span className="text-[11px] text-slate-400 block font-sans">طاقم العمل</span>
-                          <span className="text-lg font-black text-purple-400 font-mono">{stats.staffCount}</span>
+                          <span className="text-lg font-black text-purple-400 font-mono">{stats.staffCount.toLocaleString()}</span>
                         </div>
                         <Users className="w-4 h-4 text-purple-400" />
                       </div>
@@ -2366,6 +2468,90 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                       {preset.name}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* 🎛️ تحكم باقة وموديولات المنصة (SaaS Module Permissions - Platform Owner Control) */}
+              <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
+                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                    <Crown className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-bold text-white">صلاحيات باقة المتجر والموديولات (SaaS Module Control)</span>
+                  </div>
+                  <span className="text-[10px] text-amber-300 font-mono bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30 font-bold">
+                    الكلمة العليا للمالك 👑
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  التحكم المركزي في ميزات المتجر وفق باقة الاشتراك. إذا قمت بإيقاف موديول هنا، يتم قفله إجبارياً على التاجر وعملائه ولا يمكن للتاجر تفعيله:
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                  {/* 1. Orders Module */}
+                  <div className={`p-3 rounded-xl border transition ${editOwnerEnableOrders ? 'bg-slate-950/80 border-slate-700' : 'bg-rose-950/20 border-rose-500/40'}`}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <ShoppingBag className="w-3.5 h-3.5 text-blue-400" />
+                        <span>الطلبات والمنيو</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditOwnerEnableOrders(!editOwnerEnableOrders)}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                          editOwnerEnableOrders
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                            : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                        }`}
+                      >
+                        {editOwnerEnableOrders ? 'مشمول بالباقة ✅' : 'محظور/غير مشمول 🔒'}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-tight">الطلبات الفورية، السلة، وتناول محلي وسفري وتوصيل</p>
+                  </div>
+
+                  {/* 2. Bookings Module */}
+                  <div className={`p-3 rounded-xl border transition ${editOwnerEnableBookings ? 'bg-slate-950/80 border-slate-700' : 'bg-rose-950/20 border-rose-500/40'}`}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                        <span>الحجوزات والخدمات</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditOwnerEnableBookings(!editOwnerEnableBookings)}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                          editOwnerEnableBookings
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                            : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                        }`}
+                      >
+                        {editOwnerEnableBookings ? 'مشمول بالباقة ✅' : 'محظور/غير مشمول 🔒'}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-tight">حجوزات المواعيد، الفترات الزمنية، وجدولة المختصين</p>
+                  </div>
+
+                  {/* 3. Loyalty Module */}
+                  <div className={`p-3 rounded-xl border transition ${editOwnerEnableLoyalty ? 'bg-slate-950/80 border-slate-700' : 'bg-rose-950/20 border-rose-500/40'}`}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Gift className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>الولاء والمكافآت</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditOwnerEnableLoyalty(!editOwnerEnableLoyalty)}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                          editOwnerEnableLoyalty
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                            : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                        }`}
+                      >
+                        {editOwnerEnableLoyalty ? 'مشمول بالباقة ✅' : 'محظور/غير مشمول 🔒'}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-tight">برنامج النقاط، المستويات، بطاقة الـ QR، والكوبونات</p>
+                  </div>
                 </div>
               </div>
 

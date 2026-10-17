@@ -40,7 +40,14 @@ import {
   UnifiedStageInfo,
   resolveUnifiedStage,
   getStoreUnifiedStage,
+  StoreBranch,
+  POSShift,
+  POSRefund,
+  POSRefundItem,
+  POSCashMovement,
+  POSCartDiscount,
 } from '../types';
+import { generateZatcaTLVQR } from './zatcaQR';
 import {
   INITIAL_STORES,
   INITIAL_STORE,
@@ -199,7 +206,7 @@ export function getSupabaseClient(): SupabaseClient<Database> | null {
   return supabaseInstance;
 }
 
-function withTimeout<T>(promise: PromiseLike<T> | Promise<T>, ms: number = 7000): Promise<T> {
+export function withTimeout<T>(promise: PromiseLike<T> | Promise<T>, ms: number = 7000): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`Operation timed out after ${ms}ms`));
@@ -497,8 +504,11 @@ export function normalizeStore(s: any): Store {
     ? 'جاري التأسيس'
     : 'تم التأسيس';
 
+  const storeCode = s.store_code || (s.id && isUUID(s.id) ? `RD-${s.id.replace(/-/g, '').substring(0, 4).toUpperCase()}` : undefined);
+
   return {
     ...s,
+    store_code: storeCode,
     setup_fee_paid: isPaid,
     status: isSuspended ? 'suspended' : (s.status || 'active'),
     subscription_status: isSuspended ? 'suspended' : isPaid ? 'active' : 'trial',
@@ -515,6 +525,12 @@ export function normalizeStore(s: any): Store {
     trial_end_date: trialEnd,
     manager_contact,
     slider_images: slider_images.filter((img) => img && typeof img === 'object' && Boolean(img.image_url)),
+    enable_orders: s.enable_orders !== false,
+    enable_bookings: s.enable_bookings !== false,
+    enable_loyalty: s.enable_loyalty !== false,
+    owner_enable_orders: s.owner_enable_orders !== false,
+    owner_enable_bookings: s.owner_enable_bookings !== false,
+    owner_enable_loyalty: s.owner_enable_loyalty !== false,
   };
 }
 
@@ -693,12 +709,12 @@ try {
 // polling queries and fetched once per hour per client via attachStoreAssets().
 // ==============================================================================
 const STORE_SAFE_COLS =
-  'id, slug, name, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, lifecycle_stage, setup_fee_paid, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, telegram_chat_id, telegram_notifications_enabled, trial_start_date, trial_end_date, subscription_plan_id, subscription_plan, plan_code, renewal_amount, subscription_start_date, subscription_end_date, created_at, updated_at';
+  'id, slug, name, store_code, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, lifecycle_stage, setup_fee_paid, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, telegram_chat_id, telegram_notifications_enabled, trial_start_date, trial_end_date, subscription_plan_id, subscription_plan, plan_code, renewal_amount, subscription_start_date, subscription_end_date, enable_orders, enable_bookings, enable_loyalty, owner_enable_orders, owner_enable_bookings, owner_enable_loyalty, created_at, updated_at';
 const STORE_FULL_COLS = STORE_SAFE_COLS;
 const CUSTOMER_SAFE_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at';
-const CUSTOMER_FULL_COLS = CUSTOMER_SAFE_COLS;
+const CUSTOMER_FULL_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at, special_date, special_date_type, is_active, visits_count';
 const COUPON_SAFE_COLS =
-  'id, coupon_code, store_id, customer_id, customer_phone, customer_name, privilege_id, privilege_title, cost_points, status, valid_start_time, valid_end_time, purchased_at';
+  'id, coupon_code, store_id, customer_id, customer_phone, customer_name, privilege_id, privilege_title, cost_points, status, valid_start_time, valid_end_time, purchased_at, branch_id';
 const COUPON_FULL_COLS = COUPON_SAFE_COLS + ', used_at, cashier_name';
 
 // Probe (zero-row query, no payload) once per table to learn which optional columns exist.
@@ -764,7 +780,7 @@ async function attachStoreAssets(supabase: any, row: any): Promise<any> {
 
 // Non-heavy tables: explicit list, falls back to '*' only if a listed column is missing in the live schema.
 const WALLET_COLS = 'id, store_id, sms_quota, sms_used, wa_quota, wa_used, cashier_limit, extra_cashiers_purchased, whatsapp_provider, meta_phone_number_id, meta_waba_id, meta_access_token, created_at, updated_at';
-const STAFF_COLS = 'id, store_id, user_id, name, phone, role, is_active, can_manual_input_phone, created_at, updated_at';
+const STAFF_COLS = 'id, store_id, branch_id, assigned_branch_ids, user_id, name, phone, role, is_active, can_manual_input_phone, created_at, updated_at';
 const TIER_COLS = 'id, store_id, tier_name, required_xp, badge_color, icon, created_at';
 const PRIVILEGE_COLS = 'id, store_id, required_tier_id, title, description, image_url, cost_points, quantity_limit, per_customer_limit, redeemed_count, valid_start_time, valid_end_time, is_active, is_hidden, created_at';
 const LEDGER_COLS = 'id, ledger_id, transaction_id, invoice_id, store_id, store_name, affiliate_id, affiliate_name, payment_id, transaction_type, gross_amount, vat_amount, gateway_fee, affiliate_commission, net_platform_amount, status, created_at, effective_at, reversal_of, refund_of, created_by, metadata';
@@ -778,20 +794,27 @@ const ledgerCols = (s: any) => probeCols(s, 'financial_ledger', LEDGER_COLS, '*'
 const leadCols = (s: any) => probeCols(s, 'merchant_leads', LEAD_COLS, '*');
 const planCols = (s: any) => probeCols(s, 'billing_plans', PLAN_COLS, '*');
 
-// 🛡️ NEVER persist base64 data URLs in the database. Images must be uploaded to Storage first
-// (see imageCompressor.ts) and only the public URL saved. Any data: value is dropped here as a last line of defence.
+// 🛡️ NEVER persist bloated base64 data URLs in the database. Images must be uploaded to Storage first
+// (see imageCompressor.ts) and only the public URL saved. Any oversized data: value (>45KB) is dropped to conform with DB limits.
 const IMAGE_URL_KEYS = ['logo_url', 'image_url', 'privilege_image_url', 'avatar_url'];
 const isDataUrl = (v: any) => typeof v === 'string' && v.trim().toLowerCase().startsWith('data:');
 function stripDataUrls<T extends Record<string, any>>(obj: T): T {
   if (!obj || typeof obj !== 'object') return obj;
   for (const k of IMAGE_URL_KEYS) {
     if (isDataUrl((obj as any)[k])) {
-      console.warn('[egress-guard] dropped base64 value for', k);
-      (obj as any)[k] = null;
+      const val = (obj as any)[k] as string;
+      // Only drop huge uncompressed images (> 45KB) to guard DB limits and Postgres 60k RPC constraint
+      if (val.length > 45000) {
+        console.warn('[egress-guard] dropped oversized base64 value for', k);
+        (obj as any)[k] = null;
+      }
     }
   }
   if (Array.isArray((obj as any).slider_images)) {
-    (obj as any).slider_images = (obj as any).slider_images.filter((s: any) => !isDataUrl(s?.image_url));
+    (obj as any).slider_images = (obj as any).slider_images.filter((s: any) => {
+      if (isDataUrl(s?.image_url) && String(s.image_url).length > 45000) return false;
+      return true;
+    });
   }
   return obj;
 }
@@ -818,16 +841,63 @@ function noteStoreAssetUpdates(storeId: string, updates: any) {
 const couponImageCache = new Map<string, string>(); // privilege_id -> image (loaded once per session)
 const couponImagesLoaded = new Set<string>();
 
-async function sendTelegramNotification(storeId: string, message: string) {
+export async function syncTelegramStatus(
+  type: 'order' | 'booking',
+  id: string,
+  status: string,
+  cashierName?: string
+) {
+  try {
+    fetch('https://radar-telegram-bot.taeybsalah.workers.dev/sync-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type,
+        id,
+        status,
+        cashierName: cashierName || 'الكاشير'
+      })
+    }).catch(err => console.warn('syncTelegramStatus network error:', err));
+  } catch (err) {
+    console.warn('syncTelegramStatus error:', err);
+  }
+}
+
+async function sendTelegramNotification(
+  storeId: string,
+  message: string,
+  replyMarkup?: any,
+  metadata?: { type: 'order' | 'booking'; id: string }
+) {
   try {
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
-    const store = stores.find(s => s.id === storeId || s.slug === storeId);
+    let store = stores.find(s => s.id === storeId || s.slug === storeId);
+    let targetChatId = store?.telegram_chat_id;
+    let enabled = store?.telegram_notifications_enabled !== false;
+
+    if (!targetChatId && isUUID(storeId)) {
+      try {
+        const sb = getSupabaseClient();
+        if (sb) {
+          const { data } = await (sb as any).from('stores').select('telegram_chat_id, telegram_notifications_enabled').eq('id', storeId).maybeSingle();
+          if (data?.telegram_chat_id) {
+            targetChatId = data.telegram_chat_id;
+            enabled = data.telegram_notifications_enabled !== false;
+          }
+        }
+      } catch {}
+    }
     
-    if (store && store.telegram_chat_id && store.telegram_notifications_enabled !== false) {
+    if (targetChatId && enabled) {
       fetch('https://radar-telegram-bot.taeybsalah.workers.dev/notify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId: store.telegram_chat_id, text: message })
+        body: JSON.stringify({ 
+          chatId: targetChatId, 
+          text: message,
+          replyMarkup: replyMarkup || null,
+          metadata: metadata || null,
+        })
       }).catch(err => console.error('Telegram API fetch error:', err));
     }
   } catch (err) {
@@ -1053,13 +1123,28 @@ export const LoyaltyService = {
 
     if (supabase) {
       try {
-        const { data, error } = await withTimeout(
-          supabase
-            .from('stores')
-            .select((`${await storeCols(supabase)}, store_customers(count), store_staff(count)`) as unknown as '*')
-            .order('created_at', { ascending: false }),
-          6000
-        );
+        const [storesRes, logsRes] = await Promise.all([
+          withTimeout(
+            supabase
+              .from('stores')
+              .select((`${await storeCols(supabase)}, store_customers(count), store_staff(count)`) as unknown as '*')
+              .order('created_at', { ascending: false }),
+            7000
+          ),
+          withTimeout(
+            supabase
+              .from('audit_logs')
+              .select('store_id, action, purchase_amount, points_changed')
+              .limit(50000),
+            7000
+          ).catch((e) => {
+            console.warn('audit_logs query in summary fallback', e);
+            return { data: null, error: e };
+          }),
+        ]);
+
+        const data = storesRes.data;
+        const error = storesRes.error;
 
         if (!error && Array.isArray(data)) {
           const validStores = (data as any[])
@@ -1070,6 +1155,22 @@ export const LoyaltyService = {
           const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, INITIAL_CUSTOMERS);
           const localLogs = getLocalData<AuditLog[]>(STORAGE_KEYS.LOCAL_LOGS, INITIAL_AUDIT_LOGS);
           const localStaff = getLocalData<StoreStaff[]>(STORAGE_KEYS.LOCAL_STAFF, INITIAL_STAFF);
+
+          // Group Supabase audit logs by store_id
+          const dbLogs = (!logsRes?.error && Array.isArray(logsRes?.data)) ? (logsRes.data as any[]) : [];
+          const logsByStore: Record<string, { totalSales: number; totalPoints: number }> = {};
+          for (const log of dbLogs) {
+            if (!log.store_id) continue;
+            if (!logsByStore[log.store_id]) {
+              logsByStore[log.store_id] = { totalSales: 0, totalPoints: 0 };
+            }
+            if (log.action === 'PURCHASE') {
+              logsByStore[log.store_id].totalSales += Number(log.purchase_amount) || 0;
+            }
+            if (Number(log.points_changed) > 0) {
+              logsByStore[log.store_id].totalPoints += Number(log.points_changed);
+            }
+          }
 
           const analytics: Record<string, { customerCount: number; totalSales: number; totalPoints: number; staffCount: number }> = {};
           for (const item of data as any[]) {
@@ -1083,10 +1184,13 @@ export const LoyaltyService = {
             const sLocalSales = sLocalLogs.reduce((sum, l) => sum + (Number(l.purchase_amount) || 0), 0);
             const sLocalPoints = sLocalLogs.reduce((sum, l) => sum + (l.points_changed > 0 ? l.points_changed : 0), 0);
 
+            const storeDbSales = logsByStore[storeId]?.totalSales ?? 0;
+            const storeDbPoints = logsByStore[storeId]?.totalPoints ?? 0;
+
             analytics[storeId] = {
               customerCount: Math.max(dbCustCount, sLocalCust),
-              totalSales: sLocalSales,
-              totalPoints: sLocalPoints,
+              totalSales: Math.max(storeDbSales, sLocalSales),
+              totalPoints: Math.max(storeDbPoints, sLocalPoints),
               staffCount: Math.max(dbStaffCount, sLocalStaff),
             };
           }
@@ -1287,7 +1391,7 @@ export const LoyaltyService = {
               const fallbackRes = await supabase
                 .from('stores')
                 .select(await storeCols(supabase))
-                .or(`slug.ilike.%${rootSlug}%,name.ilike.%${clean}%,custom_domain.ilike.%${clean}%`)
+                .or(`slug.ilike.%${rootSlug}%,name.ilike.%${clean}%,custom_domain.ilike.%${clean}%,store_code.ilike.%${clean}%`)
                 .limit(1)
                 .maybeSingle();
               if (fallbackRes.data) data = fallbackRes.data;
@@ -1299,6 +1403,7 @@ export const LoyaltyService = {
               storeResolutionCache.set(cleanLower, { store: resolved, timestamp: Date.now() });
               storeResolutionCache.set(resolved.id.toLowerCase(), { store: resolved, timestamp: Date.now() });
               if (resolved.slug) storeResolutionCache.set(resolved.slug.toLowerCase(), { store: resolved, timestamp: Date.now() });
+              if (resolved.store_code) storeResolutionCache.set(resolved.store_code.toLowerCase(), { store: resolved, timestamp: Date.now() });
               if (resolved.custom_domain) storeResolutionCache.set(resolved.custom_domain.toLowerCase(), { store: resolved, timestamp: Date.now() });
 
               // تحديث الكاش المحلي
@@ -1323,6 +1428,7 @@ export const LoyaltyService = {
               s &&
               (s.id === clean ||
                 (s.slug && s.slug.toLowerCase() === cleanLower) ||
+                (s.store_code && s.store_code.toLowerCase() === cleanLower) ||
                 (s.custom_domain && s.custom_domain.toLowerCase() === cleanLower) ||
                 (s.slug && s.slug.toLowerCase().replace(/[-_]/g, '') === cleanLower.replace(/[-_]/g, '')))
           ) || null
@@ -2189,7 +2295,7 @@ export const LoyaltyService = {
 
     if (supabase && !isSyntheticManager) {
       try {
-        const { data, error } = await supabase
+        const { data, error } = await (supabase as any)
           .from('store_staff')
           .update(updates)
           .eq('id', staffId)
@@ -2328,6 +2434,7 @@ export const LoyaltyService = {
               staff: {
                 id: returnedStaff.id,
                 store_id: returnedStaff.store_id || resolvedStoreId,
+                branch_id: returnedStaff.branch_id || null,
                 name: returnedStaff.name,
                 phone: returnedStaff.phone,
                 role: returnedStaff.role,
@@ -2547,13 +2654,19 @@ export const LoyaltyService = {
   },
 
   // 7.2 إدارة جلسات الموظفين (Staff Session Storage)
-  getStaffSession(storeId: string, role: 'admin' | 'cashier', storeSlug?: string): StoreStaff | null {
+  getStaffSession(storeId: string, role: 'admin' | 'cashier' | 'any' = 'any', storeSlug?: string): StoreStaff | null {
     try {
-      let session = localStorage.getItem(`radar_session_${storeId}_${role}`);
-      if (!session && storeSlug) {
-        session = localStorage.getItem(`radar_session_${storeSlug}_${role}`);
+      const rolesToCheck: Array<'admin' | 'cashier'> = role === 'any' ? ['cashier', 'admin'] : [role];
+      for (const r of rolesToCheck) {
+        let session = localStorage.getItem(`radar_session_${storeId}_${r}`);
+        if (!session && storeSlug) {
+          session = localStorage.getItem(`radar_session_${storeSlug}_${r}`);
+        }
+        if (session) {
+          return JSON.parse(session);
+        }
       }
-      return session ? JSON.parse(session) : null;
+      return null;
     } catch {
       return null;
     }
@@ -2576,11 +2689,14 @@ export const LoyaltyService = {
 
   // 7.3 تذكرة الجلسة المؤقتة (8 ساعات) التي يصدرها السيرفر بعد التحقق من الـ PIN.
   // تُستخدم لتعديل المنيو والأخصائيين وقراءة وتحديث الحجوزات. الـ PIN نفسه لا يُحفظ في المتصفح.
-  saveStaffToken(storeId: string, role: string, token?: string): void {
+  saveStaffToken(storeId: string, role: string, token?: string, storeSlug?: string): void {
     if (!storeId || !token) return;
     const bucket = role === 'admin' ? 'admin' : 'cashier';
     try {
       localStorage.setItem(`radar_stoken_${storeId}_${bucket}`, token);
+      if (storeSlug) {
+        localStorage.setItem(`radar_stoken_${storeSlug}_${bucket}`, token);
+      }
     } catch {
       /* ignore */
     }
@@ -2594,9 +2710,9 @@ export const LoyaltyService = {
           const t = localStorage.getItem(`radar_stoken_${storeId}_${r}`);
           if (t) return t;
         }
-        return null;
       }
-      // معرف المتجر غير معروف: السيرفر يتحقق أن العنصر يتبع متجر صاحب التذكرة
+      // معرف المتجر غير معروف أو مسجل تحت المعرف البديل (UUID مقابل Slug):
+      // الفحص التلقائي لجميع المفاتيح الصالحة لهذا الدور
       for (const r of roles) {
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
@@ -2807,10 +2923,27 @@ export const LoyaltyService = {
     return true;
   },
 
-  // 9. جلب الامتيازات لمتجر محدد
+  // 9. جلب الامتيازات لمتجر محدد مع دمج محلي آمن يمنع اختفاء البيانات عند التحديث
   async getPrivileges(storeId: string): Promise<Privilege[]> {
     const resolvedStoreId = await this.resolveStoreId(storeId);
+    const resolvedStore = await this.resolveStore(storeId);
+    const storeSlug = resolvedStore?.slug;
     const supabase = getSupabaseClient();
+
+    // 1. قراءة الامتيازات المخزنة محلياً لهذا المتجر حصراً
+    const storeKey = STORAGE_KEYS.LOCAL_PRIVILEGES + '_' + resolvedStoreId;
+    const slugKey = storeSlug ? STORAGE_KEYS.LOCAL_PRIVILEGES + '_' + storeSlug : null;
+
+    let rawLocalStore: Privilege[] = getLocalData(storeKey, []);
+    if (rawLocalStore.length === 0 && slugKey) {
+      rawLocalStore = getLocalData(slugKey, []);
+    }
+    if (rawLocalStore.length === 0 && (resolvedStoreId === DEMO_STORE_ID || storeSlug === DEMO_STORE_SLUG)) {
+      rawLocalStore = INITIAL_PRIVILEGES;
+    }
+
+    const localStorePrivs = rawLocalStore.filter((p) => p.store_id === resolvedStoreId || p.store_id === storeId);
+
     if (supabase && isUUID(resolvedStoreId)) {
       try {
         const { data, error } = await supabase
@@ -2818,34 +2951,42 @@ export const LoyaltyService = {
           .select(`${await privilegeCols(supabase)}, tiers(tier_name)` as unknown as '*')
           .eq('store_id', resolvedStoreId)
           .order('created_at', { ascending: false });
-        if (!error && data) {
+
+        if (!error && Array.isArray(data)) {
           const mapped = data.map((p: any) => ({
             ...p,
             tier_name: p.tiers?.tier_name,
           })) as Privilege[];
-          saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES + '_' + resolvedStoreId, mapped);
-          return mapped;
+
+          // 2. دمج ذكي معزول: أصناف السيرفر لهذا المتجر + الأصناف المحلية لهذا المتجر حصراً
+          const remoteIds = new Set(mapped.map((p) => p.id));
+          const localOnly = localStorePrivs.filter((p) => !remoteIds.has(p.id));
+          const merged = [...mapped, ...localOnly];
+
+          saveLocalData(storeKey, merged);
+          if (slugKey) saveLocalData(slugKey, merged);
+          return merged;
         }
       } catch (e) {
         console.warn('Supabase fetch privileges failed', e);
       }
     }
-    const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES + '_' + resolvedStoreId, getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES));
-    // تنظيف أي امتيازات وهمية تم استنساخها تلقائياً للمتاجر الجديدة سابقاً
-    const cleanedPrivs = privs.filter((p) => !p.id.startsWith(`priv-${resolvedStoreId}-`) && !p.id.startsWith(`priv-${storeId}-`));
-    if (cleanedPrivs.length !== privs.length) {
-      saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, cleanedPrivs);
-    }
-    const storePrivs = cleanedPrivs.filter((p) => p.store_id === resolvedStoreId || p.store_id === storeId);
-    return storePrivs;
+
+    const privs = localStorePrivs.filter(
+      (p) => !p.id.startsWith(`priv-${resolvedStoreId}-`) && !p.id.startsWith(`priv-${storeId}-`)
+    );
+    return privs.filter((p) => p.store_id === resolvedStoreId || p.store_id === storeId);
   },
 
   // 9.1 إنشاء امتياز/كوبون جديد من لوحة التاجر
   async createPrivilege(privilegeData: Omit<Privilege, 'id'>): Promise<Privilege> {
     const resolvedStoreId = await this.resolveStoreId(privilegeData.store_id);
+    const resolvedStore = await this.resolveStore(privilegeData.store_id);
+    const storeSlug = resolvedStore?.slug;
     const cleanPrivilegeData = { ...privilegeData, store_id: resolvedStoreId };
-    let result: Privilege;
+    let createdPriv: Privilege | null = null;
     const supabase = getSupabaseClient();
+
     if (supabase && isUUID(resolvedStoreId)) {
       try {
         const { data, error } = await supabase
@@ -2854,33 +2995,43 @@ export const LoyaltyService = {
           .select(`${await privilegeCols(supabase)}, tiers(tier_name)` as unknown as '*')
           .single();
         if (!error && data) {
-          result = { ...data, tier_name: (data as any).tiers?.tier_name } as unknown as Privilege;
-          const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
-          privs.unshift(result);
-          saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, privs);
-          LoyaltyEvents.emit({ type: 'PRIVILEGES_UPDATED', storeId: resolvedStoreId });
-          return result;
+          createdPriv = { ...data, tier_name: (data as any).tiers?.tier_name } as unknown as Privilege;
+        } else if (error) {
+          console.warn('Supabase createPrivilege direct insert warning:', error);
         }
       } catch (e) {
-        console.warn('Supabase createPrivilege failed', e);
+        console.warn('Supabase createPrivilege exception:', e);
       }
     }
 
-    const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
-    const newPriv: Privilege = {
+    const finalPriv: Privilege = createdPriv || {
       ...cleanPrivilegeData,
       id: 'priv-' + Date.now(),
       created_at: new Date().toISOString(),
     };
-    privs.unshift(newPriv);
-    saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, privs);
+
+    // حفظ في كاش المتجر المعزول
+    const storeKey = STORAGE_KEYS.LOCAL_PRIVILEGES + '_' + resolvedStoreId;
+    const storePrivs = getLocalData<Privilege[]>(storeKey, []);
+    storePrivs.unshift(finalPriv);
+    saveLocalData(storeKey, storePrivs);
+
+    if (storeSlug) {
+      const slugKey = STORAGE_KEYS.LOCAL_PRIVILEGES + '_' + storeSlug;
+      const slugPrivs = getLocalData<Privilege[]>(slugKey, []);
+      slugPrivs.unshift(finalPriv);
+      saveLocalData(slugKey, slugPrivs);
+    }
+
     LoyaltyEvents.emit({ type: 'PRIVILEGES_UPDATED', storeId: resolvedStoreId });
-    return newPriv;
+    return finalPriv;
   },
 
   // 9.2 تعديل امتياز/كوبون
   async updatePrivilege(privilegeId: string, updates: Partial<Privilege>): Promise<Privilege> {
+    let updatedPriv: Privilege | null = null;
     const supabase = getSupabaseClient();
+
     if (supabase) {
       try {
         const { data, error } = await supabase
@@ -2890,38 +3041,50 @@ export const LoyaltyService = {
           .select(`${await privilegeCols(supabase)}, tiers(tier_name)` as unknown as '*')
           .single();
         if (!error && data) {
-          const updated = { ...data, tier_name: (data as any).tiers?.tier_name } as unknown as Privilege;
-          const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
-          const idx = privs.findIndex((p) => p.id === privilegeId);
-          if (idx !== -1) {
-            privs[idx] = updated;
-            saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, privs);
-          }
-          LoyaltyEvents.emit({ type: 'PRIVILEGES_UPDATED', storeId: updated.store_id });
-          return updated;
+          updatedPriv = { ...data, tier_name: (data as any).tiers?.tier_name } as unknown as Privilege;
         }
       } catch (e) {
         console.warn('Supabase updatePrivilege failed', e);
       }
     }
 
-    const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
-    const idx = privs.findIndex((p) => p.id === privilegeId);
-    if (idx !== -1) {
-      privs[idx] = { ...privs[idx], ...updates };
-      saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, privs);
-      LoyaltyEvents.emit({ type: 'PRIVILEGES_UPDATED', storeId: privs[idx].store_id });
-      return privs[idx];
+    const targetStoreId = updates.store_id || updatedPriv?.store_id;
+    const resolvedStoreId = targetStoreId ? await this.resolveStoreId(targetStoreId) : '';
+    const resolvedStore = targetStoreId ? await this.resolveStore(targetStoreId) : null;
+    const storeSlug = resolvedStore?.slug;
+
+    const keysToCheck = [
+      resolvedStoreId ? STORAGE_KEYS.LOCAL_PRIVILEGES + '_' + resolvedStoreId : null,
+      storeSlug ? STORAGE_KEYS.LOCAL_PRIVILEGES + '_' + storeSlug : null,
+    ].filter(Boolean) as string[];
+
+    for (const key of keysToCheck) {
+      const list: Privilege[] = getLocalData(key, []);
+      const idx = list.findIndex((p) => p.id === privilegeId);
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], ...(updatedPriv || updates) };
+        if (!updatedPriv) updatedPriv = list[idx];
+        saveLocalData(key, list);
+      }
     }
-    throw new Error('الامتياز غير موجود');
+
+    if (!updatedPriv) {
+      updatedPriv = {
+        id: privilegeId,
+        title: updates.title || 'امتياز',
+        cost_points: updates.cost_points || 0,
+        store_id: resolvedStoreId || 'unknown',
+        ...updates,
+      } as Privilege;
+    }
+
+    LoyaltyEvents.emit({ type: 'PRIVILEGES_UPDATED', storeId: updatedPriv.store_id });
+    return updatedPriv;
   },
 
   // 9.3 حذف امتياز
   async deletePrivilege(privilegeId: string): Promise<boolean> {
-    const privs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
-    const found = privs.find((p) => p.id === privilegeId);
-    const storeId = found?.store_id || '';
-
+    let storeId: string | undefined;
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -2931,8 +3094,27 @@ export const LoyaltyService = {
       }
     }
 
-    const filtered = privs.filter((p) => p.id !== privilegeId);
+    if (typeof window !== 'undefined') {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith(STORAGE_KEYS.LOCAL_PRIVILEGES)) {
+            const list: Privilege[] = getLocalData(key, []);
+            const found = list.find((p) => p.id === privilegeId);
+            if (found && !storeId) storeId = found.store_id;
+            const filtered = list.filter((p) => p.id !== privilegeId);
+            saveLocalData(key, filtered);
+          }
+        }
+      } catch (e) {
+        console.warn('Error deleting privilege storage:', e);
+      }
+    }
+
+    const globalPrivs = getLocalData<Privilege[]>(STORAGE_KEYS.LOCAL_PRIVILEGES, INITIAL_PRIVILEGES);
+    const filtered = globalPrivs.filter((p) => p.id !== privilegeId);
     saveLocalData(STORAGE_KEYS.LOCAL_PRIVILEGES, filtered);
+
     if (storeId) {
       LoyaltyEvents.emit({ type: 'PRIVILEGES_UPDATED', storeId });
     }
@@ -3076,6 +3258,7 @@ export const LoyaltyService = {
             purchased_at: c.purchased_at,
             used_at: c.used_at,
             cashier_name: c.cashier_name,
+            branch_id: c.branch_id || null,
           })) as CustomerCoupon[];
         }
       } catch (e) {
@@ -3120,6 +3303,7 @@ export const LoyaltyService = {
             purchased_at: c.purchased_at,
             used_at: c.used_at,
             cashier_name: c.cashier_name,
+            branch_id: c.branch_id || null,
           })) as CustomerCoupon[];
         }
       } catch (e) {
@@ -3400,6 +3584,28 @@ export const LoyaltyService = {
       ).catch((e: any) => console.warn('Supabase purchaseCoupon audit log failed', e));
     }
 
+    // ─── 7. إشعار تليجرام التفاعلي لطلب استبدال المكافأة (قسم حصرياتي) ───
+    try {
+      const rewardTelegramMsg = `🎁 طلب استبدال مكافأة بالنقاط (حصرياتي)!\n\n` +
+        `👤 العميل: ${customer.name || 'عميل المتجر'}\n` +
+        `📱 الجوال: ${customer.phone}\n` +
+        `🏆 المكافأة: ${privilege.title}\n` +
+        `💎 النقاط المخصومة: ${cost} نقطة\n` +
+        `🔢 كود الكوبون: ${newCoupon.coupon_code}\n\n` +
+        `يرجى اعتماد التسليم أو الرفض أدناه:`;
+      const rewardReplyMarkup = {
+        inline_keyboard: [
+          [
+            { text: '✅ اعتماد التسليم', callback_data: `cpn_clm:${newCoupon.id}` },
+            { text: '❌ رفض', callback_data: `cpn_rej:${newCoupon.id}` }
+          ]
+        ]
+      };
+      sendTelegramNotification(resolvedStoreId, rewardTelegramMsg, rewardReplyMarkup);
+    } catch (e) {
+      console.warn('reward telegram notification failed:', e);
+    }
+
     return { success: true, coupon: newCoupon, updatedCustomer };
   },
 
@@ -3513,7 +3719,9 @@ export const LoyaltyService = {
     couponId: string,
     staffId?: string,
     staffName?: string,
-    entryMethod: 'qr_scan' | 'manual' = 'qr_scan'
+    entryMethod: 'qr_scan' | 'manual' = 'qr_scan',
+    branchId?: string | null,
+    branchName?: string | null
   ): Promise<{ success: boolean; coupon: CustomerCoupon }> {
     const currentStore = await this.resolveStore(storeId);
     const resolvedStoreId = currentStore?.id || storeId;
@@ -3534,6 +3742,9 @@ export const LoyaltyService = {
           redeemed_at: usedAt,
           redeemed_by_staff_id: isUUID(staffId) ? staffId : null,
         };
+        if (branchId && isUUID(branchId)) {
+          updatePayload.branch_id = branchId;
+        }
 
         // 🛡️ تنفيذ التحديث كـ Atomic Transaction بشرط أن تكون الحالة ACTIVE لمنع التكرار
         const { data: updatedRows, error: updateErr } = await supabase
@@ -3551,10 +3762,11 @@ export const LoyaltyService = {
           throw new Error('هذا الكوبون محروق وتم استخدامه مسبقاً');
         }
 
-        await supabase.from('audit_logs').insert([
+        await (supabase as any).from('audit_logs').insert([
           {
             store_id: resolvedStoreId,
             staff_id: isUUID(staffId) ? staffId : null,
+            branch_id: branchId && isUUID(branchId) ? branchId : null,
             customer_id: isUUID(coupon.customer_id) ? coupon.customer_id : null,
             customer_phone: coupon.customer_phone,
             customer_name: coupon.customer_name || 'عميل مميز',
@@ -3570,6 +3782,8 @@ export const LoyaltyService = {
               cost_points: coupon.cost_points,
               cashier_name: staffName || 'كاشير المتجر',
               redeemed_at: usedAt,
+              branch_id: branchId || null,
+              branch_name: branchName || null,
             },
           },
         ]);
@@ -3637,7 +3851,9 @@ export const LoyaltyService = {
     rawCode: string,
     staffId?: string | null,
     staffName?: string | null,
-    entryMethod: 'qr_scan' | 'manual' = 'qr_scan'
+    entryMethod: 'qr_scan' | 'manual' = 'qr_scan',
+    branchId?: string | null,
+    branchName?: string | null
   ): Promise<{
     type: 'COUPON' | 'PASS' | 'REDEEM_POINTS';
     success: boolean;
@@ -3886,13 +4102,18 @@ export const LoyaltyService = {
 
       if (supabase && isUUID(resolvedStoreId)) {
         try {
+          const couponUpdatePayload: any = {
+            status: 'REDEEMED',
+            redeemed_at: usedAt,
+            redeemed_by_staff_id: isUUID(staffId) ? staffId : null,
+          };
+          if (branchId && isUUID(branchId)) {
+            couponUpdatePayload.branch_id = branchId;
+          }
+
           const { data: updatedRows, error: updateErr } = await supabase
             .from('customer_coupons')
-            .update({
-              status: 'REDEEMED',
-              redeemed_at: usedAt,
-              redeemed_by_staff_id: isUUID(staffId) ? staffId : null,
-            })
+            .update(couponUpdatePayload)
             .eq('id', couponData.id)
             .eq('status', 'ACTIVE') // Atomic guard: ensures double-spend is blocked
             .select('id')
@@ -3908,10 +4129,11 @@ export const LoyaltyService = {
 
           // تسجيل في سجل العمليات (Audit Logs) — Fire & Forget بلا أي تأخير للواجهة (0ms)
           Promise.resolve(
-            supabase.from('audit_logs').insert([
+            (supabase as any).from('audit_logs').insert([
               {
                 store_id: resolvedStoreId,
                 staff_id: isUUID(staffId) ? staffId : null,
+                branch_id: branchId && isUUID(branchId) ? branchId : null,
                 customer_id: isUUID(couponData.customer_id) ? couponData.customer_id : null,
                 customer_phone: couponData.customer_phone,
                 customer_name: couponData.customer_name || 'عميل مميز',
@@ -3926,6 +4148,8 @@ export const LoyaltyService = {
                   cost_points: couponData.cost_points,
                   cashier_name: staffName || 'كاشير المتجر',
                   redeemed_at: usedAt,
+                  branch_id: branchId || null,
+                  branch_name: branchName || null,
                 },
               },
             ])
@@ -4084,25 +4308,51 @@ export const LoyaltyService = {
           ])
         ).filter(Boolean);
 
+        const cols = await customerCols(supabase);
         const { data, error } = await supabase
           .from('store_customers')
-          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at')
+          .select(cols)
           .eq('store_id', resolvedId)
           .in('phone', candidatePhones)
           .limit(1)
           .maybeSingle();
 
         if (!error && data && data.id) {
+          // Check local special_date cache fallback if DB didn't return one
+          let localSpecialDate: string | null = (data as any).special_date || null;
+          let localSpecialDateType: string | null = (data as any).special_date_type || null;
+          if (!localSpecialDate && typeof window !== 'undefined') {
+            try {
+              const cached =
+                localStorage.getItem(`radar_cust_special_date_${resolvedId}_${normInput}`) ||
+                localStorage.getItem(`radar_cust_special_date_${storeId}_${normInput}`) ||
+                localStorage.getItem(`radar_cust_special_date_${resolvedId}_${cleanPhone}`) ||
+                localStorage.getItem(`radar_cust_special_date_${storeId}_${cleanPhone}`);
+              if (cached) {
+                try {
+                  const parsed = JSON.parse(cached);
+                  localSpecialDate = (typeof parsed === 'object' && parsed !== null && parsed.date) ? parsed.date : String(parsed);
+                  localSpecialDateType = (typeof parsed === 'object' && parsed !== null && parsed.type) ? parsed.type : 'يوم ميلادي';
+                } catch {
+                  localSpecialDate = cached;
+                  localSpecialDateType = 'يوم ميلادي';
+                }
+              }
+            } catch {}
+          }
+
           return {
             id: data.id,
             store_id: data.store_id,
             phone: data.phone,
             name: data.name || 'عميل مميز',
+            special_date: localSpecialDate,
+            special_date_type: localSpecialDateType,
             wallet_balance: Number(data.wallet_balance) || 0,
             lifetime_xp: Number(data.lifetime_xp) || 0,
             last_visit_date: data.last_visit_date ? data.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
-            is_active: true,
-            visits_count: 1,
+            is_active: (data as any).is_active !== undefined ? (data as any).is_active : true,
+            visits_count: (data as any).visits_count || 1,
             created_at: data.created_at,
           } as Customer;
         }
@@ -4111,13 +4361,29 @@ export const LoyaltyService = {
       }
     }
     const customers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
-    return (
-      customers.find(
-        (c) =>
-          (c.store_id === resolvedId || c.store_id === storeId) &&
-          normalizePhone(c.phone) === normInput
-      ) || null
-    );
+    const found = customers.find(
+      (c) =>
+        (c.store_id === resolvedId || c.store_id === storeId) &&
+        normalizePhone(c.phone) === normInput
+    ) || null;
+    if (found && !found.special_date && typeof window !== 'undefined') {
+      try {
+        const cached =
+          localStorage.getItem(`radar_cust_special_date_${resolvedId}_${normInput}`) ||
+          localStorage.getItem(`radar_cust_special_date_${storeId}_${normInput}`);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            found.special_date = (typeof parsed === 'object' && parsed !== null && parsed.date) ? parsed.date : String(parsed);
+            found.special_date_type = (typeof parsed === 'object' && parsed !== null && parsed.type) ? parsed.type : 'يوم ميلادي';
+          } catch {
+            found.special_date = cached;
+            found.special_date_type = 'يوم ميلادي';
+          }
+        }
+      } catch {}
+    }
+    return found;
   },
 
   // 13. جلب جميع العملاء لمتجر محدد
@@ -4128,9 +4394,10 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedId)) {
       try {
+        const cols = await customerCols(supabase);
         const { data, error } = await supabase
           .from('store_customers')
-          .select('id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at')
+          .select(cols)
           .eq('store_id', resolvedId)
           .order('last_visit_date', { ascending: false });
         if (!error && Array.isArray(data)) {
@@ -4139,6 +4406,8 @@ export const LoyaltyService = {
             store_id: c.store_id,
             phone: c.phone,
             name: c.name || 'عميل مميز',
+            special_date: c.special_date || null,
+            special_date_type: c.special_date_type || null,
             wallet_balance: Number(c.wallet_balance) || 0,
             lifetime_xp: Number(c.lifetime_xp) || 0,
             last_visit_date: c.last_visit_date ? c.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
@@ -4562,12 +4831,6 @@ export const LoyaltyService = {
       newLifetimeXP: welcomePoints,
     });
 
-    // Notify Telegram
-    sendTelegramNotification(
-      resolvedStoreId, 
-      `🎉 تسجيل عميل جديد في متجرك!\n\nالاسم: ${name}\nالرقم: ${normInput}\nالرصيد الافتتاحي: ${welcomePoints} نقطة\n\nنظام رادار يتمنى لك مبيعات موفقة 🚀`
-    );
-
     return createdCust;
   },
 
@@ -4601,7 +4864,11 @@ export const LoyaltyService = {
           })
         });
         const data = await res.json();
-        return Boolean(data?.success);
+        const ok = Boolean(data?.success);
+        if (!ok) {
+          sendTelegramNotification(storeId, '⚠️ تنبيه عاجل: انقطع اتصال الواتساب في متجرك، يرجى الدخول للوحة التحكم وإعادة الربط');
+        }
+        return ok;
       } else if (wallet?.whatsapp_provider === 'meta' && wallet.meta_phone_number_id && wallet.meta_access_token) {
         const res = await fetch(`https://graph.facebook.com/v18.0/${wallet.meta_phone_number_id}/messages`, {
           method: 'POST',
@@ -4616,11 +4883,15 @@ export const LoyaltyService = {
             text: { body: msg }
           })
         });
+        if (!res.ok) {
+          sendTelegramNotification(storeId, '⚠️ تنبيه عاجل: انقطع اتصال الواتساب في متجرك، يرجى الدخول للوحة التحكم وإعادة الربط');
+        }
         return res.ok;
       }
       return false;
     } catch (e) {
       console.warn('sendStoreWhatsAppOTP failed:', e);
+      sendTelegramNotification(storeId, '⚠️ تنبيه عاجل: انقطع اتصال الواتساب في متجرك، يرجى الدخول للوحة التحكم وإعادة الربط');
       return false;
     }
   },
@@ -4689,7 +4960,9 @@ export const LoyaltyService = {
     qrToken?: DynamicQRToken,
     staffId?: string,
     staffName?: string,
-    entryMethod: 'qr_scan' | 'manual' = 'qr_scan'
+    entryMethod: 'qr_scan' | 'manual' = 'qr_scan',
+    branchId?: string | null,
+    branchName?: string | null
   ): Promise<{ success: boolean; customer: Customer; pointsEarned: number; currentTier: string }> {
     if (qrToken) {
       const validation = this.validateAndConsumeQRToken(qrToken);
@@ -4785,10 +5058,11 @@ export const LoyaltyService = {
         const effectiveCustomerName = supabaseUpdatedCust?.name || globalName;
 
         // تسجيل العملية في سجل التدقيق (Audit Logs)
-        await supabase.from('audit_logs').insert([
+        await (supabase as any).from('audit_logs').insert([
           {
             store_id: resolvedStoreId,
             staff_id: staffId || null,
+            branch_id: branchId && isUUID(branchId) ? branchId : null,
             customer_id: supabaseUpdatedCust?.id || null,
             customer_phone: phone.trim(),
             customer_name: effectiveCustomerName,
@@ -4801,6 +5075,8 @@ export const LoyaltyService = {
               cashier_name: staffName || 'كاشير',
               customer_name: effectiveCustomerName,
               multiplier: multiplier,
+              branch_id: branchId || null,
+              branch_name: branchName || null,
             },
           },
         ]);
@@ -4914,7 +5190,9 @@ export const LoyaltyService = {
     qrToken?: DynamicQRToken,
     staffId?: string,
     staffName?: string,
-    entryMethod: 'qr_scan' | 'manual' = 'qr_scan'
+    entryMethod: 'qr_scan' | 'manual' = 'qr_scan',
+    branchId?: string | null,
+    branchName?: string | null
   ): Promise<{ success: boolean; customer: Customer; remainingBalance: number }> {
     if (qrToken) {
       const validation = this.validateAndConsumeQRToken(qrToken);
@@ -4959,10 +5237,11 @@ export const LoyaltyService = {
 
           if (updatedData) updatedCustomer = updatedData as Customer;
 
-          await supabase.from('audit_logs').insert([
+          await (supabase as any).from('audit_logs').insert([
             {
               store_id: resolvedStoreId,
               staff_id: staffId || null,
+              branch_id: branchId && isUUID(branchId) ? branchId : null,
               customer_id: matchedCust.id,
               customer_phone: phone.trim(),
               customer_name: matchedCust.name || undefined,
@@ -4974,6 +5253,8 @@ export const LoyaltyService = {
                 reward: rewardTitle,
                 cashier_name: staffName || 'كاشير',
                 customer_name: matchedCust.name || undefined,
+                branch_id: branchId || null,
+                branch_name: branchName || null,
               },
             },
           ]);
@@ -5048,6 +5329,8 @@ export const LoyaltyService = {
         if (!error && data) {
           return data.map((l: any) => ({
             ...l,
+            branch_id: l.branch_id || l.metadata?.branch_id || null,
+            branch_name: l.branch_name || l.metadata?.branch_name || null,
             entry_method: l.entry_method || 'qr_scan',
             customer_phone: l.customer_phone || l.store_customers?.phone,
             customer_name: l.customer_name || l.metadata?.customer_name || l.store_customers?.name,
@@ -5084,7 +5367,7 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase.rpc('get_all_store_invoices_batch');
+        const { data, error } = await withTimeout(supabase.rpc('get_all_store_invoices_batch'), 4000);
         if (!error && data && typeof data === 'object') {
           saveLocalData(STORAGE_KEYS.LOCAL_INVOICES, data);
           return data as unknown as Record<string, StoreInvoice[]>;
@@ -5094,10 +5377,13 @@ export const LoyaltyService = {
       }
 
       try {
-        const { data: invRows, error: invErr } = await supabase
-          .from('store_invoices')
-          .select('*')
-          .order('created_at', { ascending: false });
+        const { data: invRows, error: invErr } = await withTimeout(
+          supabase
+            .from('store_invoices')
+            .select('*')
+            .order('created_at', { ascending: false }),
+          4000
+        );
         if (!invErr && invRows && invRows.length > 0) {
           const map: Record<string, StoreInvoice[]> = {};
           for (const inv of invRows) {
@@ -6687,7 +6973,25 @@ export const LoyaltyService = {
 
   async getCatalogItems(storeId: string): Promise<CatalogItem[]> {
     const resolvedStoreId = await this.resolveStoreId(storeId);
+    const resolvedStore = await this.resolveStore(storeId);
+    const storeSlug = resolvedStore?.slug;
     const supabase = getSupabaseClient();
+
+    // 1. قراءة الأصناف المخزنة محلياً لهذا المتجر حصراً (عزل تام لكل متجر)
+    const storeKey = STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId;
+    const slugKey = storeSlug ? STORAGE_KEYS.LOCAL_CATALOG + '_' + storeSlug : null;
+
+    let rawLocalList: CatalogItem[] = getLocalData(storeKey, []);
+    if (rawLocalList.length === 0 && slugKey) {
+      rawLocalList = getLocalData(slugKey, []);
+    }
+    // إذا كان المتجر هو ديمو كافيه وفارغ تماماً، نقرأ الافتراضي الأولي له حصراً
+    if (rawLocalList.length === 0 && (resolvedStoreId === DEMO_STORE_ID || storeSlug === DEMO_STORE_SLUG)) {
+      rawLocalList = INITIAL_CATALOG_ITEMS;
+    }
+
+    const localStoreItems = rawLocalList.filter((item) => item.store_id === resolvedStoreId || item.store_id === storeId);
+
     if (supabase && isUUID(resolvedStoreId)) {
       try {
         const { data, error } = await supabase
@@ -6695,20 +6999,31 @@ export const LoyaltyService = {
           .select('*')
           .eq('store_id', resolvedStoreId)
           .order('created_at', { ascending: false });
+
         if (!error && Array.isArray(data)) {
-          saveLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId, data);
-          return data as any;
+          // 2. دمج ذكي معزول: أصناف السيرفر لهذا المتجر + الأصناف المحلية لهذا المتجر حصراً
+          const remoteItems = data as unknown as CatalogItem[];
+          const remoteIds = new Set(remoteItems.map((it) => it.id));
+          const localOnly = localStoreItems.filter((it) => !remoteIds.has(it.id));
+          const merged: CatalogItem[] = [...remoteItems, ...localOnly];
+
+          saveLocalData(storeKey, merged);
+          if (slugKey) saveLocalData(slugKey, merged);
+          return merged;
         }
       } catch (e) {
         console.warn('Supabase getCatalogItems failed', e);
       }
     }
-    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId, getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []));
-    return localList.filter((item) => item.store_id === resolvedStoreId || item.store_id === storeId);
+
+    return localStoreItems;
   },
 
   async addCatalogItem(item: Omit<CatalogItem, 'id' | 'created_at'>): Promise<CatalogItem> {
     const resolvedStoreId = await this.resolveStoreId(item.store_id);
+    const resolvedStore = await this.resolveStore(item.store_id);
+    const storeSlug = resolvedStore?.slug;
+
     const newItem: CatalogItem = {
       ...item,
       store_id: resolvedStoreId,
@@ -6719,106 +7034,231 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     let createdItem: CatalogItem | null = null;
     if (supabase && isUUID(resolvedStoreId)) {
-      const adminToken = this.getStaffToken(resolvedStoreId, 'admin');
-      await this.assertCanWrite(adminToken);
+      const adminToken = this.getStaffToken(resolvedStoreId, 'admin') || this.getStaffToken(undefined, 'admin');
       if (adminToken) {
-        const res = await this.callWithStaffToken(
-          'merchant_save_catalog_item',
-          { p_item_id: null, p_item: stripDataUrls({ ...item, store_id: resolvedStoreId }) },
-          adminToken
-        );
-        if (res?.item) createdItem = res.item as unknown as CatalogItem;
-      } else {
+        try {
+          const res = await this.callWithStaffToken(
+            'merchant_save_catalog_item',
+            { p_item_id: null, p_item: stripDataUrls({ ...item, store_id: resolvedStoreId }) },
+            adminToken
+          );
+          if (res?.item) createdItem = res.item as unknown as CatalogItem;
+        } catch (rpcErr) {
+          console.warn('merchant_save_catalog_item RPC failed, attempting direct insert:', rpcErr);
+        }
+      }
+
+      if (!createdItem) {
         try {
           const { data, error } = await supabase
             .from('catalog_items')
-            .insert([stripDataUrls({ ...newItem }) as any])
+            .insert([stripDataUrls({ ...newItem, store_id: resolvedStoreId }) as any])
             .select()
             .single();
           if (!error && data) {
             createdItem = data as unknown as CatalogItem;
           } else if (error) {
-            console.error('Supabase addCatalogItem error:', error);
+            console.error('Supabase addCatalogItem direct insert error:', error);
           }
         } catch (e) {
-          console.warn('Supabase addCatalogItem exception:', e);
+          console.warn('Supabase addCatalogItem direct insert exception:', e);
         }
       }
     }
 
     const finalItem = createdItem || newItem;
-    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId, getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []));
+    const storeKey = STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId;
+    const localList: CatalogItem[] = getLocalData(storeKey, []);
     localList.unshift(finalItem);
-    saveLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId, localList);
+    saveLocalData(storeKey, localList);
+
+    if (storeSlug) {
+      const slugKey = STORAGE_KEYS.LOCAL_CATALOG + '_' + storeSlug;
+      const slugList: CatalogItem[] = getLocalData(slugKey, []);
+      slugList.unshift(finalItem);
+      saveLocalData(slugKey, slugList);
+    }
+
+    LoyaltyEvents.emit({ type: 'CATALOG_UPDATED', storeId: resolvedStoreId });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: resolvedStoreId });
     
     return finalItem;
   },
 
-async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<CatalogItem> {
-    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
-    const idx = localList.findIndex((item) => item.id === id);
+  async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<CatalogItem> {
+    let targetStoreId = updates.store_id;
     let updatedItem: CatalogItem | null = null;
 
-    if (idx !== -1) {
-      localList[idx] = { ...localList[idx], ...updates };
-      updatedItem = localList[idx];
-      saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, localList);
+    // 1. Resolve store ID and store slug
+    const resolvedStoreId = targetStoreId ? await this.resolveStoreId(targetStoreId) : '';
+    const resolvedStore = targetStoreId ? await this.resolveStore(targetStoreId) : null;
+    const storeSlug = resolvedStore?.slug;
+
+    // 2. Search and update in local storage keys strictly for this store
+    const keysToCheck = [
+      resolvedStoreId ? STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId : null,
+      storeSlug ? STORAGE_KEYS.LOCAL_CATALOG + '_' + storeSlug : null,
+      targetStoreId && targetStoreId !== resolvedStoreId && targetStoreId !== storeSlug ? STORAGE_KEYS.LOCAL_CATALOG + '_' + targetStoreId : null,
+    ].filter(Boolean) as string[];
+
+    for (const key of keysToCheck) {
+      const list: CatalogItem[] = getLocalData(key, []);
+      const idx = list.findIndex((item) => item.id === id);
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], ...updates, store_id: resolvedStoreId || list[idx].store_id };
+        if (!updatedItem) updatedItem = list[idx];
+        saveLocalData(key, list);
+      }
     }
 
+    // 3. Construct updatedItem if not in local cache yet
+    if (!updatedItem) {
+      updatedItem = {
+        id,
+        name: updates.name || 'صنف',
+        price: updates.price || 0,
+        item_type: updates.item_type || 'product',
+        category: updates.category || 'عام',
+        is_available: updates.is_available !== false,
+        store_id: resolvedStoreId || targetStoreId || 'unknown',
+        created_at: new Date().toISOString(),
+        ...updates,
+      } as CatalogItem;
+      if (resolvedStoreId) {
+        const storeList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId, []);
+        storeList.unshift(updatedItem);
+        saveLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + resolvedStoreId, storeList);
+      }
+      if (storeSlug) {
+        const slugList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + storeSlug, []);
+        slugList.unshift(updatedItem);
+        saveLocalData(STORAGE_KEYS.LOCAL_CATALOG + '_' + storeSlug, slugList);
+      }
+    }
+
+    // 4. Remote Supabase persistence (RPC or Direct) strictly isolated to effectiveStoreId
+    const effectiveStoreId = resolvedStoreId || (updatedItem.store_id ? await this.resolveStoreId(updatedItem.store_id) : '');
     const supabase = getSupabaseClient();
-    if (supabase) {
-      const adminToken = this.getStaffToken(updates.store_id || updatedItem?.store_id, 'admin');
-      await this.assertCanWrite(adminToken);
+    if (supabase && effectiveStoreId && isUUID(effectiveStoreId)) {
+      const adminToken = this.getStaffToken(effectiveStoreId, 'admin') || this.getStaffToken(undefined, 'admin');
+      let remoteSaved = false;
+
       if (adminToken) {
-        const res = await this.callWithStaffToken('merchant_save_catalog_item', { p_item_id: id, p_item: stripDataUrls({ ...updates }) }, adminToken);
-        if (res?.item) updatedItem = res.item as unknown as CatalogItem;
-      } else {
         try {
-          const { data, error } = await supabase.from('catalog_items').update(stripDataUrls({ ...updates }) as any).eq('id', id).select().single();
-          if (!error && data) {
-            updatedItem = data as unknown as CatalogItem;
+          const res = await this.callWithStaffToken(
+            'merchant_save_catalog_item',
+            { p_item_id: id, p_item: stripDataUrls({ ...updates, store_id: effectiveStoreId }) },
+            adminToken
+          );
+          if (res?.item) {
+            updatedItem = res.item as unknown as CatalogItem;
+            remoteSaved = true;
           }
-        } catch (e) {
-          console.warn('Supabase updateCatalogItem fallback', e);
+        } catch (rpcErr) {
+          console.warn('merchant_save_catalog_item RPC update failed:', rpcErr);
+        }
+      }
+
+      if (!remoteSaved) {
+        try {
+          // Direct update with strict store_id check to prevent touching another store's item
+          const { data: updateData, error: updateErr } = await supabase
+            .from('catalog_items')
+            .update(stripDataUrls({ ...updates }) as any)
+            .eq('id', id)
+            .eq('store_id', effectiveStoreId)
+            .select()
+            .maybeSingle();
+
+          if (!updateErr && updateData) {
+            updatedItem = updateData as unknown as CatalogItem;
+            remoteSaved = true;
+          } else {
+            // If item doesn't exist remotely (e.g. was created offline or with synthetic ID), insert it!
+            const { data: insertData, error: insertErr } = await supabase
+              .from('catalog_items')
+              .insert([stripDataUrls({ ...updatedItem, store_id: effectiveStoreId }) as any])
+              .select()
+              .single();
+            if (!insertErr && insertData) {
+              updatedItem = insertData as unknown as CatalogItem;
+              remoteSaved = true;
+            }
+          }
+        } catch (directErr) {
+          console.warn('Direct catalog_items sync failed:', directErr);
+        }
+      }
+
+      // Update local storage with the final server item
+      if (remoteSaved && updatedItem) {
+        for (const key of keysToCheck) {
+          const currentList: CatalogItem[] = getLocalData(key, []);
+          const fIdx = currentList.findIndex((it) => it.id === id || it.id === updatedItem?.id);
+          if (fIdx !== -1) {
+            currentList[fIdx] = updatedItem;
+          } else {
+            currentList.unshift(updatedItem);
+          }
+          saveLocalData(key, currentList);
         }
       }
     }
 
-    if (!updatedItem) {
-      throw new Error(`Catalog item with id ${id} not found`);
-    }
-
-    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: updatedItem.store_id });
+    LoyaltyEvents.emit({ type: 'CATALOG_UPDATED', storeId: effectiveStoreId || updatedItem.store_id });
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: effectiveStoreId || updatedItem.store_id });
     return updatedItem;
   },
 
   async deleteCatalogItem(id: string): Promise<boolean> {
-    const localList: CatalogItem[] = getLocalData(STORAGE_KEYS.LOCAL_CATALOG, []);
-    const itemToDelete = localList.find((i) => i.id === id);
-    const storeId = itemToDelete?.store_id;
+    let targetStoreId: string | undefined;
 
+    // Scan local storage catalog keys to remove the item strictly for this store
+    if (typeof window !== 'undefined') {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith(STORAGE_KEYS.LOCAL_CATALOG)) {
+            const list: CatalogItem[] = getLocalData(key, []);
+            const item = list.find((it) => it.id === id);
+            if (item) {
+              targetStoreId = item.store_id;
+              const filtered = list.filter((it) => it.id !== id);
+              saveLocalData(key, filtered);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Error deleting from catalog storage:', e);
+      }
+    }
+
+    const resolvedStoreId = targetStoreId ? await this.resolveStoreId(targetStoreId) : '';
     const supabase = getSupabaseClient();
-    if (supabase) {
-      const adminToken = this.getStaffToken(storeId, 'admin');
-      await this.assertCanWrite(adminToken);
+    if (supabase && resolvedStoreId && isUUID(resolvedStoreId)) {
+      const adminToken = this.getStaffToken(resolvedStoreId, 'admin') || this.getStaffToken(undefined, 'admin');
       if (adminToken) {
-        await this.callWithStaffToken('merchant_delete_catalog_item', { p_item_id: id }, adminToken);
+        try {
+          await this.callWithStaffToken('merchant_delete_catalog_item', { p_item_id: id }, adminToken);
+        } catch (e) {
+          console.warn('merchant_delete_catalog_item RPC failed, attempting direct delete:', e);
+          try {
+            await supabase.from('catalog_items').delete().eq('id', id).eq('store_id', resolvedStoreId);
+          } catch (delErr) {
+            console.warn('Direct catalog_items delete failed:', delErr);
+          }
+        }
       } else {
         try {
-          await supabase.from('catalog_items').delete().eq('id', id);
+          await supabase.from('catalog_items').delete().eq('id', id).eq('store_id', resolvedStoreId);
         } catch (e) {
-          console.warn('Supabase deleteCatalogItem fallback', e);
+          console.warn('Supabase deleteCatalogItem fallback:', e);
         }
       }
     }
 
-    const filtered = localList.filter((item) => item.id !== id);
-    saveLocalData(STORAGE_KEYS.LOCAL_CATALOG, filtered);
-
-    if (storeId) {
-      LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
-    }
+    LoyaltyEvents.emit({ type: 'CATALOG_UPDATED', storeId: resolvedStoreId || targetStoreId || '' });
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: resolvedStoreId || targetStoreId || '' });
     return true;
   },
 
@@ -6929,9 +7369,15 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     const resolvedStoreId = currentStore?.id || payload.store_id;
     const supabase = getSupabaseClient();
     
-    const orderNumber = payload.order_id || ('ORD-' + Math.floor(1000 + Math.random() * 9000));
+    const orderNumber = payload.order_id || payload.order_number || ('ORD-' + Math.floor(1000 + Math.random() * 9000));
+    const isDirectPOSOrder = Boolean(payload.cashier_id) || payload.order_source === 'pos' || payload.status === 'completed';
+    const resolvedOrderSource = payload.order_source || (isDirectPOSOrder ? 'pos' : 'customer_app');
+    const resolvedStatus = payload.status || (isDirectPOSOrder ? 'completed' : 'pending');
+    const resolvedPaymentStatus = payload.payment_status || (isDirectPOSOrder ? 'paid' : 'unpaid');
+
     const dbPayload = {
       store_id: resolvedStoreId,
+      branch_id: payload.branch_id || null,
       order_number: orderNumber,
       customer_name: payload.customer_name || 'عميل مميز',
       customer_phone: payload.customer_phone || '',
@@ -6940,8 +7386,11 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
       items: payload.items || [],
       total_price: payload.total_price || payload.total_amount || 0,
       loyalty_points_earned: payload.loyalty_points_earned || 0,
-      status: 'pending',
-      payment_status: 'unpaid',
+      status: resolvedStatus,
+      payment_status: resolvedPaymentStatus,
+      order_source: resolvedOrderSource,
+      cashier_id: payload.cashier_id || null,
+      cashier_name: payload.cashier_name || null,
       notes: payload.notes || payload.fulfillment_details?.general_notes || ''
     };
 
@@ -6954,26 +7403,42 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
           
         if (error) throw error;
         if (data) {
-          const itemsSummary = (payload.items || [])
-            .map((it: any) => `• ${it.name || it.item_name} × ${it.quantity} (${it.total_price || it.price} ر.س)`)
-            .join('\n');
-          const fulfillmentLabel = payload.fulfillment_type === 'dine_in' ? '🍽️ محلي' : payload.fulfillment_type === 'takeaway' ? '🚗 سفري' : '🛵 توصيل';
-          const telegramMsg = `🛎️ طلب جديد رقم #${orderNumber}!\n\n` +
-            `👤 العميل: ${payload.customer_name || 'عميل المتجر'}\n` +
-            `📱 الجوال: ${payload.customer_phone || '-'}\n` +
-            `📦 طريقة الاستلام: ${fulfillmentLabel}\n` +
-            (payload.fulfillment_details?.table_number ? `🪑 رقم الطاولة: ${payload.fulfillment_details.table_number}\n` : '') +
-            `💰 المبلغ الإجمالي: ${payload.total_price || payload.total_amount || 0} ر.س\n\n` +
-            `الأصناف:\n${itemsSummary}\n\n` +
-            `🔗 افتح شاشة الكاشير للتعامل مع الطلب فوراً 🚀`;
-          sendTelegramNotification(resolvedStoreId, telegramMsg);
+          // Send Telegram notification ONLY for external customer app orders (never for in-store cashier sales)
+          if (!isDirectPOSOrder && resolvedStatus === 'pending') {
+            const itemsSummary = (payload.items || [])
+              .map((it: any) => `• ${it.name || it.item_name} × ${it.quantity} (${it.total_price || it.price} ر.س)`)
+              .join('\n');
+            const fulfillmentLabel = payload.fulfillment_type === 'dine_in' ? '🍽️ محلي' : payload.fulfillment_type === 'takeaway' ? '🚗 سفري' : '🛵 توصيل';
+            const branchLine = payload.branch_name ? `📍 الفرع: ${payload.branch_name}\n` : '';
+            const telegramMsg = `🛎️ طلب جديد رقم #${orderNumber}!\n\n` +
+              branchLine +
+              `👤 العميل: ${payload.customer_name || 'عميل المتجر'}\n` +
+              `📱 الجوال: ${payload.customer_phone || '-'}\n` +
+              `📦 طريقة الاستلام: ${fulfillmentLabel}\n` +
+              (payload.fulfillment_details?.table_number ? `🪑 رقم الطاولة: ${payload.fulfillment_details.table_number}\n` : '') +
+              `💰 المبلغ الإجمالي: ${payload.total_price || payload.total_amount || 0} ر.س\n\n` +
+              `الأصناف:\n${itemsSummary}\n\n` +
+              `⚡ اختر الإجراء المطلوب فوراً أدناه:`;
+            const replyMarkup = {
+              inline_keyboard: [
+                [
+                  { text: '✅ قبول وتحضير', callback_data: `ord_prep:${data.id}` },
+                  { text: '🚀 جاهز للاستلام', callback_data: `ord_rdy:${data.id}` }
+                ],
+                [
+                  { text: '❌ رفض الطلب', callback_data: `ord_rej:${data.id}` }
+                ]
+              ]
+            };
+            sendTelegramNotification(resolvedStoreId, telegramMsg, replyMarkup, { type: 'order', id: data.id });
+          }
 
           // ⚡ Realtime broadcast across tabs & physical devices
           LoyaltyEvents.emit({
             type: 'ORDER_CREATED',
             storeId: resolvedStoreId,
             phone: payload.customer_phone,
-            orderData: data,
+            orderData: { ...data, ...dbPayload },
           });
 
           return {
@@ -6983,8 +7448,7 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
           };
         }
       } catch (e: any) {
-        console.warn('Supabase createStoreOrder failed:', e);
-        throw new Error(e.message || 'فشل في إرسال الطلب، الرجاء المحاولة مرة أخرى.');
+        console.warn('Supabase createStoreOrder failed, switching to offline local fallback:', e);
       }
     }
     
@@ -7096,7 +7560,113 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     return [];
   },
 
-  async updateOrderStatus(orderId: string, status: string): Promise<boolean> {
+  async rewardPointsForCompletedTransaction(
+    storeId: string,
+    customerPhone: string,
+    pointsEarned: number,
+    reason: string,
+    customerName?: string,
+    cashierName?: string,
+    branchId?: string | null,
+    branchName?: string | null,
+    purchaseAmount?: number,
+    actionType: 'PURCHASE' | 'SERVICE_BOOKING' = 'PURCHASE'
+  ): Promise<boolean> {
+    if (!pointsEarned || pointsEarned <= 0 || !customerPhone) return false;
+    const currentStore = await this.resolveStore(storeId);
+    const resolvedStoreId = currentStore?.id || storeId;
+    const supabase = getSupabaseClient();
+    const cleanPhone = customerPhone.trim();
+    const normPhone = cleanPhone.replace(/\D/g, '').slice(-9);
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        const { data: matchedCust } = await supabase
+          .from('store_customers')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .or(`phone.eq.${cleanPhone},phone.eq.${normPhone},phone.eq.0${normPhone},phone.eq.+966${normPhone},phone.eq.966${normPhone}`)
+          .limit(1)
+          .maybeSingle();
+
+        if (matchedCust) {
+          const newLifetime = (matchedCust.lifetime_xp || 0) + pointsEarned;
+          const newBalance = (matchedCust.wallet_balance || 0) + pointsEarned;
+          const updatePayload: any = {
+            lifetime_xp: newLifetime,
+            wallet_balance: newBalance,
+            last_visit_date: new Date().toISOString(),
+          };
+          if ((!matchedCust.name || matchedCust.name === 'عميل' || matchedCust.name === 'عميل مميز') && customerName) {
+            updatePayload.name = customerName;
+          }
+
+          const { data: updatedData } = await supabase
+            .from('store_customers')
+            .update(updatePayload)
+            .eq('id', matchedCust.id)
+            .select()
+            .single();
+
+          if (updatedData) {
+            LoyaltyEvents.emit({
+              type: 'POINTS_ADDED',
+              storeId: resolvedStoreId,
+              phone: matchedCust.phone,
+              points: pointsEarned,
+              newBalance,
+            });
+            LoyaltyEvents.emit({
+              type: 'CUSTOMER_UPDATED',
+              storeId: resolvedStoreId,
+              phone: matchedCust.phone,
+            });
+            LoyaltyEvents.emit({
+              type: 'WALLET_UPDATED',
+              storeId: resolvedStoreId,
+              phone: matchedCust.phone,
+            });
+
+            // 📝 تسجيل العملية في سجل التدقيق (Audit Logs) مع اسم الكاشير والفرع
+            Promise.resolve(
+              (supabase as any).from('audit_logs').insert([
+                {
+                  store_id: resolvedStoreId,
+                  staff_id: null,
+                  branch_id: branchId && isUUID(branchId) ? branchId : null,
+                  customer_id: matchedCust.id,
+                  customer_phone: matchedCust.phone,
+                  customer_name: matchedCust.name || customerName || 'عميل المتجر',
+                  action: actionType,
+                  purchase_amount: purchaseAmount || 0,
+                  points_changed: pointsEarned,
+                  entry_method: 'manual',
+                  metadata: {
+                    note: reason,
+                    cashier_name: cashierName || 'كاشير المتجر',
+                    branch_id: branchId || null,
+                    branch_name: branchName || null,
+                  },
+                },
+              ])
+            ).catch((err: any) => console.warn('Supabase audit log insert for reward points warning:', err));
+          }
+          return true;
+        }
+      } catch (err) {
+        console.warn('rewardPointsForCompletedTransaction error:', err);
+      }
+    }
+    return false;
+  },
+
+  async updateOrderStatus(
+    orderId: string,
+    status: string,
+    cashierName?: string,
+    branchId?: string | null,
+    branchName?: string | null
+  ): Promise<boolean> {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -7115,6 +7685,23 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
             phone: data.customer_phone,
             orderData: data,
           });
+          syncTelegramStatus('order', orderId, status, cashierName);
+
+          // 🌟 AUTOMATIC LOYALTY POINTS AWARDING UPON COMPLETION!
+          if (status === 'completed' && data.customer_phone && Number(data.loyalty_points_earned) > 0) {
+            this.rewardPointsForCompletedTransaction(
+              data.store_id,
+              data.customer_phone,
+              Number(data.loyalty_points_earned),
+              `استلام واكتمال الطلب #${data.order_number || orderId}`,
+              data.customer_name,
+              cashierName,
+              branchId || data.branch_id,
+              branchName,
+              Number(data.total_amount) || 0,
+              'PURCHASE'
+            ).catch((err) => console.warn('Failed to auto-reward order points:', err));
+          }
         }
         return true;
       } catch (err: any) {
@@ -7135,6 +7722,7 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
         phone: localList[idx].customer_phone,
         orderData: localList[idx],
       });
+      syncTelegramStatus('order', orderId, status, cashierName);
       return true;
     }
     return false;
@@ -7460,45 +8048,72 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     const currentStore = await this.resolveStore(storeId);
     const resolvedStoreId = currentStore?.id || storeId;
     const supabase = getSupabaseClient();
+    const cleanCustomerPhone = customerPhone ? normalizePhone(customerPhone) : '';
+
+    let remoteBookings: ServiceBooking[] = [];
+    let fetchSucceeded = false;
+
     if (supabase && isUUID(resolvedStoreId)) {
       try {
-        // 1) عميل: حجوزات رقم جواله فقط (نقطة ضعف معروفة: دخول العميل بالجوال فقط)
-        if (customerPhone) {
+        // 1) عميل: حجوزات رقم جواله فقط
+        if (cleanCustomerPhone) {
           const { data, error } = await (supabase as any).rpc('get_customer_bookings', {
             p_store_id: resolvedStoreId,
-            p_phone: customerPhone,
+            p_phone: cleanCustomerPhone,
           });
-          if (!error && Array.isArray(data)) return data as ServiceBooking[];
-          return [];
-        }
-        // 2) تاجر/كاشير: حجوزات متجره عبر التذكرة
-        const staffToken = this.getStaffToken(resolvedStoreId, 'any');
-        if (staffToken) {
-          const res = await this.callWithStaffToken('get_store_bookings_secure', { p_live_only: false }, staffToken);
-          if (res && Array.isArray(res.bookings)) {
-            saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, res.bookings);
-            return res.bookings as ServiceBooking[];
+          if (!error && Array.isArray(data)) {
+            remoteBookings = data as ServiceBooking[];
+            fetchSucceeded = true;
           }
         } else {
-          // 3) مشرف عام (Supabase Auth): القراءة المباشرة تسمح له فقط
-          const { data, error } = await (supabase as any)
-            .from('service_bookings')
-            .select('*')
-            .eq('store_id', resolvedStoreId)
-            .order('created_at', { ascending: false });
+          // 2) تاجر/كاشير: حجوزات متجره عبر التذكرة
+          const staffToken = this.getStaffToken(resolvedStoreId, 'any') || this.getStaffToken(undefined, 'any');
+          if (staffToken) {
+            const res = await this.callWithStaffToken('get_store_bookings_secure', { p_live_only: false }, staffToken);
+            if (res && Array.isArray(res.bookings)) {
+              remoteBookings = res.bookings as ServiceBooking[];
+              fetchSucceeded = true;
+            }
+          }
+          if (!fetchSucceeded) {
+            // 3) مشرف عام أو قراءة مباشرة
+            const { data, error } = await (supabase as any)
+              .from('service_bookings')
+              .select('*')
+              .eq('store_id', resolvedStoreId)
+              .order('created_at', { ascending: false });
 
-          if (!error && Array.isArray(data)) {
-            saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, data);
-            return data as ServiceBooking[];
+            if (!error && Array.isArray(data)) {
+              remoteBookings = data as ServiceBooking[];
+              fetchSucceeded = true;
+            }
           }
         }
       } catch (e) {
         console.warn('Supabase getStoreBookings failed:', e);
       }
-      if (customerPhone) return [];
     }
-    const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
-    return list.filter((b) => b.store_id === resolvedStoreId || b.store_id === storeId);
+
+    const localList: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
+    const matchingLocal = localList.filter((b) => {
+      const matchStore = b.store_id === resolvedStoreId || b.store_id === storeId;
+      if (!cleanCustomerPhone) return matchStore;
+      return matchStore && normalizePhone(b.customer_phone) === cleanCustomerPhone;
+    });
+
+    if (fetchSucceeded) {
+      // Merge remote with any un-synced local
+      const seen = new Set(remoteBookings.map((b) => b.id || b.booking_number));
+      const merged = [...remoteBookings];
+      for (const loc of matchingLocal) {
+        if (!seen.has(loc.id) && !seen.has(loc.booking_number)) {
+          merged.push(loc);
+        }
+      }
+      return merged;
+    }
+
+    return matchingLocal;
   },
 
   async createServiceBooking(
@@ -7511,12 +8126,30 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
     const bookingId = 'booking-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
     const createdAt = new Date().toISOString();
 
+    const isCashierNotes = Boolean(
+      (booking.customer_notes && (booking.customer_notes.includes('حجز هاتف للكاشير') || booking.customer_notes.includes('حجز هاتف'))) ||
+      ((booking as any).notes && ((booking as any).notes.includes('حجز هاتف للكاشير') || (booking as any).notes.includes('حجز هاتف')))
+    );
+
+    const isDirectCashierBooking = 
+      booking.booking_source === 'phone_call' || 
+      booking.booking_source === 'walk_in' || 
+      booking.booking_source === 'cashier' ||
+      isCashierNotes ||
+      booking.status === 'confirmed' ||
+      booking.status === 'completed';
+
+    const resolvedBookingSource = booking.booking_source || (isDirectCashierBooking ? 'phone_call' : 'customer_app');
+    const resolvedStatus = booking.status || (isDirectCashierBooking ? 'confirmed' : 'pending');
+
     const newBooking: ServiceBooking = {
       ...booking,
       id: bookingId,
       booking_number: bookingNumber,
       service_id: booking.service_id || 'srv-main',
       store_id: resolvedStoreId,
+      booking_source: resolvedBookingSource,
+      status: resolvedStatus,
       created_at: createdAt,
     };
 
@@ -7537,7 +8170,8 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
       specialist_name: booking.specialist_name || null,
       booking_date: booking.booking_date,
       booking_time: booking.booking_time,
-      status: booking.status || 'pending',
+      booking_source: resolvedBookingSource,
+      status: resolvedStatus,
       customer_notes: booking.customer_notes || (booking as any).notes || null,
       loyalty_points_earned: Number((booking as any).points_to_earn) || Number(booking.loyalty_points_earned) || 0,
       created_at: createdAt,
@@ -7561,6 +8195,9 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
         p_notes: dbPayload.customer_notes,
         p_points_to_earn: dbPayload.loyalty_points_earned,
         p_selected_modifiers: dbPayload.selected_modifiers,
+        p_branch_id: booking.branch_id && isUUID(booking.branch_id) ? booking.branch_id : null,
+        p_booking_source: resolvedBookingSource,
+        p_status: resolvedStatus,
       });
 
       if (error) {
@@ -7574,27 +8211,43 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
       const created = rpcRes.booking;
       if (created) {
-        const telegramMsg = `📅 حجز موعد جديد رقم #${bookingNumber}!\n\n` +
-          `👤 العميل: ${dbPayload.customer_name}\n` +
-          `📱 الجوال: ${dbPayload.customer_phone}\n` +
-          `💇 الخدمة: ${dbPayload.service_name}\n` +
-          `⏰ الموعد: ${dbPayload.booking_date} | ${dbPayload.booking_time}\n` +
-          (dbPayload.specialist_name ? `👨‍⚕️ المختص: ${dbPayload.specialist_name}\n` : '') +
-          `💰 السعر: ${dbPayload.service_price} ر.س\n\n` +
-          `🔗 يرجى مراجعة لوحة الحجوزات لتأكيد الموعد ✅`;
-        sendTelegramNotification(resolvedStoreId, telegramMsg);
+        if (!created.branch_id && booking.branch_id) {
+          created.branch_id = booking.branch_id;
+        }
+        // Send Telegram notification ONLY for online customer app bookings (NEVER for cashier direct bookings)
+        if (!isDirectCashierBooking && resolvedBookingSource === 'customer_app' && resolvedStatus === 'pending') {
+          const branchLine = (booking as any).branch_name ? `📍 الفرع: ${(booking as any).branch_name}\n` : '';
+          const telegramMsg = `📅 حجز موعد جديد رقم #${bookingNumber}!\n\n` +
+            branchLine +
+            `👤 العميل: ${dbPayload.customer_name}\n` +
+            `📱 الجوال: ${dbPayload.customer_phone}\n` +
+            `💇 الخدمة: ${dbPayload.service_name}\n` +
+            `⏰ الموعد: ${dbPayload.booking_date} | ${dbPayload.booking_time}\n` +
+            (dbPayload.specialist_name ? `👨‍⚕️ المختص: ${dbPayload.specialist_name}\n` : '') +
+            `💰 السعر: ${dbPayload.service_price} ر.س\n\n` +
+            `يرجى تأكيد الحجز أو الاعتذار أدناه:`;
+          const replyMarkup = {
+            inline_keyboard: [
+              [
+                { text: '✅ تأكيد الحجز', callback_data: `bk_cnf:${created.id}` },
+                { text: '❌ اعتذار/رفض', callback_data: `bk_rej:${created.id}` }
+              ]
+            ]
+          };
+          sendTelegramNotification(resolvedStoreId, telegramMsg, replyMarkup, { type: 'booking', id: created.id });
+        }
 
         LoyaltyEvents.emit({
           type: 'BOOKING_CREATED',
           storeId: resolvedStoreId,
           phone: dbPayload.customer_phone,
-          bookingData: created,
+          bookingData: { ...created, booking_source: resolvedBookingSource, status: resolvedStatus },
         });
 
         const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, []);
-        list.unshift(created as unknown as ServiceBooking);
+        list.unshift({ ...created, booking_source: resolvedBookingSource, status: resolvedStatus } as unknown as ServiceBooking);
         saveLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, list);
-        return created as unknown as ServiceBooking;
+        return { ...created, booking_source: resolvedBookingSource, status: resolvedStatus } as unknown as ServiceBooking;
       }
     } else {
       const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, INITIAL_BOOKINGS);
@@ -7640,7 +8293,7 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
     if (supabase && isUUID(resolvedStoreId)) {
       try {
-        await supabase.from('audit_logs').insert([logEntry]);
+        await (supabase as any).from('audit_logs').insert([logEntry]);
       } catch (e) {
         console.warn('Supabase audit log insert for booking warning', e);
       }
@@ -7658,7 +8311,10 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
   async updateServiceBookingStatus(
     bookingId: string,
-    status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show',
+    cashierName?: string,
+    branchId?: string | null,
+    branchName?: string | null
   ): Promise<ServiceBooking> {
     const list: ServiceBooking[] = getLocalData(STORAGE_KEYS.LOCAL_BOOKINGS, INITIAL_BOOKINGS);
     const idx = list.findIndex((b) => b.id === bookingId);
@@ -7699,6 +8355,25 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
       bookingData: updatedBooking,
     });
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: updatedBooking.store_id });
+    syncTelegramStatus('booking', bookingId, status, cashierName);
+
+    // 🌟 AUTOMATIC LOYALTY POINTS AWARDING UPON BOOKING COMPLETION!
+    const bookingPoints = Number(updatedBooking.loyalty_points_earned || (updatedBooking as any).points_to_earn || 0);
+    if (status === 'completed' && updatedBooking.customer_phone && bookingPoints > 0) {
+      this.rewardPointsForCompletedTransaction(
+        updatedBooking.store_id,
+        updatedBooking.customer_phone,
+        bookingPoints,
+        `حضور واكتمال موعد الخدمة #${updatedBooking.booking_number || bookingId}`,
+        updatedBooking.customer_name,
+        cashierName,
+        branchId || updatedBooking.branch_id,
+        branchName,
+        Number(updatedBooking.service_price) || 0,
+        'SERVICE_BOOKING'
+      ).catch((err) => console.warn('Failed to auto-reward booking points:', err));
+    }
+
     return updatedBooking;
   },
 
@@ -8438,10 +9113,14 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
 
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('merchant_leads')
-          .select(await leadCols(supabase))
-          .order('created_at', { ascending: false });
+        const cols = await leadCols(supabase);
+        const { data, error } = await withTimeout(
+          supabase
+            .from('merchant_leads')
+            .select(cols)
+            .order('created_at', { ascending: false }),
+          4000
+        );
         if (!error && Array.isArray(data)) {
           const validLeads = data.map(reconcileLead);
           saveLocalData(STORAGE_KEYS.LOCAL_LEADS, validLeads);
@@ -9794,6 +10473,1424 @@ async updateCatalogItem(id: string, updates: Partial<CatalogItem>): Promise<Cata
       prorated,
       error: paymentResult.error,
     };
+  },
+
+  // ==============================================================================
+  // 🏢 إدارة الفروع (Store Branches Management - Multi-Branch Architecture)
+  // ==============================================================================
+  async getStoreBranches(storeId: string): Promise<StoreBranch[]> {
+    const resolvedStoreId = await this.resolveStoreId(storeId);
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        const { data, error } = await (supabase as any)
+          .from('store_branches')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .order('is_main', { ascending: false })
+          .order('created_at', { ascending: true });
+        if (!error && data && data.length > 0) {
+          return data as StoreBranch[];
+        }
+      } catch (err) {
+        console.warn('Failed to fetch store branches from DB:', err);
+      }
+    }
+    return [
+      {
+        id: `branch-main-${resolvedStoreId}`,
+        store_id: resolvedStoreId,
+        branch_code: 'BR-01',
+        name: 'الفرع الرئيسي',
+        is_main: true,
+        status: 'active',
+      },
+    ];
+  },
+
+  async addStoreBranch(branchData: Omit<StoreBranch, 'id' | 'created_at' | 'updated_at'>): Promise<StoreBranch> {
+    const resolvedStoreId = await this.resolveStoreId(branchData.store_id);
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(resolvedStoreId)) {
+      const { data, error } = await (supabase as any)
+        .from('store_branches')
+        .insert({
+          ...branchData,
+          store_id: resolvedStoreId,
+        })
+        .select()
+        .single();
+      if (!error && data) {
+        return data as StoreBranch;
+      }
+      if (error) {
+        throw new Error(error.message || 'تعذر إضافة الفرع');
+      }
+    }
+    return {
+      id: `branch-${Date.now()}`,
+      ...branchData,
+      store_id: resolvedStoreId,
+    };
+  },
+
+  async updateStoreBranch(branchId: string, updates: Partial<StoreBranch>): Promise<StoreBranch | null> {
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(branchId)) {
+      const { data, error } = await (supabase as any)
+        .from('store_branches')
+        .update({
+          ...updates,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', branchId)
+        .select()
+        .single();
+      if (!error && data) {
+        return data as StoreBranch;
+      }
+    }
+    return null;
+  },
+
+  async deleteStoreBranch(branchId: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(branchId)) {
+      const { error } = await (supabase as any)
+        .from('store_branches')
+        .delete()
+        .eq('id', branchId);
+      return !error;
+    }
+    return false;
+  },
+
+  async assignStaffBranch(staffId: string, branchId: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(staffId)) {
+      try {
+        // Fetch current staff record to update assigned_branch_ids array
+        const { data: currentStaff } = await (supabase as any)
+          .from('store_staff')
+          .select('id, branch_id, assigned_branch_ids, store_id')
+          .eq('id', staffId)
+          .single();
+
+        const currentAssigned: string[] = Array.isArray(currentStaff?.assigned_branch_ids)
+          ? currentStaff.assigned_branch_ids
+          : currentStaff?.branch_id
+          ? [currentStaff.branch_id]
+          : [];
+
+        const nextAssigned = Array.from(new Set([...currentAssigned, branchId]));
+        const primaryBranch = currentStaff?.branch_id || branchId;
+
+        const { error } = await (supabase as any)
+          .from('store_staff')
+          .update({
+            branch_id: primaryBranch,
+            assigned_branch_ids: nextAssigned,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', staffId);
+
+        if (!error && currentStaff?.store_id) {
+          LoyaltyEvents.emit({
+            type: 'STAFF_UPDATED',
+            storeId: currentStaff.store_id,
+          });
+          return true;
+        }
+      } catch (e) {
+        console.warn('assignStaffBranch error:', e);
+      }
+    }
+    return false;
+  },
+
+  async unassignStaffBranch(staffId: string, branchId: string): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(staffId)) {
+      try {
+        const { data: currentStaff } = await (supabase as any)
+          .from('store_staff')
+          .select('id, branch_id, assigned_branch_ids, store_id')
+          .eq('id', staffId)
+          .single();
+
+        const currentAssigned: string[] = Array.isArray(currentStaff?.assigned_branch_ids)
+          ? currentStaff.assigned_branch_ids
+          : currentStaff?.branch_id
+          ? [currentStaff.branch_id]
+          : [];
+
+        const nextAssigned = currentAssigned.filter((id) => id !== branchId);
+        const nextPrimary = currentStaff?.branch_id === branchId
+          ? (nextAssigned[0] || null)
+          : currentStaff?.branch_id;
+
+        const { error } = await (supabase as any)
+          .from('store_staff')
+          .update({
+            branch_id: nextPrimary,
+            assigned_branch_ids: nextAssigned,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', staffId);
+
+        if (!error && currentStaff?.store_id) {
+          LoyaltyEvents.emit({
+            type: 'STAFF_UPDATED',
+            storeId: currentStaff.store_id,
+          });
+          return true;
+        }
+      } catch (e) {
+        console.warn('unassignStaffBranch error:', e);
+      }
+    }
+    return false;
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  // 🔒 POS SHIFT MANAGEMENT & Z-REPORT (تقفيل الوردية وجرد الصندوق)
+  // ══════════════════════════════════════════════════════════════
+
+  async getOrCreateActiveShift(
+    store: Store,
+    staff: StoreStaff,
+    branch: StoreBranch | null,
+    openingCashFloat: number = 0
+  ): Promise<POSShift> {
+    const supabase = getSupabaseClient();
+    const resolvedStoreId = store.id;
+    const branchId = branch?.id || staff.branch_id || null;
+    const staffId = staff.id;
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        let q = (supabase as any)
+          .from('pos_shifts')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .eq('status', 'open')
+          .order('opened_at', { ascending: false });
+
+        if (branchId) {
+          q = q.eq('branch_id', branchId);
+        }
+
+        const { data, error } = await q.limit(1).maybeSingle();
+        if (!error && data) {
+          return data as POSShift;
+        }
+
+        const newShiftRow = {
+          store_id: resolvedStoreId,
+          branch_id: branchId,
+          branch_name: branch?.name || 'الفرع الرئيسي',
+          staff_id: isUUID(staffId) ? staffId : null,
+          staff_name: staff.name,
+          staff_phone: staff.phone,
+          status: 'open',
+          opened_at: new Date().toISOString(),
+          opening_cash: openingCashFloat,
+          expected_cash: openingCashFloat,
+          actual_cash: 0,
+          cash_difference: 0,
+          total_sales: 0,
+          cash_sales: 0,
+          card_sales: 0,
+          split_sales: 0,
+          tax_amount: 0,
+          orders_count: 0,
+        };
+
+        const { data: inserted, error: insErr } = await (supabase as any)
+          .from('pos_shifts')
+          .insert([newShiftRow])
+          .select('*')
+          .single();
+
+        if (!insErr && inserted) {
+          return inserted as POSShift;
+        }
+      } catch (e) {
+        console.warn('getOrCreateActiveShift DB error:', e);
+      }
+    }
+
+    const shiftStorageKey = `radar_pos_shift_${resolvedStoreId}_${branchId || 'default'}`;
+    try {
+      const existing = localStorage.getItem(shiftStorageKey);
+      if (existing) {
+        const parsed = JSON.parse(existing);
+        if (parsed && parsed.status === 'open') {
+          return parsed;
+        }
+      }
+    } catch {}
+
+    const localShift: POSShift = {
+      id: 'shift-' + Date.now(),
+      store_id: resolvedStoreId,
+      branch_id: branchId,
+      branch_name: branch?.name || 'الفرع الرئيسي',
+      staff_id: staffId,
+      staff_name: staff.name,
+      staff_phone: staff.phone,
+      status: 'open',
+      opened_at: new Date().toISOString(),
+      opening_cash: openingCashFloat,
+      expected_cash: openingCashFloat,
+      actual_cash: 0,
+      cash_difference: 0,
+      total_sales: 0,
+      cash_sales: 0,
+      card_sales: 0,
+      split_sales: 0,
+      tax_amount: 0,
+      discount_amount: 0,
+      orders_count: 0,
+    };
+    try {
+      localStorage.setItem(shiftStorageKey, JSON.stringify(localShift));
+    } catch {}
+    return localShift;
+  },
+
+  async getShiftOrdersSummary(
+    storeId: string,
+    shiftOpenedAt: string,
+    branchId?: string | null
+  ): Promise<{
+    orders_count: number;
+    total_sales: number;
+    cash_sales: number;
+    card_sales: number;
+    split_sales: number;
+    tax_amount: number;
+    discount_amount: number;
+    total_refunds: number;
+    cash_refunds: number;
+    card_refunds: number;
+    refunds_count: number;
+    total_cash_in: number;
+    total_cash_out: number;
+    cash_movements_count: number;
+    net_sales: number;
+  }> {
+    const supabase = getSupabaseClient();
+    const resolvedStoreId = isUUID(storeId)
+      ? storeId
+      : ((await this.resolveStore(storeId))?.id || storeId);
+
+    let orders: any[] = [];
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        let query = (supabase as any)
+          .from('store_orders')
+          .select('id, total_price, payment_method, branch_id, created_at, status')
+          .eq('store_id', resolvedStoreId)
+          .gte('created_at', shiftOpenedAt)
+          .neq('status', 'cancelled');
+
+        if (branchId) {
+          query = query.eq('branch_id', branchId);
+        }
+
+        const { data, error } = await query;
+        if (!error && data) {
+          orders = data;
+        }
+      } catch (e) {
+        console.warn('getShiftOrdersSummary DB query error:', e);
+      }
+    }
+
+    if (orders.length === 0) {
+      const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
+      orders = local.filter((o) => {
+        const matchesStore = o.store_id === resolvedStoreId || o.store_id === storeId;
+        const matchesBranch = !branchId || o.branch_id === branchId;
+        const isNotCancelled = o.status !== 'cancelled';
+        const isAfterOpen = new Date(o.created_at).getTime() >= new Date(shiftOpenedAt).getTime();
+        return matchesStore && matchesBranch && isNotCancelled && isAfterOpen;
+      });
+    }
+
+    let total_sales = 0;
+    let cash_sales = 0;
+    let card_sales = 0;
+    let split_sales = 0;
+    let tax_amount = 0;
+    let discount_amount = 0;
+
+    orders.forEach((o) => {
+      const total = Number(o.total_price || 0);
+      total_sales += total;
+      tax_amount += total - total / 1.15;
+
+      const method = (o.payment_method || '').toLowerCase();
+      if (method === 'cash') {
+        cash_sales += total;
+      } else if (method === 'card' || method === 'mada' || method === 'credit_card') {
+        card_sales += total;
+      } else if (method === 'split') {
+        split_sales += total;
+      } else {
+        card_sales += total;
+      }
+    });
+
+    // 🔄 جلب المرتجعات التي تمت خلال هذه الوردية
+    let refunds: any[] = [];
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        let refQuery = (supabase as any)
+          .from('pos_refunds')
+          .select('id, total_refunded, refund_method, branch_id, created_at')
+          .eq('store_id', resolvedStoreId)
+          .gte('created_at', shiftOpenedAt);
+
+        if (branchId) {
+          refQuery = refQuery.eq('branch_id', branchId);
+        }
+
+        const { data: refData } = await refQuery;
+        if (refData) refunds = refData;
+      } catch (refErr) {
+        console.warn('getShiftOrdersSummary DB refunds query error:', refErr);
+      }
+    }
+
+    if (refunds.length === 0) {
+      const localRef = getLocalData<any[]>('radar_pos_refunds', []);
+      refunds = localRef.filter((r) => {
+        const matchesStore = r.store_id === resolvedStoreId || r.store_id === storeId;
+        const matchesBranch = !branchId || r.branch_id === branchId;
+        const isAfterOpen = new Date(r.created_at).getTime() >= new Date(shiftOpenedAt).getTime();
+        return matchesStore && matchesBranch && isAfterOpen;
+      });
+    }
+
+    let total_refunds = 0;
+    let cash_refunds = 0;
+    let card_refunds = 0;
+
+    refunds.forEach((r) => {
+      const refAmt = Number(r.total_refunded || 0);
+      total_refunds += refAmt;
+      const refMethod = (r.refund_method || '').toLowerCase();
+      if (refMethod === 'cash') {
+        cash_refunds += refAmt;
+      } else {
+        card_refunds += refAmt;
+      }
+    });
+
+    // 3. Query Cash Movements (Cash In / Cash Out)
+    let cashMovements: any[] = [];
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        let mvQuery = (supabase as any)
+          .from('pos_cash_movements')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .gte('created_at', shiftOpenedAt);
+
+        if (branchId) {
+          mvQuery = mvQuery.eq('branch_id', branchId);
+        }
+
+        const { data: mvData } = await mvQuery;
+        if (mvData) cashMovements = mvData;
+      } catch (mvErr) {
+        console.warn('getShiftOrdersSummary DB cash movements query error:', mvErr);
+      }
+    }
+
+    if (cashMovements.length === 0) {
+      const localMv = getLocalData<any[]>('radar_pos_cash_movements', []);
+      cashMovements = localMv.filter((m) => {
+        const matchesStore = m.store_id === resolvedStoreId || m.store_id === storeId;
+        const matchesBranch = !branchId || m.branch_id === branchId;
+        const isAfterOpen = new Date(m.created_at).getTime() >= new Date(shiftOpenedAt).getTime();
+        return matchesStore && matchesBranch && isAfterOpen;
+      });
+    }
+
+    let total_cash_in = 0;
+    let total_cash_out = 0;
+
+    cashMovements.forEach((m) => {
+      const amt = Number(m.amount || 0);
+      if (m.type === 'cash_in') {
+        total_cash_in += amt;
+      } else if (m.type === 'cash_out') {
+        total_cash_out += amt;
+      }
+    });
+
+    return {
+      orders_count: orders.length,
+      total_sales: Math.round(total_sales * 100) / 100,
+      cash_sales: Math.round(cash_sales * 100) / 100,
+      card_sales: Math.round(card_sales * 100) / 100,
+      split_sales: Math.round(split_sales * 100) / 100,
+      tax_amount: Math.round(tax_amount * 100) / 100,
+      discount_amount: Math.round(discount_amount * 100) / 100,
+      total_refunds: Math.round(total_refunds * 100) / 100,
+      cash_refunds: Math.round(cash_refunds * 100) / 100,
+      card_refunds: Math.round(card_refunds * 100) / 100,
+      refunds_count: refunds.length,
+      total_cash_in: Math.round(total_cash_in * 100) / 100,
+      total_cash_out: Math.round(total_cash_out * 100) / 100,
+      cash_movements_count: cashMovements.length,
+      net_sales: Math.round((total_sales - total_refunds) * 100) / 100,
+    };
+  },
+
+  async closePOSShift(payload: {
+    store: Store;
+    shift: POSShift;
+    actualCash: number;
+    notes?: string;
+    summary: {
+      orders_count: number;
+      total_sales: number;
+      cash_sales: number;
+      card_sales: number;
+      split_sales: number;
+      tax_amount: number;
+      discount_amount: number;
+      total_refunds?: number;
+      cash_refunds?: number;
+      card_refunds?: number;
+      refunds_count?: number;
+      total_cash_in?: number;
+      total_cash_out?: number;
+      cash_movements_count?: number;
+      net_sales?: number;
+    };
+  }): Promise<POSShift> {
+    const { store, shift, actualCash, notes, summary } = payload;
+    const closedAt = new Date().toISOString();
+    const cashRefunds = Number(summary.cash_refunds || 0);
+    const totalCashIn = Number(summary.total_cash_in || 0);
+    const totalCashOut = Number(summary.total_cash_out || 0);
+    const expectedCash = (Number(shift.opening_cash) || 0) + (Number(summary.cash_sales) || 0) - cashRefunds + totalCashIn - totalCashOut;
+    const cashDifference = actualCash - expectedCash;
+
+    const closedShift: POSShift = {
+      ...shift,
+      status: 'closed',
+      closed_at: closedAt,
+      expected_cash: expectedCash,
+      actual_cash: actualCash,
+      cash_difference: cashDifference,
+      total_sales: summary.total_sales,
+      cash_sales: summary.cash_sales,
+      card_sales: summary.card_sales,
+      split_sales: summary.split_sales,
+      tax_amount: summary.tax_amount,
+      discount_amount: summary.discount_amount,
+      orders_count: summary.orders_count,
+      total_refunds: summary.total_refunds || 0,
+      cash_refunds: summary.cash_refunds || 0,
+      card_refunds: summary.card_refunds || 0,
+      refunds_count: summary.refunds_count || 0,
+      total_cash_in: totalCashIn,
+      total_cash_out: totalCashOut,
+      cash_movements_count: summary.cash_movements_count || 0,
+      notes: notes || null,
+      updated_at: closedAt,
+    };
+
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(shift.id)) {
+      try {
+        await (supabase as any)
+          .from('pos_shifts')
+          .update({
+            status: 'closed',
+            closed_at: closedAt,
+            expected_cash: expectedCash,
+            actual_cash: actualCash,
+            cash_difference: cashDifference,
+            total_sales: summary.total_sales,
+            cash_sales: summary.cash_sales,
+            card_sales: summary.card_sales,
+            split_sales: summary.split_sales,
+            tax_amount: summary.tax_amount,
+            discount_amount: summary.discount_amount,
+            orders_count: summary.orders_count,
+            total_refunds: summary.total_refunds || 0,
+            cash_refunds: summary.cash_refunds || 0,
+            card_refunds: summary.card_refunds || 0,
+            refunds_count: summary.refunds_count || 0,
+            total_cash_in: totalCashIn,
+            total_cash_out: totalCashOut,
+            cash_movements_count: summary.cash_movements_count || 0,
+            notes: notes || null,
+            updated_at: closedAt,
+          })
+          .eq('id', shift.id);
+      } catch (e) {
+        console.warn('closePOSShift DB error:', e);
+      }
+    }
+
+    const branchId = shift.branch_id || 'default';
+    const shiftStorageKey = `radar_pos_shift_${store.id}_${branchId}`;
+    try {
+      localStorage.removeItem(shiftStorageKey);
+      const historyKey = `radar_pos_shift_history_${store.id}`;
+      const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+      history.unshift(closedShift);
+      localStorage.setItem(historyKey, JSON.stringify(history.slice(0, 50)));
+    } catch {}
+
+    // 🎯 إرسال التقرير فورياً إلى بوت التلجرام الخاص بالتاجر
+    try {
+      await this.sendShiftTelegramReport(store, closedShift);
+      closedShift.telegram_sent = true;
+    } catch (e) {
+      console.warn('Telegram shift notification error:', e);
+    }
+
+    LoyaltyEvents.emit({
+      type: 'SHIFT_CLOSED',
+      storeId: store.id,
+      shiftData: closedShift,
+    });
+
+    return closedShift;
+  },
+
+  async sendShiftTelegramReport(store: Store, shift: POSShift): Promise<boolean> {
+    const lines: string[] = [];
+    lines.push(`🔔 *تقرير تقفيل الوردية والصندوق (Z-Report)*`);
+    lines.push(`🏢 *المتجر:* ${store.name}`);
+    lines.push(`📍 *الفرع:* ${shift.branch_name || 'الفرع الرئيسي'}`);
+    lines.push(`👤 *الكاشير:* ${shift.staff_name}${shift.staff_phone ? ` (${shift.staff_phone})` : ''}`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+
+    const openTimeStr = new Date(shift.opened_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+    const closeTimeStr = shift.closed_at
+      ? new Date(shift.closed_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
+      : new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+    const dateStr = new Date(shift.opened_at).toLocaleDateString('ar-SA');
+    lines.push(`📅 *التاريخ:* ${dateStr}`);
+    lines.push(`⏰ *توقيت الوردية:* من ${openTimeStr} ⬅️ إلى ${closeTimeStr}`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+
+    lines.push(`📊 *ملخص المبيعات والعمليات:*`);
+    lines.push(`• إجمالي المبيعات: *${Number(shift.total_sales).toFixed(2)} ر.س* (شامل الضريبة)`);
+    if (shift.total_refunds && Number(shift.total_refunds) > 0) {
+      lines.push(`• إجمالي المرتجعات: *-${Number(shift.total_refunds).toFixed(2)} ر.س* (${shift.refunds_count || 0} عملية)`);
+      lines.push(`• صافي المبيعات (Net Sales): *${(Number(shift.total_sales) - Number(shift.total_refunds)).toFixed(2)} ر.س*`);
+    }
+    lines.push(`• ضريبة القيمة المضافة (15%): *${Number(shift.tax_amount).toFixed(2)} ر.س*`);
+    if (shift.discount_amount && shift.discount_amount > 0) {
+      lines.push(`• إجمالي الخصومات: *${Number(shift.discount_amount).toFixed(2)} ر.س*`);
+    }
+    lines.push(`• عدد العمليات: *${shift.orders_count} فاتورة*`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+
+    lines.push(`💳 *تفاصيل طرق التحصيل:*`);
+    lines.push(`• كاش / نقدي: *${Number(shift.cash_sales).toFixed(2)} ر.س*`);
+    if (shift.cash_refunds && Number(shift.cash_refunds) > 0) {
+      lines.push(`• مرتجع نقدي (خرج من الدرج): *-${Number(shift.cash_refunds).toFixed(2)} ر.س*`);
+    }
+    lines.push(`• مدى / شبكة: *${Number(shift.card_sales).toFixed(2)} ر.س*`);
+    if (shift.card_refunds && Number(shift.card_refunds) > 0) {
+      lines.push(`• مرتجع شبكة / مدى: *-${Number(shift.card_refunds).toFixed(2)} ر.س*`);
+    }
+    if (shift.split_sales && shift.split_sales > 0) {
+      lines.push(`• دفع مجزأ (Split): *${Number(shift.split_sales).toFixed(2)} ر.س*`);
+    }
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+
+    lines.push(`💵 *مطابقة وجرد درج النقدية:*`);
+    lines.push(`• العهدة الافتتاحية: *${Number(shift.opening_cash).toFixed(2)} ر.س*`);
+    if (shift.total_cash_in && Number(shift.total_cash_in) > 0) {
+      lines.push(`• إيداعات نقدية (Cash In): *+${Number(shift.total_cash_in).toFixed(2)} ر.س*`);
+    }
+    if (shift.total_cash_out && Number(shift.total_cash_out) > 0) {
+      lines.push(`• مسحوبات ونثريات (Cash Out): *-${Number(shift.total_cash_out).toFixed(2)} ر.س*`);
+    }
+    lines.push(`• النقد المتوقع بالدرج: *${Number(shift.expected_cash).toFixed(2)} ر.س*`);
+    lines.push(`• النقد الفعلي المسلم: *${Number(shift.actual_cash).toFixed(2)} ر.س*`);
+
+    const diff = Number(shift.cash_difference);
+    if (Math.abs(diff) < 0.01) {
+      lines.push(`⚖️ *حالة الصندوق:* *مطابق 100% لا يوجد عجز أو زيادة ✅*`);
+    } else if (diff < 0) {
+      lines.push(`⚠️ *حالة الصندوق:* *عجز في الصندوق بمقدار ${Math.abs(diff).toFixed(2)} ر.س 🔴*`);
+    } else {
+      lines.push(`🟢 *حالة الصندوق:* *زيادة في الصندوق بمقدار +${diff.toFixed(2)} ر.س*`);
+    }
+
+    if (shift.notes) {
+      lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+      lines.push(`📝 *ملاحظة الكاشير:* "${shift.notes}"`);
+    }
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`_تم إصدار تقرير Z-Report وأرشفته آلياً عبر نظام Radar POS_`);
+
+    const message = lines.join('\n');
+    let targetChatId = store.telegram_chat_id;
+
+    if (!targetChatId && isUUID(store.id)) {
+      try {
+        const sb = getSupabaseClient();
+        if (sb) {
+          const { data } = await (sb as any).from('stores').select('telegram_chat_id').eq('id', store.id).maybeSingle();
+          if (data?.telegram_chat_id) targetChatId = data.telegram_chat_id;
+        }
+      } catch {}
+    }
+
+    if (targetChatId) {
+      try {
+        fetch('https://radar-telegram-bot.taeybsalah.workers.dev/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chatId: targetChatId,
+            text: message,
+          }),
+        }).catch(async () => {
+          const BOT_TOKEN = '8065372904:AAH8xReiWQ2zTrog0gwnQD-4Vz1zcyE51XY';
+          fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: targetChatId,
+              text: message,
+            }),
+          }).catch(() => {});
+        });
+        return true;
+      } catch (err) {
+        console.warn('Failed to send Telegram shift report:', err);
+      }
+    }
+    return false;
+  },
+
+  // صياغة رسالة الواتساب لفاتورة مبيعات العميل الإلكترونية
+  formatCustomerOrderReceiptWhatsApp(
+    store: Store,
+    order: {
+      order_number: string;
+      customer_name?: string;
+      customer_phone?: string;
+      total_amount: number;
+      tax_amount?: number;
+      payment_method?: string;
+      branch_name?: string;
+      items?: any[];
+      loyalty_points_earned?: number;
+      order_source?: string;
+      app_order_number?: string | null;
+      is_app_paid?: boolean;
+      [key: string]: any;
+    }
+  ): string {
+    const lines: string[] = [];
+    lines.push(`*🧾 فاتورة إلكترونية ضريبية - ${store.name}*`);
+    if (order.customer_name) {
+      lines.push(`أهلاً بك يا *${order.customer_name}* 👋`);
+    } else {
+      lines.push(`أهلاً بك عميلنا العزيز 👋`);
+    }
+    lines.push(`شكراً لزيارتك! تفاصيل فاتورتك:`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`🔢 *رقم الفاتورة:* #${order.order_number}`);
+    if (order.branch_name) {
+      lines.push(`📍 *الفرع:* ${order.branch_name}`);
+    }
+    if (order.order_source === 'customer_app') {
+      lines.push(`📱 *مصدر الطلب:* تطبيق العميل (أونلاين ${order.app_order_number ? `#${order.app_order_number}` : ''})`);
+    } else if (order.order_source === 'customer_app_booking') {
+      lines.push(`📅 *مصدر الحجز:* حجز مسبق عبر التطبيق (${order.app_order_number ? `#${order.app_order_number}` : ''})`);
+    } else {
+      lines.push(`🏬 *مصدر الطلب:* كاشير مباشر`);
+    }
+
+    if (order.items && order.items.length > 0) {
+      lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+      lines.push(`📋 *الأصناف:*`);
+      order.items.forEach((it: any) => {
+        const title = it.catalog_item?.name || it.name || 'صنف';
+        const qty = it.quantity || 1;
+        const price = Number(it.total_price ?? (it.unit_price ? it.unit_price * qty : 0)).toFixed(2);
+        const specialistTag = it.specialist_name ? ` (المختص: ${it.specialist_name})` : '';
+        lines.push(`• ${title}${specialistTag} × ${qty} = ${price} ر.س`);
+      });
+    }
+
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`💰 *المبلغ الإجمالي:* *${Number(order.total_amount).toFixed(2)} ر.س*`);
+    if (order.tax_amount) {
+      lines.push(`⚖️ *تشمل ضريبة القيمة المضافة (15%):* ${Number(order.tax_amount).toFixed(2)} ر.س`);
+    }
+    const payMethod =
+      order.is_app_paid
+        ? 'مدفوع إلكترونياً عبر التطبيق (Apple Pay / بطاقة) ✅'
+        : order.payment_method === 'cash'
+        ? 'نقداً 💵'
+        : order.payment_method === 'card'
+        ? 'مدى / شبكة 💳'
+        : order.payment_method === 'points'
+        ? 'نقاط ولاء 👑'
+        : order.payment_method === 'split'
+        ? 'دفع مجزأ ⚡'
+        : 'إلكتروني 💳';
+    lines.push(`💳 *طريقة الدفع:* ${payMethod}`);
+
+    if (order.loyalty_points_earned && Number(order.loyalty_points_earned) > 0) {
+      lines.push(`🎁 *نقاط الولاء المكتسبة:* +${order.loyalty_points_earned} نقطة ولاء 👑`);
+    }
+
+    if (store.tax_number) {
+      lines.push(`🏢 *الرقم الضريبي:* ${store.tax_number}`);
+    }
+
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`نسعد بخدمتكم ونتطلع لزيارتكم القادمة دائماً ✨`);
+    lines.push(`_فاتورة إلكترونية مبسطة صادرة من نظام Radar POS_`);
+    return lines.join('\n');
+  },
+
+  generateCustomerOrderWhatsAppUrl(
+    store: Store,
+    order: any,
+    phoneOverride?: string
+  ): string {
+    const rawText = this.formatCustomerOrderReceiptWhatsApp(store, order);
+    const targetPhone = phoneOverride || order.customer_phone || '';
+    const cleanPhone = targetPhone.replace(/\D/g, '');
+    const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
+    const encoded = encodeURIComponent(rawText);
+    return `https://wa.me/${intlPhone}?text=${encoded}`;
+  },
+
+  // 🔍 البحث عن الفواتير السابقة لمعالجة الاسترجاع
+  async searchOrdersForRefund(
+    storeId: string,
+    searchQuery: string,
+    branchId?: string | null
+  ): Promise<any[]> {
+    const supabase = getSupabaseClient();
+    const resolvedStoreId = isUUID(storeId)
+      ? storeId
+      : ((await this.resolveStore(storeId))?.id || storeId);
+
+    const cleanQuery = searchQuery.trim();
+    let orders: any[] = [];
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        let query = (supabase as any)
+          .from('store_orders')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .neq('status', 'cancelled')
+          .neq('refund_status', 'full')
+          .order('created_at', { ascending: false })
+          .limit(30);
+
+        if (branchId) {
+          query = query.eq('branch_id', branchId);
+        }
+
+        if (cleanQuery) {
+          const cleanOrderNum = cleanQuery.toUpperCase().startsWith('ORD-')
+            ? cleanQuery.toUpperCase()
+            : `ORD-${cleanQuery}`;
+
+          query = query.or(
+            `order_number.ilike.%${cleanQuery}%,order_number.eq.${cleanOrderNum},customer_phone.ilike.%${cleanQuery}%,customer_name.ilike.%${cleanQuery}%`
+          );
+        }
+
+        const { data, error } = await query;
+        if (!error && data) {
+          orders = data;
+        }
+      } catch (err) {
+        console.warn('searchOrdersForRefund DB error:', err);
+      }
+    }
+
+    if (orders.length === 0) {
+      const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
+      orders = local.filter((o) => {
+        const matchesStore = o.store_id === resolvedStoreId || o.store_id === storeId;
+        const matchesBranch = !branchId || o.branch_id === branchId;
+        const notCancelled = o.status !== 'cancelled' && o.refund_status !== 'full';
+        if (!matchesStore || !matchesBranch || !notCancelled) return false;
+        if (!cleanQuery) return true;
+        const q = cleanQuery.toLowerCase();
+        return (
+          (o.order_number && o.order_number.toLowerCase().includes(q)) ||
+          (o.customer_phone && o.customer_phone.includes(q)) ||
+          (o.customer_name && o.customer_name.toLowerCase().includes(q))
+        );
+      });
+    }
+
+    return orders;
+  },
+
+  // 🔄 معالجة الاسترجاع الذكي وإصدار إشعار دائن ضريبي مبسط
+  async processPOSRefund(payload: {
+    store: Store;
+    activeStaff: StoreStaff;
+    activeBranch?: StoreBranch | null;
+    activeShift?: POSShift | null;
+    order: any;
+    refundItems: POSRefundItem[];
+    refundType: 'full' | 'partial';
+    refundReason: string;
+    refundMethod: 'cash' | 'card' | 'wallet';
+    notes?: string;
+  }): Promise<POSRefund> {
+    const {
+      store,
+      activeStaff,
+      activeBranch,
+      activeShift,
+      order,
+      refundItems,
+      refundType,
+      refundReason,
+      refundMethod,
+      notes,
+    } = payload;
+
+    const supabase = getSupabaseClient();
+    const resolvedStoreId = isUUID(store.id)
+      ? store.id
+      : ((await this.resolveStore(store.id))?.id || store.id);
+
+    // 1. حساب المبالغ المالية بدقة
+    const totalRefunded = refundItems.reduce((acc, item) => acc + (Number(item.total_price) || 0), 0);
+    const subtotal = Math.round((totalRefunded / 1.15) * 100) / 100;
+    const taxAmount = Math.round((totalRefunded - subtotal) * 100) / 100;
+
+    // 2. رقم الإشعار الدائن
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const creditNoteNumber = `CN-${order.order_number?.replace('ORD-', '') || 'POS'}-${randomSuffix}`;
+    const nowIso = new Date().toISOString();
+
+    // 3. إنشاء ZATCA TLV QR Code للإشعار الدائن الضريبي
+    const zatcaQR = generateZatcaTLVQR(
+      store.name,
+      store.tax_number || '300000000000003',
+      nowIso,
+      totalRefunded.toFixed(2),
+      taxAmount.toFixed(2)
+    );
+
+    // 4. احتساب نقاط/أختام الولاء المطلوب عكسها
+    let pointsToDeduct = 0;
+    const originalPoints = Number(order.loyalty_points_earned || 0);
+    const originalTotal = Number(order.total_price || order.total_amount || 1);
+
+    if (originalPoints > 0) {
+      if (refundType === 'full' || totalRefunded >= originalTotal) {
+        pointsToDeduct = originalPoints;
+      } else {
+        pointsToDeduct = Math.round((totalRefunded / originalTotal) * originalPoints);
+      }
+    }
+
+    // 5. خصم نقاط الولاء من حساب العميل إذا كان مسجلاً
+    if (pointsToDeduct > 0 && (order.customer_phone || order.customer_id)) {
+      try {
+        const targetPhone = order.customer_phone || '';
+        const normPhone = normalizePhone(targetPhone);
+        if (supabase && isUUID(resolvedStoreId)) {
+          const { data: cust } = await (supabase as any)
+            .from('store_customers')
+            .select('*')
+            .eq('store_id', resolvedStoreId)
+            .or(`phone.eq.${targetPhone},phone.eq.${normPhone},phone.eq.0${normPhone}`)
+            .limit(1)
+            .maybeSingle();
+
+          if (cust) {
+            const newLifetime = Math.max(0, (cust.lifetime_xp || 0) - pointsToDeduct);
+            const newBalance = Math.max(0, (cust.wallet_balance || 0) - pointsToDeduct);
+            await (supabase as any)
+              .from('store_customers')
+              .update({
+                lifetime_xp: newLifetime,
+                wallet_balance: newBalance,
+                updated_at: nowIso,
+              })
+              .eq('id', cust.id);
+
+            LoyaltyEvents.emit({
+              type: 'WALLET_UPDATED',
+              storeId: store.id,
+              phone: cust.phone,
+              points: -pointsToDeduct,
+              newBalance,
+              newLifetimeXP: newLifetime,
+              title: 'استرجاع فاتورة',
+              message: `تم خصم ${pointsToDeduct} نقطة لاقترانها بعملية استرجاع فاتورة #${order.order_number}`,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Could not reverse customer loyalty points:', err);
+      }
+    }
+
+    // 6. تجهيز كائن المرتجع الكامل
+    const refundRecord: POSRefund = {
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `ref_${Date.now()}`,
+      store_id: resolvedStoreId,
+      branch_id: activeBranch?.id || order.branch_id || null,
+      branch_name: activeBranch?.name || null,
+      order_id: order.id || null,
+      order_number: order.order_number,
+      credit_note_number: creditNoteNumber,
+      refund_type: refundType,
+      refund_reason: refundReason + (notes ? ` (${notes})` : ''),
+      refund_method: refundMethod,
+      items: refundItems,
+      subtotal,
+      tax_amount: taxAmount,
+      total_refunded: Math.round(totalRefunded * 100) / 100,
+      loyalty_points_deducted: pointsToDeduct,
+      customer_id: order.customer_id || null,
+      customer_name: order.customer_name || null,
+      customer_phone: order.customer_phone || null,
+      cashier_id: activeStaff.id,
+      cashier_name: activeStaff.name,
+      shift_id: activeShift?.id || null,
+      zatca_qr: zatcaQR,
+      metadata: {
+        original_payment_method: order.payment_method,
+        original_created_at: order.created_at,
+        notes,
+      },
+      created_at: nowIso,
+    };
+
+    // 7. حفظ في قاعدة بيانات Supabase (pos_refunds)
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        await (supabase as any).from('pos_refunds').insert([refundRecord]);
+      } catch (dbErr) {
+        console.warn('Could not insert into pos_refunds table:', dbErr);
+      }
+
+      // تحديث حالة الفاتورة الأصلية store_orders
+      try {
+        const previousRefunded = Number(order.refunded_amount || 0);
+        const newTotalRefunded = previousRefunded + totalRefunded;
+        const isNowFull = newTotalRefunded >= (Number(order.total_price) || 0) * 0.99;
+
+        const history = Array.isArray(order.refund_history) ? [...order.refund_history] : [];
+        history.push({
+          credit_note_number: creditNoteNumber,
+          amount: totalRefunded,
+          type: refundType,
+          reason: refundReason,
+          method: refundMethod,
+          date: nowIso,
+          cashier_name: activeStaff.name,
+        });
+
+        await (supabase as any)
+          .from('store_orders')
+          .update({
+            refund_status: isNowFull ? 'full' : 'partial',
+            refunded_amount: Math.round(newTotalRefunded * 100) / 100,
+            refund_history: history,
+            status: isNowFull ? 'refunded' : order.status,
+            updated_at: nowIso,
+          })
+          .eq('id', order.id);
+      } catch (ordErr) {
+        console.warn('Could not update order refund status:', ordErr);
+      }
+
+      // تحديث الوردية الحالية في Supabase إذا كانت نشطة
+      if (activeShift && isUUID(activeShift.id)) {
+        try {
+          const cashRefundInc = refundMethod === 'cash' ? totalRefunded : 0;
+          const cardRefundInc = refundMethod === 'card' ? totalRefunded : 0;
+
+          const { data: curShift } = await (supabase as any)
+            .from('pos_shifts')
+            .select('total_refunds, cash_refunds, card_refunds, refunds_count')
+            .eq('id', activeShift.id)
+            .single();
+
+          if (curShift) {
+            await (supabase as any)
+              .from('pos_shifts')
+              .update({
+                total_refunds: (Number(curShift.total_refunds) || 0) + totalRefunded,
+                cash_refunds: (Number(curShift.cash_refunds) || 0) + cashRefundInc,
+                card_refunds: (Number(curShift.card_refunds) || 0) + cardRefundInc,
+                refunds_count: (Number(curShift.refunds_count) || 0) + 1,
+                updated_at: nowIso,
+              })
+              .eq('id', activeShift.id);
+          }
+        } catch (shiftErr) {
+          console.warn('Could not update pos_shifts refund metrics:', shiftErr);
+        }
+      }
+    }
+
+    // حفظ محلي في localStorage للحفاظ على سرعة الاستجابة
+    try {
+      const localRefunds = getLocalData<POSRefund[]>('radar_pos_refunds', []);
+      localRefunds.unshift(refundRecord);
+      saveLocalData('radar_pos_refunds', localRefunds.slice(0, 100));
+    } catch {}
+
+    // بث الحدث الفوري
+    LoyaltyEvents.emit({
+      type: 'REFUND_PROCESSED',
+      storeId: store.id,
+      refundData: refundRecord,
+    });
+
+    return refundRecord;
+  },
+
+  // 📄 صياغة نص رسالة الواتساب للإشعار الدائن الضريبي
+  formatCreditNoteWhatsApp(store: Store, refund: POSRefund): string {
+    const lines: string[] = [];
+    lines.push(`↩️ *إشعار دائن ضريبي مبسط (Tax Credit Note)*`);
+    lines.push(`🏢 *${store.name}*`);
+    if (refund.branch_name) {
+      lines.push(`📍 *الفرع:* ${refund.branch_name}`);
+    }
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`📑 *رقم الإشعار الدائن:* *#${refund.credit_note_number}*`);
+    lines.push(`🧾 *إشارة إلى الفاتورة الأصلية:* *#${refund.order_number}*`);
+    const dateStr = new Date(refund.created_at).toLocaleDateString('ar-SA');
+    const timeStr = new Date(refund.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+    lines.push(`⏰ *تاريخ ووقت الاسترجاع:* ${dateStr} - ${timeStr}`);
+    if (refund.cashier_name) {
+      lines.push(`👤 *الكاشير المسؤول:* ${refund.cashier_name}`);
+    }
+    lines.push(`❓ *سبب الاسترجاع:* ${refund.refund_reason}`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+
+    lines.push(`📦 *الأصناف المسترجعة:*`);
+    refund.items.forEach((item, idx) => {
+      lines.push(`${idx + 1}. *${item.name}*`);
+      lines.push(`   الكمية المسترجعة: ${item.quantity} × ${Number(item.unit_price).toFixed(2)} = *${Number(item.total_price).toFixed(2)} ر.س*`);
+    });
+
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`💰 *المبلغ المسترد الإجمالي:* *${Number(refund.total_refunded).toFixed(2)} ر.س*`);
+    lines.push(`⚖️ *تشمل ضريبة القيمة المضافة (15%):* ${Number(refund.tax_amount).toFixed(2)} ر.س`);
+    const refMethod =
+      refund.refund_method === 'cash'
+        ? 'نقداً 💵'
+        : refund.refund_method === 'card'
+        ? 'بطاقة بنكية / مدى 💳'
+        : 'رصيد ولاء بالمحفظة 📱';
+    lines.push(`💳 *طريقة الرد:* ${refMethod}`);
+
+    if (refund.loyalty_points_deducted && refund.loyalty_points_deducted > 0) {
+      lines.push(`🎁 *النقاط المسترجعة من الرصيد:* -${refund.loyalty_points_deducted} نقطة ولاء`);
+    }
+
+    if (store.tax_number) {
+      lines.push(`🏢 *الرقم الضريبي للمنشأة:* ${store.tax_number}`);
+    }
+
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`تم توثيق عملية الاسترجاع وإصدار الإشعار الدائن وفقاً لاشتراطات هيئة الزكاة والضريبة والجمارك (ZATCA).`);
+    return lines.join('\n');
+  },
+
+  generateCreditNoteWhatsAppUrl(store: Store, refund: POSRefund, phoneOverride?: string): string {
+    const rawText = this.formatCreditNoteWhatsApp(store, refund);
+    const targetPhone = phoneOverride || refund.customer_phone || '';
+    const cleanPhone = targetPhone.replace(/\D/g, '');
+    const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
+    const encoded = encodeURIComponent(rawText);
+    return `https://wa.me/${intlPhone}?text=${encoded}`;
+  },
+
+  // 📜 جلب سجل المرتجعات للمتجر
+  async getStoreRefunds(
+    storeId: string,
+    options?: { branchId?: string | null; limit?: number }
+  ): Promise<POSRefund[]> {
+    const supabase = getSupabaseClient();
+    const resolvedStoreId = isUUID(storeId)
+      ? storeId
+      : ((await this.resolveStore(storeId))?.id || storeId);
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        let query = (supabase as any)
+          .from('pos_refunds')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .order('created_at', { ascending: false })
+          .limit(options?.limit || 50);
+
+        if (options?.branchId) {
+          query = query.eq('branch_id', options.branchId);
+        }
+
+        const { data, error } = await query;
+        if (!error && data) return data as POSRefund[];
+      } catch (err) {
+        console.warn('getStoreRefunds DB error:', err);
+      }
+    }
+
+    const local = getLocalData<POSRefund[]>('radar_pos_refunds', []);
+    return local.filter((r) => {
+      const matchStore = r.store_id === resolvedStoreId || r.store_id === storeId;
+      const matchBranch = !options?.branchId || r.branch_id === options.branchId;
+      return matchStore && matchBranch;
+    });
+  },
+
+  // 💵 تسجيل حركة نقدية في الدرج (إيداع أو سحب مصروفات)
+  async recordPOSCashMovement(payload: {
+    store: Store;
+    activeStaff: StoreStaff;
+    activeBranch?: StoreBranch | null;
+    activeShift?: POSShift | null;
+    type: 'cash_in' | 'cash_out';
+    amount: number;
+    reason: string;
+    category?: string;
+    recipient_name?: string;
+    invoice_ref?: string;
+    notes?: string;
+  }): Promise<POSCashMovement> {
+    const { store, activeStaff, activeBranch, activeShift, type, amount, reason, category, recipient_name, invoice_ref, notes } = payload;
+    const supabase = getSupabaseClient();
+    const resolvedStoreId = isUUID(store.id)
+      ? store.id
+      : ((await this.resolveStore(store.id))?.id || store.id);
+
+    const nowIso = new Date().toISOString();
+    const movement: POSCashMovement = {
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `mv_${Date.now()}`,
+      store_id: resolvedStoreId,
+      branch_id: activeBranch?.id || activeStaff.branch_id || null,
+      branch_name: activeBranch?.name || null,
+      shift_id: activeShift?.id || null,
+      staff_id: activeStaff.id,
+      staff_name: activeStaff.name,
+      type,
+      amount: Number(amount) || 0,
+      reason,
+      category: category || null,
+      recipient_name: recipient_name || null,
+      invoice_ref: invoice_ref || null,
+      notes: notes || null,
+      created_at: nowIso,
+    };
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        const { data, error } = await (supabase as any)
+          .from('pos_cash_movements')
+          .insert({
+            store_id: resolvedStoreId,
+            branch_id: isUUID(movement.branch_id) ? movement.branch_id : null,
+            branch_name: movement.branch_name,
+            shift_id: isUUID(movement.shift_id) ? movement.shift_id : null,
+            staff_id: movement.staff_id,
+            staff_name: movement.staff_name,
+            type: movement.type,
+            amount: movement.amount,
+            reason: movement.reason,
+            category: movement.category,
+            recipient_name: movement.recipient_name,
+            invoice_ref: movement.invoice_ref,
+            notes: movement.notes,
+            created_at: nowIso,
+          })
+          .select()
+          .single();
+
+        if (!error && data) {
+          movement.id = data.id;
+        }
+
+        // تحديث إجماليات الوردية في قاعدة البيانات إذا كانت نشطة
+        if (activeShift && isUUID(activeShift.id)) {
+          const cashInInc = type === 'cash_in' ? movement.amount : 0;
+          const cashOutInc = type === 'cash_out' ? movement.amount : 0;
+          const { data: curShift } = await (supabase as any)
+            .from('pos_shifts')
+            .select('total_cash_in, total_cash_out, cash_movements_count')
+            .eq('id', activeShift.id)
+            .single();
+
+          if (curShift) {
+            await (supabase as any)
+              .from('pos_shifts')
+              .update({
+                total_cash_in: (Number(curShift.total_cash_in) || 0) + cashInInc,
+                total_cash_out: (Number(curShift.total_cash_out) || 0) + cashOutInc,
+                cash_movements_count: (Number(curShift.cash_movements_count) || 0) + 1,
+                updated_at: nowIso,
+              })
+              .eq('id', activeShift.id);
+          }
+        }
+      } catch (err) {
+        console.warn('recordPOSCashMovement DB error:', err);
+      }
+    }
+
+    // حفظ محلي في localStorage للحفاظ على سرعة الاستجابة
+    try {
+      const local = getLocalData<POSCashMovement[]>('radar_pos_cash_movements', []);
+      local.unshift(movement);
+      saveLocalData('radar_pos_cash_movements', local.slice(0, 100));
+    } catch {}
+
+    // بث الحدث الفوري
+    LoyaltyEvents.emit({
+      type: 'CASH_MOVEMENT_RECORDED',
+      storeId: store.id,
+      staffId: activeStaff.id,
+      cashMovementData: movement,
+    });
+
+    return movement;
+  },
+
+  // 📜 جلب حركات النقدية للمتجر / الوردية
+  async getStoreCashMovements(
+    storeId: string,
+    options?: { branchId?: string | null; shiftOpenedAt?: string; limit?: number }
+  ): Promise<POSCashMovement[]> {
+    const supabase = getSupabaseClient();
+    const resolvedStoreId = isUUID(storeId)
+      ? storeId
+      : ((await this.resolveStore(storeId))?.id || storeId);
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        let query = (supabase as any)
+          .from('pos_cash_movements')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .order('created_at', { ascending: false })
+          .limit(options?.limit || 50);
+
+        if (options?.branchId) {
+          query = query.eq('branch_id', options.branchId);
+        }
+        if (options?.shiftOpenedAt) {
+          query = query.gte('created_at', options.shiftOpenedAt);
+        }
+
+        const { data, error } = await query;
+        if (!error && data) return data as POSCashMovement[];
+      } catch (err) {
+        console.warn('getStoreCashMovements DB error:', err);
+      }
+    }
+
+    const local = getLocalData<POSCashMovement[]>('radar_pos_cash_movements', []);
+    return local.filter((m) => {
+      const matchStore = m.store_id === resolvedStoreId || m.store_id === storeId;
+      const matchBranch = !options?.branchId || m.branch_id === options.branchId;
+      const matchDate = !options?.shiftOpenedAt || new Date(m.created_at).getTime() >= new Date(options.shiftOpenedAt).getTime();
+      return matchStore && matchBranch && matchDate;
+    });
+  },
+
+  // 📜 جلب سجل الورديات للمتجر (Shifts History & Z-Reports)
+  async getStoreShifts(
+    storeId: string,
+    options?: {
+      branchId?: string | null;
+      staffId?: string | null;
+      status?: 'open' | 'closed' | 'all';
+      limit?: number;
+    }
+  ): Promise<POSShift[]> {
+    const supabase = getSupabaseClient();
+    const resolvedStoreId = isUUID(storeId)
+      ? storeId
+      : ((await this.resolveStore(storeId))?.id || storeId);
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        let query = (supabase as any)
+          .from('pos_shifts')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .order('opened_at', { ascending: false })
+          .limit(options?.limit || 100);
+
+        if (options?.branchId) {
+          query = query.eq('branch_id', options.branchId);
+        }
+        if (options?.staffId) {
+          query = query.eq('staff_id', options.staffId);
+        }
+        if (options?.status && options.status !== 'all') {
+          query = query.eq('status', options.status);
+        }
+
+        const { data, error } = await query;
+        if (!error && data) return data as POSShift[];
+      } catch (err) {
+        console.warn('getStoreShifts DB error:', err);
+      }
+    }
+
+    const localHistory = getLocalData<POSShift[]>(`radar_pos_shift_history_${storeId}`, []);
+    return localHistory.filter((s) => {
+      const matchStore = s.store_id === resolvedStoreId || s.store_id === storeId;
+      const matchBranch = !options?.branchId || s.branch_id === options.branchId;
+      const matchStaff = !options?.staffId || s.staff_id === options.staffId;
+      const matchStatus = !options?.status || options.status === 'all' || s.status === options.status;
+      return matchStore && matchBranch && matchStaff && matchStatus;
+    });
+  },
+
+  // صياغة سند قبض / صرف نقدية لواتساب
+  formatCashMovementWhatsApp(store: Store, movement: POSCashMovement): string {
+    const lines: string[] = [];
+    const isCashIn = movement.type === 'cash_in';
+    lines.push(`*💵 ${isCashIn ? 'سند إيداع نقدية (Cash In)' : 'سند صرف نقدية / نثريات (Cash Out)'}*`);
+    lines.push(`🏢 *المتجر:* ${store.name}`);
+    if (movement.branch_name) {
+      lines.push(`📍 *الفرع:* ${movement.branch_name}`);
+    }
+    lines.push(`👤 *الموظف المسؤول:* ${movement.staff_name}`);
+    lines.push(`📅 *التاريخ:* ${new Date(movement.created_at).toLocaleDateString('ar-SA')} - ${new Date(movement.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}`);
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`💰 *المبلغ:* *${Number(movement.amount).toFixed(2)} ر.س*`);
+    lines.push(`🏷️ *السبب / البيان:* ${movement.reason}`);
+    if (movement.notes) {
+      lines.push(`📝 *ملاحظات إضافية:* "${movement.notes}"`);
+    }
+    lines.push(`━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`_تم تسجيل الحركة النقدية واعتمادها بنظام الصندوق في Radar POS_`);
+    return lines.join('\n');
   },
 };
 

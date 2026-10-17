@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Bell } from 'lucide-react';
 import {
+  NotificationScope,
   getUnreadNotificationCount,
   subscribeToInboxUpdates,
 } from '../lib/notifications';
@@ -9,6 +10,9 @@ import { NotificationCenterModal } from './NotificationCenterModal';
 interface NotificationBellProps {
   portalName?: string;
   portalFilter?: string;
+  storeId?: string;
+  userPhone?: string;
+  userId?: string;
   className?: string;
   buttonClassName?: string;
 }
@@ -16,19 +20,32 @@ interface NotificationBellProps {
 export const NotificationBell: React.FC<NotificationBellProps> = ({
   portalName = 'المنصة',
   portalFilter,
+  storeId,
+  userPhone,
+  userId,
   className = '',
   buttonClassName = '',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  const scope: NotificationScope = useMemo(
+    () => ({
+      portal: portalFilter,
+      storeId,
+      userPhone,
+      userId,
+    }),
+    [portalFilter, storeId, userPhone, userId]
+  );
+
   useEffect(() => {
-    setUnreadCount(getUnreadNotificationCount(portalFilter));
+    setUnreadCount(getUnreadNotificationCount(scope));
     const unsubscribe = subscribeToInboxUpdates(() => {
-      setUnreadCount(getUnreadNotificationCount(portalFilter));
-    });
+      setUnreadCount(getUnreadNotificationCount(scope));
+    }, scope);
     return () => unsubscribe();
-  }, [portalFilter]);
+  }, [scope]);
 
   return (
     <>
@@ -56,6 +73,9 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
         onClose={() => setIsOpen(false)}
         portalName={portalName}
         portalFilter={portalFilter}
+        storeId={storeId}
+        userPhone={userPhone}
+        userId={userId}
       />
     </>
   );

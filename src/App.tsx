@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Store, UserRole } from './types';
 import { LoyaltyService } from './lib/supabase';
 import { LoyaltyEvents } from './lib/events';
@@ -7,6 +7,7 @@ import { INITIAL_STORE } from './lib/demoData';
 import { isDemoStoreSlug } from './lib/slugUtils';
 import { INITIAL_DEMO_STORE, DEMO_STORE_SLUG } from './lib/demoStoreSeed';
 import { updateDynamicPWA } from './lib/pwa';
+import { saveActiveStoreBranding, getActiveStoreBranding } from './lib/storeBranding';
 import { useAuth } from './context/AuthContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
@@ -38,6 +39,9 @@ const PartnerPublicLanding = React.lazy(() =>
 const MerchantOnboardingConsole = React.lazy(() =>
   import('./components/MerchantOnboardingConsole').then((m) => ({ default: m.MerchantOnboardingConsole }))
 );
+const KitchenDisplaySystem = React.lazy(() =>
+  import('./components/KitchenDisplaySystem').then((m) => ({ default: m.KitchenDisplaySystem }))
+);
 import { RadarQuickSwitcher } from './components/RadarQuickSwitcher';
 
 type PortalTab =
@@ -48,11 +52,26 @@ type PortalTab =
   | 'join'
   | 'partner'
   | 'partner-landing'
-  | 'onboarding';
+  | 'onboarding'
+  | 'kds';
 
 function getInitialStoreSync(targetSlug?: string | null): Store | null {
   if (typeof window === 'undefined') return null;
-  const clean = (targetSlug || '').trim().toLowerCase();
+  let clean = (targetSlug || '').trim().toLowerCase();
+  if (!clean) {
+    try {
+      const rawAuth = localStorage.getItem('radar_unified_auth_user');
+      if (rawAuth) {
+        const parsed = JSON.parse(rawAuth);
+        if (parsed?.storeSlug || parsed?.storeId) {
+          clean = String(parsed.storeSlug || parsed.storeId).trim().toLowerCase();
+        }
+      }
+      if (!clean) {
+        clean = (localStorage.getItem('radar_last_store_slug') || '').trim().toLowerCase();
+      }
+    } catch {}
+  }
   if (!clean) return null;
   if (clean === DEMO_STORE_SLUG || isDemoStoreSlug(clean)) {
     return INITIAL_DEMO_STORE;
@@ -62,7 +81,7 @@ function getInitialStoreSync(targetSlug?: string | null): Store | null {
     if (rawList) {
       const stores: Store[] = JSON.parse(rawList);
       if (Array.isArray(stores) && stores.length > 0) {
-        const found = stores.find((s) => s.slug === clean || s.id === clean);
+        const found = stores.find((s) => s.slug?.toLowerCase() === clean || s.id?.toLowerCase() === clean);
         return found || null;
       }
     }
@@ -176,10 +195,25 @@ function parseRouteParams() {
     rawHash === 'merchant' ||
     rawHash.endsWith('-admin');
   if (isMerchantAdminPath) {
+    let resolvedAdminSlug = slugParam || (rawHash.endsWith('-admin') ? rawHash.replace(/-admin$/, '') : null);
+    if (!resolvedAdminSlug) {
+      try {
+        const rawAuth = localStorage.getItem('radar_unified_auth_user');
+        if (rawAuth) {
+          const parsed = JSON.parse(rawAuth);
+          if (parsed && (parsed.role === 'merchant' || parsed.role === 'admin') && (parsed.storeSlug || parsed.storeId)) {
+            resolvedAdminSlug = parsed.storeSlug || parsed.storeId;
+          }
+        }
+        if (!resolvedAdminSlug) {
+          resolvedAdminSlug = localStorage.getItem('radar_last_store_slug');
+        }
+      } catch {}
+    }
     return {
       portal: 'admin' as const,
       isPreview: previewParam,
-      storeSlug: slugParam || (rawHash.endsWith('-admin') ? rawHash.replace(/-admin$/, '') : null),
+      storeSlug: resolvedAdminSlug,
       partnerSlug: null,
     };
   }
@@ -196,15 +230,66 @@ function parseRouteParams() {
     rawHash === 'pos' ||
     rawHash.endsWith('-pos');
   if (isCashierPath) {
+    let resolvedCashierSlug = slugParam || (rawHash.endsWith('-pos') ? rawHash.replace(/-pos$/, '') : null);
+    if (!resolvedCashierSlug) {
+      try {
+        const rawAuth = localStorage.getItem('radar_unified_auth_user');
+        if (rawAuth) {
+          const parsed = JSON.parse(rawAuth);
+          if (parsed && parsed.role === 'cashier' && (parsed.storeSlug || parsed.storeId)) {
+            resolvedCashierSlug = parsed.storeSlug || parsed.storeId;
+          }
+        }
+        if (!resolvedCashierSlug) {
+          resolvedCashierSlug = localStorage.getItem('radar_last_store_slug');
+        }
+      } catch {}
+    }
     return {
       portal: 'cashier' as const,
       isPreview: previewParam,
-      storeSlug: slugParam || (rawHash.endsWith('-pos') ? rawHash.replace(/-pos$/, '') : null),
+      storeSlug: resolvedCashierSlug,
       partnerSlug: null,
     };
   }
 
-  // 7. Check Subpaths like /:slug/pos, /:slug/admin, /:slug/cashier
+  // 6.5. Check Kitchen Display System Route (/kds, /kitchen, portal=kds, portal=kitchen, #kds, #kitchen)
+  const isKDSPath =
+    pathname === '/kds' ||
+    pathname === '/kds/' ||
+    pathname === '/kitchen' ||
+    pathname === '/kitchen/' ||
+    portalParam === 'kds' ||
+    portalParam === 'kitchen' ||
+    rawHash === 'kds' ||
+    rawHash === 'kitchen' ||
+    rawHash.endsWith('-kds') ||
+    rawHash.endsWith('-kitchen');
+  if (isKDSPath) {
+    let resolvedKDSSlug = slugParam || (rawHash.endsWith('-kds') ? rawHash.replace(/-kds$/, '') : rawHash.endsWith('-kitchen') ? rawHash.replace(/-kitchen$/, '') : null);
+    if (!resolvedKDSSlug) {
+      try {
+        const rawAuth = localStorage.getItem('radar_unified_auth_user');
+        if (rawAuth) {
+          const parsed = JSON.parse(rawAuth);
+          if (parsed && (parsed.storeSlug || parsed.storeId)) {
+            resolvedKDSSlug = parsed.storeSlug || parsed.storeId;
+          }
+        }
+        if (!resolvedKDSSlug) {
+          resolvedKDSSlug = localStorage.getItem('radar_last_store_slug');
+        }
+      } catch {}
+    }
+    return {
+      portal: 'kds' as const,
+      isPreview: previewParam,
+      storeSlug: resolvedKDSSlug,
+      partnerSlug: null,
+    };
+  }
+
+  // 7. Check Subpaths like /:slug/pos, /:slug/admin, /:slug/cashier, /:slug/kds
   const pathSegments = pathname.split('/').filter(Boolean);
   if (pathSegments.length === 2) {
     const [firstSeg, secondSeg] = pathSegments;
@@ -220,6 +305,14 @@ function parseRouteParams() {
     if (cleanSecond === 'admin' || cleanSecond === 'merchant' || cleanSecond === 'store') {
       return {
         portal: 'admin' as const,
+        isPreview: previewParam,
+        storeSlug: firstSeg,
+        partnerSlug: null,
+      };
+    }
+    if (cleanSecond === 'kds' || cleanSecond === 'kitchen') {
+      return {
+        portal: 'kds' as const,
         isPreview: previewParam,
         storeSlug: firstSeg,
         partnerSlug: null,
@@ -254,6 +347,8 @@ function parseRouteParams() {
     'partner',
     'merchant',
     'cashier',
+    'kds',
+    'kitchen',
     'dashboard',
     'app',
     'super-admin',
@@ -366,6 +461,8 @@ export function App() {
     soundType?: string;
   } | null>(null);
 
+  const recentNotificationsRef = useRef<Set<string>>(new Set());
+
   const { role, isAuthenticated, isLoading: authLoading } = useAuth();
 
   useEffect(() => {
@@ -396,6 +493,7 @@ export function App() {
       document.documentElement.style.setProperty('--brand-primary', p);
       document.documentElement.style.setProperty('--brand-secondary', s);
       updateDynamicPWA(store, activeTab);
+      saveActiveStoreBranding(store);
     }
   }, [store, activeTab]);
 
@@ -407,6 +505,7 @@ export function App() {
           if (updated) {
             setStore(updated);
             updateDynamicPWA(updated, activeTab);
+            saveActiveStoreBranding(updated);
           } else if (all.length === 0) {
             setStore(null);
             updateDynamicPWA(null, 'super-admin');
@@ -423,46 +522,72 @@ export function App() {
       }
 
       if (event.type === 'CUSTOM_NOTIFICATION') {
-        const isTargetStore =
+        // 🛡️ Deduplicate notification event processing within App instance
+        const notifDedupeKey = event.eventId || `${event.type}_${event.title}_${event.message}_${event.targetId || ''}`;
+        if (recentNotificationsRef.current.has(notifDedupeKey)) {
+          return;
+        }
+        recentNotificationsRef.current.add(notifDedupeKey);
+        if (recentNotificationsRef.current.size > 200) {
+          const first = recentNotificationsRef.current.values().next().value;
+          if (first) recentNotificationsRef.current.delete(first);
+        }
+
+        const currentStoreId = store?.id;
+        const currentStoreSlug = store?.slug;
+
+        const isMatchingStore =
           event.targetType === 'all_stores' ||
-          event.targetType === 'broadcast' ||
-          (event.targetType === 'store' &&
-            (!event.targetId ||
-              (store && (event.targetId === store.id || event.targetId === store.slug || event.storeId === store.id || event.storeId === store.slug)) ||
-              activeTab === 'admin' ||
-              activeTab === 'cashier')) ||
-          (store && (event.targetId === store.id || event.targetId === store.slug || event.storeId === store.id || event.storeId === store.slug));
+          (Boolean(currentStoreId) &&
+            (event.targetId === currentStoreId ||
+              event.targetId === currentStoreSlug ||
+              event.storeId === currentStoreId ||
+              event.storeId === currentStoreSlug));
 
-        const isTargetPartner =
+        const isMatchingPartner =
           event.targetType === 'all_partners' ||
-          event.targetType === 'broadcast' ||
-          (event.targetType === 'partner' &&
-            (!event.targetId || (partnerSlug && event.targetId === partnerSlug) || activeTab === 'partner')) ||
-          (partnerSlug && event.targetId === partnerSlug) ||
-          activeTab === 'partner';
+          (Boolean(partnerSlug) && (event.targetId === partnerSlug || event.targetType === 'partner'));
 
-        const isTargetCurrent = isTargetStore || isTargetPartner || activeTab === 'super-admin';
+        const isMatchingSuperAdmin =
+          event.targetType === 'broadcast' ||
+          (activeTab === 'super-admin' && (event.targetType === 'super_admin' || !event.targetType));
+
+        const isTargetCurrent =
+          (activeTab === 'admin' && isMatchingStore) ||
+          (activeTab === 'cashier' && isMatchingStore) ||
+          (activeTab === 'partner' && isMatchingPartner) ||
+          isMatchingSuperAdmin;
 
         if (isTargetCurrent && event.title && event.message) {
           playBeepSound(event.soundType || 'notification');
 
-          saveInboxNotification({
-            title: event.title,
-            body: event.message,
-            soundType: event.soundType || 'notification',
-            targetType: (event.targetType as any) || 'broadcast',
-            targetId: event.targetId || undefined,
-            portal:
-              activeTab === 'super-admin'
-                ? 'super_admin'
-                : activeTab === 'partner'
-                ? 'partner'
-                : activeTab === 'admin'
-                ? 'store'
-                : activeTab === 'cashier'
-                ? 'cashier'
-                : 'customer',
-          });
+          const targetPortal =
+            activeTab === 'super-admin'
+              ? 'super_admin'
+              : activeTab === 'partner'
+              ? 'partner'
+              : activeTab === 'admin'
+              ? 'store'
+              : activeTab === 'cashier'
+              ? 'cashier'
+              : 'customer';
+
+          saveInboxNotification(
+            {
+              id: event.eventId,
+              title: event.title,
+              body: event.message,
+              soundType: event.soundType || 'notification',
+              targetType: (event.targetType as any) || 'broadcast',
+              targetId: event.targetId || undefined,
+              storeId: currentStoreId,
+              portal: targetPortal,
+            },
+            {
+              portal: targetPortal,
+              storeId: currentStoreId,
+            }
+          );
 
           setIncomingToast({
             id: 'toast-' + Date.now(),
@@ -475,39 +600,28 @@ export function App() {
             title: event.title,
             body: event.message,
             soundType: event.soundType || 'notification',
-            tag: `radar-notif-${Date.now()}`,
+            tag: `radar-notif-${event.eventId || Date.now()}`,
           }).catch(() => {});
         }
       }
 
-      if (event.type === 'POINTS_ADDED' && event.points) {
-        saveInboxNotification({
-          title: 'نقاط ولاء جديدة 🌟',
-          body: `تمت إضافة +${event.points} نقطة بنجاح! رصيدك الجديد: ${event.newBalance ?? 0} نقطة.`,
-          soundType: 'success',
-          targetType: 'customer',
-          portal: 'customer',
-        });
-      }
-
-      if (event.type === 'REWARD_REDEEMED' && event.rewardTitle) {
-        saveInboxNotification({
-          title: 'استبدال مكافأة بنجاح 🎁',
-          body: `تم استبدال: "${event.rewardTitle}" بنجاح!`,
-          soundType: 'redeem',
-          targetType: 'customer',
-          portal: 'customer',
-        });
-      }
-
-      if (event.type === 'PAYMENT_COMPLETED') {
-        saveInboxNotification({
-          title: 'عملية دفع جديدة 💳',
-          body: 'تم استلام دفعة مالية جديدة وتحديث اشتراك المتجر.',
-          soundType: 'success',
-          targetType: 'store',
-          portal: 'store',
-        });
+      // 💳 Payment completed (only for relevant store or super admin)
+      if (event.type === 'PAYMENT_COMPLETED' && (activeTab === 'super-admin' || (store && event.storeId === store.id))) {
+        const targetPortal = activeTab === 'super-admin' ? 'super_admin' : 'store';
+        saveInboxNotification(
+          {
+            title: 'عملية دفع جديدة 💳',
+            body: 'تم استلام دفعة مالية جديدة وتحديث اشتراك المتجر.',
+            soundType: 'success',
+            targetType: 'store',
+            storeId: store?.id,
+            portal: targetPortal,
+          },
+          {
+            portal: targetPortal,
+            storeId: store?.id,
+          }
+        );
       }
     });
 
@@ -590,6 +704,7 @@ export function App() {
               : 'customer';
           setActiveTab(targetPortal);
           updateDynamicPWA(found, targetPortal);
+          saveActiveStoreBranding(found);
           localStorage.setItem('radar_last_store_slug', found.slug || found.id);
           localStorage.setItem('radar_last_portal', targetPortal);
           setLoading(false);
@@ -629,6 +744,7 @@ export function App() {
           setStore(defaultStore);
           setActiveTab(config.portal);
           updateDynamicPWA(defaultStore, config.portal);
+          saveActiveStoreBranding(defaultStore);
           localStorage.setItem('radar_last_store_slug', defaultStore.slug || defaultStore.id);
           localStorage.setItem('radar_last_portal', config.portal);
           setLoading(false);
@@ -656,6 +772,7 @@ export function App() {
     setActiveTab(targetTab);
     setIsSuperAdminPreview(true);
     updateDynamicPWA(selectedStore, targetTab);
+    saveActiveStoreBranding(selectedStore);
     const url = new URL(window.location.href);
     url.searchParams.set('store', selectedStore.slug);
     url.searchParams.set('portal', targetTab);
@@ -675,15 +792,81 @@ export function App() {
   };
 
   if (loading || authLoading) {
+    const isPlatformPortal =
+      activeTab === 'super-admin' ||
+      activeTab === 'partner' ||
+      activeTab === 'join' ||
+      activeTab === 'partner-landing';
+
+    const activeBranding = (!isPlatformPortal && (store || getActiveStoreBranding())) || null;
+
+    if (activeBranding && activeBranding.name) {
+      const primaryColor = activeBranding.primary_color || '#0F172A';
+      const secondaryColor = activeBranding.secondary_color || '#F59E0B';
+
+      return (
+        <div className="min-h-screen bg-[#080B11] flex flex-col items-center justify-center text-slate-100 selection:bg-amber-500 selection:text-black">
+          <div className="flex flex-col items-center gap-4 text-center px-4 max-w-sm w-full animate-fade-in">
+            {/* Store Dynamic Logo / Monogram */}
+            <div
+              className="w-20 h-20 rounded-3xl flex items-center justify-center text-white text-3xl font-black shadow-2xl overflow-hidden relative border border-white/10"
+              style={{
+                backgroundColor: primaryColor,
+                boxShadow: `0 15px 35px -5px ${secondaryColor}33`,
+              }}
+            >
+              {activeBranding.logo_url ? (
+                <img
+                  src={activeBranding.logo_url}
+                  alt={activeBranding.name}
+                  className="w-full h-full object-cover rounded-3xl"
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = 'none';
+                  }}
+                />
+              ) : (
+                <span className="font-mono text-2xl font-bold" style={{ color: secondaryColor }}>
+                  {activeBranding.name.slice(0, 2)}
+                </span>
+              )}
+            </div>
+
+            {/* Store Name & Portal Tagline */}
+            <div className="space-y-1">
+              <h1 className="text-2xl font-black tracking-wide text-white drop-shadow-sm">
+                {activeBranding.name}
+              </h1>
+              <p className="text-xs text-slate-400 font-medium">
+                بوابة الولاء والمكافآت الذكية
+              </p>
+            </div>
+
+            {/* Loading Indicator themed with store's brand accent */}
+            <div className="flex items-center gap-2 text-slate-400 font-mono text-xs mt-3 bg-slate-900/90 px-4 py-2 rounded-full border border-slate-800 shadow-xl">
+              <div
+                className="w-3.5 h-3.5 border-2 rounded-full animate-spin"
+                style={{
+                  borderColor: secondaryColor,
+                  borderTopColor: 'transparent',
+                }}
+              ></div>
+              <span>جاري تهيئة البوابة...</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Default Platform Splash Screen (RADAR)
     return (
       <div className="min-h-screen bg-[#080B11] flex flex-col items-center justify-center text-slate-100 selection:bg-amber-500 selection:text-black">
-        <div className="flex flex-col items-center gap-4 text-center px-4">
+        <div className="flex flex-col items-center gap-4 text-center px-4 animate-fade-in">
           <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 text-3xl shadow-xl shadow-amber-500/20 font-black animate-pulse">
             ⚡
           </div>
           <div className="space-y-1">
             <h1 className="text-xl font-black tracking-wide text-white">رادار | RADAR</h1>
-            <p className="text-xs text-slate-400 font-medium">نظام الولاء السحابي الذكي</p>
+            <p className="text-xs text-slate-400 font-medium">محرك الولاء والمكافآت الذكي</p>
           </div>
           <div className="flex items-center gap-2 text-slate-400 font-mono text-xs mt-2 bg-slate-900/80 px-4 py-2 rounded-full border border-slate-800 shadow-lg">
             <div className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
@@ -809,11 +992,27 @@ export function App() {
             <CustomerWallet store={store} />
           )}
 
+          {activeTab === 'kds' && store && (
+            <div className="fixed inset-0 z-50 bg-slate-950 overflow-hidden">
+              <KitchenDisplaySystem
+                store={store}
+                activeStaff={null}
+                activeBranch={null}
+                isGeneralManager={true}
+                onClose={() => {
+                  const url = new URL(window.location.origin + '/' + store.slug);
+                  window.location.href = url.toString();
+                }}
+              />
+            </div>
+          )}
+
           {activeTab !== 'super-admin' &&
             activeTab !== 'join' &&
             activeTab !== 'partner' &&
             activeTab !== 'partner-landing' &&
             activeTab !== 'onboarding' &&
+            activeTab !== 'kds' &&
             (!store || !store.id) && (
               <div className="min-h-[60vh] flex items-center justify-center p-4">
                 <div className="max-w-md w-full p-8 rounded-3xl bg-slate-900/95 border border-slate-800 text-center space-y-5 shadow-2xl">

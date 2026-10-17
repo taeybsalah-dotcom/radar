@@ -77,3 +77,31 @@ self.addEventListener('notificationclick', (event) => {
     })
   );
 });
+
+// Handle In-App / Background Messages from Window Clients
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
+    const data = event.data.payload || {};
+    const title = data.title || 'رادار | RADAR';
+    const options = {
+      body: data.body || '',
+      icon: data.icon || '/icon-192.png',
+      badge: data.badge || '/favicon-32.png',
+      vibrate: data.vibrate || [400, 200, 400, 200, 800],
+      tag: data.tag || 'radar-alert',
+      renotify: true,
+      requireInteraction: data.requireInteraction !== undefined ? data.requireInteraction : true,
+      data: {
+        url: data.url || '/',
+        dateOfArrival: Date.now(),
+      },
+      actions: [
+        { action: 'open', title: 'عرض الآن 👁️' },
+        { action: 'close', title: 'إغلاق ✕' },
+      ],
+    };
+
+    event.waitUntil(self.registration.showNotification(title, options));
+  }
+});
+

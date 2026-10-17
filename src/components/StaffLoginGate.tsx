@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { Store, StoreStaff } from '../types';
+import React, { useState, useEffect } from 'react';
+import { Store, StoreStaff, StoreBranch } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
+import { ensureAudioUnlocked } from '../lib/sound';
 import {
   ShieldCheck,
   Lock,
@@ -18,6 +19,7 @@ import {
   ArrowRight,
   HelpCircle,
   RefreshCw,
+  Building2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -36,6 +38,34 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
 
   // Mode: 'LOGIN' | 'FORGOT_PIN' | 'RESET_PIN'
   const [mode, setMode] = useState<'LOGIN' | 'FORGOT_PIN' | 'RESET_PIN'>('LOGIN');
+
+  // Branch Selection State
+  const [branches, setBranches] = useState<StoreBranch[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
+  const [loadingBranches, setLoadingBranches] = useState(false);
+
+  useEffect(() => {
+    if (store?.id) {
+      setLoadingBranches(true);
+      LoyaltyService.getStoreBranches(store.id)
+        .then((brs) => {
+          if (Array.isArray(brs) && brs.length > 0) {
+            setBranches(brs);
+            const savedBranch =
+              localStorage.getItem(`radar_pos_active_branch_${store.id}`) ||
+              (store.slug ? localStorage.getItem(`radar_pos_active_branch_${store.slug}`) : null);
+            if (savedBranch && brs.some((b) => b.id === savedBranch)) {
+              setSelectedBranchId(savedBranch);
+            } else {
+              const main = brs.find((b) => b.is_main) || brs[0];
+              setSelectedBranchId(main.id);
+            }
+          }
+        })
+        .catch((err) => console.warn('Failed to load branches in StaffLoginGate', err))
+        .finally(() => setLoadingBranches(false));
+    }
+  }, [store?.id, store?.slug]);
 
   // Form Inputs
   const [phone, setPhone] = useState('');
@@ -81,6 +111,18 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
     setLoading(true);
     setErrorMessage(null);
 
+    // Warm-up and unlock audio on interaction
+    try {
+      ensureAudioUnlocked();
+    } catch {}
+
+    // Verify branch selection for cashier
+    if (requiredRole === 'cashier' && branches.length > 0 && !selectedBranchId) {
+      setErrorMessage('يرجى تحديد الفرع الذي ستبدأ العمل فيه اليوم');
+      setLoading(false);
+      return;
+    }
+
     try {
       const authRes = await LoyaltyService.verifyStaffPin(
         normPhone,
@@ -99,9 +141,46 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
 
       const staff = authRes.staff;
 
-      // تسجيل دخول ناجح للمتجر الحالي حصراً
+      // 🏢 التحقق الصارم من صلاحية الكاشير للفرع المحدد
+      if (requiredRole === 'cashier' && branches.length > 0 && selectedBranchId) {
+        if (staff.role !== 'admin') {
+          const assigned = Array.isArray(staff.assigned_branch_ids) ? staff.assigned_branch_ids : [];
+          const isAllowed = assigned.includes(selectedBranchId) || staff.branch_id === selectedBranchId;
+          if (!isAllowed) {
+            const targetBranch = branches.find((b) => b.id === selectedBranchId);
+            setErrorMessage(
+              `❌ عفواً، حسابك غير مسجل للعمل في فرع (${targetBranch?.name || 'المحدد'}). يرجى اختيار الفرع المخصص لك أو مراجعة إدارة المتجر.`
+            );
+            return;
+          }
+        }
+
+        // تثبيت الفرع المعتمد لجلسة الكاشير الحالية
+        staff.branch_id = selectedBranchId;
+        try {
+          localStorage.setItem(`radar_pos_active_branch_${store.id}`, selectedBranchId);
+          if (store.slug) {
+            localStorage.setItem(`radar_pos_active_branch_${store.slug}`, selectedBranchId);
+          }
+        } catch {}
+      }
+
+      // 🛡️ تنظيف وتفريغ أي جلسة سابقة أو بيانات مخزنة مرتبطة بالكاشير أو المدير تماماً قبل حفظ بيانات الجلسة الجديدة
+      LoyaltyService.clearStaffSession(store.id, 'cashier', store.slug);
+      LoyaltyService.clearStaffSession(store.id, 'admin', store.slug);
+      try {
+        localStorage.removeItem('radar_unified_auth_user');
+        localStorage.removeItem(`radar_stoken_${store.id}_cashier`);
+        localStorage.removeItem(`radar_stoken_${store.id}_admin`);
+        if (store.slug) {
+          localStorage.removeItem(`radar_session_${store.slug}_cashier`);
+          localStorage.removeItem(`radar_session_${store.slug}_admin`);
+        }
+      } catch {}
+
+      // تسجيل دخول ناجح للمتجر والفرع المعتمد حصراً
       LoyaltyService.saveStaffSession(store.id, staff, store.slug);
-      LoyaltyService.saveStaffToken(store.id, staff.role, authRes.session_token);
+      LoyaltyService.saveStaffToken(store.id, staff.role, authRes.session_token, store.slug);
       authLogin(staff.role === 'admin' ? 'merchant' : 'cashier', {
         id: staff.id,
         storeId: store.id,
@@ -284,6 +363,44 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
         {/* ======================================================== */}
         {mode === 'LOGIN' && (
           <form onSubmit={handleDirectLogin} className="mt-6 space-y-4">
+
+            {/* 🏢 Branch Selection for Cashier Login */}
+            {requiredRole === 'cashier' && branches.length > 0 && (
+              <div className="space-y-1.5 animate-fade-in">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                    الفرع المراد بدء الوردية فيه:
+                  </label>
+                  <span className="text-[10px] text-amber-400 font-bold bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                    إجباري للتحقق 🔒
+                  </span>
+                </div>
+                <div className="relative">
+                  <select
+                    value={selectedBranchId}
+                    onChange={(e) => {
+                      setSelectedBranchId(e.target.value);
+                      setErrorMessage(null);
+                    }}
+                    className="w-full bg-slate-950 border-2 border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-3 text-sm font-bold text-amber-300 outline-none transition cursor-pointer appearance-none shadow-inner"
+                    required
+                  >
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id} className="bg-slate-900 text-white font-bold py-1">
+                        📍 {b.name} {b.is_main ? '(الفرع الرئيسي)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">
+                    ▼
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-normal">
+                  * سيتم التحقق من أن حسابك مصرح له بالعمل في هذا الفرع حصراً.
+                </p>
+              </div>
+            )}
             
             {/* Phone Number */}
             <div className="space-y-1.5">

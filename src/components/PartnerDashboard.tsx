@@ -10,12 +10,13 @@ import {
   resolveUnifiedStage,
   getStoreUnifiedStage,
 } from '../types';
-import { LoyaltyService, getSupabaseClient, normalizeLead, normalizePhone } from '../lib/supabase';
+import { LoyaltyService, getSupabaseClient, normalizeLead, normalizePhone, withTimeout } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
 import { QRCodeSVG } from 'qrcode.react';
 import { NotificationBell } from './NotificationBell';
+import { clearAllInboxNotifications } from '../lib/notifications';
 import {
   ShieldCheck,
   Sparkles,
@@ -211,6 +212,16 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
   // 4. Leads State
   const [leads, setLeads] = useState<MerchantLead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  const [isRefreshingLeads, setIsRefreshingLeads] = useState(false);
+  const isFetchingLeadsRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const [leadsSearch, setLeadsSearch] = useState('');
   const [leadsStatusFilter, setLeadsStatusFilter] = useState('ALL');
   const [leadsPage, setLeadsPage] = useState(1);
@@ -368,11 +379,25 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
   // Fetch Leads with search & pagination (without triggering re-render flicker)
   const fetchLeads = useCallback(
-    async (pageToLoad: number = 1) => {
+    async (pageToLoad: number = 1, isManual: boolean = false) => {
       if (!partner) return;
-      if (leads.length === 0) {
+      if (isFetchingLeadsRef.current) return;
+      isFetchingLeadsRef.current = true;
+
+      if (isManual && isMountedRef.current) {
+        setIsRefreshingLeads(true);
+      } else if (leads.length === 0 && isMountedRef.current) {
         setLoadingLeads(true);
       }
+
+      // 🛡️ Fail-safe timeout to strictly guarantee clearing of spinning states within 6s
+      const safetyTimeout = setTimeout(() => {
+        isFetchingLeadsRef.current = false;
+        if (isMountedRef.current) {
+          setIsRefreshingLeads(false);
+          setLoadingLeads(false);
+        }
+      }, 6000);
 
       try {
         const client = getSupabaseClient();
@@ -394,7 +419,10 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
           const from = (pageToLoad - 1) * 15;
           const to = from + 14;
-          const { data, count, error } = await query.range(from, to).order('created_at', { ascending: false });
+          const { data, count, error } = await withTimeout(
+            query.range(from, to).order('created_at', { ascending: false }),
+            5000
+          );
 
           if (!error && data && data.length > 0) {
             // 🔄 JOIN / Enriched lookup with stores and invoices directly from Supabase
@@ -407,10 +435,13 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
             if (convertedStoreIds.length > 0) {
               try {
-                const { data: storesList } = await client
-                  .from('stores')
-                  .select('id, name, status, subscription_status, lifecycle_stage, setup_fee_paid, subscription_plan, subscription_plan_id, subscription_end_date')
-                  .in('id', convertedStoreIds);
+                const { data: storesList } = await withTimeout(
+                  client
+                    .from('stores')
+                    .select('id, name, status, subscription_status, lifecycle_stage, setup_fee_paid, subscription_plan, subscription_plan_id, subscription_end_date')
+                    .in('id', convertedStoreIds),
+                  4000
+                );
                 if (storesList) {
                   storesList.forEach((s: any) => {
                     storesMap[s.id] = s;
@@ -418,11 +449,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                 }
 
                 // Check paid invoices in store_invoices
-                const { data: paidInvs } = await client
-                  .from('store_invoices')
-                  .select('store_id')
-                  .in('store_id', convertedStoreIds)
-                  .eq('status', 'paid');
+                const { data: paidInvs } = await withTimeout(
+                  client
+                    .from('store_invoices')
+                    .select('store_id')
+                    .in('store_id', convertedStoreIds)
+                    .eq('status', 'paid'),
+                  4000
+                );
                 if (paidInvs) {
                   paidInvs.forEach((i: any) => paidStoresSet.add(i.store_id));
                 }
@@ -439,11 +473,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                 if (partner.affiliate_id && partner.affiliate_id !== partner.id) commConds.push(`partner_account_id.eq.${partner.affiliate_id}`);
                 
                 if (commConds.length > 0) {
-                  const { data: commsList } = await client
-                    .from('partner_commissions')
-                    .select('merchant_lead_id, store_id, status')
-                    .in('status', ['EARNED', 'AVAILABLE', 'PAID'])
-                    .or(commConds.join(','));
+                  const { data: commsList } = await withTimeout(
+                    client
+                      .from('partner_commissions')
+                      .select('merchant_lead_id, store_id, status')
+                      .in('status', ['EARNED', 'AVAILABLE', 'PAID'])
+                      .or(commConds.join(',')),
+                    4000
+                  );
                   if (commsList) {
                     commsList.forEach((c: any) => {
                       if (c.merchant_lead_id) paidLeadsSet.add(c.merchant_lead_id);
@@ -502,10 +539,11 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
               });
             }
 
-            setLeads(normalized);
-            setTotalLeads(count || data.length);
-            setLeadsPage(pageToLoad);
-            setLoadingLeads(false);
+            if (isMountedRef.current) {
+              setLeads(normalized);
+              setTotalLeads(count || data.length);
+              setLeadsPage(pageToLoad);
+            }
             return;
           }
         }
@@ -538,21 +576,28 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             (l) => l.store_name?.toLowerCase().includes(s) || l.manager_name?.toLowerCase().includes(s) || l.phone?.includes(s)
           );
         }
-        setLeads(matched);
-        setTotalLeads(matched.length);
-        setLeadsPage(pageToLoad);
+        if (isMountedRef.current) {
+          setLeads(matched);
+          setTotalLeads(matched.length);
+          setLeadsPage(pageToLoad);
+        }
       } catch (err) {
         console.warn('Error fetching partner leads:', err);
       } finally {
-        setLoadingLeads(false);
+        clearTimeout(safetyTimeout);
+        isFetchingLeadsRef.current = false;
+        if (isMountedRef.current) {
+          setLoadingLeads(false);
+          setIsRefreshingLeads(false);
+        }
       }
     },
-    [partner, leadsStatusFilter, leadsSearch]
+    [partner, leadsStatusFilter, leadsSearch, leads.length]
   );
 
   useEffect(() => {
     if (partner && (activeTab === 'leads' || activeTab === 'overview')) {
-      fetchLeads(1);
+      fetchLeads(1, false);
     }
   }, [partner, activeTab, leadsStatusFilter, fetchLeads]);
 
@@ -560,7 +605,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
   const debouncedSyncPartnerData = useMemo(
     () =>
       debounce(async (pId: string) => {
-        fetchLeads(1);
+        fetchLeads(1, false);
         const [fin, comms, allLeads, bonusData, allStores] = await Promise.all([
           LoyaltyService.getPartnerFinancialSummary(pId, partner?.affiliate_id),
           LoyaltyService.getPartnerCommissions(pId),
@@ -606,7 +651,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           total_earned: fin.earned_commissions,
           total_paid: fin.paid_commissions,
         });
-      }, 400),
+      }, 1200),
     [partner, fetchLeads]
   );
 
@@ -669,9 +714,13 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
   };
 
   const handleLogout = () => {
+    const partnerId = partner?.id || partner?.slug;
     authLogout('partner');
     LoyaltyService.clearPartnerSession();
     sessionStorage.removeItem('RADAR_PARTNER_AUTH_TOKEN');
+    if (partnerId) {
+      clearAllInboxNotifications({ portal: 'partner', userId: partnerId });
+    }
     setPartner(null);
     setStats(null);
   };
@@ -882,6 +931,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
           <NotificationBell
             portalName="بوابة الشريك والمسوق"
             portalFilter="partner"
+            userId={partner?.id || partner?.slug || user?.id}
           />
 
           <button
@@ -1165,11 +1215,12 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                   <span>بحث</span>
                 </button>
                 <button
-                  onClick={() => fetchLeads(leadsPage)}
+                  onClick={() => fetchLeads(leadsPage, true)}
+                  disabled={isRefreshingLeads}
                   className="p-2.5 rounded-2xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition"
-                  title="تحديث"
+                  title="تحديث البيانات"
                 >
-                  <RefreshCw className={`w-4 h-4 ${loadingLeads ? 'animate-spin text-amber-400' : ''}`} />
+                  <RefreshCw className={`w-4 h-4 text-amber-400 ${isRefreshingLeads ? 'animate-spin' : ''}`} />
                 </button>
               </div>
             </div>

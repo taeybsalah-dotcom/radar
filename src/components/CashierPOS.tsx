@@ -1,11 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Store, Customer, Tier, Privilege, DynamicQRToken, StoreStaff, CustomerCoupon } from '../types';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Store, Customer, Tier, Privilege, DynamicQRToken, StoreStaff, CustomerCoupon, StoreBranch, getStoreActiveModules } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
 import { QRScannerModal } from './QRScannerModal';
 import { StaffLoginGate } from './StaffLoginGate';
 import { NotificationBell } from './NotificationBell';
+import { clearAllInboxNotifications, sendPortalNotification, requestNotificationPermission, getNotificationPermissionStatus } from '../lib/notifications';
 import { playBeepSound, ensureAudioUnlocked } from '../lib/sound';
 import { LoyaltyEvents } from '../lib/events';
+import { saveActiveStoreBranding } from '../lib/storeBranding';
+import { CashierRegisterTab } from './CashierRegisterTab';
+import { CashierShiftCloseModal } from './CashierShiftCloseModal';
+import { CashierRefundModal } from './CashierRefundModal';
+import { OfflineSyncModal } from './OfflineSyncModal';
+import { OfflineSyncEngine } from '../lib/offlineSync';
+import { KitchenDisplaySystem } from './KitchenDisplaySystem';
+import { CashierCashMovementModal } from './CashierCashMovementModal';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   Camera, QrCode, ShoppingBag, Calendar,
   Zap,
@@ -37,6 +47,16 @@ import {
   Utensils,
   ChefHat,
   Filter,
+  Building2,
+  Receipt,
+  RotateCcw,
+  Wifi,
+  WifiOff,
+  TrendingDown,
+  Coins,
+  Scissors,
+  ExternalLink,
+  Copy,
 } from 'lucide-react';
 
 interface CashierPOSProps {
@@ -44,16 +64,24 @@ interface CashierPOSProps {
 }
 
 export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
-  const [authenticatedCashier, setAuthenticatedCashier] = useState<StoreStaff | null>(() =>
-    store?.id ? (LoyaltyService.getStaffSession(store.id, 'cashier', store.slug) ||
-    LoyaltyService.getStaffSession(store.id, 'admin', store.slug)) : null
-  );
+  // 🛡️ ZERO ADMIN FALLBACK: Check staff session for cashier or admin operating POS
+  const [authenticatedCashier, setAuthenticatedCashier] = useState<StoreStaff | null>(() => {
+    if (!store?.id) return null;
+    return LoyaltyService.getStaffSession(store.id, 'any', store.slug);
+  });
+
+  useEffect(() => {
+    if (store) {
+      saveActiveStoreBranding(store);
+    }
+  }, [store]);
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [privileges, setPrivileges] = useState<Privilege[]>([]);
   const [storeCoupons, setStoreCoupons] = useState<CustomerCoupon[]>([]);
   const [staffList, setStaffList] = useState<StoreStaff[]>([]);
+  const [storeBranches, setStoreBranches] = useState<StoreBranch[]>([]);
   const [activeStaff, setActiveStaff] = useState<StoreStaff | null>(authenticatedCashier);
 
   const authCashierRef = useRef<StoreStaff | null>(authenticatedCashier);
@@ -64,11 +92,60 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   // ⚡ Debounce / Duplicate Scan Suppression Ref (Section 15 & 51)
   const lastScanRef = useRef<{ rawData: string; timestamp: number } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'scanner' | 'orders' | 'rewards'>('scanner');
+  const [activeTab, setActiveTab] = useState<'register' | 'kds' | 'scanner' | 'orders' | 'rewards'>('register');
   const [loading, setLoading] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerAction, setScannerAction] = useState<'SMART' | 'REDEEM'>('SMART');
   const [selectedReward, setSelectedReward] = useState<{ id?: string; title: string; cost: number } | null>(null);
+
+  // 📱 KDS & Services Display QR Codes Modal for Kitchen/Salon Tablets
+  const [isScreensModalOpen, setIsScreensModalOpen] = useState(false);
+  const [copiedScreenKey, setCopiedScreenKey] = useState<string | null>(null);
+  const [screensModalBranchId, setScreensModalBranchId] = useState<string>('');
+
+  // 🧾 Transfer online order or booking into active POS Cart
+  const [transferredOrderToPOS, setTransferredOrderToPOS] = useState<any | null>(null);
+
+  const handleTransferOrderToPOS = (order: any) => {
+    stopAlertRinger();
+    setIncomingAlert(null);
+    setTransferredOrderToPOS(order);
+    setActiveTab('register');
+  };
+
+  const handleTransferBookingToPOS = (booking: any) => {
+    stopAlertRinger();
+    setIncomingAlert(null);
+    const bookingOrder = {
+      id: booking.id,
+      order_number: booking.booking_number,
+      customer_id: booking.customer_id,
+      customer_name: booking.customer_name,
+      customer_phone: booking.customer_phone,
+      order_source: 'customer_app_booking',
+      payment_method: 'pay_at_store',
+      payment_status: 'pending',
+      fulfillment_type: 'service_booking',
+      notes: `حجز موعد #${booking.booking_number} (${booking.booking_date} | ${booking.booking_time})${booking.notes ? ` - ${booking.notes}` : ''}`,
+      items: [
+        {
+          id: booking.service_id,
+          name: booking.service_name,
+          category: booking.service_category || 'خدمات',
+          unit_price: Number(booking.total_price || booking.service_price) || 0,
+          quantity: 1,
+          total_price: Number(booking.total_price || booking.service_price) || 0,
+          item_type: 'service',
+          duration_minutes: booking.duration_minutes || booking.service_duration_minutes || 30,
+          specialist_id: booking.specialist_id,
+          specialist_name: booking.specialist_name,
+          notes: `حجز #${booking.booking_number}`,
+        },
+      ],
+    };
+    setTransferredOrderToPOS(bookingOrder);
+    setActiveTab('register');
+  };
 
   // 💰 Invoice Amount Modal State (For Customer Points Accumulation)
   const [isAmountModalOpen, setIsAmountModalOpen] = useState(false);
@@ -94,6 +171,19 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const [changePinError, setChangePinError] = useState<string | null>(null);
   const [changePinSuccess, setChangePinSuccess] = useState<string | null>(null);
   const [isSavingCashierPin, setIsSavingCashierPin] = useState(false);
+
+  // 🔒 Shift Close & Cash Drawer Modal State
+  const [isShiftCloseModalOpen, setIsShiftCloseModalOpen] = useState(false);
+
+  // 🔄 Refund & Tax Credit Note Modal State
+  const [isRefundModalOpen, setIsRefundModalOpen] = useState(false);
+
+  // 💵 Cash Drawer In / Out Movement Modal State
+  const [isCashMovementModalOpen, setIsCashMovementModalOpen] = useState(false);
+  const [cashMovementInitialType, setCashMovementInitialType] = useState<'cash_in' | 'cash_out'>('cash_out');
+
+  // 🌐 Offline Sync Modal State
+  const [isOfflineModalOpen, setIsOfflineModalOpen] = useState(false);
 
   // ✏️ Unified Manual Input State (Phone or Coupon Code)
   const [manualInput, setManualInput] = useState('');
@@ -122,6 +212,10 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   // 🛒 Live Orders State
   const [liveOrders, setLiveOrders] = useState<any[]>([]);
   const [liveBookings, setLiveBookings] = useState<any[]>([]);
+  const liveOrdersRef = useRef<any[]>(liveOrders);
+  liveOrdersRef.current = liveOrders;
+  const liveBookingsRef = useRef<any[]>(liveBookings);
+  liveBookingsRef.current = liveBookings;
   const [orderActionError, setOrderActionError] = useState<string | null>(null);
 
   // 🔔 Audio & Realtime Alert State
@@ -148,6 +242,123 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     });
   };
 
+  const [notificationPermission, setNotificationPermission] = useState<string>(() => {
+    return getNotificationPermissionStatus();
+  });
+
+  useEffect(() => {
+    // Automatically attempt to prompt for notifications on first interaction if default
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        const handleFirstInteraction = () => {
+          requestNotificationPermission()
+            .then((status) => setNotificationPermission(status))
+            .catch(() => {});
+          window.removeEventListener('click', handleFirstInteraction);
+          window.removeEventListener('touchstart', handleFirstInteraction);
+        };
+        window.addEventListener('click', handleFirstInteraction, { once: true });
+        window.addEventListener('touchstart', handleFirstInteraction, { once: true });
+      }
+    }
+  }, []);
+
+  const handleEnableNotifications = async () => {
+    const status = await requestNotificationPermission();
+    setNotificationPermission(status);
+    if (status === 'granted') {
+      try {
+        playBeepSound('notification');
+      } catch {}
+    }
+  };
+
+  // 🔋 Persistent Background Standby & Screen WakeLock (For mobile order alerts when screen is locked)
+  const silentKeepAliveAudioRef = useRef<HTMLAudioElement | null>(null);
+  const wakeLockRef = useRef<any>(null);
+  const [isKeepAliveActive, setIsKeepAliveActive] = useState<boolean>(false);
+
+  const requestWakeLock = async () => {
+    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+      try {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+      } catch {}
+    }
+  };
+
+  const startBackgroundKeepAlive = async () => {
+    try {
+      // 1. Silent Loop Audio to maintain active OS media session (prevents iOS/Android from killing WebSocket)
+      if (!silentKeepAliveAudioRef.current && typeof window !== 'undefined') {
+        const audio = new Audio('/sounds/silent-keepalive.wav');
+        audio.loop = true;
+        audio.preload = 'auto';
+        silentKeepAliveAudioRef.current = audio;
+      }
+      if (silentKeepAliveAudioRef.current) {
+        await silentKeepAliveAudioRef.current.play().catch(() => {});
+      }
+
+      // 2. Set MediaSession so iOS/Android treats it as persistent foreground media
+      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: `رادار كاشير | في انتظار الطلبات 🟢`,
+          artist: store.name,
+          album: 'نظام الاستقبال الفوري للطلبات',
+          artwork: [{ src: store.logo_url || '/icon-192.png', sizes: '192x192', type: 'image/png' }],
+        });
+        navigator.mediaSession.setActionHandler('play', () => {
+          silentKeepAliveAudioRef.current?.play().catch(() => {});
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          silentKeepAliveAudioRef.current?.play().catch(() => {});
+        });
+      }
+
+      // 3. Keep screen from dimming/sleeping
+      await requestWakeLock();
+
+      setIsKeepAliveActive(true);
+    } catch (e) {
+      console.warn('Background keep-alive start error:', e);
+    }
+  };
+
+  useEffect(() => {
+    // Start keep alive on first user interaction anywhere in POS
+    const triggerKeepAlive = () => {
+      startBackgroundKeepAlive();
+      window.removeEventListener('click', triggerKeepAlive);
+      window.removeEventListener('touchstart', triggerKeepAlive);
+    };
+    window.addEventListener('click', triggerKeepAlive, { once: true });
+    window.addEventListener('touchstart', triggerKeepAlive, { once: true });
+
+    // Handle visibility change to re-acquire wakeLock if user returns to tab
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (wakeLockRef.current) {
+        try { wakeLockRef.current.release(); } catch {}
+      }
+      if (silentKeepAliveAudioRef.current) {
+        silentKeepAliveAudioRef.current.pause();
+      }
+    };
+  }, [store.name, store.logo_url]);
+
+  const isIos = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isStandalone = typeof window !== 'undefined' && (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (navigator as any).standalone === true
+  );
+
   const [incomingAlert, setIncomingAlert] = useState<{
     id: string;
     title: string;
@@ -173,35 +384,162 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     };
   }, []);
 
+  // 📍 Interactive Branch Selection for Cashier and Manager
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(`radar_pos_active_branch_${store.id}`) || null;
+    } catch {
+      return null;
+    }
+  });
+
+  const effectiveStaff = activeStaff || authenticatedCashier;
+  const isAdmin = effectiveStaff?.role === 'admin';
+
+  // Allowed branches for this staff member
+  const allowedBranches = useMemo(() => {
+    if (isAdmin) return storeBranches;
+    if (!effectiveStaff) return storeBranches;
+    const assigned = Array.isArray(effectiveStaff.assigned_branch_ids) ? effectiveStaff.assigned_branch_ids : [];
+    const directBranch = effectiveStaff.branch_id;
+    if (assigned.length === 0 && !directBranch) return storeBranches;
+    return storeBranches.filter(b => assigned.includes(b.id) || b.id === directBranch);
+  }, [isAdmin, effectiveStaff, storeBranches]);
+
+  // Determine current active branch ID
+  const effectiveBranchId: string | null = useMemo(() => {
+    if (isAdmin) {
+      if (selectedBranchId === 'ALL') return null;
+      if (selectedBranchId && storeBranches.some(b => b.id === selectedBranchId)) {
+        return selectedBranchId;
+      }
+      return effectiveStaff?.branch_id || (storeBranches.length > 0 ? storeBranches[0].id : null);
+    }
+    // Cashier:
+    if (selectedBranchId && allowedBranches.some(b => b.id === selectedBranchId)) {
+      return selectedBranchId;
+    }
+    return allowedBranches[0]?.id || effectiveStaff?.branch_id || storeBranches[0]?.id || null;
+  }, [isAdmin, selectedBranchId, allowedBranches, effectiveStaff?.branch_id, storeBranches]);
+
+  const isGeneralManager = isAdmin && (!effectiveBranchId || selectedBranchId === 'ALL');
+  const activeBranchId = isGeneralManager ? null : effectiveBranchId;
+  const activeBranchObj = storeBranches.find(b => b.id === activeBranchId);
+
+  const activeBranchIdRef = useRef<string | null>(activeBranchId);
+  activeBranchIdRef.current = activeBranchId;
+  const isGMModeRef = useRef<boolean>(isGeneralManager);
+  isGMModeRef.current = isGeneralManager;
+
+  const handleSwitchBranch = (branchId: string | null) => {
+    setSelectedBranchId(branchId || 'ALL');
+    try {
+      if (branchId) {
+        localStorage.setItem(`radar_pos_active_branch_${store.id}`, branchId);
+      } else {
+        localStorage.setItem(`radar_pos_active_branch_${store.id}`, 'ALL');
+      }
+    } catch {}
+  };
+
+  // 🛡️ Strict Branch Alert Filter:
+  // If in GM mode (admin viewing all branches), receive all alerts.
+  // Specific branch cashier/manager: strictly isolate to their currently active branch.
+  const shouldAlertForBranch = (incomingBranchId?: string | null): boolean => {
+    if (isGMModeRef.current) return true;
+    const curBranch = activeBranchIdRef.current;
+    if (!curBranch) return true;
+    if (incomingBranchId && incomingBranchId !== curBranch) {
+      return false;
+    }
+    if (!incomingBranchId) {
+      const isMain = storeBranches.find(b => b.id === curBranch)?.is_main;
+      return Boolean(isMain);
+    }
+    return true;
+  };
+
+  // 🛑 State-Driven Ringer Watcher: Automatically stops ringer when current alert is no longer pending
+  useEffect(() => {
+    if (incomingAlert?.orderId) {
+      const order = liveOrders.find(o => o.id === incomingAlert.orderId);
+      if (order && order.status !== 'pending') {
+        stopAlertRinger();
+        setIncomingAlert(null);
+      }
+    }
+    if (incomingAlert?.bookingId) {
+      const booking = liveBookings.find(b => b.id === incomingAlert.bookingId);
+      if (booking && booking.status !== 'pending') {
+        stopAlertRinger();
+        setIncomingAlert(null);
+      }
+    }
+  }, [liveOrders, liveBookings, incomingAlert]);
+
   const triggerLiveAlert = (
     title: string,
     detail: string,
     type: 'order' | 'booking' | 'coupon' = 'order',
-    targetEntityId?: string
+    targetEntityId?: string,
+    targetBranchId?: string | null
   ) => {
-    const alertKey = `${title}_${detail}`;
+    // 🛡️ Defense-in-depth: if targetBranchId is provided and does not match active branch, abort
+    if (targetBranchId && !shouldAlertForBranch(targetBranchId)) {
+      return;
+    }
+
+    const alertKey = `${title}_${detail}_${targetEntityId || ''}`;
     const now = Date.now();
-    const isDuplicate = lastAlertKeyRef.current.key === alertKey && (now - lastAlertKeyRef.current.time < 3500);
+    const isDuplicate = lastAlertKeyRef.current.key === alertKey && (now - lastAlertKeyRef.current.time < 4000);
+
+    // If duplicate event fired rapidly, keep the existing ringer loop running!
+    if (isDuplicate && alertRingerTimerRef.current) {
+      return;
+    }
     lastAlertKeyRef.current = { key: alertKey, time: now };
 
     stopAlertRinger();
 
-    if (!isDuplicate && !isSoundMutedRef.current) {
+    if (!isSoundMutedRef.current) {
       try {
         playBeepSound('pos_order_alert');
       } catch (e) {
         console.warn('Audio alert failed', e);
       }
 
-      // 🛎️ Continuous ringer loop (rings every 3.2 seconds until accepted or cancelled)
+      // 🛎️ Show OS / Lockscreen push notification (rings/vibrates even if browser in background or screen off)
+      try {
+        sendPortalNotification({
+          title: `🛎️ ${title}`,
+          body: detail,
+          tag: `pos-alert-${targetEntityId || Date.now()}`,
+          soundType: 'pos_order_alert',
+          requireInteraction: true,
+        });
+      } catch {}
+
+      // 📳 Mobile Physical Device Vibration
+      if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+        try {
+          navigator.vibrate([500, 250, 500, 250, 800]);
+        } catch {}
+      }
+
+      // 🛎️ Continuous ringer loop (rings & vibrates every 3.0 seconds until accepted or cancelled)
       if (type === 'order' || type === 'booking') {
         alertRingerTimerRef.current = setInterval(() => {
           if (!isSoundMutedRef.current) {
             try {
               playBeepSound('pos_order_alert');
             } catch {}
+            if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+              try {
+                navigator.vibrate([350, 150, 350]);
+              } catch {}
+            }
           }
-        }, 3200);
+        }, 3000);
       }
     }
 
@@ -223,11 +561,26 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     }
   };
 
+  // 🎛️ Store Active Modules (SaaS & Merchant Settings)
+  const activeModules = useMemo(() => getStoreActiveModules(store), [store]);
+
   // 📦 Orders & Bookings Organization State
-  const [ordersSubTab, setOrdersSubTab] = useState<'orders' | 'bookings'>('orders');
+  const [ordersSubTab, setOrdersSubTab] = useState<'orders' | 'bookings'>(() => activeModules.orders ? 'orders' : 'bookings');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'new' | 'preparing' | 'completed'>('all');
   const [bookingStatusFilter, setBookingStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'past'>('all');
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
+
+  // Auto-sync tab if active modules change
+  useEffect(() => {
+    if (!activeModules.orders && ordersSubTab === 'orders') {
+      setOrdersSubTab('bookings');
+    } else if (!activeModules.bookings && ordersSubTab === 'bookings') {
+      setOrdersSubTab('orders');
+    }
+    if (!activeModules.orders && !activeModules.bookings && activeTab === 'kds') {
+      setActiveTab('register');
+    }
+  }, [activeModules.orders, activeModules.bookings, activeTab, ordersSubTab]);
 
   // 🔊 Unlock Web Audio API on first user interaction (click/touch/key) to comply with browser Autoplay Policy
   useEffect(() => {
@@ -257,45 +610,83 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     let isCancelled = false;
     let channel: any = null;
 
+    const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
     LoyaltyService.resolveStore(store.id).then((resolvedStore) => {
       if (isCancelled) return;
-      const targetStoreId = resolvedStore?.id || store.id;
-      setEffectiveStoreId(targetStoreId);
+      const validStoreUuid = resolvedStore?.id && isUuid(resolvedStore.id)
+        ? resolvedStore.id
+        : isUuid(store.id)
+        ? store.id
+        : null;
+
+      if (!validStoreUuid) return;
+      setEffectiveStoreId(validStoreUuid);
 
       // 1. Initial Load (Runs ONCE when cashier mounts)
-      LoyaltyService.getLiveStoreOrders(targetStoreId).then(orders => {
+      LoyaltyService.getLiveStoreOrders(validStoreUuid).then(orders => {
         if (!isCancelled) setLiveOrders(orders);
       }).catch(() => {});
-      LoyaltyService.getLiveStoreBookings(targetStoreId).then(bookings => {
+      LoyaltyService.getLiveStoreBookings(validStoreUuid).then(bookings => {
         if (!isCancelled) setLiveBookings(bookings);
       }).catch(() => {});
 
-      // 2. Realtime WebSocket subscription with resolved UUID
+      // 2. Realtime WebSocket subscription with verified UUID server filter
       const supabase = getSupabaseClient();
       if (!supabase) return;
 
       channel = supabase
-        .channel('live-pos-' + targetStoreId)
+        .channel('pos-live-orders-and-bookings-' + (validStoreUuid || store.id) + '-' + Date.now())
         .on(
           'postgres_changes',
           {
             event: '*',
             schema: 'public',
             table: 'store_orders',
-            filter: `store_id=eq.${targetStoreId}`
           },
           (payload: any) => {
+            const updated = payload.new;
+            if (!updated) return;
+            const orderStoreId = String(updated.store_id || '').toLowerCase().trim();
+            const currentUuid = String(validStoreUuid || '').toLowerCase().trim();
+            const rawStoreId = String(store?.id || '').toLowerCase().trim();
+
+            const isStoreMatch = Boolean(
+              (currentUuid && orderStoreId === currentUuid) ||
+              (rawStoreId && orderStoreId === rawStoreId)
+            );
+            const isExistingMatch = liveOrdersRef.current.some(o => o.id === updated.id || (o.order_number && o.order_number === updated.order_number));
+
+            if (!isStoreMatch && !isExistingMatch) return;
+
             if (payload.eventType === 'INSERT') {
               setLiveOrders(prev => [payload.new, ...prev.filter(o => o.id !== payload.new.id && o.order_number !== payload.new.order_number)]);
-              const num = payload.new.order_number || '';
-              const name = payload.new.customer_name || 'عميل المتجر';
-              const price = payload.new.total_price || 0;
-              const typeText = payload.new.order_type === 'dine_in' ? 'محلي' : payload.new.order_type === 'takeaway' ? 'سفري' : 'توصيل';
-              triggerLiveAlert(`طلب جديد #${num}`, `${name} (${price} ر.س) • ${typeText}`, 'order', payload.new.id);
+              // 🛡️ Alert ONLY for orders from customer app, NEVER for in-store walk-in POS orders or completed invoices!
+              const isDirectPOSOrder = 
+                payload.new.order_source === 'pos' || 
+                payload.new.status === 'completed' || 
+                Boolean(payload.new.cashier_id);
+              const isCustomerAppPendingOrder = 
+                !isDirectPOSOrder && 
+                payload.new.status === 'pending' && 
+                (payload.new.order_source === 'customer_app' || !payload.new.order_source);
+
+              if (isCustomerAppPendingOrder && shouldAlertForBranch(payload.new?.branch_id)) {
+                const num = payload.new.order_number || '';
+                const name = payload.new.customer_name || 'عميل التطبيق';
+                const price = payload.new.total_price || 0;
+                const typeText = payload.new.order_type === 'dine_in' ? 'محلي' : payload.new.order_type === 'takeaway' ? 'سفري' : 'توصيل';
+                const isPaid = payload.new.payment_status === 'paid' ? ' (مدفوع بالتطبيق 💳)' : '';
+                triggerLiveAlert(`طلب تطبيق جديد #${num}`, `${name} (${price} ر.س)${isPaid} • ${typeText}`, 'order', payload.new.id, payload.new.branch_id);
+              }
             } else if (payload.eventType === 'UPDATE') {
-              setLiveOrders(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+              setLiveOrders(prev => prev.map(o => (o.id === updated.id || o.order_number === updated.order_number) ? { ...o, ...updated } : o));
+              if (updated.status !== 'pending') {
+                stopAlertRinger();
+                setIncomingAlert(prev => (prev?.orderId === updated.id || !prev?.orderId) ? null : prev);
+              }
             } else if (payload.eventType === 'DELETE') {
-              setLiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
+              setLiveOrders(prev => prev.filter(o => o.id !== payload.old?.id));
             }
           }
         )
@@ -305,20 +696,59 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             event: '*',
             schema: 'public',
             table: 'service_bookings',
-            filter: `store_id=eq.${targetStoreId}`
           },
           (payload: any) => {
+            const updated = payload.new;
+            if (!updated) return;
+            const bookingStoreId = String(updated.store_id || '').toLowerCase().trim();
+            const currentUuid = String(validStoreUuid || '').toLowerCase().trim();
+            const rawStoreId = String(store?.id || '').toLowerCase().trim();
+
+            const isStoreMatch = Boolean(
+              (currentUuid && bookingStoreId === currentUuid) ||
+              (rawStoreId && bookingStoreId === rawStoreId)
+            );
+            const isExistingMatch = liveBookingsRef.current.some(b => b.id === updated.id || (b.booking_number && b.booking_number === updated.booking_number));
+
+            if (!isStoreMatch && !isExistingMatch) return;
+
             if (payload.eventType === 'INSERT') {
               setLiveBookings(prev => [payload.new, ...prev.filter(b => b.id !== payload.new.id && b.booking_number !== payload.new.booking_number)]);
-              const num = payload.new.booking_number || '';
-              const name = payload.new.customer_name || 'عميل جديد';
-              const service = payload.new.service_name || 'خدمة';
-              const date = payload.new.booking_date || '';
-              triggerLiveAlert(`حجز جديد #${num}`, `${name} - ${service} (${date})`, 'booking', payload.new.id);
+              // 🛡️ Alert ONLY for bookings from customer app, NEVER for cashier phone/walk-in or completed bookings
+              const isCashierNotes = Boolean(
+                (payload.new.customer_notes && (payload.new.customer_notes.includes('حجز هاتف للكاشير') || payload.new.customer_notes.includes('حجز هاتف'))) ||
+                ((payload.new as any).notes && ((payload.new as any).notes.includes('حجز هاتف للكاشير') || (payload.new as any).notes.includes('حجز هاتف')))
+              );
+              const isDirectCashierBooking = 
+                payload.new.status === 'completed' || 
+                payload.new.status === 'cancelled' ||
+                payload.new.status === 'confirmed' ||
+                payload.new.booking_source === 'phone_call' ||
+                payload.new.booking_source === 'walk_in' ||
+                payload.new.booking_source === 'cashier' ||
+                isCashierNotes;
+
+              const isCustomerAppPendingBooking = 
+                !isDirectCashierBooking && 
+                payload.new.status === 'pending' && 
+                (payload.new.booking_source === 'customer_app' || !payload.new.booking_source) &&
+                !isCashierNotes;
+
+              if (isCustomerAppPendingBooking && shouldAlertForBranch(payload.new?.branch_id)) {
+                const num = payload.new.booking_number || '';
+                const name = payload.new.customer_name || 'عميل التطبيق';
+                const service = payload.new.service_name || 'خدمة';
+                const date = payload.new.booking_date || '';
+                triggerLiveAlert(`حجز موعد عبر التطبيق #${num}`, `${name} - ${service} (${date})`, 'booking', payload.new.id, payload.new.branch_id);
+              }
             } else if (payload.eventType === 'UPDATE') {
-              setLiveBookings(prev => prev.map(o => o.id === payload.new.id ? payload.new : o));
+              setLiveBookings(prev => prev.map(b => (b.id === updated.id || b.booking_number === updated.booking_number) ? { ...b, ...updated } : b));
+              if (updated.status !== 'pending') {
+                stopAlertRinger();
+                setIncomingAlert(prev => (prev?.bookingId === updated.id || !prev?.bookingId) ? null : prev);
+              }
             } else if (payload.eventType === 'DELETE') {
-              setLiveBookings(prev => prev.filter(o => o.id !== payload.old.id));
+              setLiveBookings(prev => prev.filter(b => b.id !== payload.old?.id));
             }
           }
         )
@@ -328,13 +758,13 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             event: '*',
             schema: 'public',
             table: 'customer_coupons',
-            filter: `store_id=eq.${targetStoreId}`
+            filter: `store_id=eq.${validStoreUuid}`,
           },
           (payload: any) => {
             if (payload.eventType === 'INSERT') {
               setStoreCoupons(prev => [payload.new, ...prev.filter(c => c.id !== payload.new.id)]);
             } else if (payload.eventType === 'UPDATE') {
-              setStoreCoupons(prev => prev.map(c => c.id === payload.new.id ? payload.new : c));
+              setStoreCoupons(prev => prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c));
             } else if (payload.eventType === 'DELETE') {
               setStoreCoupons(prev => prev.filter(c => c.id !== payload.old.id));
             }
@@ -362,7 +792,10 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       stopAlertRinger();
       setIncomingAlert(prev => prev?.orderId === orderId ? null : prev);
       setOrderActionError(null);
-      await LoyaltyService.updateOrderStatus(orderId, status);
+      const staffName = activeStaff?.name || authenticatedCashier?.name || 'الكاشير';
+      const effectiveBranchId = activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null;
+      const effectiveBranchName = activeBranchObj?.name || null;
+      await LoyaltyService.updateOrderStatus(orderId, status, staffName, effectiveBranchId, effectiveBranchName);
       setLiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
     } catch (e: any) {
       setOrderActionError(e.message || 'حدث خطأ أثناء تحديث الحالة.');
@@ -376,7 +809,10 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       stopAlertRinger();
       setIncomingAlert(prev => prev?.bookingId === bookingId ? null : prev);
       setOrderActionError(null);
-      await LoyaltyService.updateServiceBookingStatus(bookingId, status);
+      const staffName = activeStaff?.name || authenticatedCashier?.name || 'الكاشير';
+      const effectiveBranchId = activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null;
+      const effectiveBranchName = activeBranchObj?.name || null;
+      await LoyaltyService.updateServiceBookingStatus(bookingId, status, staffName, effectiveBranchId, effectiveBranchName);
       setLiveBookings(prev => prev.map(o => o.id === bookingId ? { ...o, status } : o));
     } catch (e: any) {
       setOrderActionError(e.message || 'حدث خطأ أثناء تحديث حالة الحجز.');
@@ -391,9 +827,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
   useEffect(() => {
     if (store?.id) {
-      const session =
-        LoyaltyService.getStaffSession(store.id, 'cashier', store.slug) ||
-        LoyaltyService.getStaffSession(store.id, 'admin', store.slug);
+      const session = LoyaltyService.getStaffSession(store.id, 'any', store.slug);
       setAuthenticatedCashier(session);
       setActiveStaff(session);
     }
@@ -425,27 +859,29 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                 (item) => item.id !== o.id && item.order_number !== o.order_number
               ),
             ]);
-            const num = o.order_number || '';
-            const name = o.customer_name || 'عميل المتجر';
-            const price = o.total_price || 0;
-            const typeText =
-              o.order_type === 'dine_in'
-                ? 'محلي'
-                : o.order_type === 'takeaway'
-                ? 'سفري'
-                : 'توصيل';
-            triggerLiveAlert(
-              `طلب جديد #${num}`,
-              `${name} (${price} ر.س) • ${typeText}`,
-              'order',
-              o.id
-            );
+            // 🛡️ BRANCH ISOLATION: Alert ONLY if matches active cashier branch AND comes from customer app
+            const isDirectPOSOrder = o.order_source === 'pos' || o.status === 'completed' || Boolean(o.cashier_id);
+            const isCustomerAppPendingOrder = !isDirectPOSOrder && o.status === 'pending' && (o.order_source === 'customer_app' || !o.order_source);
+            if (isCustomerAppPendingOrder && shouldAlertForBranch(o.branch_id)) {
+              const num = o.order_number || '';
+              const name = o.customer_name || 'عميل التطبيق';
+              const price = o.total_price || 0;
+              const typeText =
+                o.order_type === 'dine_in'
+                  ? 'محلي'
+                  : o.order_type === 'takeaway'
+                  ? 'سفري'
+                  : 'توصيل';
+              const isPaid = o.payment_status === 'paid' ? ' (مدفوع بالتطبيق 💳)' : '';
+              triggerLiveAlert(
+                `طلب تطبيق جديد #${num}`,
+                `${name} (${price} ر.س)${isPaid} • ${typeText}`,
+                'order',
+                o.id,
+                o.branch_id
+              );
+            }
           } else {
-            triggerLiveAlert(
-              'طلب جديد في المنيو 📦',
-              'تم استلام طلب جديد من العميل',
-              'order'
-            );
             if (effectiveStoreId || store?.id) {
               LoyaltyService.getLiveStoreOrders(effectiveStoreId || store.id)
                 .then(setLiveOrders)
@@ -465,27 +901,69 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                   item.id !== b.id && item.booking_number !== b.booking_number
               ),
             ]);
-            const num = b.booking_number || '';
-            const name = b.customer_name || 'عميل جديد';
-            const service = b.service_name || 'خدمة';
-            const date = b.booking_date || '';
-            triggerLiveAlert(
-              `حجز جديد #${num}`,
-              `${name} - ${service} (${date})`,
-              'booking',
-              b.id
+            // 🛡️ BRANCH ISOLATION: Alert ONLY if matches active cashier branch AND is from customer app
+            const isCashierNotes = Boolean(
+              (b.customer_notes && (b.customer_notes.includes('حجز هاتف للكاشير') || b.customer_notes.includes('حجز هاتف'))) ||
+              ((b as any).notes && ((b as any).notes.includes('حجز هاتف للكاشير') || (b as any).notes.includes('حجز هاتف')))
             );
+            const isDirectCashierBooking = 
+              b.status === 'completed' || 
+              b.status === 'cancelled' ||
+              b.status === 'confirmed' ||
+              b.booking_source === 'phone_call' ||
+              b.booking_source === 'walk_in' ||
+              b.booking_source === 'cashier' ||
+              isCashierNotes;
+
+            const isCustomerAppPendingBooking = 
+              !isDirectCashierBooking && 
+              b.status === 'pending' && 
+              (b.booking_source === 'customer_app' || !b.booking_source) &&
+              !isCashierNotes;
+
+            if (isCustomerAppPendingBooking && shouldAlertForBranch(b.branch_id)) {
+              const num = b.booking_number || '';
+              const name = b.customer_name || 'عميل التطبيق';
+              const service = b.service_name || 'خدمة';
+              const date = b.booking_date || '';
+              triggerLiveAlert(
+                `حجز موعد عبر التطبيق #${num}`,
+                `${name} - ${service} (${date})`,
+                'booking',
+                b.id,
+                b.branch_id
+              );
+            }
           } else {
-            triggerLiveAlert(
-              'حجز موعد جديد 📅',
-              'تم استلام حجز خدمة جديد من العميل',
-              'booking'
-            );
             if (effectiveStoreId || store?.id) {
               LoyaltyService.getLiveStoreBookings(effectiveStoreId || store.id)
                 .then(setLiveBookings)
                 .catch(() => {});
             }
+          }
+          return;
+        }
+
+        if (event.type === 'ORDER_STATUS_UPDATED' && event.orderData) {
+          const updated = event.orderData;
+          setLiveOrders((prev) =>
+            prev.map((o) => (o.id === updated.id || o.order_number === updated.order_number ? { ...o, ...updated } : o))
+          );
+          if (updated.status !== 'pending') {
+            stopAlertRinger();
+            setIncomingAlert((prev) => (prev?.orderId === updated.id || !prev?.orderId) ? null : prev);
+          }
+          return;
+        }
+
+        if (event.type === 'BOOKING_STATUS_UPDATED' && event.bookingData) {
+          const updated = event.bookingData;
+          setLiveBookings((prev) =>
+            prev.map((b) => (b.id === updated.id || b.booking_number === updated.booking_number ? { ...b, ...updated } : b))
+          );
+          if (updated.status !== 'pending') {
+            stopAlertRinger();
+            setIncomingAlert((prev) => (prev?.bookingId === updated.id || !prev?.bookingId) ? null : prev);
           }
           return;
         }
@@ -497,6 +975,13 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
         if (event.type === 'PRIVILEGES_UPDATED') {
           LoyaltyService.getPrivileges(store.id).then(setPrivileges).catch(() => {});
+          return;
+        }
+
+        if (event.type === 'BRANCHES_UPDATED') {
+          LoyaltyService.getStoreBranches(store.id).then((brs) => {
+            if (brs && Array.isArray(brs)) setStoreBranches(brs);
+          }).catch(() => {});
           return;
         }
 
@@ -515,8 +1000,6 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                 setActiveStaff(freshAuth);
                 LoyaltyService.saveStaffSession(store.id, freshAuth, store.slug);
               }
-            } else if (staff.length > 0 && !activeStaffRef.current) {
-              setActiveStaff(staff[0]);
             }
           }).catch(() => {});
           return;
@@ -528,8 +1011,6 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         }
 
         if (event.type === 'STORE_UPDATED') {
-          // التغييرات البصرية والهيكلية للمتجر تنعكس تلقائياً عبر prop المتجر القادم من App
-          // دون الحاجة لإعادة جلب كل الكوبونات أو الموظفين أو الرتب أو الفواتير
           return;
         }
       }
@@ -543,18 +1024,22 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const loadStoreMetadata = async () => {
     if (!store?.id) return;
     try {
-      const [t, p, staff, cpns] = await Promise.all([
+      const [t, p, staff, cpns, brs] = await Promise.all([
         LoyaltyService.getTiers(store.id),
         LoyaltyService.getPrivileges(store.id),
         LoyaltyService.getStoreStaff(store.id),
         LoyaltyService.getAllStoreCoupons(store.id),
+        LoyaltyService.getStoreBranches(store.id),
       ]);
       setTiers(t);
       setPrivileges(p);
       setStaffList(staff);
       setStoreCoupons(cpns);
+      if (brs && Array.isArray(brs)) {
+        setStoreBranches(brs);
+      }
 
-      // Real-time synchronization of cashier / staff permissions
+      // Real-time synchronization of cashier / staff permissions and branch assignment
       if (authenticatedCashier) {
         const freshAuth = staff.find(
           (s) =>
@@ -566,8 +1051,6 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           setActiveStaff(freshAuth);
           LoyaltyService.saveStaffSession(store.id, freshAuth, store.slug);
         }
-      } else if (staff.length > 0 && !activeStaff) {
-        setActiveStaff(staff[0]);
       }
     } catch (e) {
       console.error(e);
@@ -632,7 +1115,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           undefined,
           activeStaff?.id,
           activeStaff?.name,
-          entryMethod
+          entryMethod,
+          activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null,
+          activeBranchObj?.name || null
         );
 
         setCustomer(res.customer);
@@ -675,7 +1160,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         rawData,
         activeStaff?.id,
         activeStaff?.name,
-        entryMethod
+        entryMethod,
+        activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null,
+        activeBranchObj?.name || null
       );
 
       // 🛑 Early Exit في حال وجود أي خطأ أو عدم تطابق المتجر
@@ -718,6 +1205,24 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       // 2️⃣ إذا كان باركود عميل (PASS) تم التحقق من سلامته ومطابقته للمتجر
       if (scanResult.type === 'PASS' && scanResult.customerPhone) {
         playBeepSound('success');
+
+        // إذا كان الكاشير في تبويب نقطة البيع (register) يتم ربط العميل فوراً بالسلة وتطبيق الخصومات
+        if (activeTab === 'register') {
+          try {
+            const freshCust = await LoyaltyService.getCustomer(store.id, scanResult.customerPhone);
+            if (freshCust) {
+              setCustomer(freshCust);
+            }
+          } catch {}
+          setSuccessResult({
+            message: `تم ربط حساب العميل (${scanResult.customerName || scanResult.customerPhone}) بنقطة البيع بنجاح! 👑`,
+            phone: scanResult.customerPhone,
+            type: 'PURCHASE',
+          });
+          setLoading(false);
+          return;
+        }
+
         setPendingCustomerScan({
           phone: scanResult.customerPhone,
           name: scanResult.customerName,
@@ -769,7 +1274,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         pendingCustomerScan.qrTokenObj,
         effectiveStaff?.id,
         effectiveStaff?.name,
-        pendingCustomerScan.entryMethod
+        pendingCustomerScan.entryMethod,
+        activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id || null,
+        activeBranchObj?.name || null
       );
 
       setCustomer(res.customer);
@@ -869,7 +1376,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         pendingCustomerScan.qrTokenObj,
         effectiveStaff?.id,
         effectiveStaff?.name,
-        pendingCustomerScan.entryMethod
+        pendingCustomerScan.entryMethod,
+        activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id || null,
+        activeBranchObj?.name || null
       );
 
       setCustomer(res.customer);
@@ -1003,8 +1512,30 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const handleLogout = () => {
     LoyaltyService.clearStaffSession(store.id, 'cashier', store.slug);
     LoyaltyService.clearStaffSession(store.id, 'admin', store.slug);
+    try {
+      localStorage.removeItem('radar_unified_auth_user');
+      localStorage.removeItem(`radar_stoken_${store.id}_cashier`);
+      localStorage.removeItem(`radar_stoken_${store.id}_admin`);
+      if (store.slug) {
+        localStorage.removeItem(`radar_session_${store.slug}_cashier`);
+        localStorage.removeItem(`radar_session_${store.slug}_admin`);
+        localStorage.removeItem(`radar_pos_active_branch_${store.slug}`);
+      }
+      localStorage.removeItem(`radar_pos_active_branch_${store.id}`);
+    } catch {}
+
+    // 🛡️ Root-level Cashier State & Notification Purge
+    clearAllInboxNotifications({ portal: 'cashier', storeId: store.id });
+    setSelectedBranchId(null);
     setAuthenticatedCashier(null);
     setActiveStaff(null);
+    setCustomer(null);
+    setSuccessResult(null);
+    setErrorMessage(null);
+    setIncomingAlert(null);
+    setPendingCustomerScan(null);
+    setManualInput('');
+    stopAlertRinger();
   };
 
   const handleRefreshSubscriptionCheck = async () => {
@@ -1036,6 +1567,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         onAuthenticated={(staff) => {
           setAuthenticatedCashier(staff);
           setActiveStaff(staff);
+          if (staff.branch_id) {
+            setSelectedBranchId(staff.branch_id);
+          }
           loadStoreMetadata();
           LoyaltyService.checkAndUpdateStoreSubscription(store.id).then(setSubscriptionInfo).catch(() => {});
         }}
@@ -1149,6 +1683,14 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
               >
                 {store.name}
               </span>
+              {(store.store_code || store.id) && (
+                <span
+                  title="كود المتجر التعريفي السريع"
+                  className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 font-extrabold tracking-wider"
+                >
+                  {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
               معامل النقاط: كل 1 ريال = <strong style={{ color: store.secondary_color || '#F59E0B' }}>{store.points_per_riyal} نقطة</strong> ولاء
@@ -1161,6 +1703,8 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           <NotificationBell
             portalName={`كاشير (${store.name})`}
             portalFilter="cashier"
+            storeId={store.id}
+            userId={activeStaff?.id || authenticatedCashier?.id}
           />
 
           {/* 🔔 Live Audio Alert Toggle */}
@@ -1189,6 +1733,16 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             <span className="text-[11px] font-mono" style={{ color: store.secondary_color || '#F59E0B' }} dir="ltr">({activeStaff?.phone || authenticatedCashier.phone})</span>
           </div>
 
+          {/* Active Branch Fixed Badge (Locked per session - Selected at login) */}
+          <div className="flex items-center space-x-1.5 rtl:space-x-reverse bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs shadow-sm">
+            <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="text-slate-400 shrink-0">الفرع:</span>
+            <span className="text-amber-400 font-extrabold">
+              {activeBranchObj ? `📍 ${activeBranchObj.name}${activeBranchObj.is_main ? ' (الرئيسي)' : ''}` : isGeneralManager ? '👑 كافة الفروع (المدير العام)' : '📍 الفرع الرئيسي'}
+            </span>
+            <span className="text-[10px] text-slate-500 font-mono" title="الفرع معتمد ومقفل لوردية الكاشير الحالية">🔒</span>
+          </div>
+
           {/* Permission Indicator */}
           <span
             className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border ${
@@ -1199,6 +1753,21 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           >
             {activeStaff?.can_manual_input_phone ? '✏️ مسموح يدوي' : '📷 مسح إجباري 🔒'}
           </span>
+
+          {/* Background Standby Status */}
+          <div
+            onClick={startBackgroundKeepAlive}
+            className="flex items-center space-x-1.5 rtl:space-x-reverse bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800 text-[11px] cursor-pointer hover:border-slate-700 transition"
+            title="اضغط لتنشيط وضع الاستقبال بالخلفية وإبقاء الاتصال حياً"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isKeepAliveActive ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isKeepAliveActive ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+            </span>
+            <span className={isKeepAliveActive ? 'text-emerald-400 font-bold' : 'text-slate-400 font-bold'}>
+              {isKeepAliveActive ? 'استقبال الطلبات نشط 🟢' : 'تنشيط الخلفية ⚡'}
+            </span>
+          </div>
 
           {/* Cashier Self-Service PIN Change Button */}
           <button
@@ -1218,6 +1787,124 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             <span>تغيير رمزي السري 🔑</span>
           </button>
 
+          {/* 👨‍🍳 KDS - Kitchen / Salon Display System Button */}
+          {(activeModules.orders || activeModules.bookings) && (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveTab(activeTab === 'kds' ? 'register' : 'kds')}
+                className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
+                  activeTab === 'kds'
+                    ? 'bg-amber-500 text-black border-amber-400 shadow-amber-500/30'
+                    : 'bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 hover:text-white border-indigo-500/40'
+                }`}
+                title={activeModules.orders ? 'شاشة المطبخ والبار الفورية (KDS)' : 'شاشة صالة الخدمات والمواعيد'}
+              >
+                {activeModules.orders ? <ChefHat className="w-3.5 h-3.5 text-indigo-400" /> : <Scissors className="w-3.5 h-3.5 text-indigo-400" />}
+                <span>{activeModules.orders ? 'شاشة المطبخ (KDS) 👨‍🍳' : 'شاشة الخدمات (KDS) ✂️'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setScreensModalBranchId(activeBranchId || 'ALL');
+                  setIsScreensModalOpen(true);
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-amber-200 border border-slate-700 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
+                title="عرض باركود شاشات العرض للتابلت"
+              >
+                <QrCode className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden sm:inline">باركود الشاشات 📱</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `${window.location.origin}/${store.slug}/kds${activeBranchId ? '?branch=' + activeBranchId : ''}`;
+                  window.open(url, '_blank');
+                }}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 border border-slate-700 transition"
+                title="فتح شاشة العرض في نافذة مستقلة للتابلت"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* 🌐 Network & Offline Sync Status Pill */}
+          <button
+            type="button"
+            onClick={() => setIsOfflineModalOpen(true)}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
+              !OfflineSyncEngine.isOnline() || OfflineSyncEngine.getQueuedOrders(store.id).length > 0
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30'
+                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+            }`}
+            title="حالة الاتصال ومزامنة فواتير الأوفلاين"
+          >
+            {OfflineSyncEngine.isOnline() ? (
+              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+            )}
+            <span>{OfflineSyncEngine.isOnline() ? 'أونلاين 🟢' : 'أوفلاين 🟡'}</span>
+            {OfflineSyncEngine.getQueuedOrders(store.id).length > 0 && (
+              <span className="w-4 h-4 rounded-full bg-amber-500 text-black font-black text-[10px] flex items-center justify-center animate-bounce">
+                {OfflineSyncEngine.getQueuedOrders(store.id).length}
+              </span>
+            )}
+          </button>
+
+          {/* 💸 Cashier Expense (Petty Cash) Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setCashMovementInitialType('cash_out');
+              setIsCashMovementModalOpen(true);
+            }}
+            className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
+            title="تسجيل مصروف نثري من الدرج (مشتريات، نظافة، صيانة، دليفري)"
+          >
+            <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
+            <span>تسجيل مصروف 💸</span>
+          </button>
+
+          {/* 🪙 Cashier Float Deposit Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setCashMovementInitialType('cash_in');
+              setIsCashMovementModalOpen(true);
+            }}
+            className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
+            title="إيداع فكة أو عهدة إضافية في الدرج"
+          >
+            <Coins className="w-3.5 h-3.5 text-emerald-400" />
+            <span>إيداع فكة 🪙</span>
+          </button>
+
+          {/* 🔄 Cashier Refund & Credit Note Button */}
+          <button
+            type="button"
+            onClick={() => setIsRefundModalOpen(true)}
+            className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
+            title="استرجاع فاتورة وإصدار إشعار دائن ضريبي معتمد"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+            <span>المرتجعات (إشعار دائن) 🔄</span>
+          </button>
+
+          {/* 🔒 Cashier Shift Close & Z-Report Button */}
+          <button
+            type="button"
+            onClick={() => setIsShiftCloseModalOpen(true)}
+            className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/40 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
+            title="تقفيل الصندوق وجرد الوردية (Z-Report)"
+          >
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            <span>تقفيل الصندوق (Z-Report) 🔒</span>
+          </button>
+
           <button
             onClick={handleLogout}
             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-red-950/70 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/40 text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse transition"
@@ -1227,6 +1914,37 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           </button>
         </div>
       </div>
+
+      {/* 🔔 Background Notification Permission Banner (For Mobile Background Alerts) */}
+      {notificationPermission !== 'granted' && (
+        <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 text-xs shadow-lg animate-fade-in">
+          <div className="flex items-center gap-2.5">
+            <Bell className="w-4 h-4 text-amber-400 shrink-0 animate-bounce" />
+            <span className="text-amber-100 font-semibold">
+              لتصلك أصوات ورنين الطلبات حتى لو كانت الشاشة مقفلة أو المتصفح في الخلفية:
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleEnableNotifications}
+            className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs shadow transition active:scale-95 shrink-0"
+          >
+            تفعيل الرنين والإشعارات 🔔
+          </button>
+        </div>
+      )}
+
+      {/* 📱 iOS Add to Home Screen Guidance for 100% Locked Screen Notifications */}
+      {isIos && !isStandalone && (
+        <div className="p-3 rounded-2xl bg-gradient-to-r from-blue-500/20 via-blue-500/10 to-transparent border border-blue-500/30 flex items-center justify-between gap-3 text-xs shadow-lg animate-fade-in text-blue-100">
+          <div className="flex items-center gap-2.5">
+            <span className="text-base shrink-0">📱</span>
+            <span>
+              <strong>لمستخدمي الآيفون:</strong> لرنين جرس الطلبات حتى وشاشة الآيفون مقفلة، اضغط زر المشاركة <strong className="font-mono text-white">⎋</strong> أسفل متصفح Safari ثم اختر <strong>"إضافة إلى الشاشة الرئيسية" (Add to Home Screen)</strong>.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* 🛎️ Real-Time Floating Incoming Alert Toast with Loop Ringer & Instant Actions */}
       {incomingAlert && (
@@ -1251,8 +1969,18 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
               <>
                 <button
                   type="button"
+                  onClick={() => {
+                    const ord = liveOrders.find(o => o.id === incomingAlert.orderId);
+                    if (ord) handleTransferOrderToPOS(ord);
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1.5"
+                >
+                  <span>🧾 تحويل للسلة والمحاسبة</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => updateOrderStatus(incomingAlert.orderId!, 'preparing')}
-                  className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1"
+                  className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1"
                 >
                   <span>قبول وتحضير ✅</span>
                 </button>
@@ -1268,6 +1996,16 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
             {incomingAlert.type === 'booking' && incomingAlert.bookingId && (
               <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const bk = liveBookings.find(b => b.id === incomingAlert.bookingId);
+                    if (bk) handleTransferBookingToPOS(bk);
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1.5"
+                >
+                  <span>🧾 تحويل للسلة والمحاسبة</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => updateBookingStatus(incomingAlert.bookingId!, 'confirmed')}
@@ -1325,6 +2063,44 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       )}
 
       
+
+      {/* 👨‍🍳 TAB: Real-Time Kitchen & Bar Display System (شاشة المطبخ والبار) */}
+      {activeTab === 'kds' && (
+        <div className="pb-24 animate-fade-in">
+          <KitchenDisplaySystem
+            store={store}
+            activeStaff={(activeStaff || authenticatedCashier) || null}
+            activeBranch={activeBranchObj || null}
+            isGeneralManager={isGeneralManager}
+            onClose={() => setActiveTab('register')}
+          />
+        </div>
+      )}
+
+      {/* 🛒 TAB 1: Complete Cloud POS Register (نقطة البيع والسلة الذكية) */}
+      {activeTab === 'register' && (
+        <CashierRegisterTab
+          store={store}
+          activeStaff={(activeStaff || authenticatedCashier)!}
+          activeBranch={activeBranchObj || null}
+          customer={customer}
+          tiers={tiers}
+          setCustomer={setCustomer}
+          onOpenCustomerScanner={handleOpenSmartScanner}
+          onOpenShiftClose={() => setIsShiftCloseModalOpen(true)}
+          onOpenRefund={() => setIsRefundModalOpen(true)}
+          liveOrders={liveOrders}
+          liveBookings={liveBookings}
+          transferredOrder={transferredOrderToPOS}
+          onClearTransferredOrder={() => setTransferredOrderToPOS(null)}
+          onRefreshOrders={() => {
+            if (effectiveStoreId || store?.id) {
+              LoyaltyService.getLiveStoreOrders(effectiveStoreId || store.id).then(setLiveOrders).catch(() => {});
+              LoyaltyService.getLiveStoreBookings(effectiveStoreId || store.id).then(setLiveBookings).catch(() => {});
+            }
+          }}
+        />
+      )}
 
       {activeTab === 'scanner' && (
         <div className="animate-fade-in pb-24">
@@ -1482,12 +2258,27 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       )}
 
       {activeTab === 'orders' && (() => {
-        const newOrders = liveOrders.filter(o => o.status === 'pending' || o.status === 'accepted');
-        const prepOrders = liveOrders.filter(o => o.status === 'preparing');
-        const readyOrders = liveOrders.filter(o => o.status === 'ready');
-        const completedOrders = liveOrders.filter(o => o.status === 'completed' || o.status === 'cancelled');
+        // Scope orders and bookings strictly to active branch (or all if general manager)
+        const branchScopedOrders = isGeneralManager
+          ? liveOrders
+          : liveOrders.filter(o => {
+              if (o.branch_id) return o.branch_id === activeBranchId;
+              return Boolean(activeBranchObj?.is_main);
+            });
 
-        const displayedOrders = liveOrders.filter(order => {
+        const branchScopedBookings = isGeneralManager
+          ? liveBookings
+          : liveBookings.filter(b => {
+              if (b.branch_id) return b.branch_id === activeBranchId;
+              return Boolean(activeBranchObj?.is_main);
+            });
+
+        const newOrders = branchScopedOrders.filter(o => o.status === 'pending' || o.status === 'accepted');
+        const prepOrders = branchScopedOrders.filter(o => o.status === 'preparing');
+        const readyOrders = branchScopedOrders.filter(o => o.status === 'ready');
+        const completedOrders = branchScopedOrders.filter(o => o.status === 'completed' || o.status === 'cancelled');
+
+        const displayedOrders = branchScopedOrders.filter(order => {
           if (orderStatusFilter === 'new' && !(order.status === 'pending' || order.status === 'accepted')) return false;
           if (orderStatusFilter === 'preparing' && order.status !== 'preparing') return false;
           if (orderStatusFilter === 'completed' && !(order.status === 'ready' || order.status === 'completed' || order.status === 'cancelled')) return false;
@@ -1502,11 +2293,11 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           return true;
         });
 
-        const pendingBookings = liveBookings.filter(b => b.status === 'pending');
-        const confirmedBookings = liveBookings.filter(b => b.status === 'confirmed');
-        const pastBookings = liveBookings.filter(b => b.status === 'completed' || b.status === 'cancelled' || b.status === 'no_show');
+        const pendingBookings = branchScopedBookings.filter(b => b.status === 'pending');
+        const confirmedBookings = branchScopedBookings.filter(b => b.status === 'confirmed');
+        const pastBookings = branchScopedBookings.filter(b => b.status === 'completed' || b.status === 'cancelled' || b.status === 'no_show');
 
-        const displayedBookings = liveBookings.filter(bk => {
+        const displayedBookings = branchScopedBookings.filter(bk => {
           if (bookingStatusFilter === 'pending' && bk.status !== 'pending') return false;
           if (bookingStatusFilter === 'confirmed' && bk.status !== 'confirmed') return false;
           if (bookingStatusFilter === 'past' && !(bk.status === 'completed' || bk.status === 'cancelled' || bk.status === 'no_show')) return false;
@@ -1524,46 +2315,82 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
         return (
           <div className="animate-fade-in max-w-4xl mx-auto space-y-5 pb-28">
+
+            {/* 📍 Active Branch Context Indicator Banner */}
+            <div className="flex items-center justify-between px-4 py-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 text-xs shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-400 font-bold">عرض طلبات:</span>
+                <span className="font-extrabold text-amber-400 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                  {activeBranchObj ? activeBranchObj.name : 'كافة الفروع (المدير العام)'}
+                </span>
+              </div>
+              <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1">
+                <span>عزل آمن للفرع 🔒</span>
+              </span>
+            </div>
             
             {/* 🔘 Sub-Tab Selector & Live Sync Controls */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/90 p-3 sm:p-4 rounded-3xl border border-slate-800 shadow-xl backdrop-blur-md">
-              <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-slate-800/80">
-                <button
-                  type="button"
-                  onClick={() => setOrdersSubTab('orders')}
-                  className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition duration-200 ${
-                    ordersSubTab === 'orders'
-                      ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Utensils className="w-4 h-4" />
-                  <span>طلبات المنيو</span>
-                  {newOrders.length > 0 && (
-                    <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
-                      {newOrders.length}
-                    </span>
-                  )}
-                </button>
+              {activeModules.orders && activeModules.bookings ? (
+                <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-slate-800/80">
+                  <button
+                    type="button"
+                    onClick={() => setOrdersSubTab('orders')}
+                    className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition duration-200 ${
+                      ordersSubTab === 'orders'
+                        ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Utensils className="w-4 h-4" />
+                    <span>طلبات المنيو</span>
+                    {newOrders.length > 0 && (
+                      <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
+                        {newOrders.length}
+                      </span>
+                    )}
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setOrdersSubTab('bookings')}
-                  className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition duration-200 ${
-                    ordersSubTab === 'bookings'
-                      ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Calendar className="w-4 h-4" />
-                  <span>حجوزات الخدمات</span>
+                  <button
+                    type="button"
+                    onClick={() => setOrdersSubTab('bookings')}
+                    className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition duration-200 ${
+                      ordersSubTab === 'bookings'
+                        ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Calendar className="w-4 h-4" />
+                    <span>حجوزات الخدمات</span>
+                    {pendingBookings.length > 0 && (
+                      <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
+                        {pendingBookings.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              ) : activeModules.bookings ? (
+                <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-purple-500/30 px-4 py-2.5">
+                  <Calendar className="w-4 h-4 text-purple-400" />
+                  <span className="font-black text-xs sm:text-sm text-purple-200">سجل حجوزات ومواعيد الخدمات</span>
                   {pendingBookings.length > 0 && (
                     <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
                       {pendingBookings.length}
                     </span>
                   )}
-                </button>
-              </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-amber-500/30 px-4 py-2.5">
+                  <Utensils className="w-4 h-4 text-amber-400" />
+                  <span className="font-black text-xs sm:text-sm text-amber-200">سجل طلبات المتجر والمنيو</span>
+                  {newOrders.length > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
+                      {newOrders.length}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Quick Search & Manual Refresh */}
               <div className="flex items-center gap-2">
@@ -1618,7 +2445,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                         : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
                     }`}
                   >
-                    الكل ({liveOrders.length})
+                    الكل ({branchScopedOrders.length})
                   </button>
 
                   <button
@@ -1693,7 +2520,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                           {/* Top Order Card Header */}
                           <div>
                             <div className="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="text-sm font-black font-mono text-amber-400">
                                   #{order.order_number || String(order.id).slice(0, 6)}
                                 </span>
@@ -1704,6 +2531,24 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                                     ? '🥡 استلام سفري'
                                     : '🛵 توصيل'}
                                 </span>
+                                {order.order_source === 'customer_app' ? (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold flex items-center gap-1">
+                                    <span>📱 تطبيق العميل</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 font-bold">
+                                    🏬 كاشير
+                                  </span>
+                                )}
+                                {order.payment_status === 'paid' ? (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                                    مدفوع بالتطبيق ✅
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
+                                    الدفع بالفرع ⏳
+                                  </span>
+                                )}
                               </div>
 
                               <span
@@ -1777,6 +2622,18 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                               )}
                             </div>
                           </div>
+
+                          {/* Transfer to POS Cart & Invoice */}
+                          {!isDone && !isCancelled && (
+                            <button
+                              type="button"
+                              onClick={() => handleTransferOrderToPOS(order)}
+                              className="w-full mb-2 py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/35 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow"
+                            >
+                              <Receipt className="w-3.5 h-3.5 text-amber-400" />
+                              <span>🧾 تحويل للسلة والمحاسبة (POS)</span>
+                            </button>
+                          )}
 
                           {/* Action Buttons */}
                           <div className="flex gap-2 pt-1 border-t border-slate-800/80 mt-auto">
@@ -1853,7 +2710,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                         : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
                     }`}
                   >
-                    الكل ({liveBookings.length})
+                    الكل ({branchScopedBookings.length})
                   </button>
 
                   <button
@@ -1928,9 +2785,14 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                           <div>
                             {/* Booking Card Header */}
                             <div className="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3">
-                              <span className="text-sm font-black font-mono text-amber-400">
-                                #{bk.booking_number || String(bk.id).slice(0, 6)}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-sm font-black font-mono text-amber-400">
+                                  #{bk.booking_number || String(bk.id).slice(0, 6)}
+                                </span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold">
+                                  📅 حجز تطبيق
+                                </span>
+                              </div>
                               <span
                                 className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
                                   isPending
@@ -1971,8 +2833,15 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                                   </a>
                                 )}
                               </div>
-                              <div className="text-sm font-black font-mono text-emerald-400">
-                                {Number(bk.total_price || 0).toFixed(2)} ر.س
+                              <div className="text-left">
+                                <div className="text-sm font-black font-mono text-emerald-400">
+                                  {Number(bk.service_price ?? bk.total_price ?? 0).toFixed(2)} ر.س
+                                </div>
+                                {Number(bk.loyalty_points_earned ?? bk.points_to_earn ?? 0) > 0 && (
+                                  <div className="text-[10px] font-bold text-amber-400 flex items-center gap-1 justify-end mt-0.5 font-mono">
+                                    <span>+{Number(bk.loyalty_points_earned ?? bk.points_to_earn ?? 0)} نقطة ولاء 👑</span>
+                                  </div>
+                                )}
                               </div>
                             </div>
 
@@ -1993,6 +2862,18 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                               )}
                             </div>
                           </div>
+
+                          {/* Transfer Booking to POS Cart & Invoice */}
+                          {!isCompleted && !isCancelled && !isNoShow && (
+                            <button
+                              type="button"
+                              onClick={() => handleTransferBookingToPOS(bk)}
+                              className="w-full mb-2 py-2 px-3 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-200 border border-purple-500/40 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow"
+                            >
+                              <Receipt className="w-3.5 h-3.5 text-purple-400" />
+                              <span>🧾 استقبال وتحويل للسلة والمحاسبة (POS)</span>
+                            </button>
+                          )}
 
                           {/* Booking Action Buttons */}
                           <div className="flex gap-2 pt-1 border-t border-slate-800/80 mt-auto">
@@ -2203,8 +3084,51 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
 
       {/* 📱 Bottom Navigation Dock */}
-      <div className="fixed bottom-3 left-3 right-3 z-40 max-w-md mx-auto">
+      <div className="fixed bottom-3 left-3 right-3 z-40 max-w-lg mx-auto">
         <nav className="glass-dock rounded-3xl p-1.5 flex items-center justify-around shadow-[0_-8px_30px_rgba(0,0,0,0.4)] bg-slate-950/95 backdrop-blur-3xl border border-slate-800">
+          <button
+            onClick={() => setActiveTab('register')}
+            className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 ${
+              activeTab === 'register'
+                ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
+                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+            }`}
+          >
+            <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
+            <span>نقطة البيع</span>
+          </button>
+
+          {/* Kitchen / Services Display Button */}
+          {(activeModules.orders || activeModules.bookings) && (
+            <button
+              onClick={() => setActiveTab('kds')}
+              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                activeTab === 'kds'
+                  ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
+                  : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+              }`}
+            >
+              {activeModules.orders ? <ChefHat className="w-5 h-5 sm:w-6 sm:h-6" /> : <Scissors className="w-5 h-5 sm:w-6 sm:h-6" />}
+              <span>{activeModules.orders ? 'المطبخ' : 'الخدمات'}</span>
+              {(() => {
+                const activeCount = activeModules.orders
+                  ? liveOrders.filter(
+                      (o) => (o.status === 'pending' || o.status === 'accepted' || o.status === 'preparing') &&
+                      (isGeneralManager || (o.branch_id ? o.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))
+                    ).length
+                  : liveBookings.filter(
+                      (b) => (b.status === 'pending' || b.status === 'confirmed') &&
+                      (isGeneralManager || (b.branch_id ? b.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))
+                    ).length;
+                return activeCount > 0 ? (
+                  <span className="absolute top-0 right-2 sm:right-4 w-4 h-4 rounded-full bg-blue-500 text-white text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
+                    {activeCount}
+                  </span>
+                ) : null;
+              })()}
+            </button>
+          )}
+
           <button
             onClick={() => setActiveTab('scanner')}
             className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 ${
@@ -2225,12 +3149,26 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                 : 'font-bold text-slate-400 hover:text-white hover:scale-105'
             }`}
           >
-            <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
-            <span>الطلبات</span>
+            {!activeModules.orders && activeModules.bookings ? (
+              <Calendar className="w-5 h-5 sm:w-6 sm:h-6" />
+            ) : (
+              <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
+            )}
+            <span>
+              {!activeModules.orders && activeModules.bookings
+                ? 'المواعيد'
+                : activeModules.orders && !activeModules.bookings
+                ? 'الطلبات'
+                : 'الطلبات والمواعيد'}
+            </span>
             {(() => {
-              const activeCount =
-                liveOrders.filter(o => o.status === 'pending' || o.status === 'accepted' || o.status === 'preparing' || o.status === 'ready').length +
-                liveBookings.filter(b => b.status === 'pending' || b.status === 'confirmed').length;
+              const ordersCount = activeModules.orders
+                ? liveOrders.filter(o => (o.status === 'pending' || o.status === 'accepted' || o.status === 'preparing' || o.status === 'ready') && (isGeneralManager || (o.branch_id ? o.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))).length
+                : 0;
+              const bookingsCount = activeModules.bookings
+                ? liveBookings.filter(b => (b.status === 'pending' || b.status === 'confirmed') && (isGeneralManager || (b.branch_id ? b.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))).length
+                : 0;
+              const activeCount = ordersCount + bookingsCount;
               return activeCount > 0 ? (
                 <span className="absolute top-0 right-3 sm:right-5 w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
                   {activeCount}
@@ -2239,17 +3177,19 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             })()}
           </button>
 
-          <button
-            onClick={() => setActiveTab('rewards')}
-            className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 ${
-              activeTab === 'rewards'
-                ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
-            }`}
-          >
-            <Gift className="w-5 h-5 sm:w-6 sm:h-6" />
-            <span>العروض</span>
-          </button>
+          {activeModules.loyalty && (
+            <button
+              onClick={() => setActiveTab('rewards')}
+              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 ${
+                activeTab === 'rewards'
+                  ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
+                  : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+              }`}
+            >
+              <Gift className="w-5 h-5 sm:w-6 sm:h-6" />
+              <span>العروض</span>
+            </button>
+          )}
         </nav>
       </div>
     
@@ -2573,6 +3513,305 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           }
           subtitle="وجّه كاميرا الجهاز نحو شاشة الجوال لقراءة الباركود فورياً"
         />
+      )}
+
+      {/* 🔒 Shift Closing & Z-Report Modal */}
+      {isShiftCloseModalOpen && (
+        <CashierShiftCloseModal
+          store={store}
+          activeStaff={(activeStaff || authenticatedCashier)!}
+          activeBranch={activeBranchObj || null}
+          isOpen={isShiftCloseModalOpen}
+          onClose={() => setIsShiftCloseModalOpen(false)}
+          onShiftClosed={() => {
+            // Refresh shift data and orders
+            if (effectiveStoreId || store?.id) {
+              LoyaltyService.getLiveStoreOrders(effectiveStoreId || store.id).then(setLiveOrders).catch(() => {});
+            }
+          }}
+        />
+      )}
+
+      {/* 🔄 POS Returns & Tax Credit Note Modal */}
+      {isRefundModalOpen && (
+        <CashierRefundModal
+          store={store}
+          activeStaff={(activeStaff || authenticatedCashier)!}
+          activeBranch={activeBranchObj || null}
+          activeShift={null}
+          isOpen={isRefundModalOpen}
+          onClose={() => setIsRefundModalOpen(false)}
+          onRefundCompleted={() => {
+            if (effectiveStoreId || store?.id) {
+              LoyaltyService.getLiveStoreOrders(effectiveStoreId || store.id).then(setLiveOrders).catch(() => {});
+            }
+          }}
+        />
+      )}
+
+      {/* 🌐 Offline Mode & Auto-Sync Modal */}
+      {isOfflineModalOpen && (
+        <OfflineSyncModal
+          store={store}
+          isOpen={isOfflineModalOpen}
+          onClose={() => setIsOfflineModalOpen(false)}
+          onSyncCompleted={() => {
+            if (effectiveStoreId || store?.id) {
+              LoyaltyService.getLiveStoreOrders(effectiveStoreId || store.id).then(setLiveOrders).catch(() => {});
+            }
+          }}
+        />
+      )}
+
+      {/* 💵 POS Cash In / Out Movements Modal */}
+      {isCashMovementModalOpen && (
+        <CashierCashMovementModal
+          store={store}
+          activeStaff={(activeStaff || authenticatedCashier)!}
+          activeBranch={activeBranchObj || null}
+          activeShift={null}
+          initialType={cashMovementInitialType}
+          isOpen={isCashMovementModalOpen}
+          onClose={() => setIsCashMovementModalOpen(false)}
+          onMovementRecorded={() => {
+            if (effectiveStoreId || store?.id) {
+              LoyaltyService.getLiveStoreOrders(effectiveStoreId || store.id).then(setLiveOrders).catch(() => {});
+            }
+          }}
+        />
+      )}
+
+      {/* 📱 KDS & Services Display QR Codes Modal for Kitchen/Salon Tablets */}
+      {isScreensModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fade-in text-right" dir="rtl">
+          <div className="bg-slate-900 border-2 border-slate-800 rounded-3xl max-w-3xl w-full overflow-hidden shadow-2xl flex flex-col animate-scale-up">
+            
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                  <QrCode className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white flex items-center gap-2">
+                    <span>شاشات العرض والباركود لأجهزة التابلت</span>
+                    <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                      فوري ومحدد بالفرع ⚡
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    امسح رمز الـ QR بكاميرا جهاز التابلت أو التلفزيون لتشغيل الشاشة مباشرة ومقفلة على هذا الفرع
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsScreensModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 border border-slate-700 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 space-y-6 overflow-y-auto max-h-[80vh]">
+              
+              {/* Branch Indicator & Selector */}
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-400 font-bold">الفرع المعتمد للشاشات:</span>
+                  <span className="font-black text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-xl flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                    <span>
+                      {screensModalBranchId === 'ALL'
+                        ? 'شاشة عامة (كافة الفروع)'
+                        : storeBranches.find(b => b.id === screensModalBranchId)?.name || activeBranchObj?.name || 'الفرع الحالي للكاشير'}
+                    </span>
+                  </span>
+                </div>
+
+                {storeBranches.length > 1 && (
+                  <select
+                    value={screensModalBranchId || (activeBranchId || 'ALL')}
+                    onChange={(e) => setScreensModalBranchId(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none focus:border-amber-400"
+                  >
+                    <option value={activeBranchId || 'ALL'}>
+                      📍 فرع هذا الكاشير ({activeBranchObj?.name || 'الرئيسي'})
+                    </option>
+                    <option value="ALL">🏢 شاشة عامة لجميع الفروع</option>
+                    {storeBranches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Screens Grid (Orders vs Services) */}
+              {(() => {
+                const effectiveBranchParam = screensModalBranchId && screensModalBranchId !== 'ALL'
+                  ? screensModalBranchId
+                  : screensModalBranchId === 'ALL'
+                  ? null
+                  : (activeBranchId || null);
+
+                const baseOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+                const kitchenUrl = `${baseOrigin}/${store.slug}/kds${effectiveBranchParam ? '?branch=' + effectiveBranchParam : ''}`;
+                const salonUrl = `${baseOrigin}/${store.slug}/kds?mode=services${effectiveBranchParam ? '&branch=' + effectiveBranchParam : ''}`;
+
+                const showBoth = activeModules.orders && activeModules.bookings;
+
+                return (
+                  <div className={`grid grid-cols-1 ${showBoth ? 'md:grid-cols-2' : 'max-w-md mx-auto'} gap-5`}>
+                    
+                    {/* CARD 1: KITCHEN DISPLAY (المطبخ والبار) */}
+                    {activeModules.orders && (
+                      <div className="rounded-2xl border-2 border-slate-800 bg-slate-950/60 p-5 flex flex-col justify-between items-center text-center space-y-4 shadow-xl">
+                        <div className="space-y-1">
+                          <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
+                            <ChefHat className="w-5 h-5" />
+                          </div>
+                          <h4 className="text-sm font-black text-white">شاشة المطبخ والبار (KDS) 👨‍🍳</h4>
+                          <p className="text-[11px] text-slate-400 leading-relaxed">
+                            لتجهيز وجبات ومشروبات المطبخ مع نغمة رنين فورية لكل طلب جديد
+                          </p>
+                        </div>
+
+                        {/* QR Code */}
+                        <div className="p-3 bg-white rounded-2xl shadow-xl border-4 border-amber-400/40">
+                          <QRCodeSVG
+                            value={kitchenUrl}
+                            size={160}
+                            level="H"
+                            includeMargin={false}
+                          />
+                        </div>
+
+                        {/* Actions */}
+                        <div className="w-full space-y-2 pt-2 border-t border-slate-800">
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              readOnly
+                              value={kitchenUrl}
+                              className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-[11px] font-mono text-amber-300 outline-none text-left select-all"
+                              dir="ltr"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(kitchenUrl);
+                                setCopiedScreenKey('kitchen');
+                                setTimeout(() => setCopiedScreenKey(null), 2000);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center gap-1 border border-slate-700 transition shrink-0"
+                            >
+                              {copiedScreenKey === 'kitchen' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-amber-400" />}
+                              <span>{copiedScreenKey === 'kitchen' ? 'تم!' : 'نسخ'}</span>
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => window.open(kitchenUrl, '_blank')}
+                            className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black font-black text-xs flex items-center justify-center gap-1.5 shadow transition"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <span>فتح شاشة المطبخ في نافذة جديدة</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CARD 2: SALON / SERVICES DISPLAY (صالة الخدمات والمواعيد) */}
+                    {activeModules.bookings && (
+                      <div className="rounded-2xl border-2 border-slate-800 bg-slate-950/60 p-5 flex flex-col justify-between items-center text-center space-y-4 shadow-xl">
+                        <div className="space-y-1">
+                          <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 mx-auto">
+                            <Scissors className="w-5 h-5" />
+                          </div>
+                          <h4 className="text-sm font-black text-white">شاشة صالة الخدمات والمواعيد ✂️</h4>
+                          <p className="text-[11px] text-slate-400 leading-relaxed">
+                            لمتابعة مواعيد اليوم واستقبال العملاء وتنفيذ الجلسات في الصالون/المركز
+                          </p>
+                        </div>
+
+                        {/* QR Code */}
+                        <div className="p-3 bg-white rounded-2xl shadow-xl border-4 border-purple-400/40">
+                          <QRCodeSVG
+                            value={salonUrl}
+                            size={160}
+                            level="H"
+                            includeMargin={false}
+                          />
+                        </div>
+
+                        {/* Actions */}
+                        <div className="w-full space-y-2 pt-2 border-t border-slate-800">
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              readOnly
+                              value={salonUrl}
+                              className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-[11px] font-mono text-purple-300 outline-none text-left select-all"
+                              dir="ltr"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(salonUrl);
+                                setCopiedScreenKey('salon');
+                                setTimeout(() => setCopiedScreenKey(null), 2000);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center gap-1 border border-slate-700 transition shrink-0"
+                            >
+                              {copiedScreenKey === 'salon' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-purple-400" />}
+                              <span>{copiedScreenKey === 'salon' ? 'تم!' : 'نسخ'}</span>
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => window.open(salonUrl, '_blank')}
+                            className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow transition"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <span>فتح شاشة الخدمات في نافذة جديدة</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                  </div>
+                );
+              })()}
+
+              {/* Instructions Footer */}
+              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 text-[11px] text-slate-400 flex items-start gap-2.5">
+                <span className="text-base shrink-0">💡</span>
+                <p className="leading-relaxed">
+                  <strong className="text-slate-200">طريقة الاستخدام السريع:</strong> وجّه كاميرا جهاز التابلت (iPad أو Android) أو الهاتف نحو الباركود لفتح الشاشة مباشرة على هذا الفرع. الشاشة تعمل بنظام التحديث اللحظي (WebSockets) مع نغمات تنبيه صوتية مستقلة للمطبخ دون إزعاج الكاشير.
+                </p>
+              </div>
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsScreensModalOpen(false)}
+                className="py-2.5 px-6 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition border border-slate-700"
+              >
+                إغلاق
+              </button>
+            </div>
+
+          </div>
+        </div>
       )}
 
     </div>

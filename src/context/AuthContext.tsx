@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { UserRole, AuthUser, AuthSessionState } from '../types';
 import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
+import { purgeAllCachedUserDataAndNotifications } from '../lib/notifications';
 
 interface AuthContextValue extends AuthSessionState {
   login: (role: UserRole, userDetails: Partial<AuthUser>) => void;
@@ -147,6 +148,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!specificRole || specificRole === 'super_admin') {
         await LoyaltyService.superAdminSignOut();
       }
+
+      // 🛡️ Purge cached notifications for the logging-out identity
+      purgeAllCachedUserDataAndNotifications(specificRole ? { portal: specificRole } : undefined);
     } catch (err) {
       console.warn('[AuthContext] Error during logout cleanup:', err);
     } finally {
