@@ -83,17 +83,34 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
   const brandPrimary = store.primary_color || '#0F172A';
   const brandSecondary = store.secondary_color || '#F59E0B';
 
-  // Standalone Branch Selection (supports query param ?branch= or localStorage persistence)
+  // Standalone Branch Selection (supports query param ?branch= or localStorage persistence or first branch)
   const [branches, setBranches] = useState<StoreBranch[]>(store.branches || []);
   const [selectedBranchId, setSelectedBranchId] = useState<string>(() => {
-    if (activeBranch?.id) return activeBranch.id;
     if (typeof window !== 'undefined') {
       const qBranch = new URLSearchParams(window.location.search).get('branch');
-      if (qBranch) return qBranch;
-      return localStorage.getItem(`radar_kds_branch_${store.id}`) || 'ALL';
+      if (qBranch && qBranch !== 'ALL') return qBranch;
+    }
+    if (activeBranch?.id) return activeBranch.id;
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem(`radar_kds_branch_${store.id}`);
+      if (cached && cached !== 'ALL') return cached;
+    }
+    if (store.branches && store.branches.length > 0) {
+      return store.branches[0].id;
     }
     return 'ALL';
   });
+
+  // Locked branch name for display
+  const currentBranchName = useMemo(() => {
+    if (selectedBranchId && selectedBranchId !== 'ALL') {
+      const b = branches.find((item) => item.id === selectedBranchId) || (activeBranch?.id === selectedBranchId ? activeBranch : null);
+      if (b?.name) return b.name;
+    }
+    if (activeBranch?.name) return activeBranch.name;
+    if (branches.length > 0) return branches[0].name;
+    return 'الفرع الرئيسي';
+  }, [selectedBranchId, branches, activeBranch]);
 
   // Display Mode: Orders (Kitchen/Bar) vs Services (Salon/Care Appointments)
   const activeMods = getStoreActiveModules(store);
@@ -143,10 +160,20 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
   // WakeLock Ref to keep screen alive
   const wakeLockRef = useRef<any>(null);
 
-  // Load branches if not provided
+  // Load branches if not provided and lock default branch
   useEffect(() => {
     if (store?.id && branches.length === 0) {
-      LoyaltyService.getStoreBranches(store.id).then(setBranches).catch(() => {});
+      LoyaltyService.getStoreBranches(store.id).then((fetched) => {
+        setBranches(fetched);
+        if (fetched.length > 0) {
+          setSelectedBranchId((prev) => {
+            const qBranch = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('branch') : null;
+            if (qBranch && qBranch !== 'ALL') return qBranch;
+            if (prev === 'ALL' || !prev) return fetched[0].id;
+            return prev;
+          });
+        }
+      }).catch(() => {});
     }
   }, [store?.id]);
 
@@ -654,14 +681,12 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base sm:text-lg font-black text-white tracking-wide">
-                {displayMode === 'services' ? 'شاشة تنفيذ الخدمات والمواعيد' : 'شاشة المطبخ والبار (KDS)'}
+                {displayMode === 'services' ? 'شاشة صالة الخدمات والمواعيد' : 'شاشة المطبخ والبار (KDS)'}
               </h2>
-              {selectedBranchId !== 'ALL' && (
-                <span className="text-[11px] bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full font-bold border border-slate-700 flex items-center gap-1">
-                  <Building2 className="w-3 h-3 text-amber-400" />
-                  {branches.find((b) => b.id === selectedBranchId)?.name || 'الفرع المحدد'}
-                </span>
-              )}
+              <span className="text-[11px] bg-slate-800 text-amber-300 px-2.5 py-0.5 rounded-full font-bold border border-slate-700 flex items-center gap-1 shadow-sm">
+                <Building2 className="w-3 h-3 text-amber-400" />
+                {currentBranchName}
+              </span>
             </div>
             <p className="text-[11px] text-slate-400">
               {displayMode === 'services'
@@ -699,51 +724,6 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
 
         {/* Right: Station Filters & Quick Action Controls */}
         <div className="flex items-center gap-2 flex-wrap">
-          
-          {/* Module Mode Switch (Orders vs Services) */}
-          {hasBookingsModule && hasMenuModule && (
-            <div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl p-1 gap-1">
-              <button
-                type="button"
-                onClick={() => setDisplayMode('orders')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
-                  displayMode === 'orders' ? 'bg-amber-500 text-black shadow' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <ChefHat className="w-3.5 h-3.5" />
-                <span>المطبخ</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setDisplayMode('services')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
-                  displayMode === 'services' ? 'bg-amber-500 text-black shadow' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <Scissors className="w-3.5 h-3.5" />
-                <span>الخدمات</span>
-              </button>
-            </div>
-          )}
-
-          {/* Branch Selector */}
-          {branches.length > 0 && (
-            <select
-              value={selectedBranchId}
-              onChange={(e) => {
-                setSelectedBranchId(e.target.value);
-                localStorage.setItem(`radar_kds_branch_${store.id}`, e.target.value);
-              }}
-              className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-bold text-amber-300 outline-none focus:border-amber-400"
-            >
-              <option value="ALL">🏢 جميع الفروع</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  📍 {b.name}
-                </option>
-              ))}
-            </select>
-          )}
 
           {/* Copy Direct KDS Link */}
           <button

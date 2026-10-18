@@ -3617,46 +3617,25 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             {/* Modal Body */}
             <div className="p-5 sm:p-6 space-y-6 overflow-y-auto max-h-[80vh]">
               
-              {/* Branch Indicator & Selector */}
+              {/* Branch Indicator (Strictly locked to Cashier's Active Branch) */}
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-slate-400 font-bold">الفرع المعتمد للشاشات:</span>
-                  <span className="font-black text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-xl flex items-center gap-1.5">
+                  <span className="font-black text-amber-300 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-xl flex items-center gap-1.5 shadow-sm">
                     <Building2 className="w-3.5 h-3.5 text-amber-400" />
                     <span>
-                      {screensModalBranchId === 'ALL'
-                        ? 'شاشة عامة (كافة الفروع)'
-                        : storeBranches.find(b => b.id === screensModalBranchId)?.name || activeBranchObj?.name || 'الفرع الحالي للكاشير'}
+                      {activeBranchObj?.name || (storeBranches.find(b => b.id === activeBranchId)?.name) || 'الفرع الرئيسي'}
                     </span>
                   </span>
                 </div>
-
-                {storeBranches.length > 1 && (
-                  <select
-                    value={screensModalBranchId || (activeBranchId || 'ALL')}
-                    onChange={(e) => setScreensModalBranchId(e.target.value)}
-                    className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none focus:border-amber-400"
-                  >
-                    <option value={activeBranchId || 'ALL'}>
-                      📍 فرع هذا الكاشير ({activeBranchObj?.name || 'الرئيسي'})
-                    </option>
-                    <option value="ALL">🏢 شاشة عامة لجميع الفروع</option>
-                    {storeBranches.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <span className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
+                  <span>🔒 مقفل تلقائياً لفرع هذا الكاشير لمنع تداخل الطلبات</span>
+                </span>
               </div>
 
               {/* Screens Grid (Orders vs Services) */}
               {(() => {
-                const effectiveBranchParam = screensModalBranchId && screensModalBranchId !== 'ALL'
-                  ? screensModalBranchId
-                  : screensModalBranchId === 'ALL'
-                  ? null
-                  : (activeBranchId || null);
+                const effectiveBranchParam = activeBranchId || activeBranchObj?.id || (storeBranches.length > 0 ? storeBranches[0].id : null);
 
                 const baseOrigin = typeof window !== 'undefined' ? window.location.origin : '';
                 const kitchenUrl = `${baseOrigin}/${store.slug}/kds${effectiveBranchParam ? '?branch=' + effectiveBranchParam : ''}`;
