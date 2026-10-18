@@ -134,6 +134,15 @@ type AdminTab =
   | 'branches'
   | 'settings';
 
+type SettingsSection =
+  | 'hub'
+  | 'branding'
+  | 'payments'
+  | 'modules'
+  | 'security'
+  | 'integrations'
+  | 'billing';
+
 export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) => {
   const currentStore = initialStore || INITIAL_STORE;
   const [store, setStore] = useState<Store>(currentStore);
@@ -151,10 +160,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   // Active Admin Navigation Tab & Sub-Sections
   const [activeTab, setActiveTab] = useState<AdminTab>('hub');
-  const [catalogSection, setCatalogSection] = useState<'products' | 'services' | 'modifiers'>('products');
+  const [catalogSection, setCatalogSection] = useState<'products' | 'services' | 'modifiers' | 'fulfillment'>('products');
   const [loyaltySection, setLoyaltySection] = useState<'perks' | 'tiers' | 'coupons'>('perks');
   const [customersSection, setCustomersSection] = useState<'crm' | 'logs'>('crm');
-  const [settingsSection, setSettingsSection] = useState<'identity' | 'modules' | 'billing'>('identity');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('hub');
   const [showQuickLinks, setShowQuickLinks] = useState(false);
   const [showQuickLinksModal, setShowQuickLinksModal] = useState(false);
 
@@ -1320,7 +1329,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   const handleSaveLoyaltySettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pointsPerRiyal <= 0 || !storeName.trim() || !storeSlug.trim()) return;
+    if (pointsPerRiyal <= 0 || !storeName.trim()) return;
 
     setUpdatingSettings(true);
     setSettingsSavedMessage(null);
@@ -1328,10 +1337,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     try {
       const updated = await LoyaltyService.updateStoreSettings(store.id, {
         name: storeName.trim(),
-        slug: storeSlug.toLowerCase().trim(),
-        custom_domain: customDomain.trim() ? customDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '') : null,
+        slug: store.slug, // 🔒 المقفل أمنياً - يتم تغييره حصراً من لوحة المالك
+        custom_domain: store.custom_domain, // 🔒 المقفل أمنياً - يتم ربطه حصراً من لوحة المالك
         manager_name: managerName.trim() || store.manager_name,
-        manager_contact: managerContact.trim() || store.manager_contact,
+        manager_contact: store.manager_contact || (store as any).phone, // 🔒 المقفل أمنياً - يتم تحديثه حصراً من لوحة المالك
         primary_color: primaryColor,
         secondary_color: secondaryColor,
         points_per_riyal: Number(pointsPerRiyal),
@@ -5466,6 +5475,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               <Tag className="w-4 h-4" />
               <span>الأقسام والإضافات ({globalCategories.length + globalModifierGroups.length})</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setCatalogSection('fulfillment')}
+              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                catalogSection === 'fulfillment'
+                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`}
+            >
+              <Car className="w-4 h-4" />
+              <span>خيارات الطلب والتجهيز والتوصيل 🛵</span>
+            </button>
           </div>
 
           {/* Sub-Section 1: Products */}
@@ -6540,6 +6562,249 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           )}
         </div>
       )}
+
+          {/* Sub-Section 4: Fulfillment & Ordering Options */}
+          {catalogSection === 'fulfillment' && (
+            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                    <Car className="w-6 h-6 text-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      <span>خيارات الطلب والتجهيز والتوصيل</span>
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono font-bold">
+                        Fulfillment Settings
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      حدد قنوات الاستلام، التوصيل، وحجز المواعيد المتاحة لزبائن متجرك عبر التطبيق والكاشير
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-300 font-bold">عرض المنيو للعملاء:</span>
+                  <button
+                    type="button"
+                    onClick={() => setCatalogEnabled(!catalogEnabled)}
+                    className={`px-3 py-1 rounded-full text-xs font-bold border transition ${
+                      catalogEnabled
+                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                        : 'bg-slate-900 border-slate-800 text-slate-500'
+                    }`}
+                  >
+                    {catalogEnabled ? 'مفعل ✅' : 'معطل ✕'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Alert for Auto-Save */}
+              {paymentPolicyStatus && (
+                <div className={`p-3 rounded-2xl text-xs font-bold flex items-center justify-between transition ${
+                  paymentPolicyStatus.includes('⚠️') 
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' 
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {isSavingPaymentPolicy ? (
+                      <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    )}
+                    <span>{paymentPolicyStatus}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Channels Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                {/* 1. Dine-in */}
+                <button
+                  type="button"
+                  disabled={isSavingPaymentPolicy}
+                  onClick={() => {
+                    const next = !allowDineIn;
+                    setAllowDineIn(next);
+                    handleInstantSavePaymentPolicy({ allow_dine_in: next });
+                  }}
+                  className={`p-4 rounded-2xl border text-right transition flex flex-col justify-between ${
+                    allowDineIn
+                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
+                      : 'bg-slate-950 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold text-white">🍽️ تناول محلي (طاولات)</span>
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                      allowDineIn ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {allowDineIn ? 'مفعل ✅' : 'معطل ✕'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    إتاحة الطلب المباشر من الطاولة أو حجز طاولة مسبق داخل الفرع
+                  </p>
+                </button>
+
+                {/* 2. Takeaway */}
+                <button
+                  type="button"
+                  disabled={isSavingPaymentPolicy}
+                  onClick={() => {
+                    const next = !allowTakeaway;
+                    setAllowTakeaway(next);
+                    handleInstantSavePaymentPolicy({ allow_takeaway: next });
+                  }}
+                  className={`p-4 rounded-2xl border text-right transition flex flex-col justify-between ${
+                    allowTakeaway
+                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
+                      : 'bg-slate-950 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold text-white">🚗 استلام سفري / سيارة</span>
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                      allowTakeaway ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {allowTakeaway ? 'مفعل ✅' : 'معطل ✕'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    الاستلام السريع من الفرع أو تسليم الطلب لسيارة العميل (Drive-thru)
+                  </p>
+                </button>
+
+                {/* 3. Delivery */}
+                <button
+                  type="button"
+                  disabled={isSavingPaymentPolicy}
+                  onClick={() => {
+                    const next = !allowDelivery;
+                    setAllowDelivery(next);
+                    handleInstantSavePaymentPolicy({ allow_delivery: next });
+                  }}
+                  className={`p-4 rounded-2xl border text-right transition flex flex-col justify-between ${
+                    allowDelivery
+                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
+                      : 'bg-slate-950 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold text-white">🛵 توصيل للعنوان</span>
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                      allowDelivery ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {allowDelivery ? 'مفعل ✅' : 'معطل ✕'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    إرسال الطلب لعنوان العميل المسجل أو موقعه عبر الخريطة
+                  </p>
+                </button>
+
+                {/* 4. Service Booking */}
+                <button
+                  type="button"
+                  disabled={isSavingPaymentPolicy}
+                  onClick={() => {
+                    const next = !allowServiceBooking;
+                    setAllowServiceBooking(next);
+                    handleInstantSavePaymentPolicy({ allow_service_booking: next });
+                  }}
+                  className={`p-4 rounded-2xl border text-right transition flex flex-col justify-between ${
+                    allowServiceBooking
+                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
+                      : 'bg-slate-950 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold text-white">📅 حجز مواعيد خدمات</span>
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                      allowServiceBooking ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-400'
+                    }`}>
+                      {allowServiceBooking ? 'مفعل ✅' : 'معطل ✕'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    تمكين العملاء من حجز موعد محدد لخدمة، جلسة، أو خبير مسبقاً
+                  </p>
+                </button>
+              </div>
+
+              {/* Delivery Fee Setting (if delivery is enabled) */}
+              {allowDelivery && (
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 max-w-xl">
+                  <div>
+                    <label className="text-xs font-bold text-white block">رسوم التوصيل الثابتة للطلبات:</label>
+                    <p className="text-[11px] text-slate-400 mt-0.5">تضاف تلقائياً إلى فاتورة السلة عند اختيار التوصيل للعنوان</p>
+                  </div>
+                  <div className="flex items-center space-x-2 rtl:space-x-reverse shrink-0">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={deliveryFee}
+                      onChange={(e) => setDeliveryFee(e.target.value === '' ? '' : Number(e.target.value))}
+                      onBlur={() => handleInstantSavePaymentPolicy({ delivery_fee: deliveryFee === '' ? 0 : Number(deliveryFee) })}
+                      placeholder="15"
+                      className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono font-bold text-amber-400 text-center outline-none focus:border-amber-500"
+                    />
+                    <span className="text-xs text-slate-300 font-bold">ريال سعودي</span>
+                  </div>
+                </div>
+              )}
+
+              {/* WhatsApp Receipt Toggle */}
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                    <Smartphone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-white">إرسال فواتير الكاشير عبر الواتساب تلقائياً</h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      إظهار زر إرسال الفاتورة الإلكترونية عبر الواتساب في شاشة الكاشير عند إتمام أي عملية بيع
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextVal = !enablePosWhatsappReceipt;
+                    setEnablePosWhatsappReceipt(nextVal);
+                    LoyaltyService.updateStoreSettings(store.id, { enable_pos_whatsapp_receipt: nextVal });
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold border transition shrink-0 ${
+                    enablePosWhatsappReceipt
+                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm'
+                      : 'bg-slate-900 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  {enablePosWhatsappReceipt ? 'مفعل بالكاشير ✅' : 'معطل ✕'}
+                </button>
+              </div>
+
+              {/* Save Confirmation Button */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>يتم تطبيق خيارات التجهيز فورياً على تطبيق العملاء وشاشة الكاشير</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleInstantSavePaymentPolicy()}
+                  disabled={isSavingPaymentPolicy}
+                  className="px-5 py-2.5 rounded-xl text-xs font-black bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center gap-1.5 shadow-md shadow-amber-500/10 transition active:scale-95 disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingPaymentPolicy ? 'جاري الحفظ...' : 'حفظ خيارات التجهيز 💾'}</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -6561,60 +6826,245 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       {/* ========================================== */}
       {!isStoreSuspended && activeTab === 'settings' && (
         <div className="space-y-6 animate-fade-in">
-          {/* Subtabs Switcher */}
-          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-800 p-1.5 rounded-2xl w-fit shadow-md">
-            <button
-              type="button"
-              onClick={() => setSettingsSection('identity')}
-              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
-                settingsSection === 'identity'
-                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              <Sliders className="w-4 h-4" />
-              <span>هوية المتجر والشعار</span>
-            </button>
+          {/* 🧭 Settings Hub & Workspace Navigation */}
+          {(() => {
+            const settingsSectionsConfig = [
+              {
+                id: 'branding' as SettingsSection,
+                label: 'هوية ومظهر المتجر والشعار',
+                description: 'اسم المتجر، الشعار الرسمي، الألوان الرئيسية، وسلايدر واجهة العميل',
+                icon: Palette,
+                glowColor: 'bg-amber-500/20',
+                iconBg: 'bg-amber-500/15',
+                iconBorder: 'border-amber-500/30',
+                iconColor: 'text-amber-400',
+                statHighlight: `${sliderImages.length} شرائح بالسلايدر • ألوان مخصصة`,
+              },
+              {
+                id: 'payments' as SettingsSection,
+                label: 'طرق وسياسة الدفع الإلكتروني',
+                description: 'بوابة الدفع (مدى/Apple Pay)، إلزامية الدفع أونلاين أو كاش في الفرع',
+                icon: CreditCard,
+                glowColor: 'bg-emerald-500/20',
+                iconBg: 'bg-emerald-500/15',
+                iconBorder: 'border-emerald-500/30',
+                iconColor: 'text-emerald-400',
+                statHighlight: onlinePaymentEnabled ? 'بوابة الدفع: مفعلة ✅' : 'الدفع: كاش فقط 💵',
+              },
+              {
+                id: 'modules' as SettingsSection,
+                label: 'موديولات وخدمات النظام',
+                description: 'التحكم في تشغيل وإيقاف: الطلبات المباشرة، المواعيد، وبرنامج الولاء',
+                icon: Layers,
+                glowColor: 'bg-blue-500/20',
+                iconBg: 'bg-blue-500/15',
+                iconBorder: 'border-blue-500/30',
+                iconColor: 'text-blue-400',
+                statHighlight: '3 خدمات تشغيلية بالتطبيق',
+              },
+              {
+                id: 'security' as SettingsSection,
+                label: 'الأمان والـ PIN ونقاط الولاء',
+                description: 'رمز المدير السري PIN، سقف الفواتير، معدل احتساب النقاط، والهدية الترحيبية',
+                icon: ShieldCheck,
+                glowColor: 'bg-purple-500/20',
+                iconBg: 'bg-purple-500/15',
+                iconBorder: 'border-purple-500/30',
+                iconColor: 'text-purple-400',
+                statHighlight: 'رمز PIN وسقف الفواتير',
+              },
+              {
+                id: 'integrations' as SettingsSection,
+                label: 'تنبيهات تليجرام وبوابة الرسائل',
+                description: 'ربط إشعارات بوت تليجرام المباشر وتكامل WhatsApp Cloud API',
+                icon: Send,
+                glowColor: 'bg-sky-500/20',
+                iconBg: 'bg-sky-500/15',
+                iconBorder: 'border-sky-500/30',
+                iconColor: 'text-sky-400',
+                statHighlight: telegramChatId ? 'تليجرام: متصل ✅' : 'تليجرام: غير مربوط ✕',
+              },
+              {
+                id: 'billing' as SettingsSection,
+                label: 'الاشتراك والفوترة وتجديد الباقة',
+                description: 'حالة اشتراك المتجر، عداد الأيام المتبقية، باقات المنصة، والدفع المباشر',
+                icon: Sparkles,
+                glowColor: 'bg-amber-500/20',
+                iconBg: 'bg-amber-500/15',
+                iconBorder: 'border-amber-500/30',
+                iconColor: 'text-amber-400',
+                statHighlight: subscriptionInfo?.requiresRenewal ? 'تجديد الاشتراك مطلوب ⚠️' : 'الاشتراك ساري ✅',
+              },
+            ];
 
-            <button
-              type="button"
-              onClick={() => setSettingsSection('modules')}
-              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
-                settingsSection === 'modules'
-                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              <Layers className="w-4 h-4" />
-              <span>التحكم بالخدمات (الموديولات)</span>
-            </button>
+            const currentSettingsConfig = settingsSectionsConfig.find((s) => s.id === settingsSection);
 
-            <button
-              type="button"
-              onClick={() => setSettingsSection('billing')}
-              className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
-                settingsSection === 'billing'
-                  ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-              }`}
-            >
-              <CreditCard className="w-4 h-4" />
-              <span>الاشتراك والفوترة</span>
-            </button>
-          </div>
+            return (
+              <>
+                {settingsSection === 'hub' ? (
+                  <div className="space-y-6 animate-fade-in">
+                    {/* Settings Welcome Header Banner */}
+                    <div className="rounded-3xl p-5 sm:p-6 bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-950 border border-slate-800 shadow-2xl relative overflow-hidden">
+                      <div className="absolute top-0 left-0 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl pointer-events-none -ml-20 -mt-20" />
+                      <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+                            <span className="text-xs font-bold text-amber-400">مركز التحكم والإعدادات المتقدمة</span>
+                          </div>
+                          <h3 className="text-xl sm:text-2xl font-black text-white mt-1">
+                            إعدادات المتجر والتحكم المالي والتقني ⚙️
+                          </h3>
+                          <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                            اختر أحد الأقسام بالأسفل لتخصيص متجرك. عند فتح أي قسم يختفي باقي الأقسام للتركيز الكامل، مع إمكانية العودة في أي لحظة.
+                          </p>
+                        </div>
 
-          {/* Sub-Section 1: Identity & Theme */}
-          {settingsSection === 'identity' && (
+                        {/* Quick Status Pills */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
+                            <span className="text-[10px] text-slate-400 block font-bold">بوابة الدفع</span>
+                            <span className={`text-xs font-black font-mono ${onlinePaymentEnabled ? 'text-emerald-400' : 'text-slate-400'}`}>
+                              {onlinePaymentEnabled ? 'مفعلة ✅' : 'كاش 💵'}
+                            </span>
+                          </div>
+                          <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
+                            <span className="text-[10px] text-slate-400 block font-bold">بوت تليجرام</span>
+                            <span className={`text-xs font-black font-mono ${telegramChatId ? 'text-sky-400' : 'text-slate-400'}`}>
+                              {telegramChatId ? 'متصل 🚀' : 'غير مربوط'}
+                            </span>
+                          </div>
+                          <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
+                            <span className="text-[10px] text-slate-400 block font-bold">حالة الاشتراك</span>
+                            <span className="text-xs font-black text-amber-400 font-mono">
+                              {subscriptionInfo?.requiresRenewal ? 'تجديد ⚠️' : 'ساري ✅'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 🔲 The 6 Executive Settings Cards Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+                      {settingsSectionsConfig.map((sec) => {
+                        const Icon = sec.icon;
+                        return (
+                          <button
+                            key={sec.id}
+                            type="button"
+                            onClick={() => {
+                              setSettingsSection(sec.id);
+                              window.scrollTo({ top: 300, behavior: 'smooth' });
+                            }}
+                            className="group relative rounded-3xl p-6 bg-slate-900/90 hover:bg-slate-800/95 border border-slate-800 hover:border-amber-500/50 shadow-xl hover:shadow-2xl hover:shadow-amber-500/10 transition-all duration-300 text-right flex flex-col justify-between overflow-hidden cursor-pointer hover:-translate-y-1 active:scale-[0.99]"
+                          >
+                            <div className={`absolute top-0 left-0 w-28 h-28 ${sec.glowColor} rounded-full blur-2xl pointer-events-none opacity-40 group-hover:opacity-80 transition-opacity`} />
+
+                            <div className="flex items-center justify-between w-full relative z-10 mb-4">
+                              <div className={`w-12 h-12 rounded-2xl ${sec.iconBg} border ${sec.iconBorder} flex items-center justify-center ${sec.iconColor} shadow-inner group-hover:scale-110 group-hover:shadow-lg transition-transform duration-300`}>
+                                <Icon className="w-6 h-6" />
+                              </div>
+                            </div>
+
+                            <div className="relative z-10 space-y-2 mb-6">
+                              <h4 className="text-base sm:text-lg font-black text-white group-hover:text-amber-400 transition-colors">
+                                {sec.label}
+                              </h4>
+                              <p className="text-xs text-slate-400 group-hover:text-slate-300 transition-colors leading-relaxed line-clamp-2">
+                                {sec.description}
+                              </p>
+                            </div>
+
+                            <div className="relative z-10 pt-4 border-t border-slate-800/80 flex items-center justify-between w-full">
+                              <span className="text-[11px] font-mono font-bold text-slate-300 bg-slate-950/70 px-2.5 py-1 rounded-xl border border-slate-800/80 truncate max-w-[70%]">
+                                {sec.statHighlight}
+                              </span>
+                              <div className="flex items-center gap-1 text-xs font-black text-amber-400 group-hover:text-amber-300 shrink-0">
+                                <span>فتح الإعدادات</span>
+                                <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1 transition-transform" />
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  /* ⬅️ Focused Active Settings Workspace Header */
+                  <div className="rounded-2xl p-3.5 sm:p-4 bg-slate-900/95 border border-slate-800 shadow-xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-2 z-20 animate-fade-in">
+                    <div className="flex items-center gap-3 flex-wrap min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettingsSection('hub');
+                          window.scrollTo({ top: 200, behavior: 'smooth' });
+                        }}
+                        className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all hover:scale-[1.02] active:scale-95 group shrink-0"
+                      >
+                        <ArrowRight className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+                        <span>العودة لقائمة الإعدادات (كافة الأقسام)</span>
+                      </button>
+
+                      <div className="h-6 w-px bg-slate-800 hidden sm:block" />
+
+                      {currentSettingsConfig && (
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className={`w-8 h-8 rounded-xl ${currentSettingsConfig.iconBg} border ${currentSettingsConfig.iconBorder} flex items-center justify-center ${currentSettingsConfig.iconColor} shrink-0`}>
+                            <currentSettingsConfig.icon className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <h3 className="text-sm sm:text-base font-black text-white truncate">
+                              {currentSettingsConfig.label}
+                            </h3>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                      <span className="text-[11px] text-slate-400 hidden lg:inline font-bold">انتقال سريع:</span>
+                      <select
+                        value={settingsSection}
+                        onChange={(e) => setSettingsSection(e.target.value as SettingsSection)}
+                        className="bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-200 text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-amber-500 transition cursor-pointer"
+                      >
+                        <option value="hub">⬅️ لوحة الإعدادات (الرئيسية)</option>
+                        {settingsSectionsConfig.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => setSettingsSection('hub')}
+                        title="إغلاق والعودة للإعدادات (X)"
+                        className="w-8 h-8 rounded-xl bg-slate-800/90 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-700/80 hover:border-red-500/40 flex items-center justify-center transition"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+
+          {/* ======================================================== */}
+          {/* 🎨 1. SUB-SECTION: هوية ومظهر المتجر (Branding) */}
+          {/* ======================================================== */}
+          {settingsSection === 'branding' && (
             <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
                 <div className="flex items-center space-x-3 rtl:space-x-reverse">
                   <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
-                    <Sliders className="w-6 h-6" />
+                    <Palette className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-white">إعدادات وهوية المتجر</h3>
+                    <h3 className="text-lg font-bold text-white">هوية ومظهر المتجر والشعار</h3>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      تعديل اسم المتجر، ألوان الهوية، الشعار، الدومين الخاص، ومعامل النقاط
+                      تعديل اسم المتجر، ألوان الهوية، الشعار الرسمي، ومعرض صور واجهة العميل
                     </p>
                   </div>
                 </div>
@@ -6627,686 +7077,84 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 </a>
               </div>
 
-          <form onSubmit={handleSaveLoyaltySettings} className="grid grid-cols-1 md:grid-cols-12 gap-6">
-            
-            {/* Store Identifiers Banner (Unified UUID & Short Code) */}
-            <div className="md:col-span-12 p-4 rounded-2xl bg-slate-950/80 border border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-sm">
-                  #
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-white">كود المتجر التعريفي (Store Code):</span>
-                    <span className="text-xs font-mono font-black px-2.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
-                      {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
-                    </span>
+              <form onSubmit={handleSaveLoyaltySettings} className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                {/* Store Identifiers Banner (Unified UUID & Short Code) */}
+                <div className="md:col-span-12 p-4 rounded-2xl bg-slate-950/80 border border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-sm">
+                      #
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white">كود المتجر التعريفي (Store Code):</span>
+                        <span className="text-xs font-mono font-black px-2.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
+                          {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        كود مختصر وسهل للتعريف السريع بالمتجر وربط الكاشير والفروع.
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    كود مختصر وسهل للتعريف السريع بالمتجر وربط الكاشير والفروع مستقبلاً.
-                  </p>
-                </div>
-              </div>
-              <div className="text-left sm:text-right bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800">
-                <span className="text-[10px] text-slate-500 block font-sans">المعرف البرمجي الموحد (UUID):</span>
-                <span className="text-[10px] font-mono text-slate-400 select-all font-bold">{store.id}</span>
-              </div>
-            </div>
-
-            {/* 🎛️ Store Modules Toggles Card */}
-            <div className="md:col-span-12">
-              {renderModulesCard()}
-            </div>
-
-            {/* Store Name & Slug */}
-            <div className="md:col-span-6 space-y-1.5">
-              <label className="text-xs font-medium text-slate-300 block">اسم المتجر / العلامة التجارية</label>
-              <input
-                type="text"
-                value={storeName}
-                onChange={(e) => setStoreName(e.target.value)}
-                placeholder="مثال: دكتور بطاطس 🍟"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none transition"
-                required
-              />
-            </div>
-
-            <div className="md:col-span-6 space-y-1.5">
-              <label className="text-xs font-medium text-slate-300 block">الاسم التعريفي بالرابط (Slug)</label>
-              <input
-                type="text"
-                value={storeSlug}
-                onChange={(e) => setStoreSlug(e.target.value.toLowerCase().trim())}
-                placeholder="dr-batates"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-2xl px-4 py-3 text-sm font-mono text-white outline-none transition"
-                required
-              />
-            </div>
-
-            {/* Custom Domain */}
-            <div className="md:col-span-12 space-y-1.5 p-4 rounded-2xl bg-slate-950 border border-slate-800">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-200 flex items-center space-x-1.5 rtl:space-x-reverse">
-                  <Globe className="w-4 h-4 text-slate-400" />
-                  <span>الدومين المخصص للتاجر (Custom Domain - اختياري):</span>
-                </label>
-                <span className="text-[10px] text-slate-500 font-mono">White-Label Branding</span>
-              </div>
-              <input
-                type="text"
-                value={customDomain}
-                onChange={(e) => setCustomDomain(e.target.value.toLowerCase().trim())}
-                placeholder="مثال: vip.drbatates.com أو loyalty.mybrand.sa"
-                className="w-full bg-slate-900 border border-slate-800 focus:border-slate-700 rounded-xl px-4 py-2.5 text-xs font-mono text-white placeholder-slate-600 outline-none transition"
-              />
-              <p className="text-[10px] text-slate-500">
-                * عند تعيين الدومين المخصص، ستعمل روابط الزبائن والكاشير مباشرة على نطاق موقعك الخاص.
-              </p>
-            </div>
-
-            {/* Manager Details */}
-            <div className="md:col-span-6 space-y-1.5">
-              <label className="text-xs font-medium text-slate-300 block">اسم التاجر / المدير المسؤول</label>
-              <input
-                type="text"
-                value={managerName}
-                onChange={(e) => setManagerName(e.target.value)}
-                placeholder="مثال: صالح الشهري"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-2xl px-4 py-2.5 text-xs text-white outline-none transition"
-              />
-            </div>
-
-            <div className="md:col-span-6 space-y-1.5">
-              <label className="text-xs font-medium text-slate-300 block">رقم جوال التاجر (للدخول واستلام التنبيهات)</label>
-              <input
-                type="tel"
-                value={managerContact}
-                onChange={(e) => setManagerContact(e.target.value)}
-                placeholder="05xxxxxxxx"
-                dir="ltr"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-2xl px-4 py-2.5 text-xs font-mono text-white outline-none transition text-center"
-              />
-            </div>
-
-            {/* Loyalty Point Conversion Rate Multiplier */}
-            <div className="md:col-span-12 p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
-              <label className="text-xs font-bold text-slate-200 block">
-                معامل احتساب النقاط (Points Multiplier):
-              </label>
-              <div className="flex items-center space-x-3 rtl:space-x-reverse">
-                <span className="text-xs text-slate-300 font-medium">كل 1 ريال مشتريات =</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  value={pointsPerRiyal}
-                  onChange={(e) => setPointsPerRiyal(Number(e.target.value))}
-                  className="w-24 bg-slate-900 border border-slate-800 focus:border-slate-700 rounded-xl px-3 py-2 text-sm font-mono font-bold text-white text-center outline-none transition"
-                  required
-                />
-                <span className="text-xs text-slate-300 font-medium">نقطة للزبون</span>
-              </div>
-              <p className="text-[11px] text-slate-500">
-                مثال: إذا وضعته 1.0 فإن فاتورة بقيمة 100 ريال تمنح العميل 100 نقطة.
-              </p>
-            </div>
-
-            {/* 🛡️ Security & Cashier Safeguards (الرمز السري وسقف الفواتير) */}
-            <div className="md:col-span-12 p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <div>
-                  <h4 className="text-xs font-bold text-white flex items-center space-x-1.5 rtl:space-x-reverse">
-                    <ShieldCheck className="w-4 h-4 text-amber-400" />
-                    <span>الأمان وحماية المتجر من التلاعب (Security & Anti-Fraud Safeguards):</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    التحكم في الرمز السري الرئيسي للمدير وتحديد سقف الفواتير اليومية المسموح للكاشير إدخالها دون موافقة الإدارة
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Master Admin PIN */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
-                    <span>الرمز السري لمدير المتجر (Master Admin PIN):</span>
-                    <span className="text-[10px] text-amber-400 font-mono">4-6 أرقام</span>
-                  </label>
-                  <input
-                    type="password"
-                    maxLength={8}
-                    value={adminPinCode}
-                    onChange={(e) => setAdminPinCode(e.target.value.replace(/\D/g, ''))}
-                    placeholder="9999"
-                    dir="ltr"
-                    className="w-full bg-slate-900 border border-slate-800 focus:border-amber-400 rounded-xl px-4 py-2.5 text-sm font-mono font-bold text-amber-400 text-center tracking-widest outline-none transition"
-                    required
-                  />
-                  <p className="text-[10px] text-slate-500">
-                    * يُستخدم لتسجيل دخول مدير المتجر وتأكيد العمليات الكبيرة والاستثنائية عند الكاشير.
-                  </p>
-                </div>
-
-                {/* Max Cashier Invoice SAR */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
-                    <span>سقف الفواتير العادية للكاشير (بالريال):</span>
-                    <span className="text-[10px] text-emerald-400 font-mono">حماية الفواتير</span>
-                  </label>
-                  <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                    <input
-                      type="number"
-                      min="10"
-                      step="10"
-                      value={maxCashierInvoiceAmount}
-                      onChange={(e) => setMaxCashierInvoiceAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                      placeholder="500"
-                      className="w-full bg-slate-900 border border-slate-800 focus:border-emerald-400 rounded-xl px-4 py-2.5 text-sm font-mono font-bold text-white text-center outline-none transition"
-                      required
-                    />
-                    <span className="text-xs text-slate-400 font-bold shrink-0">ر.س</span>
-                  </div>
-                  <p className="text-[10px] text-slate-500">
-                    * أي فاتورة يدخلها الكاشير تتجاوز هذا المبلغ (افتراضياً 500 ر.س) ستتطلب فوراً إدخال رمز المدير للموافقة لمنع أي تلاعب بالنقاط.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* 🛍️ Fulfillment & Smart Ordering Configuration */}
-            <div className="md:col-span-12 p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <div>
-                  <h4 className="text-xs font-bold text-white flex items-center space-x-1.5 rtl:space-x-reverse">
-                    <ShoppingBag className="w-4 h-4 text-amber-400" />
-                    <span>إعدادات المنيو والطلبات والحجز (Menu & Fulfillment Settings):</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    حدد خيارات الاستلام والتوصيل وحجز المواعيد المسموحة لزبائن متجرك
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-300 font-bold">عرض المنيو للعملاء:</span>
-                  <button
-                    type="button"
-                    onClick={() => setCatalogEnabled(!catalogEnabled)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold border transition ${
-                      catalogEnabled
-                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
-                        : 'bg-slate-900 border-slate-800 text-slate-500'
-                    }`}
-                  >
-                    {catalogEnabled ? 'مفعل ✅' : 'معطل ✕'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {/* 1. Dine-in */}
-                <button
-                  type="button"
-                  disabled={isSavingPaymentPolicy}
-                  onClick={() => {
-                    const next = !allowDineIn;
-                    setAllowDineIn(next);
-                    handleInstantSavePaymentPolicy({ allow_dine_in: next });
-                  }}
-                  className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between ${
-                    allowDineIn
-                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 text-slate-500'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">🍽️ تناول محلي (طاولات)</span>
-                    <span className="text-[10px] font-mono">{allowDineIn ? 'مفعل' : 'معطل'}</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">طلب من الطاولة أو حجز طاولة مسبق</p>
-                </button>
-
-                {/* 2. Takeaway */}
-                <button
-                  type="button"
-                  disabled={isSavingPaymentPolicy}
-                  onClick={() => {
-                    const next = !allowTakeaway;
-                    setAllowTakeaway(next);
-                    handleInstantSavePaymentPolicy({ allow_takeaway: next });
-                  }}
-                  className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between ${
-                    allowTakeaway
-                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 text-slate-500'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">🚗 استلام سفري / سيارة</span>
-                    <span className="text-[10px] font-mono">{allowTakeaway ? 'مفعل' : 'معطل'}</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">استلام من الفرع أو تسليم للسيارة</p>
-                </button>
-
-                {/* 3. Delivery */}
-                <button
-                  type="button"
-                  disabled={isSavingPaymentPolicy}
-                  onClick={() => {
-                    const next = !allowDelivery;
-                    setAllowDelivery(next);
-                    handleInstantSavePaymentPolicy({ allow_delivery: next });
-                  }}
-                  className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between ${
-                    allowDelivery
-                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 text-slate-500'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">🛵 توصيل للعنوان</span>
-                    <span className="text-[10px] font-mono">{allowDelivery ? 'مفعل' : 'معطل'}</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">توصيل للعنوان أو موقع الخريطة</p>
-                </button>
-
-                {/* 4. Service Booking */}
-                <button
-                  type="button"
-                  disabled={isSavingPaymentPolicy}
-                  onClick={() => {
-                    const next = !allowServiceBooking;
-                    setAllowServiceBooking(next);
-                    handleInstantSavePaymentPolicy({ allow_service_booking: next });
-                  }}
-                  className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between ${
-                    allowServiceBooking
-                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 text-slate-500'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">📅 حجز مواعيد خدمات</span>
-                    <span className="text-[10px] font-mono">{allowServiceBooking ? 'مفعل' : 'معطل'}</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">حجز موعد خدمة، جلسة، أو صالون</p>
-                </button>
-
-                {/* 5. POS WhatsApp Receipt Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setEnablePosWhatsappReceipt(!enablePosWhatsappReceipt)}
-                  className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between sm:col-span-2 lg:col-span-4 ${
-                    enablePosWhatsappReceipt
-                      ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 text-slate-500'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">📲 إرسال فواتير الكاشير عبر الواتساب (اختياري للعميل)</span>
-                    <span className="text-[10px] font-mono">{enablePosWhatsappReceipt ? 'مفعل ✅' : 'معطل ✕'}</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">إظهار زر إرسال الفاتورة الإلكترونية عبر الواتساب في شاشة الكاشير عند إتمام البيع</p>
-                </button>
-              </div>
-
-              {/* Delivery Fee Input if Delivery Enabled */}
-              {allowDelivery && (
-                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between max-w-sm">
-                  <label className="text-xs font-medium text-slate-300">رسوم التوصيل الثابتة (بالريال):</label>
-                  <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={deliveryFee}
-                      onChange={(e) => setDeliveryFee(e.target.value === '' ? '' : Number(e.target.value))}
-                      onBlur={() => handleInstantSavePaymentPolicy({ delivery_fee: deliveryFee === '' ? 0 : Number(deliveryFee) })}
-                      placeholder="15"
-                      className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-amber-400 text-center outline-none"
-                    />
-                    <span className="text-xs text-slate-400 font-bold">ر.س</span>
+                  <div className="text-left sm:text-right bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800">
+                    <span className="text-[10px] text-slate-500 block font-sans">المعرف البرمجي الموحد (UUID):</span>
+                    <span className="text-[10px] font-mono text-slate-400 select-all font-bold">{store.id}</span>
                   </div>
                 </div>
-              )}
-            </div>
 
-            {/* 💳 سياسة وطرق الدفع في التطبيق (تحكم التاجر المباشر) */}
-            <div className="md:col-span-12 p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
-                <div>
-                  <h4 className="text-xs font-bold text-white flex items-center space-x-1.5 rtl:space-x-reverse">
-                    <CreditCard className="w-4 h-4 text-emerald-400" />
-                    <span>سياسة وطرق الدفع لطلبات وحجوزات التطبيق (Payment Policy):</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    تحكم فيما إذا كان العميل مجبراً على الدفع أونلاين مسبقاً، أو متاح له الدفع كاش في الفرع، أو الجمع بينهما
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-400 font-bold">بوابة الدفع الإلكتروني:</span>
-                  <button
-                    type="button"
-                    disabled={isSavingPaymentPolicy}
-                    onClick={() => {
-                      const nextVal = !onlinePaymentEnabled;
-                      setOnlinePaymentEnabled(nextVal);
-                      handleInstantSavePaymentPolicy({ online_payment_enabled: nextVal });
-                    }}
-                    className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 disabled:opacity-50 ${
-                      onlinePaymentEnabled
-                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
-                        : 'bg-rose-500/15 text-rose-400 border-rose-500/40'
-                    }`}
-                  >
-                    <span>{onlinePaymentEnabled ? 'مفعلة (مدى / بطاقات) ✅' : 'معطلة بالكامل (كاش فقط) ✕'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Status Alert for Instant Auto-Save */}
-              {paymentPolicyStatus && (
-                <div className={`p-2.5 rounded-xl text-xs font-bold flex items-center justify-between transition ${
-                  paymentPolicyStatus.includes('⚠️') 
-                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' 
-                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                }`}>
-                  <div className="flex items-center gap-2">
-                    {isSavingPaymentPolicy ? (
-                      <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    )}
-                    <span>{paymentPolicyStatus}</span>
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* 1. سياسة دفع طلبات المنيو والمنتجات */}
-                <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <Utensils className="w-3.5 h-3.5 text-amber-400" />
-                      <span>دفع طلبات المنيو والمنتجات</span>
-                    </span>
-                    <span className="text-[10px] font-mono text-slate-400">
-                      {ordersPaymentPolicy === 'online_only' ? 'أونلاين فقط 🔒' : ordersPaymentPolicy === 'pay_at_store_only' ? 'عند الاستلام فقط 💵' : 'متاح الخيارين 🔄'}
-                    </span>
-                  </div>
-                  
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button
-                      type="button"
-                      disabled={!onlinePaymentEnabled || isSavingPaymentPolicy}
-                      onClick={() => {
-                        setOrdersPaymentPolicy('both');
-                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'both' });
-                      }}
-                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
-                        ordersPaymentPolicy === 'both' && onlinePaymentEnabled
-                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm'
-                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white disabled:opacity-40'
-                      }`}
-                    >
-                      <span>🔄 الخيارين</span>
-                      <span className="block text-[9px] text-slate-500 font-normal">حرية للعميل</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={!onlinePaymentEnabled || isSavingPaymentPolicy}
-                      onClick={() => {
-                        setOrdersPaymentPolicy('online_only');
-                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'online_only' });
-                      }}
-                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
-                        ordersPaymentPolicy === 'online_only' && onlinePaymentEnabled
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
-                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white disabled:opacity-40'
-                      }`}
-                    >
-                      <span>💳 أونلاين فقط</span>
-                      <span className="block text-[9px] text-slate-500 font-normal">دفع مسبق إلزامي</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isSavingPaymentPolicy}
-                      onClick={() => {
-                        setOrdersPaymentPolicy('pay_at_store_only');
-                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'pay_at_store_only' });
-                      }}
-                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
-                        ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
-                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/50 shadow-sm'
-                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
-                      }`}
-                    >
-                      <span>💵 بالفرع فقط</span>
-                      <span className="block text-[9px] text-slate-500 font-normal">دفع عند الاستلام</span>
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-slate-400">
-                    {ordersPaymentPolicy === 'online_only'
-                      ? '🔒 يشترط سداد الفاتورة إلكترونياً قبل إرسال الطلب للمطبخ والكاشير.'
-                      : ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
-                      ? '💵 يدفع العميل عند استلام الطلب من الفرع أو للسيارة.'
-                      : '🔄 يتاح للعميل في السلة الاختيار بين السداد بالبطاقة أو الدفع في الفرع.'}
-                  </p>
-                </div>
-
-                {/* 2. سياسة دفع حجوزات المواعيد والخدمات */}
-                <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5 text-purple-400" />
-                      <span>دفع حجوزات ومواعيد الخدمات</span>
-                    </span>
-                    <span className="text-[10px] font-mono text-slate-400">
-                      {bookingsPaymentPolicy === 'online_only' ? 'أونلاين فقط 🔒' : bookingsPaymentPolicy === 'pay_at_store_only' ? 'عند الحضور فقط 💵' : 'متاح الخيارين 🔄'}
-                    </span>
-                  </div>
-                  
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button
-                      type="button"
-                      disabled={!onlinePaymentEnabled || isSavingPaymentPolicy}
-                      onClick={() => {
-                        setBookingsPaymentPolicy('both');
-                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'both' });
-                      }}
-                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
-                        bookingsPaymentPolicy === 'both' && onlinePaymentEnabled
-                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm'
-                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white disabled:opacity-40'
-                      }`}
-                    >
-                      <span>🔄 الخيارين</span>
-                      <span className="block text-[9px] text-slate-500 font-normal">حرية للعميل</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={!onlinePaymentEnabled || isSavingPaymentPolicy}
-                      onClick={() => {
-                        setBookingsPaymentPolicy('online_only');
-                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'online_only' });
-                      }}
-                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
-                        bookingsPaymentPolicy === 'online_only' && onlinePaymentEnabled
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
-                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white disabled:opacity-40'
-                      }`}
-                    >
-                      <span>💳 أونلاين فقط</span>
-                      <span className="block text-[9px] text-slate-500 font-normal">سداد مسبق إلزامي</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={isSavingPaymentPolicy}
-                      onClick={() => {
-                        setBookingsPaymentPolicy('pay_at_store_only');
-                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'pay_at_store_only' });
-                      }}
-                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
-                        bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
-                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/50 shadow-sm'
-                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
-                      }`}
-                    >
-                      <span>💵 بالمركز فقط</span>
-                      <span className="block text-[9px] text-slate-500 font-normal">دفع عند الحضور</span>
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-slate-400">
-                    {bookingsPaymentPolicy === 'online_only'
-                      ? '🔒 لا يُعتمد الحجز إلا بعد الدفع الإلكتروني المسبق للحد من عدم حضور العملاء.'
-                      : bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
-                      ? '💵 يحجز العميل مجاناً ويتم تحصيل المقابل في الصالون/المركز عند الحضور.'
-                      : '🔄 يتاح للعميل تأكيد الحجز فوراً بالسداد المسبق أو اختيار الدفع عند الحضور.'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Instant Save Footer Button */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-3 border-t border-slate-800/80">
-                <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span>يتم حفظ وتطبيق السياسة المختارة فورياً وتلقائياً على تطبيق العميل والكاشير</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleInstantSavePaymentPolicy()}
-                  disabled={isSavingPaymentPolicy}
-                  className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 transition active:scale-95 disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>{isSavingPaymentPolicy ? 'جاري الحفظ...' : 'حفظ وتأكيد سياسة الدفع 💾'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* 🎁 Welcome / Signup Gift Configuration */}
-            <div className="md:col-span-12 p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-xs font-bold text-white flex items-center space-x-1.5 rtl:space-x-reverse">
-                    <Gift className="w-4 h-4 text-amber-400" />
-                    <span>الهدية الافتتاحية والترحيبية للعملاء الجدد (Welcome Gift):</span>
-                  </h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    حدد المكافأة الفورية التي يحصل عليها العميل الجديد بمجرد فتح حسابه بالمتجر
-                  </p>
-                </div>
-              </div>
-
-              {/* Gift Type Radio Selector */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setWelcomeGiftType('POINTS')}
-                  className={`p-3 rounded-xl border text-right transition flex flex-col justify-between ${
-                    welcomeGiftType === 'POINTS'
-                      ? 'bg-amber-500/10 border-amber-500/50 text-amber-300 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">🎁 نقاط ترحيبية فورية</span>
-                    <span className="text-[10px] font-mono font-bold">POINTS</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    إيداع رصيد نقاط يبدأ به العميل حسابه مباشرة
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setWelcomeGiftType('OFFER')}
-                  className={`p-3 rounded-xl border text-right transition flex flex-col justify-between ${
-                    welcomeGiftType === 'OFFER'
-                      ? 'bg-amber-500/10 border-amber-500/50 text-amber-300 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">🎟️ عرض خاص / تجربة مجانية</span>
-                    <span className="text-[10px] font-mono font-bold">OFFER</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    كوبون ترحيبي فوري (قهوة مجانية، خصم خاص، تجربة)
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setWelcomeGiftType('NONE')}
-                  className={`p-3 rounded-xl border text-right transition flex flex-col justify-between ${
-                    welcomeGiftType === 'NONE'
-                      ? 'bg-amber-500/10 border-amber-500/50 text-amber-300 shadow-sm'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">🚫 بدون هدية ترحيبية</span>
-                    <span className="text-[10px] font-mono font-bold">NONE</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    تفعيل العضوية برصيد 0 دون هدية ترحيبية
-                  </p>
-                </button>
-              </div>
-
-              {/* Dynamic Inputs based on selected Gift Type */}
-              {welcomeGiftType === 'POINTS' && (
-                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2 animate-fade-in">
-                  <label className="text-xs font-medium text-slate-300 block">
-                    عدد النقاط الترحيبية المهداة للعميل الجديد:
-                  </label>
-                  <div className="flex items-center space-x-2 rtl:space-x-reverse max-w-xs">
-                    <input
-                      type="number"
-                      min="1"
-                      value={welcomePoints}
-                      onChange={(e) => setWelcomePoints(e.target.value === '' ? '' : Number(e.target.value))}
-                      placeholder="50"
-                      className="w-32 bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-4 py-2 text-sm font-mono font-bold text-amber-400 text-center outline-none transition"
-                      required
-                    />
-                    <span className="text-xs text-slate-400 font-bold">نقطة ترحيبية فورية</span>
-                  </div>
-                </div>
-              )}
-
-              {welcomeGiftType === 'OFFER' && (
-                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2 animate-fade-in">
-                  <label className="text-xs font-medium text-slate-300 block">
-                    عنوان العرض أو التجربة الترحيبية المجانية:
-                  </label>
+                {/* Store Name (Editable) */}
+                <div className="md:col-span-6 space-y-1.5">
+                  <label className="text-xs font-medium text-slate-300 block">اسم المتجر / العلامة التجارية</label>
                   <input
                     type="text"
-                    value={welcomeOfferTitle}
-                    onChange={(e) => setWelcomeOfferTitle(e.target.value)}
-                    placeholder="مثال: كوب قهوة ترحيبي مجاني، أو عينة عطر فاخرة، أو كود خصم 20%..."
-                    className="w-full bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-4 py-2 text-xs text-white outline-none transition"
+                    value={storeName}
+                    onChange={(e) => setStoreName(e.target.value)}
+                    placeholder="اسم المتجر"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none transition"
                     required
                   />
+                </div>
+
+                {/* Store Slug (Locked & Read-only) */}
+                <div className="md:col-span-6 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-slate-300">الاسم التعريفي بالرابط (Slug)</label>
+                    <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1 font-mono">
+                      <Lock className="w-3 h-3 text-amber-400" />
+                      <span>مقفل (التحكم من لوحة المالك)</span>
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-950/70 border border-slate-800 rounded-2xl px-4 py-3 text-xs font-mono text-slate-300 flex items-center justify-between select-all" dir="ltr">
+                    <span>{store.slug}</span>
+                    <span className="text-[10px] text-slate-500 font-sans">معتمد</span>
+                  </div>
                   <p className="text-[10px] text-slate-500">
-                    * سيتم إنشاء هذا الكوبون فوراً في بطاقة العميل ويظهر في تبويب "امتيازاتي" جاهزاً للمسح عند الكاشير.
+                    * الاسم التعريفي بالرابط مقفل لحماية روابط الزبائن والكاشير، ويتم تغييره حصراً من لوحة إدارة المنصة (المالك).
                   </p>
                 </div>
-              )}
 
-              {welcomeGiftType === 'NONE' && (
-                <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400">
-                  لن يتم منح أي هدية أو نقاط افتتاحية، وسيبدأ العميل رصيده من الصفر.
+                {/* Custom Domain (Locked & Read-only) */}
+                <div className="md:col-span-12 space-y-1.5 p-4 rounded-2xl bg-slate-950/80 border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-200 flex items-center space-x-1.5 rtl:space-x-reverse">
+                      <Globe className="w-4 h-4 text-slate-400" />
+                      <span>الدومين المخصص لمتجرك (Custom Domain):</span>
+                    </label>
+                    <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1 font-mono">
+                      <Lock className="w-3 h-3 text-amber-400" />
+                      <span>White-Label (التحكم من لوحة المالك)</span>
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-900/70 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-white flex items-center justify-between mt-1">
+                    <span>{store.custom_domain ? `https://${store.custom_domain}` : 'لم يتم ربط دومين خاص (المتجر يعمل على نطاق المنصة الافتراضي)'}</span>
+                    <span className="text-[10px] text-slate-400 font-sans">{store.custom_domain ? 'مفعل وموثق ✅' : 'نطاق افتراضي'}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    * ربط وتفعيل الدومين المخصص يتم حصراً من قبل إدارة المنصة (المالك) لضبط شهادات الأمان SSL وDNS.
+                  </p>
                 </div>
-              )}
-            </div>
 
-            {/* Colors */}
+                {/* Colors */}
             <div className="md:col-span-6 space-y-2">
               <label className="text-xs font-medium text-slate-300 block">اللون الأساسي للعلامة (Primary Color)</label>
               <div className="flex items-center space-x-3 rtl:space-x-reverse">
@@ -7565,11 +7413,526 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               <span>{settingsSavedMessage}</span>
             </div>
           )}
+        </div>
+      )}
 
+      {/* ======================================================== */}
+      {/* 💳 2. SUB-SECTION: طرق وسياسة الدفع الإلكتروني (Payments) */}
+      {/* ======================================================== */}
+      {settingsSection === 'payments' && (
+        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 space-y-8 animate-fade-in shadow-xl">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shadow-sm">
+                <CreditCard className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-white">
+                  طرق وسياسة الدفع الإلكتروني (Online & Cash Policies)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  تحكم شامل في تفعيل بوابة الدفع الإلكتروني (مدى / Apple Pay) أو حصر الطلبات والحجوزات على الدفع المسبق
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {onlinePaymentEnabled ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold font-mono">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  بوابة الدفع: مفعلة ومتاحة ✅
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-bold font-mono">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  الدفع: كاش / عند الاستلام فقط 💵
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Master Gateway Activation Card */}
+          <div className={`p-5 sm:p-6 rounded-2xl border transition-all ${
+            onlinePaymentEnabled
+              ? 'bg-emerald-950/20 border-emerald-500/40 shadow-lg shadow-emerald-950/20'
+              : 'bg-slate-950/80 border-slate-800'
+          }`}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1 max-w-xl">
+                <div className="flex items-center gap-2.5">
+                  <h4 className="text-sm sm:text-base font-black text-white">
+                    تفعيل بوابة الدفع الإلكتروني لمتجرك (Mada / Visa / Apple Pay)
+                  </h4>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
+                    onlinePaymentEnabled
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}>
+                    {onlinePaymentEnabled ? 'مفعل' : 'معطل'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  عند التفعيل، يمكن لعملائك الدفع الإلكتروني الفوري في صفحة المتجر عبر بطاقات مدى والبطاقات الائتمانية وApple Pay. في حال التعطيل، يتحول المتجر بالكامل إلى الدفع اليدوي عند الاستلام أو الكاشير فقط.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={isSavingPaymentPolicy}
+                onClick={() => {
+                  const next = !onlinePaymentEnabled;
+                  setOnlinePaymentEnabled(next);
+                  handleInstantSavePaymentPolicy({ online_payment_enabled: next });
+                }}
+                className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  onlinePaymentEnabled ? 'bg-emerald-500' : 'bg-slate-800'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    onlinePaymentEnabled ? 'translate-x-0' : '-translate-x-7'
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Sub-Policy 1: الطلبات (Orders Payment Policy) */}
+          <div className="space-y-3.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
+                <ShoppingBag className="w-4 h-4 text-amber-400" />
+                <span>سياسة الدفع لطلبات المنيو (محلي، سفري، توصيل):</span>
+              </label>
+              <span className="text-[11px] text-slate-400">حفظ تلقائي فوري ⚡</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              {/* Option 1: Both */}
+              <div
+                onClick={() => {
+                  if (!onlinePaymentEnabled) return;
+                  setOrdersPaymentPolicy('both');
+                  handleInstantSavePaymentPolicy({ orders_payment_policy: 'both' });
+                }}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                  !onlinePaymentEnabled
+                    ? 'opacity-40 cursor-not-allowed bg-slate-950/40 border-slate-800/60'
+                    : ordersPaymentPolicy === 'both'
+                    ? 'bg-amber-500/10 border-amber-500/50 shadow-md ring-1 ring-amber-500/30'
+                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black text-white flex items-center gap-1.5">
+                      <span>الخياران متاحان (مرن)</span>
+                      <span className="text-[10px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">افتراضي</span>
+                    </span>
+                    {ordersPaymentPolicy === 'both' && onlinePaymentEnabled && (
+                      <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    يمنح العميل حرية الاختيار بين الدفع أونلاين فوراً أو الدفع عند الاستلام/الكاشير.
+                  </p>
+                </div>
+              </div>
+
+              {/* Option 2: Online Only */}
+              <div
+                onClick={() => {
+                  if (!onlinePaymentEnabled) return;
+                  setOrdersPaymentPolicy('online_only');
+                  handleInstantSavePaymentPolicy({ orders_payment_policy: 'online_only' });
+                }}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                  !onlinePaymentEnabled
+                    ? 'opacity-40 cursor-not-allowed bg-slate-950/40 border-slate-800/60'
+                    : ordersPaymentPolicy === 'online_only'
+                    ? 'bg-emerald-500/10 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
+                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black text-white flex items-center gap-1.5">
+                      <span>دفع أونلاين إلزامي فقط 🔒</span>
+                    </span>
+                    {ordersPaymentPolicy === 'online_only' && onlinePaymentEnabled && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    لا يُقبل أي طلب إلا بعد سداد قيمته إلكترونياً بالكامل. يلغي خيار الدفع عند الاستلام.
+                  </p>
+                </div>
+              </div>
+
+              {/* Option 3: Pay at store only */}
+              <div
+                onClick={() => {
+                  setOrdersPaymentPolicy('pay_at_store_only');
+                  handleInstantSavePaymentPolicy({ orders_payment_policy: 'pay_at_store_only' });
+                }}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                  ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
+                    ? 'bg-blue-500/10 border-blue-500/50 shadow-md ring-1 ring-blue-500/30'
+                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black text-white flex items-center gap-1.5">
+                      <span>دفع عند الاستلام / في الفرع فقط 💵</span>
+                    </span>
+                    {(ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled) && (
+                      <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    يتم تجهيز الطلب ويسدد العميل نقداً أو بجهاز مدى في الفرع مباشرة.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {!onlinePaymentEnabled && (
+              <p className="text-[11px] text-amber-400/90 font-medium bg-amber-500/10 border border-amber-500/20 px-3.5 py-2 rounded-xl">
+                ℹ️ تم تعطيل بوابة الدفع الإلكتروني، لذا فإن كافة الطلبات تعمل حالياً بنمط "الدفع عند الاستلام / الفرع فقط". قم بتفعيل بوابة الدفع أعلاه لتفعيل خيارات الدفع أونلاين.
+              </p>
+            )}
+          </div>
+
+          {/* Sub-Policy 2: الحجوزات والمواعيد (Bookings Payment Policy) */}
+          <div className="space-y-3.5 pt-3 border-t border-slate-800">
+            <div className="flex items-center justify-between">
+              <label className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-purple-400" />
+                <span>سياسة الدفع لحجوزات الخدمات والمواعيد:</span>
+              </label>
+              <span className="text-[11px] text-slate-400">حفظ تلقائي فوري ⚡</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              {/* Option 1: Both */}
+              <div
+                onClick={() => {
+                  if (!onlinePaymentEnabled) return;
+                  setBookingsPaymentPolicy('both');
+                  handleInstantSavePaymentPolicy({ bookings_payment_policy: 'both' });
+                }}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                  !onlinePaymentEnabled
+                    ? 'opacity-40 cursor-not-allowed bg-slate-950/40 border-slate-800/60'
+                    : bookingsPaymentPolicy === 'both'
+                    ? 'bg-purple-500/10 border-purple-500/50 shadow-md ring-1 ring-purple-500/30'
+                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black text-white flex items-center gap-1.5">
+                      <span>الخياران متاحان (مرن)</span>
+                      <span className="text-[10px] text-purple-400 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded">افتراضي</span>
+                    </span>
+                    {bookingsPaymentPolicy === 'both' && onlinePaymentEnabled && (
+                      <CheckCircle2 className="w-4 h-4 text-purple-400 shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    يمكن للعميل تأكيد الحجز فوراً مع خيار الدفع أونلاين أو الدفع عند الحضور في الموعد.
+                  </p>
+                </div>
+              </div>
+
+              {/* Option 2: Online Only */}
+              <div
+                onClick={() => {
+                  if (!onlinePaymentEnabled) return;
+                  setBookingsPaymentPolicy('online_only');
+                  handleInstantSavePaymentPolicy({ bookings_payment_policy: 'online_only' });
+                }}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                  !onlinePaymentEnabled
+                    ? 'opacity-40 cursor-not-allowed bg-slate-950/40 border-slate-800/60'
+                    : bookingsPaymentPolicy === 'online_only'
+                    ? 'bg-emerald-500/10 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
+                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black text-white flex items-center gap-1.5">
+                      <span>دفع أونلاين إلزامي لتأكيد الحجز 🔒</span>
+                    </span>
+                    {bookingsPaymentPolicy === 'online_only' && onlinePaymentEnabled && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    حجز الموعد يتطلب السداد مقدماً عبر المتجر لتثبيت وتأكيد الحجز ومنع التغيب.
+                  </p>
+                </div>
+              </div>
+
+              {/* Option 3: Pay at store only */}
+              <div
+                onClick={() => {
+                  setBookingsPaymentPolicy('pay_at_store_only');
+                  handleInstantSavePaymentPolicy({ bookings_payment_policy: 'pay_at_store_only' });
+                }}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                  bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
+                    ? 'bg-blue-500/10 border-blue-500/50 shadow-md ring-1 ring-blue-500/30'
+                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black text-white flex items-center gap-1.5">
+                      <span>الدفع عند الحضور في الموعد فقط 💵</span>
+                    </span>
+                    {(bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled) && (
+                      <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    يتم تثبيت الحجز ويسدد العميل تكلفة الخدمة عند الحضور في الفرع نقداً أو مدى.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Status footer */}
+          <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+            <span className="text-xs text-slate-400 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>تنعكس هذه السياسات فوراً على شاشة الدفع وسلة التسوق للزبائن</span>
+            </span>
+            {paymentPolicyStatus && (
+              <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 rounded-xl">
+                {paymentPolicyStatus}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 🛡️ 4. SUB-SECTION: الأمان والـ PIN ونقاط الولاء (Security) */}
+      {/* ======================================================== */}
+      {settingsSection === 'security' && (
+        <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+              <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 shadow-sm">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-white">
+                  الأمان والـ PIN وصلاحيات المدير ونقاط الولاء
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  إدارة رمز الدخول السري للمدير PIN، سقف فواتير الكاشير، رقم جوال الإدارة المعتمد، ونظام نقاط الولاء
+                </p>
+              </div>
+            </div>
+
+            <div className="px-3.5 py-1.5 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-bold font-mono">
+              حماية متقدمة 🔒
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveLoyaltySettings} className="grid grid-cols-1 md:grid-cols-12 gap-6">
+            {/* Manager Name (Editable) */}
+            <div className="md:col-span-6 space-y-1.5">
+              <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-purple-400" />
+                <span>اسم المدير العام / المسئول:</span>
+              </label>
+              <input
+                type="text"
+                value={managerName}
+                onChange={(e) => setManagerName(e.target.value)}
+                placeholder="اسم مدير الفرع أو مالك النشاط"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-purple-400 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none transition"
+              />
+              <p className="text-[10px] text-slate-500">
+                الاسم المسجل في السجلات الإدارية وتقارير المتجر.
+              </p>
+            </div>
+
+            {/* Manager Contact Phone (Locked & Read-only 🔒) */}
+            <div className="md:col-span-6 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5 text-purple-400" />
+                  <span>رقم جوال المتجر / المدير العام:</span>
+                </label>
+                <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1 font-mono">
+                  <Lock className="w-3 h-3 text-amber-400" />
+                  <span>مقفل (التحكم من لوحة المالك فقط)</span>
+                </span>
+              </div>
+              <div className="w-full bg-slate-950/70 border border-slate-800 rounded-2xl px-4 py-3 text-xs font-mono text-slate-300 flex items-center justify-between select-all" dir="ltr">
+                <span>{store.manager_contact || (store as any).phone || 'غير مسجل'}</span>
+                <span className="text-[10px] text-slate-500 font-sans">معتمد أمنياً</span>
+              </div>
+              <p className="text-[10px] text-slate-500">
+                * رقم الجوال معتمد وموثق في السجل الأمني للمتجر، ويتم تعديله حصراً من لوحة إدارة المنصة (المالك) لضمان حماية الملكية.
+              </p>
+            </div>
+
+            {/* Master Admin PIN */}
+            <div className="md:col-span-6 space-y-1.5">
+              <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                <span>رمز PIN للمدير العام (Master Admin PIN):</span>
+              </label>
+              <input
+                type="text"
+                maxLength={6}
+                value={adminPinCode}
+                onChange={(e) => setAdminPinCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="9999"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-3 text-sm font-mono font-bold text-white outline-none transition tracking-widest text-center"
+                required
+              />
+              <p className="text-[10px] text-slate-500">
+                الرمز السري الرئيسي لدخول لوحة التاجر وتخطي حدود العمليات في شاشات الكاشير.
+              </p>
+            </div>
+
+            {/* Max Cashier Invoice Amount */}
+            <div className="md:col-span-6 space-y-1.5">
+              <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
+                <Coins className="w-3.5 h-3.5 text-emerald-400" />
+                <span>سقف فاتورة الكاشير بالريال (Max Invoice SAR):</span>
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={maxCashierInvoiceAmount}
+                onChange={(e) => setMaxCashierInvoiceAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                placeholder="500"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-400 rounded-2xl px-4 py-3 text-sm font-mono font-bold text-white outline-none transition"
+              />
+              <p className="text-[10px] text-slate-500">
+                الحد الأقصى المسموح لموظفي الكاشير بإدخاله في الفاتورة الواحدة لمنع التلاعب وتجاوز الصلاحيات.
+              </p>
+            </div>
+
+            {/* Points Per Riyal */}
+            <div className="md:col-span-6 space-y-1.5">
+              <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>معدل احتساب نقاط الولاء (نقاط لكل 1 ريال):</span>
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min="0.1"
+                value={pointsPerRiyal}
+                onChange={(e) => setPointsPerRiyal(Number(e.target.value))}
+                placeholder="1.0"
+                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-3 text-sm font-mono font-bold text-white outline-none transition"
+                required
+              />
+              <p className="text-[10px] text-slate-500">
+                مثال: 1.0 يعني أن إنفاق 100 ريال يمنح العميل 100 نقطة ولاء تلقائياً.
+              </p>
+            </div>
+
+            {/* Welcome Gift Type */}
+            <div className="md:col-span-6 space-y-1.5">
+              <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
+                <Gift className="w-3.5 h-3.5 text-rose-400" />
+                <span>نوع الهدية الترحيبية للزبون الجديد:</span>
+              </label>
+              <select
+                value={welcomeGiftType}
+                onChange={(e) => setWelcomeGiftType(e.target.value as 'POINTS' | 'OFFER' | 'NONE')}
+                className="w-full bg-slate-950 border border-slate-800 focus:border-rose-400 rounded-2xl px-4 py-3 text-xs font-bold text-white outline-none transition cursor-pointer"
+              >
+                <option value="POINTS">🎁 نقاط ولاء فورية مضافة للمحفظة</option>
+                <option value="OFFER">🏷️ قسيمة / عرض خصم ترحيبي خاص</option>
+                <option value="NONE">❌ بدون هدية ترحيبية</option>
+              </select>
+              <p className="text-[10px] text-slate-500">
+                تمنح للزبون تلقائياً بمجرد مسح الباركود لأول مرة والانضمام لمتجرك.
+              </p>
+            </div>
+
+            {/* Conditional Welcome Gift Fields */}
+            {welcomeGiftType === 'POINTS' && (
+              <div className="md:col-span-12 space-y-1.5 p-4 rounded-2xl bg-slate-950/60 border border-slate-800 animate-fade-in">
+                <label className="text-xs font-bold text-amber-400 block">
+                  عدد النقاط الترحيبية المجانية الممنوحة للعميل:
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={welcomePoints}
+                  onChange={(e) => setWelcomePoints(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="مثال: 50"
+                  className="w-full max-w-xs bg-slate-900 border border-slate-800 focus:border-amber-400 rounded-xl px-4 py-2 text-xs font-mono font-bold text-white outline-none"
+                />
+              </div>
+            )}
+
+            {welcomeGiftType === 'OFFER' && (
+              <div className="md:col-span-12 space-y-1.5 p-4 rounded-2xl bg-slate-950/60 border border-slate-800 animate-fade-in">
+                <label className="text-xs font-bold text-rose-400 block">
+                  عنوان الهدية أو العرض الترحيبي (مثال: قهوة مجانية / خصم 15%):
+                </label>
+                <input
+                  type="text"
+                  value={welcomeOfferTitle}
+                  onChange={(e) => setWelcomeOfferTitle(e.target.value)}
+                  placeholder="خصم 15% على أول طلب"
+                  className="w-full bg-slate-900 border border-slate-800 focus:border-rose-400 rounded-xl px-4 py-2.5 text-xs text-white outline-none"
+                />
+              </div>
+            )}
+
+            {/* Submit button */}
+            <div className="md:col-span-12 flex items-center justify-between pt-3 border-t border-slate-800">
+              <span className="text-xs text-slate-500">
+                يتم تطبيق رمز الـ PIN ومعدل النقاط فوراً على محفظة العملاء وشاشة الكاشير
+              </span>
+
+              <button
+                type="submit"
+                disabled={updatingSettings}
+                className="py-3 px-6 rounded-2xl bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-sm flex items-center space-x-2 rtl:space-x-reverse shadow-md transition disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{updatingSettings ? 'جاري الحفظ...' : 'حفظ إعدادات الأمان ونقاط الولاء'}</span>
+              </button>
+            </div>
+          </form>
+
+          {settingsSavedMessage && (
+            <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold animate-fade-in flex items-center space-x-2 rtl:space-x-reverse">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>{settingsSavedMessage}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 📡 5. SUB-SECTION: تنبيهات تليجرام وبوابة الرسائل (Integrations) */}
+      {/* ======================================================== */}
+      {settingsSection === 'integrations' && (
+        <div className="space-y-6 animate-fade-in">
           {/* ========================================== */}
           {/* 🤖 Telegram Bot Integration Card */}
           {/* ========================================== */}
-          <div className="mt-8 rounded-3xl p-6 sm:p-8 bg-blue-900/10 border border-blue-500/30 shadow-xl space-y-6">
+          <div className="rounded-3xl p-6 sm:p-8 bg-blue-900/10 border border-blue-500/30 shadow-xl space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-blue-500/20">
               <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
                 <div className="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
