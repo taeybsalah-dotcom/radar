@@ -749,7 +749,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         total_price: cartGrandTotal,
         payment_method: transferredMetadata?.isAppPrepaid ? 'online' : paymentMethod,
         payment_status: 'paid',
-        status: 'preparing',
+        status: 'pending',
         cashier_id: activeStaff.id,
         cashier_name: activeStaff.name,
         created_at: nowIso,
@@ -770,6 +770,47 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         } catch (netErr) {
           console.warn('Network checkout failed, switching to offline queue:', netErr);
           isOfflineOrder = true;
+        }
+      }
+
+      // 1b. If the invoice contains services and wasn't already converted from an existing booking,
+      // register them as service bookings so they appear on the salon/service display (KDS Services)
+      const serviceCartItems = cartItems.filter((c) => {
+        const itemType = (c.catalog_item.item_type || '').toLowerCase();
+        const cat = (c.catalog_item.category || '').toLowerCase();
+        return itemType === 'service' || cat === 'خدمات' || cat === 'خدمة' || cat === 'صالون' || cat === 'عناية';
+      });
+
+      if (!isOfflineOrder && serviceCartItems.length > 0 && !transferredMetadata?.originalOrderId) {
+        try {
+          const nowDate = new Date();
+          const bookingDateStr = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}-${String(nowDate.getDate()).padStart(2, '0')}`;
+          const bookingTimeStr = `${String(nowDate.getHours()).padStart(2, '0')}:${String(nowDate.getMinutes()).padStart(2, '0')}`;
+
+          for (const sItem of serviceCartItems) {
+            await LoyaltyService.createServiceBooking({
+              store_id: store.id,
+              branch_id: activeBranch?.id || null,
+              branch_name: activeBranch?.name || null,
+              customer_id: customer?.id || undefined,
+              customer_name: customer?.name || 'عميل كاشير مباشر',
+              customer_phone: customer?.phone || '',
+              service_id: sItem.catalog_item.id || 'srv-direct',
+              service_name: sItem.catalog_item.name,
+              service_price: sItem.total_price,
+              total_price: sItem.total_price,
+              service_duration_minutes: sItem.catalog_item.duration_minutes || 30,
+              specialist_id: sItem.specialist_id || null,
+              specialist_name: sItem.specialist_name || null,
+              booking_date: bookingDateStr,
+              booking_time: bookingTimeStr,
+              booking_source: 'walk_in',
+              status: 'pending',
+              customer_notes: `[فاتورة كاشير #${orderNumber}] ${sItem.notes || ''}`.trim(),
+            });
+          }
+        } catch (bkErr) {
+          console.warn('Could not auto-register walk-in service booking from POS:', bkErr);
         }
       }
 

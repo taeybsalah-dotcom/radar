@@ -36,6 +36,34 @@ import {
   User,
 } from 'lucide-react';
 
+// Helper: Check if an item is a service (salon/care/appointment) rather than a kitchen/bar item
+export const isServiceItem = (it: any): boolean => {
+  if (!it) return false;
+  const itemType = (it.item_type || '').toLowerCase().trim();
+  const cat = (it.category || '').toLowerCase().trim();
+  const name = (it.name || '').toLowerCase().trim();
+  return (
+    itemType === 'service' ||
+    cat === 'خدمات' ||
+    cat === 'خدمة' ||
+    cat === 'صالون' ||
+    cat === 'عناية' ||
+    name.includes('قص شعر') ||
+    name.includes('حلاقة') ||
+    name.includes('مساج') ||
+    name.includes('تنظيف بشرة') ||
+    name.includes('مكياج') ||
+    name.includes('مانيكير') ||
+    name.includes('بديكير') ||
+    Boolean(it.specialist_id || it.specialist_name)
+  );
+};
+
+export const hasKitchenItems = (order: any): boolean => {
+  const items = Array.isArray(order?.items) ? order.items : [];
+  return items.some((it: any) => !isServiceItem(it));
+};
+
 interface KitchenDisplaySystemProps {
   store: Store;
   activeStaff?: StoreStaff | null;
@@ -210,7 +238,7 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
                 return [newOrder, ...prev];
               });
 
-              if (soundEnabled) {
+              if (soundEnabled && hasKitchenItems(newOrder)) {
                 try {
                   playBeepSound('kitchen_order_ding');
                 } catch {}
@@ -282,7 +310,7 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
           return [newOrder, ...prev];
         });
 
-        if (soundEnabled) {
+        if (soundEnabled && hasKitchenItems(newOrder)) {
           try {
             playBeepSound('kitchen_order_ding');
           } catch {}
@@ -421,9 +449,13 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
     }
   };
 
-  // Filtered Orders for the KDS
+  // Filtered Orders for the KDS (Kitchen & Bar)
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
+      // 0. Exclude orders that contain ONLY services (e.g. Salon, Haircuts, Spa)
+      // The Kitchen/Bar display is exclusively for food, beverages, and kitchen items.
+      if (!hasKitchenItems(order)) return false;
+
       // 1. Branch Filter
       if (selectedBranchId !== 'ALL' && order.branch_id) {
         if (order.branch_id !== selectedBranchId) return false;
@@ -439,7 +471,7 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
 
       // 3. Station Filter
       if (stationFilter !== 'ALL') {
-        const items = Array.isArray(order.items) ? order.items : [];
+        const items = (Array.isArray(order.items) ? order.items : []).filter((it: any) => !isServiceItem(it));
         const hasMatchingItem = items.some((it: any) => {
           const cat = (it.category || '').toLowerCase();
           const name = (it.name || '').toLowerCase();
@@ -579,15 +611,22 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
   // Counts summary
   const activeCount =
     displayMode === 'services'
-      ? bookings.filter((b) => ['pending', 'confirmed'].includes((b.status || '').toLowerCase())).length
-      : orders.filter((o) =>
-          ['pending', 'accepted', 'preparing', 'ready'].includes((o.status || '').toLowerCase())
-        ).length;
+      ? bookings.filter((b) => {
+          if (selectedBranchId !== 'ALL' && b.branch_id && b.branch_id !== selectedBranchId) return false;
+          return ['pending', 'confirmed'].includes((b.status || '').toLowerCase());
+        }).length
+      : orders.filter((o) => {
+          if (selectedBranchId !== 'ALL' && o.branch_id && o.branch_id !== selectedBranchId) return false;
+          if (!hasKitchenItems(o)) return false;
+          return ['pending', 'accepted', 'preparing', 'ready'].includes((o.status || '').toLowerCase());
+        }).length;
 
   const urgentCount =
     displayMode === 'services'
       ? 0
       : orders.filter((o) => {
+          if (selectedBranchId !== 'ALL' && o.branch_id && o.branch_id !== selectedBranchId) return false;
+          if (!hasKitchenItems(o)) return false;
           if (!['pending', 'accepted', 'preparing'].includes((o.status || '').toLowerCase())) return false;
           const diffMin = (currentTime.getTime() - new Date(o.created_at).getTime()) / 60000;
           return diffMin >= 10;
@@ -1300,7 +1339,7 @@ const OrderChitCard: React.FC<OrderChitCardProps> = ({
 }) => {
   const status = (order.status || 'pending').toLowerCase();
   const elapsed = getElapsedInfo(order.created_at);
-  const items = Array.isArray(order.items) ? order.items : [];
+  const items = (Array.isArray(order.items) ? order.items : []).filter((it: any) => !isServiceItem(it));
 
   // Urgency styling based on wait time
   const timerBorderClass =
