@@ -179,8 +179,8 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
     if (!isBackground) setLoading(true);
     try {
       const [fetchedOrders, fetchedBookings] = await Promise.all([
-        LoyaltyService.getLiveStoreOrders(store.id),
-        hasBookingsModule ? LoyaltyService.getStoreBookings(store.id).catch(() => []) : Promise.resolve([]),
+        LoyaltyService.getLiveStoreOrders(store.id).catch(() => []),
+        LoyaltyService.getStoreBookings(store.id).catch(() => []),
       ]);
       if (Array.isArray(fetchedOrders)) {
         setOrders(fetchedOrders);
@@ -318,7 +318,12 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
       } else if (payload.type === 'ORDER_STATUS_UPDATED' && payload.orderData) {
         const updated = payload.orderData;
         setOrders((prev) =>
-          prev.map((o) => (o.id === updated.id ? { ...o, status: updated.status } : o))
+          prev.map((o) => (o.id === updated.id || o.order_number === updated.order_number ? { ...o, status: updated.status } : o))
+        );
+      } else if (payload.type === 'BOOKING_STATUS_UPDATED' && payload.bookingData) {
+        const updated = payload.bookingData;
+        setBookings((prev) =>
+          prev.map((b) => (b.id === updated.id || b.booking_number === updated.booking_number ? { ...b, ...updated } : b))
         );
       }
     });
@@ -374,28 +379,29 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
 
   // Handle Order Status Transitions
   const handleUpdateStatus = async (orderId: string, nextStatus: string) => {
+    // ⚡ 1. Optimistic Instant UI Update (0ms latency on screen)
+    setOrders((prev) =>
+      prev.map((o) => (o.id === orderId || o.order_number === orderId ? { ...o, status: nextStatus } : o))
+    );
+
+    if (nextStatus === 'ready') {
+      playBeepSound('success');
+      confetti({
+        particleCount: 50,
+        spread: 50,
+        origin: { y: 0.7 },
+        colors: ['#10B981', '#38BDF8', '#F59E0B'],
+      });
+    } else {
+      playBeepSound('commission');
+    }
+
     try {
       const staffName = activeStaff?.name || 'شاشة المطبخ (KDS)';
       const branchId = activeBranch?.id || null;
       const branchName = activeBranch?.name || null;
 
       await LoyaltyService.updateOrderStatus(orderId, nextStatus, staffName, branchId, branchName);
-
-      setOrders((prev) =>
-        prev.map((o) => (o.id === orderId ? { ...o, status: nextStatus } : o))
-      );
-
-      if (nextStatus === 'ready') {
-        playBeepSound('success');
-        confetti({
-          particleCount: 50,
-          spread: 50,
-          origin: { y: 0.7 },
-          colors: ['#10B981', '#38BDF8', '#F59E0B'],
-        });
-      } else {
-        playBeepSound('commission');
-      }
     } catch (err) {
       console.error('Failed to update order status in KDS:', err);
     }
@@ -422,28 +428,29 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
     bookingId: string,
     nextStatus: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
   ) => {
+    // ⚡ 1. Optimistic Instant UI Update (0ms latency on screen)
+    setBookings((prev) =>
+      prev.map((b) => (b.id === bookingId || b.booking_number === bookingId ? { ...b, status: nextStatus } : b))
+    );
+
+    if (nextStatus === 'completed') {
+      playBeepSound('success');
+      confetti({
+        particleCount: 50,
+        spread: 50,
+        origin: { y: 0.7 },
+        colors: ['#A855F7', '#EC4899', '#38BDF8'],
+      });
+    } else {
+      playBeepSound('commission');
+    }
+
     try {
       const staffName = activeStaff?.name || 'شاشة الخدمات (KDS)';
       const branchId = selectedBranchId !== 'ALL' ? selectedBranchId : null;
       const branchName = branches.find((b) => b.id === branchId)?.name || null;
 
       await LoyaltyService.updateServiceBookingStatus(bookingId, nextStatus, staffName, branchId, branchName);
-
-      setBookings((prev) =>
-        prev.map((b) => (b.id === bookingId ? { ...b, status: nextStatus } : b))
-      );
-
-      if (nextStatus === 'completed') {
-        playBeepSound('success');
-        confetti({
-          particleCount: 50,
-          spread: 50,
-          origin: { y: 0.7 },
-          colors: ['#A855F7', '#EC4899', '#38BDF8'],
-        });
-      } else {
-        playBeepSound('commission');
-      }
     } catch (err) {
       console.error('Failed to update booking status in KDS:', err);
     }
@@ -1002,8 +1009,11 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
         ) : displayMode === 'services' ? (
           /* ======================================================== */
           /* ✂️ SALON / CARE SERVICES DISPLAY WORKSPACE                */
-          /* ======================================================== */
-          filteredBookings.length === 0 ? (
+          (viewMode === 'kanban' && ticketTab === 'active'
+            ? (kanbanBookingColumns.pendingBookings.length === 0 &&
+               kanbanBookingColumns.confirmedBookings.length === 0 &&
+               kanbanBookingColumns.completedBookings.length === 0)
+            : filteredBookings.length === 0) ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3 text-center border-2 border-dashed border-slate-800 rounded-3xl p-8">
               <div className="w-16 h-16 rounded-3xl bg-slate-900 border border-slate-800 flex items-center justify-center text-3xl">
                 ✂️
