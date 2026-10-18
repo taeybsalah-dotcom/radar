@@ -8311,7 +8311,7 @@ export const LoyaltyService = {
 
   async updateServiceBookingStatus(
     bookingId: string,
-    status: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show',
+    status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show',
     cashierName?: string,
     branchId?: string | null,
     branchName?: string | null
@@ -8446,11 +8446,11 @@ export const LoyaltyService = {
     return `https://wa.me/${intlPhone}?text=${encoded}`;
   },
 
-  // صياغة رسائل الواتساب الصادرة من التاجر للعميل بناءً على حالة الموعد (مؤكد / مكتمل / ملغي / لم يحضر)
+  // صياغة رسائل الواتساب الصادرة من التاجر للعميل بناءً على حالة الموعد (مؤكد / قيد التنفيذ / مكتمل / ملغي / لم يحضر)
   formatMerchantBookingStatusWhatsApp(
     booking: ServiceBooking,
     storeName: string,
-    statusOverride?: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    statusOverride?: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show'
   ): string {
     const status = statusOverride || booking.status || 'confirmed';
     const store = storeName || booking.store_name || 'متجر رادار';
@@ -8484,6 +8484,14 @@ export const LoyaltyService = {
       lines.push(`━━━━━━━━━━━━━━━━━━━━`);
       lines.push(`💡 يمكنك إعادة حجز موعد جديد في أي وقت يناسبك عبر محفظتك الرقمية.`);
       lines.push(`حياك الله ونسعد بخدمتك دائماً ✨`);
+    } else if (status === 'in_progress') {
+      lines.push(`*✂️ بدء تقديم خدمتك الآن في ${store} - #${booking.booking_number}*`);
+      lines.push(`أهلاً بك يا *${booking.customer_name}*! 🌟`);
+      lines.push(`تم تأكيد حضورك وبدء جلستك لخدمة: *${booking.service_name}* الآن.`);
+      if (booking.specialist_name) {
+        lines.push(`✂️ *المختص:* ${booking.specialist_name}`);
+      }
+      lines.push(`نتمنى لك تجربة ممتعة ومميزة معنا ✨`);
     } else {
       // Confirmed
       lines.push(`*💇‍♂️ تأكيد موعدك في ${store} - #${booking.booking_number}*`);
@@ -8510,7 +8518,7 @@ export const LoyaltyService = {
   generateMerchantBookingStatusWhatsAppUrl(
     booking: ServiceBooking,
     storeName: string,
-    statusOverride?: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    statusOverride?: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show'
   ): string {
     const rawText = this.formatMerchantBookingStatusWhatsApp(booking, storeName, statusOverride);
     const cleanPhone = (booking.customer_phone || '').replace(/\D/g, '');

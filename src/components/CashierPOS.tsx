@@ -1973,16 +1973,18 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                     const ord = liveOrders.find(o => o.id === incomingAlert.orderId);
                     if (ord) handleTransferOrderToPOS(ord);
                   }}
-                  className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs transition shrink-0 flex items-center gap-1"
                 >
-                  <span>🧾 تحويل للسلة والمحاسبة</span>
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>تحويل للسلة 🧾</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => updateOrderStatus(incomingAlert.orderId!, 'preparing')}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1"
+                  onClick={() => updateOrderStatus(incomingAlert.orderId!, 'accepted')}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1"
                 >
-                  <span>قبول وتحضير ✅</span>
+                  <ChefHat className="w-3.5 h-3.5" />
+                  <span>قبول وإرسال للمطبخ 👨‍🍳</span>
                 </button>
                 <button
                   type="button"
@@ -2002,16 +2004,18 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                     const bk = liveBookings.find(b => b.id === incomingAlert.bookingId);
                     if (bk) handleTransferBookingToPOS(bk);
                   }}
-                  className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-300 border border-purple-500/40 font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1"
                 >
-                  <span>🧾 تحويل للسلة والمحاسبة</span>
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>تحويل للسلة 🧾</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => updateBookingStatus(incomingAlert.bookingId!, 'confirmed')}
                   className="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs transition shadow-lg shrink-0 flex items-center gap-1"
                 >
-                  <span>تأكيد الموعد ✅</span>
+                  <Scissors className="w-3.5 h-3.5" />
+                  <span>تأكيد الموعد وإرساله للصالة ✅</span>
                 </button>
                 <button
                   type="button"
@@ -2273,14 +2277,14 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
               return Boolean(activeBranchObj?.is_main);
             });
 
-        const newOrders = branchScopedOrders.filter(o => o.status === 'pending' || o.status === 'accepted');
-        const prepOrders = branchScopedOrders.filter(o => o.status === 'preparing');
+        const newOrders = branchScopedOrders.filter(o => o.status === 'pending');
+        const prepOrders = branchScopedOrders.filter(o => o.status === 'accepted' || o.status === 'preparing');
         const readyOrders = branchScopedOrders.filter(o => o.status === 'ready');
         const completedOrders = branchScopedOrders.filter(o => o.status === 'completed' || o.status === 'cancelled');
 
         const displayedOrders = branchScopedOrders.filter(order => {
-          if (orderStatusFilter === 'new' && !(order.status === 'pending' || order.status === 'accepted')) return false;
-          if (orderStatusFilter === 'preparing' && order.status !== 'preparing') return false;
+          if (orderStatusFilter === 'new' && order.status !== 'pending') return false;
+          if (orderStatusFilter === 'preparing' && !(order.status === 'accepted' || order.status === 'preparing')) return false;
           if (orderStatusFilter === 'completed' && !(order.status === 'ready' || order.status === 'completed' || order.status === 'cancelled')) return false;
           
           if (orderSearchQuery.trim()) {
@@ -2294,12 +2298,12 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         });
 
         const pendingBookings = branchScopedBookings.filter(b => b.status === 'pending');
-        const confirmedBookings = branchScopedBookings.filter(b => b.status === 'confirmed');
+        const confirmedBookings = branchScopedBookings.filter(b => b.status === 'confirmed' || b.status === 'in_progress');
         const pastBookings = branchScopedBookings.filter(b => b.status === 'completed' || b.status === 'cancelled' || b.status === 'no_show');
 
         const displayedBookings = branchScopedBookings.filter(bk => {
           if (bookingStatusFilter === 'pending' && bk.status !== 'pending') return false;
-          if (bookingStatusFilter === 'confirmed' && bk.status !== 'confirmed') return false;
+          if (bookingStatusFilter === 'confirmed' && !(bk.status === 'confirmed' || bk.status === 'in_progress')) return false;
           if (bookingStatusFilter === 'past' && !(bk.status === 'completed' || bk.status === 'cancelled' || bk.status === 'no_show')) return false;
 
           if (orderSearchQuery.trim()) {
@@ -2498,7 +2502,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {displayedOrders.map((order) => {
-                      const isNew = order.status === 'pending' || order.status === 'accepted';
+                      const isPending = order.status === 'pending';
+                      const isAccepted = order.status === 'accepted';
+                      const isNew = isPending || isAccepted;
                       const isPrep = order.status === 'preparing';
                       const isReady = order.status === 'ready';
                       const isDone = order.status === 'completed';
@@ -2508,8 +2514,10 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                         <div
                           key={order.id}
                           className={`bg-slate-900 rounded-3xl p-5 border flex flex-col justify-between shadow-xl transition duration-200 relative overflow-hidden ${
-                            isNew
+                            isPending
                               ? 'border-rose-500/60 shadow-rose-950/30 ring-1 ring-rose-500/30'
+                              : isAccepted
+                              ? 'border-blue-500/60 shadow-blue-950/30 ring-1 ring-blue-500/30'
                               : isPrep
                               ? 'border-amber-500/50 shadow-amber-950/20'
                               : isReady
@@ -2553,8 +2561,10 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
                               <span
                                 className={`text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 ${
-                                  isNew
+                                  isPending
                                     ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
+                                    : isAccepted
+                                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
                                     : isPrep
                                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                                     : isReady
@@ -2564,7 +2574,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                                     : 'bg-slate-800 text-slate-400'
                                 }`}
                               >
-                                {isNew ? '🔴 طلب جديد' : isPrep ? '🟡 قيد التحضير' : isReady ? '🟢 جاهز للتسليم' : isCancelled ? '❌ ملغي' : '🏁 مكتمل'}
+                                {isPending ? '🔴 بانتظار موافقة الكاشير' : isAccepted ? '👨‍🍳 معتمد بالمطبخ' : isPrep ? '🟡 قيد التحضير' : isReady ? '🟢 جاهز للتسليم' : isCancelled ? '❌ ملغي' : '🏁 مكتمل'}
                               </span>
                             </div>
 
@@ -2637,7 +2647,28 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
 
                           {/* Action Buttons */}
                           <div className="flex gap-2 pt-1 border-t border-slate-800/80 mt-auto">
-                            {isNew && (
+                            {isPending && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => updateOrderStatus(order.id, 'accepted')}
+                                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-1.5"
+                                >
+                                  <ChefHat className="w-3.5 h-3.5" />
+                                  <span>قبول وإرسال للمطبخ 👨‍🍳</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => updateOrderStatus(order.id, 'cancelled')}
+                                  className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition"
+                                  title="إلغاء الطلب"
+                                >
+                                  إلغاء ❌
+                                </button>
+                              </>
+                            )}
+
+                            {isAccepted && (
                               <>
                                 <button
                                   type="button"
@@ -2645,7 +2676,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                                   className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition shadow-lg shadow-blue-900/30 flex items-center justify-center gap-1.5"
                                 >
                                   <ChefHat className="w-3.5 h-3.5" />
-                                  <span>قبول وبدء التحضير</span>
+                                  <span>بدء التحضير 🍳</span>
                                 </button>
                                 <button
                                   type="button"

@@ -219,7 +219,7 @@ export const CashierAppointmentsModal: React.FC<CashierAppointmentsModalProps> =
   // Handle Quick Status Change
   const handleUpdateStatus = async (
     bookingId: string,
-    nextStatus: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    nextStatus: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show'
   ) => {
     setUpdatingId(bookingId);
     try {
@@ -578,17 +578,21 @@ export const CashierAppointmentsModal: React.FC<CashierAppointmentsModalProps> =
                 const statusColor =
                   b.status === 'confirmed'
                     ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : b.status === 'in_progress'
+                    ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30'
                     : b.status === 'pending'
-                    ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                    ? 'bg-amber-500/15 text-amber-400 border-amber-500/30 animate-pulse'
                     : b.status === 'completed'
                     ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
                     : 'bg-rose-500/15 text-rose-400 border-rose-500/30';
 
                 const statusArabic =
                   b.status === 'confirmed'
-                    ? 'مؤكد ✅'
+                    ? 'مؤكد بالصالة ✅'
+                    : b.status === 'in_progress'
+                    ? 'قيد الخدمة بالصالة ✂️'
                     : b.status === 'pending'
-                    ? 'بانتظار التأكيد ⏳'
+                    ? 'بانتظار موافقة الكاشير ⏳'
                     : b.status === 'completed'
                     ? 'مكتمل ومحاسب 🏁'
                     : b.status === 'cancelled'
@@ -733,21 +737,32 @@ export const CashierAppointmentsModal: React.FC<CashierAppointmentsModalProps> =
                           <Phone className="w-3.5 h-3.5" />
                         </a>
 
-                        {/* Quick Confirm */}
+                        {/* Quick Confirm / Cancel */}
                         {b.status === 'pending' && (
-                          <button
-                            type="button"
-                            disabled={updatingId === b.id}
-                            onClick={() => handleUpdateStatus(b.id, 'confirmed')}
-                            className="px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-[11px] font-bold transition"
-                            title="تأكيد الموعد"
-                          >
-                            {updatingId === b.id ? '...' : 'تأكيد ✅'}
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              disabled={updatingId === b.id}
+                              onClick={() => handleUpdateStatus(b.id, 'confirmed')}
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold transition flex items-center gap-1"
+                              title="تأكيد الموعد وإرساله لشاشة الصالة"
+                            >
+                              {updatingId === b.id ? '...' : 'تأكيد وإرسال للصالة ✅'}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={updatingId === b.id}
+                              onClick={() => handleUpdateStatus(b.id, 'cancelled')}
+                              className="px-2 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-[11px] font-bold transition"
+                              title="إلغاء الموعد"
+                            >
+                              {updatingId === b.id ? '...' : 'إلغاء ❌'}
+                            </button>
+                          </>
                         )}
 
                         {/* Quick Complete */}
-                        {b.status === 'confirmed' && (
+                        {(b.status === 'confirmed' || b.status === 'in_progress') && (
                           <button
                             type="button"
                             disabled={updatingId === b.id}

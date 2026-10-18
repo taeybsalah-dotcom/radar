@@ -265,16 +265,28 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
                 return [newOrder, ...prev];
               });
 
-              if (soundEnabled && hasKitchenItems(newOrder)) {
+              // 🛡️ Central Cashier Gate: Only ding if order was created directly by Cashier (POS) or already approved!
+              const isAppPending = (newOrder.order_source === 'customer_app' || (!newOrder.order_source && !newOrder.cashier_id)) && (newOrder.status || '').toLowerCase() === 'pending';
+              if (soundEnabled && hasKitchenItems(newOrder) && !isAppPending) {
                 try {
                   playBeepSound('kitchen_order_ding');
                 } catch {}
               }
             } else if (payload.eventType === 'UPDATE') {
               const updated = payload.new;
-              setOrders((prev) =>
-                prev.map((o) => (o.id === updated.id || o.order_number === updated.order_number ? { ...o, ...updated } : o))
-              );
+              setOrders((prev) => {
+                const existing = prev.find((o) => o.id === updated.id);
+                const wasAppPending = existing && (existing.order_source === 'customer_app' || !existing.order_source) && (existing.status || '').toLowerCase() === 'pending';
+                const isNowApproved = (updated.status || '').toLowerCase() === 'accepted' || (updated.status || '').toLowerCase() === 'preparing';
+
+                // 🔔 Ring in Kitchen the moment the Cashier approves the order!
+                if (soundEnabled && hasKitchenItems(updated) && wasAppPending && isNowApproved) {
+                  try {
+                    playBeepSound('kitchen_order_ding');
+                  } catch {}
+                }
+                return prev.map((o) => (o.id === updated.id || o.order_number === updated.order_number ? { ...o, ...updated } : o));
+              });
             } else if (payload.eventType === 'DELETE') {
               setOrders((prev) => prev.filter((o) => o.id !== payload.old?.id));
             }
@@ -297,16 +309,29 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
             if (payload.eventType === 'INSERT') {
               const newBk = payload.new;
               setBookings((prev) => [newBk, ...prev.filter((b) => b.id !== newBk.id && b.booking_number !== newBk.booking_number)]);
-              if (soundEnabled) {
+              
+              // 🛡️ Central Cashier Gate: Do not ding for unconfirmed customer app bookings
+              const isAppPendingBooking = (newBk.booking_source === 'customer_app' || !newBk.booking_source) && (newBk.status || '').toLowerCase() === 'pending';
+              if (soundEnabled && !isAppPendingBooking) {
                 try {
                   playBeepSound('kitchen_order_ding');
                 } catch {}
               }
             } else if (payload.eventType === 'UPDATE') {
               const updated = payload.new;
-              setBookings((prev) =>
-                prev.map((b) => (b.id === updated.id || b.booking_number === updated.booking_number ? { ...b, ...updated } : b))
-              );
+              setBookings((prev) => {
+                const existing = prev.find((b) => b.id === updated.id);
+                const wasAppPending = existing && (existing.booking_source === 'customer_app' || !existing.booking_source) && (existing.status || '').toLowerCase() === 'pending';
+                const isNowConfirmed = (updated.status || '').toLowerCase() === 'confirmed' || (updated.status || '').toLowerCase() === 'in_progress';
+
+                // 🔔 Ring in Salon when Cashier confirms the booking!
+                if (soundEnabled && wasAppPending && isNowConfirmed) {
+                  try {
+                    playBeepSound('kitchen_order_ding');
+                  } catch {}
+                }
+                return prev.map((b) => (b.id === updated.id || b.booking_number === updated.booking_number ? { ...b, ...updated } : b));
+              });
             } else if (payload.eventType === 'DELETE') {
               setBookings((prev) => prev.filter((b) => b.id !== payload.old?.id));
             }
@@ -453,7 +478,7 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
   // Handle Booking Status Transitions
   const handleUpdateBookingStatus = async (
     bookingId: string,
-    nextStatus: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show'
+    nextStatus: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show'
   ) => {
     // ⚡ 1. Optimistic Instant UI Update (0ms latency on screen)
     setBookings((prev) =>
@@ -489,6 +514,15 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
       // 0. Exclude orders that contain ONLY services (e.g. Salon, Haircuts, Spa)
       // The Kitchen/Bar display is exclusively for food, beverages, and kitchen items.
       if (!hasKitchenItems(order)) return false;
+
+      // 🛡️ Central Cashier Gate (Option 2): Customer App orders must be approved by Cashier first!
+      // If an order came from customer_app (or has no cashier_id) and is still 'pending',
+      // it must NOT appear in the Kitchen until the Cashier approves it.
+      const isFromApp = order.order_source === 'customer_app' || (!order.order_source && !order.cashier_id);
+      const isPendingApproval = (order.status || '').toLowerCase() === 'pending';
+      if (isFromApp && isPendingApproval) {
+        return false;
+      }
 
       // 1. Branch Filter
       if (selectedBranchId !== 'ALL' && order.branch_id) {
@@ -565,6 +599,14 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
         if (b.branch_id !== selectedBranchId) return false;
       }
 
+      // 🛡️ Central Cashier Gate (Option 2): Customer App bookings must be confirmed by Cashier first!
+      // While status is 'pending' from customer_app, it stays in Cashier review queue and is hidden from live salon.
+      const isAppBooking = b.booking_source === 'customer_app' || !b.booking_source;
+      const isPendingAppBooking = (b.status || '').toLowerCase() === 'pending';
+      if (isAppBooking && isPendingAppBooking) {
+        return false;
+      }
+
       // 2. Date Filter
       if (bookingDateFilter === 'today') {
         const rawDate = b.booking_date ? String(b.booking_date) : '';
@@ -596,7 +638,7 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
       // 4. Tab Filter
       const st = (b.status || 'pending').toLowerCase();
       if (ticketTab === 'active') {
-        return st === 'pending' || st === 'confirmed';
+        return st === 'pending' || st === 'confirmed' || st === 'in_progress';
       } else {
         return st === 'completed' || st === 'cancelled' || st === 'no_show';
       }
@@ -620,17 +662,21 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
 
   // Group active bookings for Kanban
   const kanbanBookingColumns = useMemo(() => {
-    const pendingBookings = filteredBookings.filter(
-      (b) => (b.status || '').toLowerCase() === 'pending'
+    // Column 1: Confirmed today & waiting for customer arrival
+    const waitingArrivalBookings = filteredBookings.filter((b) => {
+      const st = (b.status || '').toLowerCase();
+      return st === 'confirmed' || st === 'pending';
+    });
+    // Column 2: Customer has arrived and is currently in service on the chair
+    const inProgressBookings = filteredBookings.filter(
+      (b) => (b.status || '').toLowerCase() === 'in_progress'
     );
-    const confirmedBookings = filteredBookings.filter(
-      (b) => (b.status || '').toLowerCase() === 'confirmed'
-    );
+    // Column 3: Completed today
     const completedBookings = bookings.filter((b) => {
       if (selectedBranchId !== 'ALL' && b.branch_id && b.branch_id !== selectedBranchId) return false;
       return (b.status || '').toLowerCase() === 'completed';
     });
-    return { pendingBookings, confirmedBookings, completedBookings };
+    return { waitingArrivalBookings, inProgressBookings, completedBookings };
   }, [filteredBookings, bookings, selectedBranchId]);
 
   // Unique specialists list
@@ -647,11 +693,17 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
     displayMode === 'services'
       ? bookings.filter((b) => {
           if (selectedBranchId !== 'ALL' && b.branch_id && b.branch_id !== selectedBranchId) return false;
-          return ['pending', 'confirmed'].includes((b.status || '').toLowerCase());
+          const isAppBooking = b.booking_source === 'customer_app' || !b.booking_source;
+          const isPending = (b.status || '').toLowerCase() === 'pending';
+          if (isAppBooking && isPending) return false;
+          return ['pending', 'confirmed', 'in_progress'].includes((b.status || '').toLowerCase());
         }).length
       : orders.filter((o) => {
           if (selectedBranchId !== 'ALL' && o.branch_id && o.branch_id !== selectedBranchId) return false;
           if (!hasKitchenItems(o)) return false;
+          const isFromApp = o.order_source === 'customer_app' || (!o.order_source && !o.cashier_id);
+          const isPending = (o.status || '').toLowerCase() === 'pending';
+          if (isFromApp && isPending) return false;
           return ['pending', 'accepted', 'preparing', 'ready'].includes((o.status || '').toLowerCase());
         }).length;
 
@@ -990,8 +1042,8 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
           /* ======================================================== */
           /* ✂️ SALON / CARE SERVICES DISPLAY WORKSPACE                */
           (viewMode === 'kanban' && ticketTab === 'active'
-            ? (kanbanBookingColumns.pendingBookings.length === 0 &&
-               kanbanBookingColumns.confirmedBookings.length === 0 &&
+            ? (kanbanBookingColumns.waitingArrivalBookings.length === 0 &&
+               kanbanBookingColumns.inProgressBookings.length === 0 &&
                kanbanBookingColumns.completedBookings.length === 0)
             : filteredBookings.length === 0) ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3 text-center border-2 border-dashed border-slate-800 rounded-3xl p-8">
@@ -1000,25 +1052,25 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
               </div>
               <h3 className="text-lg font-black text-slate-300">صالة الخدمات والمواعيد جاهزة بانتظار الحجوزات</h3>
               <p className="text-xs text-slate-500 max-w-sm">
-                لا توجد أي حجوزات أو مواعيد تحت الإجراء حالياً. ستظهر المواعيد الجديدة هنا فور تسجيلها أو حجزها عبر التطبيق أو الكاشير.
+                لا توجد أي حجوزات أو مواعيد تحت الإجراء حالياً. ستظهر المواعيد المعتمدة هنا فور تأكيدها من الكاشير أو تسجيلها بالفرع.
               </p>
             </div>
           ) : viewMode === 'kanban' && ticketTab === 'active' ? (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-full min-w-[900px]">
-              {/* COLUMN 1: PENDING / WAITING (🟡 بانتظار الحضور) */}
+              {/* COLUMN 1: CONFIRMED / WAITING FOR ARRIVAL (🟡 مواعيد مؤكدة اليوم / بانتظار الحضور) */}
               <div className="bg-slate-900/60 border border-amber-500/30 rounded-3xl p-3 flex flex-col gap-3 overflow-hidden">
                 <div className="flex items-center justify-between pb-2 border-b border-amber-500/20 px-2 shrink-0">
                   <span className="font-black text-xs text-amber-300 flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
-                    بانتظار الحضور / جديدة
+                    المواعيد المؤكدة اليوم (بانتظار الحضور)
                   </span>
                   <span className="text-xs font-mono font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-full">
-                    {kanbanBookingColumns.pendingBookings.length}
+                    {kanbanBookingColumns.waitingArrivalBookings.length}
                   </span>
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-                  {kanbanBookingColumns.pendingBookings.map((booking) => (
+                  {kanbanBookingColumns.waitingArrivalBookings.map((booking) => (
                     <ServiceBookingChitCard
                       key={booking.id}
                       booking={booking}
@@ -1029,7 +1081,7 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
                 </div>
               </div>
 
-              {/* COLUMN 2: CONFIRMED / IN SERVICE (🟣 تم الحضور / قيد التنفيذ) */}
+              {/* COLUMN 2: IN PROGRESS / ATTENDED (🟣 تم الحضور / قيد التنفيذ الآن) */}
               <div className="bg-slate-900/60 border border-purple-500/30 rounded-3xl p-3 flex flex-col gap-3 overflow-hidden">
                 <div className="flex items-center justify-between pb-2 border-b border-purple-500/20 px-2 shrink-0">
                   <span className="font-black text-xs text-purple-300 flex items-center gap-1.5">
@@ -1037,12 +1089,12 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
                     تم الحضور / قيد التنفيذ الآن
                   </span>
                   <span className="text-xs font-mono font-black bg-purple-500/20 text-purple-300 border border-purple-500/40 px-2.5 py-0.5 rounded-full">
-                    {kanbanBookingColumns.confirmedBookings.length}
+                    {kanbanBookingColumns.inProgressBookings.length}
                   </span>
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-                  {kanbanBookingColumns.confirmedBookings.map((booking) => (
+                  {kanbanBookingColumns.inProgressBookings.map((booking) => (
                     <ServiceBookingChitCard
                       key={booking.id}
                       booking={booking}
@@ -1053,7 +1105,7 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
                 </div>
               </div>
 
-              {/* COLUMN 3: COMPLETED (🟢 خدمات مكتملة) */}
+              {/* COLUMN 3: COMPLETED (🟢 خدمات مكتملة اليوم) */}
               <div className="bg-slate-900/60 border border-emerald-500/30 rounded-3xl p-3 flex flex-col gap-3 overflow-hidden">
                 <div className="flex items-center justify-between pb-2 border-b border-emerald-500/20 px-2 shrink-0">
                   <span className="font-black text-xs text-emerald-300 flex items-center gap-1.5">
@@ -1373,6 +1425,11 @@ const OrderChitCard: React.FC<OrderChitCardProps> = ({
               🚗 {order.car_plate || 'سيارة'}
             </span>
           )}
+          {order.order_source === 'customer_app' && (
+            <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+              📱 معتمد من الكاشير
+            </span>
+          )}
         </div>
 
         {/* Live Elapsed Wait Timer */}
@@ -1498,7 +1555,7 @@ const OrderChitCard: React.FC<OrderChitCardProps> = ({
 /* ======================================================== */
 interface ServiceBookingChitCardProps {
   booking: ServiceBooking;
-  onUpdateStatus: (bookingId: string, nextStatus: 'pending' | 'confirmed' | 'completed' | 'cancelled' | 'no_show') => void;
+  onUpdateStatus: (bookingId: string, nextStatus: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'no_show') => void;
   onPrintChit: (booking: ServiceBooking) => void;
 }
 
@@ -1609,15 +1666,15 @@ const ServiceBookingChitCard: React.FC<ServiceBookingChitCardProps> = ({
           <Printer className="w-4 h-4" />
         </button>
 
-        {status === 'pending' && (
+        {(status === 'confirmed' || status === 'pending') && (
           <>
             <button
               type="button"
-              onClick={() => onUpdateStatus(booking.id, 'confirmed')}
-              className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow transition"
+              onClick={() => onUpdateStatus(booking.id, 'in_progress')}
+              className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow transition"
             >
-              <Check className="w-4 h-4" />
-              <span>تأكيد وبدء الخدمة</span>
+              <Scissors className="w-4 h-4" />
+              <span>تأكيد الحضور وبدء الخدمة</span>
             </button>
             <button
               type="button"
@@ -1630,11 +1687,11 @@ const ServiceBookingChitCard: React.FC<ServiceBookingChitCardProps> = ({
           </>
         )}
 
-        {status === 'confirmed' && (
+        {status === 'in_progress' && (
           <button
             type="button"
             onClick={() => onUpdateStatus(booking.id, 'completed')}
-            className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black font-black text-xs flex items-center justify-center gap-1.5 shadow transition"
+            className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow transition"
           >
             <CheckCircle2 className="w-4 h-4" />
             <span>إتمام الخدمة بنجاح ✅</span>
