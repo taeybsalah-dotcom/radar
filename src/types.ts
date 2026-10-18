@@ -485,6 +485,11 @@ export interface StoreFulfillmentSettings {
   delivery_fee: number; // رسوم التوصيل بالريال (0 = مجاني)
   allow_service_booking: boolean; // متاح حجز مواعيد خدمات وحضور
   booking_notice_minutes?: number; // وقت الإشعار المسبق للموعد (افتراضياً 30 دقيقة)
+
+  // 💳 سياسات الدفع الإلكتروني في التطبيق (تحكم التاجر)
+  online_payment_enabled?: boolean; // تفعيل الدفع الإلكتروني العام بالمتجر
+  orders_payment_policy?: 'both' | 'online_only' | 'pay_at_store_only'; // سياسة دفع طلبات المنيو
+  bookings_payment_policy?: 'both' | 'online_only' | 'pay_at_store_only'; // سياسة دفع حجوزات المواعيد
 }
 
 export interface CartItem {
@@ -513,6 +518,10 @@ export interface WhatsAppOrderPayload {
   loyalty_points_earned: number;
   status?: 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled';
   points_awarded?: boolean;
+  payment_method?: 'pay_at_store' | 'online' | 'cash' | 'mada' | 'visa' | 'mastercard' | 'credit_card';
+  payment_status?: 'pending' | 'paid' | 'failed' | 'refunded';
+  payment_transaction_id?: string;
+  paid_at?: string;
   fulfillment_details: {
     table_number?: string;
     party_size?: number;
@@ -829,6 +838,10 @@ export interface ServiceBooking {
   customer_notes?: string;
   notes?: string;
   booking_source?: 'customer_app' | 'phone_call' | 'walk_in' | 'cashier';
+  payment_method?: 'pay_at_store' | 'online' | 'cash' | 'mada' | 'visa' | 'mastercard' | 'credit_card';
+  payment_status?: 'pending' | 'paid' | 'failed' | 'refunded';
+  payment_transaction_id?: string;
+  paid_at?: string;
   loyalty_points_earned?: number;
   points_to_earn?: number;
   created_at: string;

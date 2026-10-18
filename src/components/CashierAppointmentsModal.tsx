@@ -634,6 +634,16 @@ export const CashierAppointmentsModal: React.FC<CashierAppointmentsModalProps> =
                           {isPhoneSource ? '📞 حجز هاتفي للكاشير' : '📱 حجز تطبيق العميل'}
                         </span>
 
+                        {b.payment_status === 'paid' ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                            💳 مسدد أونلاين ✅
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                            💵 الدفع بالمركز ⏳
+                          </span>
+                        )}
+
                         <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1 font-mono">
                           <Clock className="w-3.5 h-3.5 text-amber-400" />
                           <span>{b.booking_time}</span>

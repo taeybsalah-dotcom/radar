@@ -26,6 +26,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import { checkBranchOpenStatus } from '../lib/branchUtils';
 import { saveActiveStoreBranding } from '../lib/storeBranding';
+import { SandboxPaymentModal } from './SandboxPaymentModal';
 import {
   Building2,
   Sparkles,
@@ -34,6 +35,7 @@ import {
   Award,
   ShieldCheck,
   CheckCircle2,
+  CreditCard,
   X,
   RefreshCw,
   Smartphone,
@@ -377,6 +379,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [specialistName, setSpecialistName] = useState('');
   const [generalOrderNotes, setGeneralOrderNotes] = useState('');
   const [orderSuccessPayload, setOrderSuccessPayload] = useState<WhatsAppOrderPayload | null>(null);
+
+  // 💳 سياسات الدفع الإلكتروني والتحصيل في التطبيق
+  const [orderPaymentMethod, setOrderPaymentMethod] = useState<'online' | 'pay_at_store'>('online');
+  const [bookingPaymentMethod, setBookingPaymentMethod] = useState<'online' | 'pay_at_store'>('online');
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentModalConfig, setPaymentModalConfig] = useState<{
+    type: 'order' | 'booking';
+    title: string;
+    itemDescription: string;
+    amount: number;
+    onSuccess: (details: any) => Promise<void>;
+  } | null>(null);
+
+  const onlinePaymentEnabled = Boolean(store.fulfillment_settings?.online_payment_enabled);
+  const effectiveOrdersPolicy = onlinePaymentEnabled
+    ? (store.fulfillment_settings?.orders_payment_policy || 'both')
+    : 'pay_at_store_only';
+  const effectiveBookingsPolicy = onlinePaymentEnabled
+    ? (store.fulfillment_settings?.bookings_payment_policy || 'both')
+    : 'pay_at_store_only';
 
   const [celebrationModal, setCelebrationModal] = useState<{
     isOpen: boolean;
@@ -1764,7 +1786,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
   };
 
-  const executeDirectBookingSubmission = async (targetCustomer: Customer) => {
+  const executeDirectBookingSubmission = async (targetCustomer: Customer, paidDetails?: any) => {
     if (!selectedBookingService || bookingSubmitting) return;
 
     if (selectedBookingService.modifier_groups) {
@@ -1797,6 +1819,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     try {
       const flatModifiers = getFlatSelectedServiceModifiers();
       const finalPrice = calculateServiceBookingPrice();
+      const isPrepaid = Boolean(paidDetails);
+      const resolvedPaymentMethod = isPrepaid ? (paidDetails?.paymentMethod || 'online') : 'pay_at_store';
+      const resolvedPaymentStatus = isPrepaid ? 'paid' : 'pending';
+      const resolvedBookingStatus = isPrepaid ? 'confirmed' : 'pending';
+      const pointsToEarn = Math.floor(finalPrice * (store.points_per_riyal || 1));
+
       const createdBooking = await LoyaltyService.createServiceBooking({
         store_id: store.id,
         store_name: store.name,
@@ -1816,11 +1844,40 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         specialist_name: selectedBookingSpecialist?.name,
         booking_date: selectedBookingDate,
         booking_time: selectedBookingTime,
-        status: 'pending',
-        points_to_earn: Math.floor(finalPrice * (store.points_per_riyal || 1)),
+        status: resolvedBookingStatus,
+        payment_status: resolvedPaymentStatus,
+        payment_method: resolvedPaymentMethod,
+        points_to_earn: pointsToEarn,
+        loyalty_points_earned: isPrepaid ? pointsToEarn : 0,
         notes: bookingNotes.trim() || undefined,
         booking_source: 'customer_app',
       } as any);
+
+      // 👑 سداد مسبق معتمد: منح نقاط الولاء فوراً للعميل وتحديث المحفظة
+      if (isPrepaid && pointsToEarn > 0) {
+        LoyaltyService.rewardPointsForCompletedTransaction(
+          store.id,
+          targetCustomer.phone,
+          pointsToEarn,
+          `سداد إلكتروني لحجز موعد #${createdBooking.booking_number || ''} (${selectedBookingService.name})`,
+          targetCustomer.name || undefined,
+          'بوابة الدفع الإلكتروني',
+          selectedBranch?.id || null,
+          selectedBranch?.name || null,
+          finalPrice,
+          'SERVICE_BOOKING'
+        ).catch(console.error);
+
+        setCustomer((prev) =>
+          prev
+            ? {
+                ...prev,
+                wallet_balance: (prev.wallet_balance || 0) + pointsToEarn,
+                lifetime_xp: (prev.lifetime_xp || 0) + pointsToEarn,
+              }
+            : null
+        );
+      }
 
       setStoreBookings((prev) => [createdBooking, ...prev]);
       setBookingSuccessData(createdBooking);
@@ -1845,6 +1902,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     if (!customer) {
       setPendingAuthAction({ type: 'SUBMIT_BOOKING' });
       setShowLoginModal(true);
+      return;
+    }
+
+    const needsOnlinePayment =
+      effectiveBookingsPolicy === 'online_only' ||
+      (effectiveBookingsPolicy === 'both' && bookingPaymentMethod === 'online');
+
+    if (needsOnlinePayment) {
+      const price = calculateServiceBookingPrice();
+      setPaymentModalConfig({
+        type: 'booking',
+        title: 'سداد حجز الموعد إلكترونياً',
+        itemDescription: `${selectedBookingService.name} - ${selectedBookingDate} (${selectedBookingTime})`,
+        amount: price,
+        onSuccess: async (details) => {
+          setIsPaymentModalOpen(false);
+          await executeDirectBookingSubmission(customer, details);
+        },
+      });
+      setIsPaymentModalOpen(true);
       return;
     }
 
@@ -2056,7 +2133,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setCartItems((prev) => prev.filter((item) => item.id !== cartItemId));
   };
 
-  const executeDirectOrderSubmission = async (targetCustomer: Customer) => {
+  const executeDirectOrderSubmission = async (targetCustomer: Customer, paidDetails?: any) => {
     if (cartItems.length === 0 || submittingOrder) return;
 
     if (selectedBranch && !branchStatus.isOpen) {
@@ -2069,6 +2146,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     try {
       const orderId = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
       const activationCode = Math.floor(1000 + Math.random() * 9000).toString();
+      const isPaid = Boolean(paidDetails);
+      const resolvedPaymentMethod = isPaid ? (paidDetails?.paymentMethod || 'online') : 'pay_at_store';
+      const resolvedPaymentStatus = isPaid ? 'paid' : 'pending';
 
       const payload: any = {
         order_id: orderId,
@@ -2100,24 +2180,50 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         notes: generalOrderNotes.trim(),
         loyalty_points_earned: estimatedLoyaltyPoints,
         order_source: 'customer_app',
-        payment_method: 'pay_at_store',
-        payment_status: 'pending',
+        payment_method: resolvedPaymentMethod,
+        payment_status: resolvedPaymentStatus,
         status: 'pending',
-        points_awarded: false,
+        points_awarded: isPaid,
         created_at: new Date().toISOString(),
       };
 
       // 1. Insert order in Supabase store_orders (also triggers Telegram notification)
       await LoyaltyService.createStoreOrder(payload);
 
-      // 2. Update past orders in local view
+      // 2. إذا تم السداد إلكترونياً، يتم منح نقاط الولاء فوراً للعميل وتحديث المحفظة
+      if (isPaid && estimatedLoyaltyPoints > 0) {
+        LoyaltyService.rewardPointsForCompletedTransaction(
+          store.id,
+          targetCustomer.phone,
+          estimatedLoyaltyPoints,
+          `سداد إلكتروني لطلب أونلاين #${orderId}`,
+          targetCustomer.name || undefined,
+          'بوابة الدفع الإلكتروني',
+          selectedBranch?.id || null,
+          selectedBranch?.name || null,
+          cartGrandTotal,
+          'PURCHASE'
+        ).catch(console.error);
+
+        setCustomer((prev) =>
+          prev
+            ? {
+                ...prev,
+                wallet_balance: (prev.wallet_balance || 0) + estimatedLoyaltyPoints,
+                lifetime_xp: (prev.lifetime_xp || 0) + estimatedLoyaltyPoints,
+              }
+            : null
+        );
+      }
+
+      // 3. Update past orders in local view
       LoyaltyService.getCustomerOrders(store.id, targetCustomer.phone)
         .then((updated) => {
           if (updated && Array.isArray(updated)) setPastOrders(updated);
         })
         .catch(() => {});
 
-      // 3. Clear cart and show order confirmation modal (ZERO WhatsApp redirect!)
+      // 4. Clear cart and show order confirmation modal (ZERO WhatsApp redirect!)
       setCartItems([]);
       setIsCartModalOpen(false);
       setOrderSuccessPayload(payload);
@@ -2147,6 +2253,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     if (!customer) {
       setPendingAuthAction({ type: 'SUBMIT_ORDER' });
       setShowLoginModal(true);
+      return;
+    }
+
+    const needsOnlinePayment =
+      effectiveOrdersPolicy === 'online_only' ||
+      (effectiveOrdersPolicy === 'both' && orderPaymentMethod === 'online');
+
+    if (needsOnlinePayment) {
+      setPaymentModalConfig({
+        type: 'order',
+        title: 'سداد فاتورة الطلب إلكترونياً',
+        itemDescription: `طلب منيو (${cartItems.length} أصناف) - ${store.name}`,
+        amount: cartGrandTotal,
+        onSuccess: async (details) => {
+          setIsPaymentModalOpen(false);
+          await executeDirectOrderSubmission(customer, details);
+        },
+      });
+      setIsPaymentModalOpen(true);
       return;
     }
 
@@ -3966,15 +4091,102 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         />
                       </div>
 
+                      {/* 💳 طرق وسياسة سداد الحجز */}
+                      <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/[0.08] space-y-2.5">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+                          <span className="flex items-center gap-1.5">
+                            <CreditCard className="w-4 h-4 text-purple-400" />
+                            <span>طريقة سداد الموعد:</span>
+                          </span>
+                          {effectiveBookingsPolicy === 'online_only' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                              🔒 سداد مسبق إلزامي
+                            </span>
+                          )}
+                          {effectiveBookingsPolicy === 'pay_at_store_only' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold">
+                              💵 عند الحضور بالمركز
+                            </span>
+                          )}
+                          {effectiveBookingsPolicy === 'both' && (
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              اختر طريقتك المفضلة
+                            </span>
+                          )}
+                        </div>
+
+                        {effectiveBookingsPolicy === 'both' ? (
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setBookingPaymentMethod('online')}
+                              className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
+                                bookingPaymentMethod === 'online'
+                                  ? 'bg-purple-500/20 border-purple-500/50 text-purple-200 shadow-sm'
+                                  : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              <span className="text-xs font-black flex items-center gap-1">
+                                <span>💳 دفع إلكتروني فوري</span>
+                                {bookingPaymentMethod === 'online' && <Check className="w-3.5 h-3.5 mr-auto text-purple-400" />}
+                              </span>
+                              <span className="text-[10px] text-slate-400">تأكيد الموعد والمقعد 100%</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setBookingPaymentMethod('pay_at_store')}
+                              className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
+                                bookingPaymentMethod === 'pay_at_store'
+                                  ? 'bg-blue-500/20 border-blue-500/50 text-blue-200 shadow-sm'
+                                  : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              <span className="text-xs font-black flex items-center gap-1">
+                                <span>💵 عند الحضور بالمركز</span>
+                                {bookingPaymentMethod === 'pay_at_store' && <Check className="w-3.5 h-3.5 mr-auto text-blue-400" />}
+                              </span>
+                              <span className="text-[10px] text-slate-400">نقداً أو شبكة بالاستقبال</span>
+                            </button>
+                          </div>
+                        ) : effectiveBookingsPolicy === 'online_only' ? (
+                          <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 text-[11px] flex items-center gap-2">
+                            <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />
+                            <span>يشترط المركز السداد الإلكتروني المسبق لتأكيد الموعد وضمان عدم تضارب الجداول.</span>
+                          </div>
+                        ) : (
+                          <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-slate-300 text-[11px] flex items-center gap-2">
+                            <span className="text-base">💵</span>
+                            <span>يتم سداد قيمة الخدمة في صالة الاستقبال بالمركز عند موعد حضورك.</span>
+                          </div>
+                        )}
+                      </div>
+
                       <div className="space-y-2 pt-1">
                         <button
                           type="button"
                           onClick={handleConfirmServiceBooking}
                           disabled={bookingSubmitting}
-                          className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition disabled:opacity-50"
+                          className={`w-full py-3.5 rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-lg transition disabled:opacity-50 ${
+                            effectiveBookingsPolicy === 'online_only' || (effectiveBookingsPolicy === 'both' && bookingPaymentMethod === 'online')
+                              ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-600/30'
+                              : 'bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-emerald-600/20'
+                          }`}
                         >
-                          <MessageCircle className="w-4 h-4" />
-                          <span>{bookingSubmitting ? 'جاري تسجيل الموعد...' : 'تأكيد الحجز المباشر ✅'}</span>
+                          {bookingSubmitting ? (
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          ) : (effectiveBookingsPolicy === 'online_only' || (effectiveBookingsPolicy === 'both' && bookingPaymentMethod === 'online')) ? (
+                            <CreditCard className="w-4 h-4" />
+                          ) : (
+                            <MessageCircle className="w-4 h-4" />
+                          )}
+                          <span>
+                            {bookingSubmitting
+                              ? 'جاري تسجيل الموعد...'
+                              : (effectiveBookingsPolicy === 'online_only' || (effectiveBookingsPolicy === 'both' && bookingPaymentMethod === 'online'))
+                              ? `سداد الجلسة (${finalTotalPrice} ر.س) وتأكيد الحجز 💳`
+                              : 'تأكيد الحجز المباشر ✅'}
+                          </span>
                         </button>
 
                         <button
@@ -4038,6 +4250,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             {bk.service_category && (
                               <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-white/[0.06] text-slate-300 border border-white/[0.08] font-bold">
                                 {bk.service_category}
+                              </span>
+                            )}
+                            {bk.payment_status === 'paid' ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
+                                💳 مسدد أونلاين ✅
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1">
+                                💵 الدفع عند الحضور
                               </span>
                             )}
                           </div>
@@ -5987,6 +6208,77 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </div>
                 )}
               </div>
+
+              {/* 💳 طرق وسياسة السداد للطلب */}
+              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                  <span className="flex items-center gap-1.5">
+                    <CreditCard className="w-4 h-4 text-emerald-400" />
+                    <span>طريقة الدفع:</span>
+                  </span>
+                  {effectiveOrdersPolicy === 'online_only' && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                      🔒 إلزامي أونلاين
+                    </span>
+                  )}
+                  {effectiveOrdersPolicy === 'pay_at_store_only' && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold">
+                      💵 بالفرع فقط
+                    </span>
+                  )}
+                  {effectiveOrdersPolicy === 'both' && (
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      اختر طريقتك المفضلة
+                    </span>
+                  )}
+                </div>
+
+                {effectiveOrdersPolicy === 'both' ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setOrderPaymentMethod('online')}
+                      className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
+                        orderPaymentMethod === 'online'
+                          ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300 shadow-sm'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-xs font-black flex items-center gap-1">
+                        <span>💳 دفع إلكتروني</span>
+                        {orderPaymentMethod === 'online' && <Check className="w-3.5 h-3.5 mr-auto text-emerald-400" />}
+                      </span>
+                      <span className="text-[10px] text-slate-500">مدى / فيزا / أبل باي</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setOrderPaymentMethod('pay_at_store')}
+                      className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
+                        orderPaymentMethod === 'pay_at_store'
+                          ? 'bg-blue-500/15 border-blue-500/50 text-blue-300 shadow-sm'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-xs font-black flex items-center gap-1">
+                        <span>💵 دفع عند الاستلام</span>
+                        {orderPaymentMethod === 'pay_at_store' && <Check className="w-3.5 h-3.5 mr-auto text-blue-400" />}
+                      </span>
+                      <span className="text-[10px] text-slate-500">نقداً أو شبكة بالفرع</span>
+                    </button>
+                  </div>
+                ) : effectiveOrdersPolicy === 'online_only' ? (
+                  <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-[11px] flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>يشترط المتجر السداد الإلكتروني المسبق بالبطاقة (مدى / فيزا) لتأكيد وتجهيز الطلب.</span>
+                  </div>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-[11px] flex items-center gap-2">
+                    <span className="text-base">💵</span>
+                    <span>يتم تحصيل قيمة الطلب بالكامل عند استلام طلبك من الفرع أو للسيارة.</span>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="p-4 bg-slate-950 border-t border-slate-800 shrink-0 space-y-2.5">
@@ -6020,11 +6312,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 className={`w-full py-3.5 rounded-2xl font-black text-sm text-white flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-50 ${
                   selectedBranch && !branchStatus.isOpen
                     ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    : (effectiveOrdersPolicy === 'online_only' || (effectiveOrdersPolicy === 'both' && orderPaymentMethod === 'online'))
+                    ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 shadow-xl shadow-emerald-600/30'
                     : 'bg-emerald-600 hover:bg-emerald-500 shadow-xl shadow-emerald-600/25'
                 }`}
               >
                 {submittingOrder ? (
                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (effectiveOrdersPolicy === 'online_only' || (effectiveOrdersPolicy === 'both' && orderPaymentMethod === 'online')) ? (
+                  <CreditCard className="w-5 h-5" />
                 ) : (
                   <ShoppingBag className="w-5 h-5 fill-current" />
                 )}
@@ -6033,6 +6329,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     ? 'جاري إرسال الطلب...'
                     : selectedBranch && !branchStatus.isOpen
                     ? 'الفرع مغلق حالياً 🔒'
+                    : (effectiveOrdersPolicy === 'online_only' || (effectiveOrdersPolicy === 'both' && orderPaymentMethod === 'online'))
+                    ? `سداد إلكترونياً بالبطاقة (${cartGrandTotal} ر.س) 💳`
                     : customer
                     ? 'تأكيد وإرسال الطلب للكاشير فوراً 🚀'
                     : 'إتمام الطلب وتأكيد الرقم 🚀'}
@@ -6134,6 +6432,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <div className="flex items-center justify-between text-slate-400">
                 <span>الإجمالي:</span>
                 <span className="font-mono text-white font-bold">{orderSuccessPayload.total_amount} ر.س</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-400">
+                <span>طريقة وسداد الطلب:</span>
+                <span className="font-bold text-white">
+                  {orderSuccessPayload.payment_status === 'paid'
+                    ? '💳 مدفوع إلكترونياً (أونلاين) ✅'
+                    : '💵 الدفع عند الاستلام بالفرع'}
+                </span>
               </div>
               <div className="flex items-center justify-between text-emerald-400 font-bold">
                 <span>النقاط المستحقة:</span>
@@ -6261,6 +6567,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           <span className="text-[10px] text-slate-400 font-bold">
             {fulfillmentTitles[fulfillmentType] || fulfillmentType}
           </span>
+          {order.payment_status === 'paid' ? (
+            <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
+              💳 مسدد أونلاين ✅
+            </span>
+          ) : (
+            <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1">
+              💵 الدفع بالفرع
+            </span>
+          )}
           {!isLive && status === 'completed' && (
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
               ✓ مكتمل
@@ -6465,6 +6780,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             />
           </div>
         </div>
+      )}
+
+      {/* 💳 بوابة السداد والدفع الإلكتروني السريع للعميل */}
+      {isPaymentModalOpen && paymentModalConfig && (
+        <SandboxPaymentModal
+          isOpen={isPaymentModalOpen}
+          onClose={() => {
+            setIsPaymentModalOpen(false);
+            setPaymentModalConfig(null);
+          }}
+          title={paymentModalConfig.title}
+          itemDescription={paymentModalConfig.itemDescription}
+          amount={paymentModalConfig.amount}
+          currency="ر.س"
+          storeName={store.name}
+          onProcessPayment={paymentModalConfig.onSuccess}
+        />
       )}
 
     </div>

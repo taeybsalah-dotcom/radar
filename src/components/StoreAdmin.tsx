@@ -267,6 +267,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [allowServiceBooking, setAllowServiceBooking] = useState(currentStore?.fulfillment_settings?.allow_service_booking ?? true);
   const [enablePosWhatsappReceipt, setEnablePosWhatsappReceipt] = useState(currentStore?.enable_pos_whatsapp_receipt !== false);
 
+  // 💳 App Payment Policies State (Online Payment vs Pay At Store)
+  const [onlinePaymentEnabled, setOnlinePaymentEnabled] = useState(currentStore?.fulfillment_settings?.online_payment_enabled !== false);
+  const [ordersPaymentPolicy, setOrdersPaymentPolicy] = useState<'both' | 'online_only' | 'pay_at_store_only'>(currentStore?.fulfillment_settings?.orders_payment_policy || 'both');
+  const [bookingsPaymentPolicy, setBookingsPaymentPolicy] = useState<'both' | 'online_only' | 'pay_at_store_only'>(currentStore?.fulfillment_settings?.bookings_payment_policy || 'both');
+
   // 🎛️ Module Toggles State (SaaS Architecture)
   const [enableOrders, setEnableOrders] = useState(currentStore?.enable_orders !== false);
   const [enableBookings, setEnableBookings] = useState(currentStore?.enable_bookings !== false);
@@ -974,6 +979,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setAllowDelivery(activeStore.fulfillment_settings.allow_delivery ?? true);
         setDeliveryFee(activeStore.fulfillment_settings.delivery_fee ?? 15);
         setAllowServiceBooking(activeStore.fulfillment_settings.allow_service_booking ?? true);
+        setOnlinePaymentEnabled(activeStore.fulfillment_settings.online_payment_enabled !== false);
+        setOrdersPaymentPolicy(activeStore.fulfillment_settings.orders_payment_policy || 'both');
+        setBookingsPaymentPolicy(activeStore.fulfillment_settings.bookings_payment_policy || 'both');
       }
       setEnableOrders(activeStore.enable_orders !== false);
       setEnableBookings(activeStore.enable_bookings !== false);
@@ -1291,6 +1299,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           delivery_fee: deliveryFee === '' ? 0 : Number(deliveryFee),
           allow_service_booking: allowServiceBooking,
           booking_notice_minutes: 30,
+          online_payment_enabled: onlinePaymentEnabled,
+          orders_payment_policy: ordersPaymentPolicy,
+          bookings_payment_policy: bookingsPaymentPolicy,
         },
       });
 
@@ -6616,6 +6627,164 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* 💳 سياسة وطرق الدفع في التطبيق (تحكم التاجر المباشر) */}
+            <div className="md:col-span-12 p-4 sm:p-5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center space-x-1.5 rtl:space-x-reverse">
+                    <CreditCard className="w-4 h-4 text-emerald-400" />
+                    <span>سياسة وطرق الدفع لطلبات وحجوزات التطبيق (Payment Policy):</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    تحكم فيما إذا كان العميل مجبراً على الدفع أونلاين مسبقاً، أو متاح له الدفع كاش في الفرع، أو الجمع بينهما
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-bold">بوابة الدفع الإلكتروني:</span>
+                  <button
+                    type="button"
+                    onClick={() => setOnlinePaymentEnabled(!onlinePaymentEnabled)}
+                    className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
+                      onlinePaymentEnabled
+                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                        : 'bg-rose-500/15 text-rose-400 border-rose-500/40'
+                    }`}
+                  >
+                    <span>{onlinePaymentEnabled ? 'مفعلة (مدى / بطاقات) ✅' : 'معطلة بالكامل (كاش فقط) ✕'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 1. سياسة دفع طلبات المنيو والمنتجات */}
+                <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Utensils className="w-3.5 h-3.5 text-amber-400" />
+                      <span>دفع طلبات المنيو والمنتجات</span>
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {ordersPaymentPolicy === 'online_only' ? 'أونلاين فقط 🔒' : ordersPaymentPolicy === 'pay_at_store_only' ? 'عند الاستلام فقط 💵' : 'متاح الخيارين 🔄'}
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      disabled={!onlinePaymentEnabled}
+                      onClick={() => setOrdersPaymentPolicy('both')}
+                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
+                        ordersPaymentPolicy === 'both' && onlinePaymentEnabled
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white disabled:opacity-40'
+                      }`}
+                    >
+                      <span>🔄 الخيارين</span>
+                      <span className="block text-[9px] text-slate-500 font-normal">حرية للعميل</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={!onlinePaymentEnabled}
+                      onClick={() => setOrdersPaymentPolicy('online_only')}
+                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
+                        ordersPaymentPolicy === 'online_only' && onlinePaymentEnabled
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white disabled:opacity-40'
+                      }`}
+                    >
+                      <span>💳 أونلاين فقط</span>
+                      <span className="block text-[9px] text-slate-500 font-normal">دفع مسبق إلزامي</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setOrdersPaymentPolicy('pay_at_store_only')}
+                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
+                        ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
+                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/50 shadow-sm'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <span>💵 بالفرع فقط</span>
+                      <span className="block text-[9px] text-slate-500 font-normal">دفع عند الاستلام</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    {ordersPaymentPolicy === 'online_only'
+                      ? '🔒 يشترط سداد الفاتورة إلكترونياً قبل إرسال الطلب للمطبخ والكاشير.'
+                      : ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
+                      ? '💵 يدفع العميل عند استلام الطلب من الفرع أو للسيارة.'
+                      : '🔄 يتاح للعميل في السلة الاختيار بين السداد بالبطاقة أو الدفع في الفرع.'}
+                  </p>
+                </div>
+
+                {/* 2. سياسة دفع حجوزات المواعيد والخدمات */}
+                <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                      <span>دفع حجوزات ومواعيد الخدمات</span>
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {bookingsPaymentPolicy === 'online_only' ? 'أونلاين فقط 🔒' : bookingsPaymentPolicy === 'pay_at_store_only' ? 'عند الحضور فقط 💵' : 'متاح الخيارين 🔄'}
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      disabled={!onlinePaymentEnabled}
+                      onClick={() => setBookingsPaymentPolicy('both')}
+                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
+                        bookingsPaymentPolicy === 'both' && onlinePaymentEnabled
+                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white disabled:opacity-40'
+                      }`}
+                    >
+                      <span>🔄 الخيارين</span>
+                      <span className="block text-[9px] text-slate-500 font-normal">حرية للعميل</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={!onlinePaymentEnabled}
+                      onClick={() => setBookingsPaymentPolicy('online_only')}
+                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
+                        bookingsPaymentPolicy === 'online_only' && onlinePaymentEnabled
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white disabled:opacity-40'
+                      }`}
+                    >
+                      <span>💳 أونلاين فقط</span>
+                      <span className="block text-[9px] text-slate-500 font-normal">سداد مسبق إلزامي</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setBookingsPaymentPolicy('pay_at_store_only')}
+                      className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
+                        bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
+                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/50 shadow-sm'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <span>💵 بالمركز فقط</span>
+                      <span className="block text-[9px] text-slate-500 font-normal">دفع عند الحضور</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    {bookingsPaymentPolicy === 'online_only'
+                      ? '🔒 لا يُعتمد الحجز إلا بعد الدفع الإلكتروني المسبق للحد من عدم حضور العملاء.'
+                      : bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
+                      ? '💵 يحجز العميل مجاناً ويتم تحصيل المقابل في الصالون/المركز عند الحضور.'
+                      : '🔄 يتاح للعميل تأكيد الحجز فوراً بالسداد المسبق أو اختيار الدفع عند الحضور.'}
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* 🎁 Welcome / Signup Gift Configuration */}

@@ -1430,6 +1430,15 @@ const OrderChitCard: React.FC<OrderChitCardProps> = ({
               📱 معتمد من الكاشير
             </span>
           )}
+          {order.payment_status === 'paid' ? (
+            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+              💳 مدفوع أونلاين
+            </span>
+          ) : (
+            <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
+              💵 دفع بالفرع
+            </span>
+          )}
         </div>
 
         {/* Live Elapsed Wait Timer */}

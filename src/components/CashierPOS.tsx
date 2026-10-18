@@ -116,6 +116,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const handleTransferBookingToPOS = (booking: any) => {
     stopAlertRinger();
     setIncomingAlert(null);
+    const isPaid = booking.payment_status === 'paid' || booking.payment_method === 'online';
     const bookingOrder = {
       id: booking.id,
       order_number: booking.booking_number,
@@ -123,8 +124,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       customer_name: booking.customer_name,
       customer_phone: booking.customer_phone,
       order_source: 'customer_app_booking',
-      payment_method: 'pay_at_store',
-      payment_status: 'pending',
+      payment_method: booking.payment_method || (isPaid ? 'online' : 'pay_at_store'),
+      payment_status: booking.payment_status || (isPaid ? 'paid' : 'pending'),
+      is_app_paid: isPaid,
       fulfillment_type: 'service_booking',
       notes: `حجز موعد #${booking.booking_number} (${booking.booking_date} | ${booking.booking_time})${booking.notes ? ` - ${booking.notes}` : ''}`,
       items: [
@@ -2728,6 +2730,15 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold">
                                   📅 حجز تطبيق
                                 </span>
+                                {bk.payment_status === 'paid' ? (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                                    مدفوع بالتطبيق ✅
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
+                                    الدفع بالمركز ⏳
+                                  </span>
+                                )}
                               </div>
                               <span
                                 className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
