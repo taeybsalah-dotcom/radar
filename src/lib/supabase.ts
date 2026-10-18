@@ -7372,7 +7372,7 @@ export const LoyaltyService = {
     const orderNumber = payload.order_id || payload.order_number || ('ORD-' + Math.floor(1000 + Math.random() * 9000));
     const isDirectPOSOrder = Boolean(payload.cashier_id) || payload.order_source === 'pos' || payload.status === 'completed';
     const resolvedOrderSource = payload.order_source || (isDirectPOSOrder ? 'pos' : 'customer_app');
-    const resolvedStatus = payload.status || (isDirectPOSOrder ? 'preparing' : 'pending');
+    const resolvedStatus = payload.status || (isDirectPOSOrder ? 'accepted' : 'pending');
     const resolvedPaymentStatus = payload.payment_status || (isDirectPOSOrder ? 'paid' : 'unpaid');
 
     const dbPayload = {
@@ -7474,6 +7474,62 @@ export const LoyaltyService = {
       id: localOrder.id,
       order_id: localOrder.order_number,
     };
+  },
+
+  async updateStoreOrder(
+    orderId: string,
+    updates: Record<string, any>
+  ): Promise<any> {
+    const supabase = getSupabaseClient();
+    const nowIso = new Date().toISOString();
+    const updatePayload: Record<string, any> = {
+      ...updates,
+      updated_at: nowIso,
+    };
+
+    if (supabase) {
+      try {
+        const { data, error } = await (supabase as any).from('store_orders')
+          .update(updatePayload)
+          .eq('id', orderId)
+          .select()
+          .single();
+        if (error) throw error;
+        if (data) {
+          LoyaltyEvents.emit({
+            type: 'ORDER_STATUS_UPDATED',
+            storeId: data.store_id,
+            phone: data.customer_phone,
+            orderData: data,
+          });
+          if (updates.status) {
+            syncTelegramStatus('order', orderId, updates.status, updates.cashier_name);
+          }
+          return data;
+        }
+      } catch (err: any) {
+        console.warn('Supabase updateStoreOrder error:', err);
+      }
+    }
+
+    // Local fallback
+    const localList = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
+    const idx = localList.findIndex(o => o.id === orderId || o.order_number === orderId);
+    if (idx !== -1) {
+      localList[idx] = {
+        ...localList[idx],
+        ...updatePayload,
+      };
+      saveLocalData(STORAGE_KEYS.LOCAL_ORDERS, localList);
+      LoyaltyEvents.emit({
+        type: 'ORDER_STATUS_UPDATED',
+        storeId: localList[idx].store_id,
+        phone: localList[idx].customer_phone,
+        orderData: localList[idx],
+      });
+      return localList[idx];
+    }
+    return null;
   },
 
     async createOrder(orderData: any): Promise<any> {

@@ -755,12 +755,46 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         created_at: nowIso,
       };
 
-      // 1. Create order record (Online with Offline queue fallback)
+      // 1. Create order record or update transferred online order
       let savedOrder: any = null;
       let isOfflineOrder = false;
 
+      const isTransferredAppOrder = Boolean(transferredMetadata?.originalOrderId && transferredMetadata.orderSource === 'customer_app');
+      const isTransferredBooking = Boolean(transferredMetadata?.originalOrderId && transferredMetadata.orderSource === 'customer_app_booking');
+
       if (!OfflineSyncEngine.isOnline()) {
         isOfflineOrder = true;
+      } else if (isTransferredAppOrder && transferredMetadata) {
+        try {
+          // 🛡️ Settle existing online menu order: Mark as paid + accepted (sent to kitchen for preparation)
+          // ⚠️ Do NOT mark as 'completed'! It must go to the Kitchen KDS Column 1 for food preparation!
+          const updateFields = {
+            status: 'accepted', // 👨‍🍳 معتمد من الكاشير - يرسل للمطبخ في بداية التحضير
+            payment_status: 'paid', // 💰 مسدد
+            payment_method: transferredMetadata?.isAppPrepaid ? 'online' : paymentMethod,
+            cashier_id: activeStaff.id,
+            cashier_name: activeStaff.name,
+            order_type: orderType,
+            table_number: orderType === 'dine_in' ? tableNumber.trim() || undefined : undefined,
+            car_plate: orderType === 'car' ? carPlate.trim() || undefined : undefined,
+            items: orderPayload.items,
+            total_price: cartGrandTotal,
+            loyalty_points_earned: 0,
+            branch_id: activeBranch?.id || null,
+          };
+          savedOrder = await LoyaltyService.updateStoreOrder(transferredMetadata.originalOrderId, updateFields);
+          if (!savedOrder) {
+            savedOrder = {
+              ...orderPayload,
+              id: transferredMetadata.originalOrderId,
+              order_number: transferredMetadata.appOrderNumber || orderNumber,
+              status: 'accepted',
+            };
+          }
+        } catch (updateErr) {
+          console.warn('Failed to update transferred app order, fallback to create:', updateErr);
+          savedOrder = await LoyaltyService.createStoreOrder(orderPayload);
+        }
       } else {
         try {
           savedOrder = await LoyaltyService.createStoreOrder(orderPayload);
@@ -876,6 +910,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
       const completeInfo = {
         ...orderPayload,
         id: savedOrder?.id || orderNumber,
+        order_number: savedOrder?.order_number || transferredMetadata?.appOrderNumber || orderNumber,
         pointsEarned,
         is_offline: isOfflineOrder,
         cashTendered: paymentMethod === 'cash' ? Number(cashTendered) : undefined,
@@ -886,28 +921,20 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
       setIsCheckoutModalOpen(false);
       setIsReceiptModalOpen(true);
 
-      // 5. If this invoice was converted from an app order or booking, mark original as completed
-      if (transferredMetadata?.originalOrderId) {
+      // 5. If this invoice was converted from an app booking, confirm the booking
+      // Note: Transferred app menu orders are already set to 'accepted' (sent to kitchen for preparation) in Step 1,
+      // and must NOT be marked 'completed' here! Completion happens when the food is prepared and delivered to the customer.
+      if (isTransferredBooking && transferredMetadata?.originalOrderId) {
         try {
-          if (transferredMetadata.orderSource === 'customer_app_booking') {
-            await LoyaltyService.updateServiceBookingStatus(
-              transferredMetadata.originalOrderId,
-              'completed',
-              activeStaff.name,
-              activeBranch?.id || null,
-              activeBranch?.name || null
-            );
-          } else {
-            await LoyaltyService.updateOrderStatus(
-              transferredMetadata.originalOrderId,
-              'completed',
-              activeStaff.name,
-              activeBranch?.id || null,
-              activeBranch?.name || null
-            );
-          }
+          await LoyaltyService.updateServiceBookingStatus(
+            transferredMetadata.originalOrderId,
+            'confirmed',
+            activeStaff.name,
+            activeBranch?.id || null,
+            activeBranch?.name || null
+          );
         } catch (syncOrigErr) {
-          console.warn('Could not mark transferred online order as completed in backend:', syncOrigErr);
+          console.warn('Could not update transferred booking status in backend:', syncOrigErr);
         }
       }
 
