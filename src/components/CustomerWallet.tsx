@@ -392,7 +392,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     onSuccess: (details: any) => Promise<void>;
   } | null>(null);
 
-  const onlinePaymentEnabled = Boolean(store.fulfillment_settings?.online_payment_enabled);
+  const onlinePaymentEnabled = store.fulfillment_settings?.online_payment_enabled !== false;
   const effectiveOrdersPolicy = onlinePaymentEnabled
     ? (store.fulfillment_settings?.orders_payment_policy || 'both')
     : 'pay_at_store_only';

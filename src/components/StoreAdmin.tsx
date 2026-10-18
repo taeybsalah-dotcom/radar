@@ -342,6 +342,57 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     }
   };
 
+  // 💳 Instant Auto-Save for Fulfillment & Payment Policies
+  const [isSavingPaymentPolicy, setIsSavingPaymentPolicy] = useState(false);
+  const [paymentPolicyStatus, setPaymentPolicyStatus] = useState<string | null>(null);
+
+  const handleInstantSavePaymentPolicy = async (overrides?: Partial<StoreFulfillmentSettings>) => {
+    const targetStoreId = store?.id || currentStore?.id;
+    if (!targetStoreId || isSavingPaymentPolicy) return;
+    setIsSavingPaymentPolicy(true);
+    setPaymentPolicyStatus('جاري الحفظ والتطبيق...');
+
+    const nextOnline = overrides?.online_payment_enabled !== undefined ? overrides.online_payment_enabled : onlinePaymentEnabled;
+    const nextOrders = overrides?.orders_payment_policy || ordersPaymentPolicy;
+    const nextBookings = overrides?.bookings_payment_policy || bookingsPaymentPolicy;
+    const nextDineIn = overrides?.allow_dine_in !== undefined ? overrides.allow_dine_in : allowDineIn;
+    const nextTakeaway = overrides?.allow_takeaway !== undefined ? overrides.allow_takeaway : allowTakeaway;
+    const nextDelivery = overrides?.allow_delivery !== undefined ? overrides.allow_delivery : allowDelivery;
+    const nextDeliveryFee = overrides?.delivery_fee !== undefined ? overrides.delivery_fee : (deliveryFee === '' ? 0 : Number(deliveryFee));
+    const nextServiceBooking = overrides?.allow_service_booking !== undefined ? overrides.allow_service_booking : allowServiceBooking;
+
+    try {
+      const newSettings: StoreFulfillmentSettings = {
+        allow_dine_in: nextDineIn,
+        allow_takeaway: nextTakeaway,
+        allow_delivery: nextDelivery,
+        delivery_fee: Number(nextDeliveryFee) >= 0 ? Number(nextDeliveryFee) : 15,
+        allow_service_booking: nextServiceBooking,
+        booking_notice_minutes: 30,
+        online_payment_enabled: nextOnline,
+        orders_payment_policy: nextOrders,
+        bookings_payment_policy: nextBookings,
+      };
+
+      const updated = await LoyaltyService.updateStoreSettings(targetStoreId, {
+        fulfillment_settings: newSettings,
+      });
+
+      if (updated) {
+        setStore(updated);
+      }
+      LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: targetStoreId });
+      setPaymentPolicyStatus('⚡ تم حفظ وتطبيق سياسة الدفع فوراً على المتجر وتطبيق العميل!');
+      setTimeout(() => setPaymentPolicyStatus(null), 4000);
+    } catch (e: any) {
+      console.error('Failed to auto-save payment policy', e);
+      setPaymentPolicyStatus('⚠️ تعذر الحفظ الفوري، يرجى إعادة المحاولة.');
+      setTimeout(() => setPaymentPolicyStatus(null), 4000);
+    } finally {
+      setIsSavingPaymentPolicy(false);
+    }
+  };
+
   // Edit Staff PIN Modal State
   const [isEditStaffPinModalOpen, setIsEditStaffPinModalOpen] = useState(false);
   const [editingStaffForPin, setEditingStaffForPin] = useState<StoreStaff | null>(null);
@@ -6526,7 +6577,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 {/* 1. Dine-in */}
                 <button
                   type="button"
-                  onClick={() => setAllowDineIn(!allowDineIn)}
+                  disabled={isSavingPaymentPolicy}
+                  onClick={() => {
+                    const next = !allowDineIn;
+                    setAllowDineIn(next);
+                    handleInstantSavePaymentPolicy({ allow_dine_in: next });
+                  }}
                   className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between ${
                     allowDineIn
                       ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
@@ -6543,7 +6599,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 {/* 2. Takeaway */}
                 <button
                   type="button"
-                  onClick={() => setAllowTakeaway(!allowTakeaway)}
+                  disabled={isSavingPaymentPolicy}
+                  onClick={() => {
+                    const next = !allowTakeaway;
+                    setAllowTakeaway(next);
+                    handleInstantSavePaymentPolicy({ allow_takeaway: next });
+                  }}
                   className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between ${
                     allowTakeaway
                       ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
@@ -6560,7 +6621,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 {/* 3. Delivery */}
                 <button
                   type="button"
-                  onClick={() => setAllowDelivery(!allowDelivery)}
+                  disabled={isSavingPaymentPolicy}
+                  onClick={() => {
+                    const next = !allowDelivery;
+                    setAllowDelivery(next);
+                    handleInstantSavePaymentPolicy({ allow_delivery: next });
+                  }}
                   className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between ${
                     allowDelivery
                       ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
@@ -6577,7 +6643,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 {/* 4. Service Booking */}
                 <button
                   type="button"
-                  onClick={() => setAllowServiceBooking(!allowServiceBooking)}
+                  disabled={isSavingPaymentPolicy}
+                  onClick={() => {
+                    const next = !allowServiceBooking;
+                    setAllowServiceBooking(next);
+                    handleInstantSavePaymentPolicy({ allow_service_booking: next });
+                  }}
                   className={`p-3.5 rounded-xl border text-right transition flex flex-col justify-between ${
                     allowServiceBooking
                       ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 shadow-sm'
@@ -6620,6 +6691,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       step="1"
                       value={deliveryFee}
                       onChange={(e) => setDeliveryFee(e.target.value === '' ? '' : Number(e.target.value))}
+                      onBlur={() => handleInstantSavePaymentPolicy({ delivery_fee: deliveryFee === '' ? 0 : Number(deliveryFee) })}
                       placeholder="15"
                       className="w-20 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-amber-400 text-center outline-none"
                     />
@@ -6646,8 +6718,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   <span className="text-xs text-slate-400 font-bold">بوابة الدفع الإلكتروني:</span>
                   <button
                     type="button"
-                    onClick={() => setOnlinePaymentEnabled(!onlinePaymentEnabled)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
+                    disabled={isSavingPaymentPolicy}
+                    onClick={() => {
+                      const nextVal = !onlinePaymentEnabled;
+                      setOnlinePaymentEnabled(nextVal);
+                      handleInstantSavePaymentPolicy({ online_payment_enabled: nextVal });
+                    }}
+                    className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 disabled:opacity-50 ${
                       onlinePaymentEnabled
                         ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
                         : 'bg-rose-500/15 text-rose-400 border-rose-500/40'
@@ -6657,6 +6734,24 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </button>
                 </div>
               </div>
+
+              {/* Status Alert for Instant Auto-Save */}
+              {paymentPolicyStatus && (
+                <div className={`p-2.5 rounded-xl text-xs font-bold flex items-center justify-between transition ${
+                  paymentPolicyStatus.includes('⚠️') 
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' 
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {isSavingPaymentPolicy ? (
+                      <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    )}
+                    <span>{paymentPolicyStatus}</span>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* 1. سياسة دفع طلبات المنيو والمنتجات */}
@@ -6674,8 +6769,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   <div className="grid grid-cols-3 gap-1.5">
                     <button
                       type="button"
-                      disabled={!onlinePaymentEnabled}
-                      onClick={() => setOrdersPaymentPolicy('both')}
+                      disabled={!onlinePaymentEnabled || isSavingPaymentPolicy}
+                      onClick={() => {
+                        setOrdersPaymentPolicy('both');
+                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'both' });
+                      }}
                       className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
                         ordersPaymentPolicy === 'both' && onlinePaymentEnabled
                           ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm'
@@ -6688,8 +6786,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                     <button
                       type="button"
-                      disabled={!onlinePaymentEnabled}
-                      onClick={() => setOrdersPaymentPolicy('online_only')}
+                      disabled={!onlinePaymentEnabled || isSavingPaymentPolicy}
+                      onClick={() => {
+                        setOrdersPaymentPolicy('online_only');
+                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'online_only' });
+                      }}
                       className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
                         ordersPaymentPolicy === 'online_only' && onlinePaymentEnabled
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
@@ -6702,7 +6803,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                     <button
                       type="button"
-                      onClick={() => setOrdersPaymentPolicy('pay_at_store_only')}
+                      disabled={isSavingPaymentPolicy}
+                      onClick={() => {
+                        setOrdersPaymentPolicy('pay_at_store_only');
+                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'pay_at_store_only' });
+                      }}
                       className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
                         ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
                           ? 'bg-blue-500/20 text-blue-300 border-blue-500/50 shadow-sm'
@@ -6737,8 +6842,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   <div className="grid grid-cols-3 gap-1.5">
                     <button
                       type="button"
-                      disabled={!onlinePaymentEnabled}
-                      onClick={() => setBookingsPaymentPolicy('both')}
+                      disabled={!onlinePaymentEnabled || isSavingPaymentPolicy}
+                      onClick={() => {
+                        setBookingsPaymentPolicy('both');
+                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'both' });
+                      }}
                       className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
                         bookingsPaymentPolicy === 'both' && onlinePaymentEnabled
                           ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm'
@@ -6751,8 +6859,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                     <button
                       type="button"
-                      disabled={!onlinePaymentEnabled}
-                      onClick={() => setBookingsPaymentPolicy('online_only')}
+                      disabled={!onlinePaymentEnabled || isSavingPaymentPolicy}
+                      onClick={() => {
+                        setBookingsPaymentPolicy('online_only');
+                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'online_only' });
+                      }}
                       className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
                         bookingsPaymentPolicy === 'online_only' && onlinePaymentEnabled
                           ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
@@ -6765,7 +6876,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                     <button
                       type="button"
-                      onClick={() => setBookingsPaymentPolicy('pay_at_store_only')}
+                      disabled={isSavingPaymentPolicy}
+                      onClick={() => {
+                        setBookingsPaymentPolicy('pay_at_store_only');
+                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'pay_at_store_only' });
+                      }}
                       className={`p-2 rounded-xl text-center text-[11px] font-bold border transition ${
                         bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
                           ? 'bg-blue-500/20 text-blue-300 border-blue-500/50 shadow-sm'
@@ -6784,6 +6899,23 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       : '🔄 يتاح للعميل تأكيد الحجز فوراً بالسداد المسبق أو اختيار الدفع عند الحضور.'}
                   </p>
                 </div>
+              </div>
+
+              {/* Instant Save Footer Button */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5 pt-3 border-t border-slate-800/80">
+                <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>يتم حفظ وتطبيق السياسة المختارة فورياً وتلقائياً على تطبيق العميل والكاشير</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleInstantSavePaymentPolicy()}
+                  disabled={isSavingPaymentPolicy}
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 transition active:scale-95 disabled:opacity-50"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isSavingPaymentPolicy ? 'جاري الحفظ...' : 'حفظ وتأكيد سياسة الدفع 💾'}</span>
+                </button>
               </div>
             </div>
 

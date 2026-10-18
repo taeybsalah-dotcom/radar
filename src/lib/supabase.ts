@@ -531,6 +531,23 @@ export function normalizeStore(s: any): Store {
     owner_enable_orders: s.owner_enable_orders !== false,
     owner_enable_bookings: s.owner_enable_bookings !== false,
     owner_enable_loyalty: s.owner_enable_loyalty !== false,
+    fulfillment_settings: (() => {
+      let raw = s.fulfillment_settings ?? localExistingStore?.fulfillment_settings;
+      if (typeof raw === 'string') {
+        try { raw = JSON.parse(raw); } catch { raw = null; }
+      }
+      return {
+        allow_dine_in: raw?.allow_dine_in !== false,
+        allow_takeaway: raw?.allow_takeaway !== false,
+        allow_delivery: raw?.allow_delivery !== false,
+        delivery_fee: Number(raw?.delivery_fee) >= 0 ? Number(raw?.delivery_fee) : 15,
+        allow_service_booking: raw?.allow_service_booking !== false,
+        booking_notice_minutes: Number(raw?.booking_notice_minutes) || 30,
+        online_payment_enabled: raw?.online_payment_enabled !== false,
+        orders_payment_policy: (raw?.orders_payment_policy as any) || 'both',
+        bookings_payment_policy: (raw?.bookings_payment_policy as any) || 'both',
+      };
+    })(),
   };
 }
 
@@ -709,7 +726,7 @@ try {
 // polling queries and fetched once per hour per client via attachStoreAssets().
 // ==============================================================================
 const STORE_SAFE_COLS =
-  'id, slug, name, store_code, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, lifecycle_stage, setup_fee_paid, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, telegram_chat_id, telegram_notifications_enabled, trial_start_date, trial_end_date, subscription_plan_id, subscription_plan, plan_code, renewal_amount, subscription_start_date, subscription_end_date, enable_orders, enable_bookings, enable_loyalty, owner_enable_orders, owner_enable_bookings, owner_enable_loyalty, created_at, updated_at';
+  'id, slug, name, store_code, logo_url, slider_images, primary_color, secondary_color, points_per_riyal, subscription_active, status, subscription_status, lifecycle_stage, setup_fee_paid, manager_name, manager_contact, custom_domain, welcome_gift_type, welcome_points, welcome_offer_title, telegram_chat_id, telegram_notifications_enabled, trial_start_date, trial_end_date, subscription_plan_id, subscription_plan, plan_code, renewal_amount, subscription_start_date, subscription_end_date, enable_orders, enable_bookings, enable_loyalty, owner_enable_orders, owner_enable_bookings, owner_enable_loyalty, fulfillment_settings, created_at, updated_at';
 const STORE_FULL_COLS = STORE_SAFE_COLS;
 const CUSTOMER_SAFE_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at';
 const CUSTOMER_FULL_COLS = 'id, store_id, phone, name, lifetime_xp, wallet_balance, last_visit_date, created_at, updated_at, special_date, special_date_type, is_active, visits_count';
