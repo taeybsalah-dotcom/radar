@@ -92,7 +92,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   // ⚡ Debounce / Duplicate Scan Suppression Ref (Section 15 & 51)
   const lastScanRef = useRef<{ rawData: string; timestamp: number } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'register' | 'kds' | 'scanner' | 'orders' | 'rewards'>('register');
+  const [activeTab, setActiveTab] = useState<'register' | 'orders' | 'bookings' | 'scanner' | 'rewards'>('register');
   const [loading, setLoading] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerAction, setScannerAction] = useState<'SMART' | 'REDEEM'>('SMART');
@@ -565,22 +565,19 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const activeModules = useMemo(() => getStoreActiveModules(store), [store]);
 
   // 📦 Orders & Bookings Organization State
-  const [ordersSubTab, setOrdersSubTab] = useState<'orders' | 'bookings'>(() => activeModules.orders ? 'orders' : 'bookings');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'new' | 'preparing' | 'completed'>('all');
   const [bookingStatusFilter, setBookingStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'past'>('all');
   const [orderSearchQuery, setOrderSearchQuery] = useState('');
+  const [bookingSearchQuery, setBookingSearchQuery] = useState('');
 
   // Auto-sync tab if active modules change
   useEffect(() => {
-    if (!activeModules.orders && ordersSubTab === 'orders') {
-      setOrdersSubTab('bookings');
-    } else if (!activeModules.bookings && ordersSubTab === 'bookings') {
-      setOrdersSubTab('orders');
+    if (!activeModules.orders && activeTab === 'orders') {
+      setActiveTab(activeModules.bookings ? 'bookings' : 'register');
+    } else if (!activeModules.bookings && activeTab === 'bookings') {
+      setActiveTab(activeModules.orders ? 'orders' : 'register');
     }
-    if (!activeModules.orders && !activeModules.bookings && activeTab === 'kds') {
-      setActiveTab('register');
-    }
-  }, [activeModules.orders, activeModules.bookings, activeTab, ordersSubTab]);
+  }, [activeModules.orders, activeModules.bookings, activeTab]);
 
   // 🔊 Unlock Web Audio API on first user interaction (click/touch/key) to comply with browser Autoplay Policy
   useEffect(() => {
@@ -1650,6 +1647,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           borderRightColor: store.secondary_color || '#F59E0B',
         }}
       >
+        {/* Right side: Store Logo + Name, with Cashier & Branch directly underneath */}
         <div className="flex items-center space-x-3 rtl:space-x-reverse">
           {store.logo_url ? (
             <img
@@ -1672,17 +1670,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           )}
           <div>
             <div className="flex items-center space-x-2 rtl:space-x-reverse">
-              <h3 className="text-base sm:text-lg font-black text-white">نظام الكاشير الذكي (Radar POS)</h3>
-              <span
-                className="text-[10px] font-mono px-2.5 py-0.5 rounded-full border font-bold"
-                style={{
-                  backgroundColor: `${store.secondary_color || '#F59E0B'}20`,
-                  borderColor: `${store.secondary_color || '#F59E0B'}40`,
-                  color: store.secondary_color || '#F59E0B',
-                }}
-              >
-                {store.name}
-              </span>
+              <h3 className="text-base sm:text-lg font-black text-white">{store.name}</h3>
               {(store.store_code || store.id) && (
                 <span
                   title="كود المتجر التعريفي السريع"
@@ -1692,13 +1680,39 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                 </span>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
-              معامل النقاط: كل 1 ريال = <strong style={{ color: store.secondary_color || '#F59E0B' }}>{store.points_per_riyal} نقطة</strong> ولاء
-            </p>
+            
+            {/* Cashier & Branch underneath store name */}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mt-1">
+              <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-0.5 rounded-lg border border-slate-800">
+                <User className="w-3.5 h-3.5 text-amber-400" />
+                <span>الكاشير: <strong className="text-white font-bold">{activeStaff?.name || authenticatedCashier.name}</strong></span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsChangePinModalOpen(true);
+                    setChangePinCurrent('');
+                    setChangePinNew('');
+                    setChangePinConfirm('');
+                    setChangePinError(null);
+                    setChangePinSuccess(null);
+                  }}
+                  className="text-slate-500 hover:text-amber-400 mr-1 transition"
+                  title="تغيير رمزي السري"
+                >
+                  <KeyRound className="w-3 h-3" />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-0.5 rounded-lg border border-slate-800">
+                <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                <span>الفرع: <strong className="text-amber-400 font-bold">{activeBranchObj ? activeBranchObj.name : isGeneralManager ? 'كافة الفروع' : 'الفرع الرئيسي'}</strong></span>
+                <span className="text-[10px] text-slate-500" title="الفرع معتمد ومقفل لوردية الكاشير">🔒</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Authenticated Cashier Info & Logout */}
+        {/* Left side: System Controls only */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <NotificationBell
             portalName={`كاشير (${store.name})`}
@@ -1723,113 +1737,8 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             ) : (
               <Volume2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
             )}
-            <span>{isSoundMuted ? 'الصوت صامت 🔕' : 'جرس التنبيه 🔔'}</span>
+            <span>{isSoundMuted ? 'صامت 🔕' : 'جرس التنبيه 🔔'}</span>
           </button>
-
-          <div className="flex items-center space-x-2 rtl:space-x-reverse bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
-            <User className="w-3.5 h-3.5" style={{ color: store.secondary_color || '#F59E0B' }} />
-            <span className="text-slate-400">الكاشير:</span>
-            <strong className="text-white font-bold">{activeStaff?.name || authenticatedCashier.name}</strong>
-            <span className="text-[11px] font-mono" style={{ color: store.secondary_color || '#F59E0B' }} dir="ltr">({activeStaff?.phone || authenticatedCashier.phone})</span>
-          </div>
-
-          {/* Active Branch Fixed Badge (Locked per session - Selected at login) */}
-          <div className="flex items-center space-x-1.5 rtl:space-x-reverse bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs shadow-sm">
-            <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-            <span className="text-slate-400 shrink-0">الفرع:</span>
-            <span className="text-amber-400 font-extrabold">
-              {activeBranchObj ? `📍 ${activeBranchObj.name}${activeBranchObj.is_main ? ' (الرئيسي)' : ''}` : isGeneralManager ? '👑 كافة الفروع (المدير العام)' : '📍 الفرع الرئيسي'}
-            </span>
-            <span className="text-[10px] text-slate-500 font-mono" title="الفرع معتمد ومقفل لوردية الكاشير الحالية">🔒</span>
-          </div>
-
-          {/* Permission Indicator */}
-          <span
-            className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border ${
-              activeStaff?.can_manual_input_phone
-                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-            }`}
-          >
-            {activeStaff?.can_manual_input_phone ? '✏️ مسموح يدوي' : '📷 مسح إجباري 🔒'}
-          </span>
-
-          {/* Background Standby Status */}
-          <div
-            onClick={startBackgroundKeepAlive}
-            className="flex items-center space-x-1.5 rtl:space-x-reverse bg-slate-950 px-2.5 py-1.5 rounded-xl border border-slate-800 text-[11px] cursor-pointer hover:border-slate-700 transition"
-            title="اضغط لتنشيط وضع الاستقبال بالخلفية وإبقاء الاتصال حياً"
-          >
-            <span className="relative flex h-2 w-2">
-              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isKeepAliveActive ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
-              <span className={`relative inline-flex rounded-full h-2 w-2 ${isKeepAliveActive ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-            </span>
-            <span className={isKeepAliveActive ? 'text-emerald-400 font-bold' : 'text-slate-400 font-bold'}>
-              {isKeepAliveActive ? 'استقبال الطلبات نشط 🟢' : 'تنشيط الخلفية ⚡'}
-            </span>
-          </div>
-
-          {/* Cashier Self-Service PIN Change Button */}
-          <button
-            type="button"
-            onClick={() => {
-              setIsChangePinModalOpen(true);
-              setChangePinCurrent('');
-              setChangePinNew('');
-              setChangePinConfirm('');
-              setChangePinError(null);
-              setChangePinSuccess(null);
-            }}
-            className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition"
-            title="تغيير الرقم السري الخاص بي"
-          >
-            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-            <span>تغيير رمزي السري 🔑</span>
-          </button>
-
-          {/* 👨‍🍳 KDS - Kitchen / Salon Display System Button */}
-          {(activeModules.orders || activeModules.bookings) && (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setActiveTab(activeTab === 'kds' ? 'register' : 'kds')}
-                className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
-                  activeTab === 'kds'
-                    ? 'bg-amber-500 text-black border-amber-400 shadow-amber-500/30'
-                    : 'bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 hover:text-white border-indigo-500/40'
-                }`}
-                title={activeModules.orders ? 'شاشة المطبخ والبار الفورية (KDS)' : 'شاشة صالة الخدمات والمواعيد'}
-              >
-                {activeModules.orders ? <ChefHat className="w-3.5 h-3.5 text-indigo-400" /> : <Scissors className="w-3.5 h-3.5 text-indigo-400" />}
-                <span>{activeModules.orders ? 'شاشة المطبخ (KDS) 👨‍🍳' : 'شاشة الخدمات (KDS) ✂️'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setScreensModalBranchId(activeBranchId || 'ALL');
-                  setIsScreensModalOpen(true);
-                }}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-amber-200 border border-slate-700 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
-                title="عرض باركود شاشات العرض للتابلت"
-              >
-                <QrCode className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden sm:inline">باركود الشاشات 📱</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  const url = `${window.location.origin}/${store.slug}/kds${activeBranchId ? '?branch=' + activeBranchId : ''}`;
-                  window.open(url, '_blank');
-                }}
-                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 border border-slate-700 transition"
-                title="فتح شاشة العرض في نافذة مستقلة للتابلت"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
 
           {/* 🌐 Network & Offline Sync Status Pill */}
           <button
@@ -1855,44 +1764,21 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             )}
           </button>
 
-          {/* 💸 Cashier Expense (Petty Cash) Button */}
-          <button
-            type="button"
-            onClick={() => {
-              setCashMovementInitialType('cash_out');
-              setIsCashMovementModalOpen(true);
-            }}
-            className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
-            title="تسجيل مصروف نثري من الدرج (مشتريات، نظافة، صيانة، دليفري)"
-          >
-            <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
-            <span>تسجيل مصروف 💸</span>
-          </button>
-
-          {/* 🪙 Cashier Float Deposit Button */}
-          <button
-            type="button"
-            onClick={() => {
-              setCashMovementInitialType('cash_in');
-              setIsCashMovementModalOpen(true);
-            }}
-            className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
-            title="إيداع فكة أو عهدة إضافية في الدرج"
-          >
-            <Coins className="w-3.5 h-3.5 text-emerald-400" />
-            <span>إيداع فكة 🪙</span>
-          </button>
-
-          {/* 🔄 Cashier Refund & Credit Note Button */}
-          <button
-            type="button"
-            onClick={() => setIsRefundModalOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
-            title="استرجاع فاتورة وإصدار إشعار دائن ضريبي معتمد"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-            <span>المرتجعات (إشعار دائن) 🔄</span>
-          </button>
+          {/* 📱 Screens Barcode Modal Button (for kitchen/salon tablets) */}
+          {(activeModules.orders || activeModules.bookings) && (
+            <button
+              type="button"
+              onClick={() => {
+                setScreensModalBranchId(activeBranchId || 'ALL');
+                setIsScreensModalOpen(true);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-amber-200 border border-slate-700 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
+              title="عرض باركود شاشات العرض للتابلت"
+            >
+              <QrCode className="w-3.5 h-3.5 text-amber-400" />
+              <span>باركود الشاشات 📱</span>
+            </button>
+          )}
 
           {/* 🔒 Cashier Shift Close & Z-Report Button */}
           <button
@@ -1905,11 +1791,12 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             <span>تقفيل الصندوق (Z-Report) 🔒</span>
           </button>
 
+          {/* Logout */}
           <button
             onClick={handleLogout}
             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-red-950/70 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/40 text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse transition"
           >
-            <LogOut className="w-3 h-3" />
+            <LogOut className="w-3.5 h-3.5" />
             <span>خروج 🚪</span>
           </button>
         </div>
@@ -2040,11 +1927,10 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
               type="button"
               onClick={() => {
                 stopAlertRinger();
-                setActiveTab('orders');
                 if (incomingAlert.type === 'booking') {
-                  setOrdersSubTab('bookings');
+                  setActiveTab('bookings');
                 } else {
-                  setOrdersSubTab('orders');
+                  setActiveTab('orders');
                 }
               }}
               className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-black text-xs transition shrink-0"
@@ -2063,21 +1949,6 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
               <X className="w-4 h-4" />
             </button>
           </div>
-        </div>
-      )}
-
-      
-
-      {/* 👨‍🍳 TAB: Real-Time Kitchen & Bar Display System (شاشة المطبخ والبار) */}
-      {activeTab === 'kds' && (
-        <div className="pb-24 animate-fade-in">
-          <KitchenDisplaySystem
-            store={store}
-            activeStaff={(activeStaff || authenticatedCashier) || null}
-            activeBranch={activeBranchObj || null}
-            isGeneralManager={isGeneralManager}
-            onClose={() => setActiveTab('register')}
-          />
         </div>
       )}
 
@@ -2262,18 +2133,11 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       )}
 
       {activeTab === 'orders' && (() => {
-        // Scope orders and bookings strictly to active branch (or all if general manager)
+        // Scope orders strictly to active branch (or all if general manager)
         const branchScopedOrders = isGeneralManager
           ? liveOrders
           : liveOrders.filter(o => {
               if (o.branch_id) return o.branch_id === activeBranchId;
-              return Boolean(activeBranchObj?.is_main);
-            });
-
-        const branchScopedBookings = isGeneralManager
-          ? liveBookings
-          : liveBookings.filter(b => {
-              if (b.branch_id) return b.branch_id === activeBranchId;
               return Boolean(activeBranchObj?.is_main);
             });
 
@@ -2297,33 +2161,14 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           return true;
         });
 
-        const pendingBookings = branchScopedBookings.filter(b => b.status === 'pending');
-        const confirmedBookings = branchScopedBookings.filter(b => b.status === 'confirmed' || b.status === 'in_progress');
-        const pastBookings = branchScopedBookings.filter(b => b.status === 'completed' || b.status === 'cancelled' || b.status === 'no_show');
-
-        const displayedBookings = branchScopedBookings.filter(bk => {
-          if (bookingStatusFilter === 'pending' && bk.status !== 'pending') return false;
-          if (bookingStatusFilter === 'confirmed' && !(bk.status === 'confirmed' || bk.status === 'in_progress')) return false;
-          if (bookingStatusFilter === 'past' && !(bk.status === 'completed' || bk.status === 'cancelled' || bk.status === 'no_show')) return false;
-
-          if (orderSearchQuery.trim()) {
-            const q = orderSearchQuery.toLowerCase().trim();
-            const matchNum = String(bk.booking_number || '').toLowerCase().includes(q);
-            const matchName = String(bk.customer_name || '').toLowerCase().includes(q);
-            const matchPhone = String(bk.customer_phone || '').includes(q);
-            const matchService = String(bk.service_name || '').toLowerCase().includes(q);
-            if (!matchNum && !matchName && !matchPhone && !matchService) return false;
-          }
-          return true;
-        });
-
         return (
           <div className="animate-fade-in max-w-4xl mx-auto space-y-5 pb-28">
 
             {/* 📍 Active Branch Context Indicator Banner */}
             <div className="flex items-center justify-between px-4 py-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 text-xs shadow-sm">
               <div className="flex items-center gap-2">
-                <span className="text-slate-400 font-bold">عرض طلبات:</span>
+                <Utensils className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-slate-400 font-bold">عرض طلبات المنيو:</span>
                 <span className="font-extrabold text-amber-400 flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5 text-amber-400" />
                   {activeBranchObj ? activeBranchObj.name : 'كافة الفروع (المدير العام)'}
@@ -2334,86 +2179,43 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
               </span>
             </div>
             
-            {/* 🔘 Sub-Tab Selector & Live Sync Controls */}
+            {/* 🔘 Header & Live Sync Controls */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/90 p-3 sm:p-4 rounded-3xl border border-slate-800 shadow-xl backdrop-blur-md">
-              {activeModules.orders && activeModules.bookings ? (
-                <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-slate-800/80">
-                  <button
-                    type="button"
-                    onClick={() => setOrdersSubTab('orders')}
-                    className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition duration-200 ${
-                      ordersSubTab === 'orders'
-                        ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Utensils className="w-4 h-4" />
-                    <span>طلبات المنيو</span>
-                    {newOrders.length > 0 && (
-                      <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
-                        {newOrders.length}
-                      </span>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setOrdersSubTab('bookings')}
-                    className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition duration-200 ${
-                      ordersSubTab === 'bookings'
-                        ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <Calendar className="w-4 h-4" />
-                    <span>حجوزات الخدمات</span>
-                    {pendingBookings.length > 0 && (
-                      <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
-                        {pendingBookings.length}
-                      </span>
-                    )}
-                  </button>
-                </div>
-              ) : activeModules.bookings ? (
-                <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-purple-500/30 px-4 py-2.5">
-                  <Calendar className="w-4 h-4 text-purple-400" />
-                  <span className="font-black text-xs sm:text-sm text-purple-200">سجل حجوزات ومواعيد الخدمات</span>
-                  {pendingBookings.length > 0 && (
-                    <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
-                      {pendingBookings.length}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-amber-500/30 px-4 py-2.5">
-                  <Utensils className="w-4 h-4 text-amber-400" />
-                  <span className="font-black text-xs sm:text-sm text-amber-200">سجل طلبات المتجر والمنيو</span>
-                  {newOrders.length > 0 && (
-                    <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
-                      {newOrders.length}
-                    </span>
-                  )}
-                </div>
-              )}
+              <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-amber-500/30 px-4 py-2.5">
+                <ShoppingBag className="w-4 h-4 text-amber-400" />
+                <span className="font-black text-xs sm:text-sm text-amber-200">سجل طلبات المتجر والمنيو</span>
+                {newOrders.length > 0 && (
+                  <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
+                    {newOrders.length}
+                  </span>
+                )}
+              </div>
 
               {/* Quick Search & Manual Refresh */}
               <div className="flex items-center gap-2">
-                <div className="relative flex-1 sm:w-56">
+                <div className="relative flex-1 sm:w-64">
                   <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
                   <input
                     type="text"
                     value={orderSearchQuery}
                     onChange={(e) => setOrderSearchQuery(e.target.value)}
-                    placeholder="بحث برقم، اسم، جوال..."
+                    placeholder="بحث برقم الطلب، اسم، جوال..."
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-8 pl-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                   />
+                  {orderSearchQuery && (
+                    <button
+                      onClick={() => setOrderSearchQuery('')}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
 
                 <button
                   type="button"
                   onClick={() => {
                     LoyaltyService.getLiveStoreOrders(store.id).then(setLiveOrders);
-                    LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings);
                   }}
                   className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition"
                   title="تحديث فوري"
@@ -2434,10 +2236,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             )}
 
             {/* ══════════════════════════════════════════════ */}
-            {/* TAB 1: MENU ORDERS (طلبات المنيو) */}
+            {/* MENU ORDERS LIST (طلبات المنيو) */}
             {/* ══════════════════════════════════════════════ */}
-            {ordersSubTab === 'orders' && (
-              <div className="space-y-4">
+            <div className="space-y-4">
                 {/* Status Filter Pills */}
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
                   <button
@@ -2723,13 +2524,117 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                   </div>
                 )}
               </div>
+          </div>
+        );
+      })()}
+
+      {/* 📅 TAB: SERVICE BOOKINGS (حجوزات ومواعيد الخدمات) */}
+      {activeTab === 'bookings' && (() => {
+        const branchScopedBookings = isGeneralManager
+          ? liveBookings
+          : liveBookings.filter(b => {
+              if (b.branch_id) return b.branch_id === activeBranchId;
+              return Boolean(activeBranchObj?.is_main);
+            });
+
+        const pendingBookings = branchScopedBookings.filter(b => b.status === 'pending');
+        const confirmedBookings = branchScopedBookings.filter(b => b.status === 'confirmed' || b.status === 'in_progress');
+        const pastBookings = branchScopedBookings.filter(b => b.status === 'completed' || b.status === 'cancelled' || b.status === 'no_show');
+
+        const displayedBookings = branchScopedBookings.filter(bk => {
+          if (bookingStatusFilter === 'pending' && bk.status !== 'pending') return false;
+          if (bookingStatusFilter === 'confirmed' && !(bk.status === 'confirmed' || bk.status === 'in_progress')) return false;
+          if (bookingStatusFilter === 'past' && !(bk.status === 'completed' || bk.status === 'cancelled' || bk.status === 'no_show')) return false;
+
+          if (bookingSearchQuery.trim()) {
+            const q = bookingSearchQuery.toLowerCase().trim();
+            const matchNum = String(bk.booking_number || '').toLowerCase().includes(q);
+            const matchName = String(bk.customer_name || '').toLowerCase().includes(q);
+            const matchPhone = String(bk.customer_phone || '').includes(q);
+            const matchService = String(bk.service_name || '').toLowerCase().includes(q);
+            if (!matchNum && !matchName && !matchPhone && !matchService) return false;
+          }
+          return true;
+        });
+
+        return (
+          <div className="animate-fade-in max-w-4xl mx-auto space-y-5 pb-28">
+
+            {/* 📍 Active Branch Context Indicator Banner */}
+            <div className="flex items-center justify-between px-4 py-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 text-xs shadow-sm">
+              <div className="flex items-center gap-2">
+                <Scissors className="w-3.5 h-3.5 text-purple-400" />
+                <span className="text-slate-400 font-bold">عرض حجوزات ومواعيد الخدمات:</span>
+                <span className="font-extrabold text-purple-400 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-purple-400" />
+                  {activeBranchObj ? activeBranchObj.name : 'كافة الفروع (المدير العام)'}
+                </span>
+              </div>
+              <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1">
+                <span>عزل آمن للفرع 🔒</span>
+              </span>
+            </div>
+            
+            {/* 🔘 Header & Live Sync Controls */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/90 p-3 sm:p-4 rounded-3xl border border-slate-800 shadow-xl backdrop-blur-md">
+              <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-2xl border border-purple-500/30 px-4 py-2.5">
+                <Calendar className="w-4 h-4 text-purple-400" />
+                <span className="font-black text-xs sm:text-sm text-purple-200">سجل حجوزات ومواعيد الخدمات</span>
+                {pendingBookings.length > 0 && (
+                  <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-black flex items-center justify-center animate-pulse">
+                    {pendingBookings.length}
+                  </span>
+                )}
+              </div>
+
+              {/* Quick Search & Manual Refresh */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1 sm:w-64">
+                  <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    value={bookingSearchQuery}
+                    onChange={(e) => setBookingSearchQuery(e.target.value)}
+                    placeholder="بحث برقم الحجز، اسم، جوال، خدمة..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-8 pl-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                  />
+                  {bookingSearchQuery && (
+                    <button
+                      onClick={() => setBookingSearchQuery('')}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    LoyaltyService.getLiveStoreBookings(store.id).then(setLiveBookings);
+                  }}
+                  className="p-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition"
+                  title="تحديث فوري"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Error notice if action failed */}
+            {orderActionError && (
+              <div className="p-3 rounded-2xl bg-rose-950/70 border border-rose-500/50 text-rose-300 text-xs flex items-center justify-between">
+                <span>{orderActionError}</span>
+                <button onClick={() => setOrderActionError(null)} className="p-1 text-slate-400 hover:text-white">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             )}
 
             {/* ══════════════════════════════════════════════ */}
-            {/* TAB 2: SERVICE BOOKINGS (حجوزات الخدمات) */}
+            {/* SERVICE BOOKINGS LIST (حجوزات الخدمات) */}
             {/* ══════════════════════════════════════════════ */}
-            {ordersSubTab === 'bookings' && (
-              <div className="space-y-4">
+            <div className="space-y-4">
                 {/* Status Filter Pills */}
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
                   <button
@@ -2959,7 +2864,6 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                   </div>
                 )}
               </div>
-            )}
 
           </div>
         );
@@ -3129,31 +3033,54 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             <span>نقطة البيع</span>
           </button>
 
-          {/* Kitchen / Services Display Button */}
-          {(activeModules.orders || activeModules.bookings) && (
+          {/* Orders Button (ShoppingBag) */}
+          {activeModules.orders && (
             <button
-              onClick={() => setActiveTab('kds')}
+              onClick={() => setActiveTab('orders')}
               className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 relative ${
-                activeTab === 'kds'
+                activeTab === 'orders'
                   ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
                   : 'font-bold text-slate-400 hover:text-white hover:scale-105'
               }`}
             >
-              {activeModules.orders ? <ChefHat className="w-5 h-5 sm:w-6 sm:h-6" /> : <Scissors className="w-5 h-5 sm:w-6 sm:h-6" />}
-              <span>{activeModules.orders ? 'المطبخ' : 'الخدمات'}</span>
+              <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
+              <span>الطلبات</span>
               {(() => {
-                const activeCount = activeModules.orders
-                  ? liveOrders.filter(
-                      (o) => (o.status === 'pending' || o.status === 'accepted' || o.status === 'preparing') &&
-                      (isGeneralManager || (o.branch_id ? o.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))
-                    ).length
-                  : liveBookings.filter(
-                      (b) => (b.status === 'pending' || b.status === 'confirmed') &&
-                      (isGeneralManager || (b.branch_id ? b.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))
-                    ).length;
-                return activeCount > 0 ? (
-                  <span className="absolute top-0 right-2 sm:right-4 w-4 h-4 rounded-full bg-blue-500 text-white text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
-                    {activeCount}
+                const ordersCount = liveOrders.filter(
+                  (o) =>
+                    (o.status === 'pending' || o.status === 'accepted' || o.status === 'preparing' || o.status === 'ready') &&
+                    (isGeneralManager || (o.branch_id ? o.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))
+                ).length;
+                return ordersCount > 0 ? (
+                  <span className="absolute top-0 right-3 sm:right-5 w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
+                    {ordersCount}
+                  </span>
+                ) : null;
+              })()}
+            </button>
+          )}
+
+          {/* Bookings Button (Calendar) */}
+          {activeModules.bookings && (
+            <button
+              onClick={() => setActiveTab('bookings')}
+              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                activeTab === 'bookings'
+                  ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
+                  : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+              }`}
+            >
+              <Calendar className="w-5 h-5 sm:w-6 sm:h-6" />
+              <span>المواعيد</span>
+              {(() => {
+                const bookingsCount = liveBookings.filter(
+                  (b) =>
+                    (b.status === 'pending' || b.status === 'confirmed') &&
+                    (isGeneralManager || (b.branch_id ? b.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))
+                ).length;
+                return bookingsCount > 0 ? (
+                  <span className="absolute top-0 right-3 sm:right-5 w-4 h-4 rounded-full bg-purple-500 text-white text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
+                    {bookingsCount}
                   </span>
                 ) : null;
               })()}
@@ -3170,42 +3097,6 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           >
             <QrCode className="w-5 h-5 sm:w-6 sm:h-6" />
             <span>الماسح</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 relative ${
-              activeTab === 'orders'
-                ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
-            }`}
-          >
-            {!activeModules.orders && activeModules.bookings ? (
-              <Calendar className="w-5 h-5 sm:w-6 sm:h-6" />
-            ) : (
-              <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
-            )}
-            <span>
-              {!activeModules.orders && activeModules.bookings
-                ? 'المواعيد'
-                : activeModules.orders && !activeModules.bookings
-                ? 'الطلبات'
-                : 'الطلبات والمواعيد'}
-            </span>
-            {(() => {
-              const ordersCount = activeModules.orders
-                ? liveOrders.filter(o => (o.status === 'pending' || o.status === 'accepted' || o.status === 'preparing' || o.status === 'ready') && (isGeneralManager || (o.branch_id ? o.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))).length
-                : 0;
-              const bookingsCount = activeModules.bookings
-                ? liveBookings.filter(b => (b.status === 'pending' || b.status === 'confirmed') && (isGeneralManager || (b.branch_id ? b.branch_id === activeBranchId : Boolean(activeBranchObj?.is_main)))).length
-                : 0;
-              const activeCount = ordersCount + bookingsCount;
-              return activeCount > 0 ? (
-                <span className="absolute top-0 right-3 sm:right-5 w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-sm animate-pulse">
-                  {activeCount}
-                </span>
-              ) : null;
-            })()}
           </button>
 
           {activeModules.loyalty && (

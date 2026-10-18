@@ -1055,19 +1055,19 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
   return (
     <div className="space-y-4 animate-fade-in text-right" dir="rtl">
       
-      {/* 🚀 Top Register Action Bar */}
+      {/* 🚀 Bar 1: Order Type & Catalog Search */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-md backdrop-blur-md">
         
         {/* Order Type Selector (Only for Stores with Orders / Food / Retail) */}
         {activeModules.orders && (
-          <>
-            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-bold">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-bold">
               <button
                 type="button"
                 onClick={() => setOrderType('dine_in')}
                 className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
                   orderType === 'dine_in'
-                    ? 'bg-amber-500 text-black shadow-md'
+                    ? 'bg-amber-500 text-black shadow-md font-black'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1080,12 +1080,12 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 onClick={() => setOrderType('takeaway')}
                 className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
                   orderType === 'takeaway'
-                    ? 'bg-amber-500 text-black shadow-md'
+                    ? 'bg-amber-500 text-black shadow-md font-black'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <Package className="w-3.5 h-3.5" />
-                <span>سفري 🛍️</span>
+                <span>سفري 🥡</span>
               </button>
 
               <button
@@ -1093,7 +1093,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 onClick={() => setOrderType('car')}
                 className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
                   orderType === 'car'
-                    ? 'bg-amber-500 text-black shadow-md'
+                    ? 'bg-amber-500 text-black shadow-md font-black'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1137,7 +1137,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 />
               </div>
             )}
-          </>
+          </div>
         )}
 
         {/* Salon / Service Center Badge */}
@@ -1148,190 +1148,123 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
           </div>
         )}
 
-        {/* Search Input */}
-        <div className="relative flex-1 max-w-xs">
-          <input
-            type="text"
-            placeholder="ابحث بالاسم أو السعر... 🔍"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && filteredItems.length === 1) {
-                e.preventDefault();
-                handleAddToCart(filteredItems[0]);
-                setSearchQuery('');
-              }
-            }}
-            className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3.5 py-1.5 text-xs text-white placeholder-slate-500 outline-none transition"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
-            >
-              ✕
-            </button>
-          )}
+        {/* Search Input & Items Count */}
+        <div className="flex items-center gap-2 flex-1 max-w-md justify-end">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              placeholder="ابحث بالاسم أو السعر... 🔍"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && filteredItems.length === 1) {
+                  e.preventDefault();
+                  handleAddToCart(filteredItems[0]);
+                  setSearchQuery('');
+                }
+              }}
+              className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3.5 py-1.5 text-xs text-white placeholder-slate-500 outline-none transition"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400 font-medium bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 shrink-0">
+            <Layers className="w-3.5 h-3.5 text-amber-400" />
+            <span>الأصناف: <strong className="text-white">{filteredItems.length}</strong></span>
+          </div>
         </div>
+      </div>
 
-        {/* Items Count Badge */}
-        <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400 font-medium bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
-          <Layers className="w-3.5 h-3.5 text-amber-400" />
-          <span>الأصناف المتوفرة: <strong className="text-white">{filteredItems.length}</strong></span>
-        </div>
-
-        {/* Network & Offline Sync Quick Button */}
-        <button
-          type="button"
-          onClick={() => setIsOfflineModalOpen(true)}
-          className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition shadow-sm relative ${
-            !isOnline || queuedOfflineCount > 0
-              ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
-              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-          }`}
-          title="حالة الاتصال ومزامنة فواتير الأوفلاين"
-        >
-          {isOnline ? (
-            <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-          ) : (
-            <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-          )}
-          <span>{isOnline ? 'أونلاين 🟢' : 'أوفلاين 🟡'}</span>
-          {queuedOfflineCount > 0 && (
-            <span className="w-4 h-4 rounded-full bg-amber-500 text-black font-black text-[10px] flex items-center justify-center animate-bounce">
-              {queuedOfflineCount}
-            </span>
-          )}
-        </button>
-
-        {/* Parked Orders Quick Button */}
-        <button
-          type="button"
-          onClick={() => setIsParkedOrdersModalOpen(true)}
-          className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition shadow-sm relative ${
-            parkedOrders.length > 0
-              ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
-              : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
-          }`}
-          title="عرض واسترجاع الفواتير المعلقة"
-        >
-          <Pause className="w-3.5 h-3.5 text-amber-400" />
-          <span>الفواتير المعلقة</span>
-          {parkedOrders.length > 0 && (
-            <span className="w-4 h-4 rounded-full bg-amber-500 text-black font-black text-[10px] flex items-center justify-center animate-pulse">
-              {parkedOrders.length}
-            </span>
-          )}
-        </button>
-
-        {/* Services & Appointments Quick Button */}
-        {activeModules.bookings && (
+      {/* ⚡ Bar 2: Fast Invoicing Utilities & Cash Accounts (Grouped Near Cart / Invoicing) */}
+      <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-sm backdrop-blur-md">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+          {/* Electronic Cash Drawer Kick Button */}
           <button
             type="button"
-            onClick={() => setIsAppointmentsModalOpen(true)}
-            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition shadow-sm relative ${
-              bookingsList.filter(b => b.booking_date === new Date().toISOString().slice(0, 10)).length > 0
-                ? 'bg-purple-500/20 text-purple-200 border-purple-500/50 hover:bg-purple-500/30 shadow-[0_0_12px_rgba(168,85,247,0.25)]'
+            onClick={handleKickCashDrawer}
+            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 transition flex items-center gap-1.5 shadow-sm active:scale-95"
+            title="إرسال أمر فتح درج الكاشير الإلكتروني (Drawer Kick)"
+          >
+            <Unlock className="w-3.5 h-3.5 text-emerald-400" />
+            <span>فتح الدرج 🔓</span>
+          </button>
+
+          {/* Custom Open Price Item */}
+          <button
+            type="button"
+            onClick={() => setIsCustomItemModalOpen(true)}
+            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-amber-300 hover:text-white border border-amber-500/30 transition flex items-center gap-1.5 shadow-sm active:scale-95"
+            title="إضافة صنف مخصص أو خدمة بسعر حر"
+          >
+            <Plus className="w-3.5 h-3.5 text-amber-400" />
+            <span>صنف حر ➕</span>
+          </button>
+
+          {/* Refund & Returns */}
+          {onOpenRefund && (
+            <button
+              type="button"
+              onClick={onOpenRefund}
+              className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-rose-300 hover:text-white border border-rose-500/30 transition flex items-center gap-1.5 shadow-sm active:scale-95"
+              title="استرجاع فاتورة وإصدار إشعار دائن ضريبي معتمد"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+              <span>المرتجع (إشعار دائن) 🔄</span>
+            </button>
+          )}
+
+          {/* Parked Orders Button */}
+          <button
+            type="button"
+            onClick={() => setIsParkedOrdersModalOpen(true)}
+            className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 shadow-sm relative active:scale-95 ${
+              parkedOrders.length > 0
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
                 : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
             }`}
-            title="عرض واستقبال مواعيد الخدمات والحجوزات"
+            title="عرض واسترجاع الفواتير المعلقة"
           >
-            <Calendar className="w-3.5 h-3.5 text-purple-400" />
-            <span>المواعيد 📅</span>
-            {bookingsList.filter(b => b.booking_date === new Date().toISOString().slice(0, 10)).length > 0 && (
-              <span className="w-4 h-4 rounded-full bg-purple-500 text-white font-black text-[10px] flex items-center justify-center animate-pulse">
-                {bookingsList.filter(b => b.booking_date === new Date().toISOString().slice(0, 10)).length}
+            <Pause className="w-3.5 h-3.5 text-amber-400" />
+            <span>الفواتير المعلقة ⏸️</span>
+            {parkedOrders.length > 0 && (
+              <span className="w-4 h-4 rounded-full bg-amber-500 text-black font-black text-[10px] flex items-center justify-center animate-pulse">
+                {parkedOrders.length}
               </span>
             )}
           </button>
-        )}
 
-        {/* Refund & Returns Quick Button */}
-        {onOpenRefund && (
+          {/* Recent Shift Receipts */}
           <button
             type="button"
-            onClick={onOpenRefund}
-            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-            title="استرجاع فاتورة وإصدار إشعار دائن ضريبي معتمد"
+            onClick={() => setIsRecentReceiptsModalOpen(true)}
+            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-blue-300 hover:text-white border border-blue-500/30 transition flex items-center gap-1.5 shadow-sm active:scale-95"
+            title="سجل فواتير الوردية وإعادة الطباعة"
           >
-            <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-            <span>المرتجعات (إشعار دائن) 🔄</span>
+            <Receipt className="w-3.5 h-3.5 text-blue-400" />
+            <span>فواتير الوردية 🧾</span>
           </button>
-        )}
+        </div>
 
-        {/* Custom Open Price Item Quick Button */}
-        <button
-          type="button"
-          onClick={() => setIsCustomItemModalOpen(true)}
-          className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-          title="إضافة صنف مخصص أو خدمة بسعر حر"
-        >
-          <Plus className="w-3.5 h-3.5 text-amber-400" />
-          <span>صنف حر ➕</span>
-        </button>
-
-        {/* 💸 Cashier Expense (Petty Cash) Quick Button */}
+        {/* 💸 Unified Petty Cash & Float Movements Button */}
         <button
           type="button"
           onClick={() => {
             setCashMovementInitialType('cash_out');
             setIsCashMovementModalOpen(true);
           }}
-          className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-          title="تسجيل مصروف نثري من الدرج (مشتريات، نظافة، دليفري، صيانة)"
+          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/15 to-rose-500/15 hover:from-amber-500/25 hover:to-rose-500/25 text-amber-200 hover:text-white border border-amber-500/40 text-xs font-black flex items-center gap-1.5 transition shadow-sm active:scale-95"
+          title="تسجيل المصروفات النثرية وإيداع الفكة والعهدة في الصندوق"
         >
-          <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
-          <span>تسجيل مصروف 💸</span>
+          <Coins className="w-3.5 h-3.5 text-amber-400" />
+          <span>حسابات الفرع والنثريات 💸</span>
         </button>
-
-        {/* 🪙 Cash In / Float Deposit Quick Button */}
-        <button
-          type="button"
-          onClick={() => {
-            setCashMovementInitialType('cash_in');
-            setIsCashMovementModalOpen(true);
-          }}
-          className="px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-white border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-          title="إيداع فكة أو عهدة إضافية في الدرج"
-        >
-          <Coins className="w-3.5 h-3.5 text-emerald-400" />
-          <span>إيداع فكة 🪙</span>
-        </button>
-
-        {/* Recent Shift Receipts Quick Button */}
-        <button
-          type="button"
-          onClick={() => setIsRecentReceiptsModalOpen(true)}
-          className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-blue-300 hover:text-white border border-blue-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-          title="سجل فواتير الوردية وإعادة الطباعة"
-        >
-          <Receipt className="w-3.5 h-3.5 text-blue-400" />
-          <span>فواتير الوردية 🧾</span>
-        </button>
-
-        {/* Electronic Cash Drawer Kick Button */}
-        <button
-          type="button"
-          onClick={handleKickCashDrawer}
-          className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-          title="إرسال أمر فتح درج الكاشير الإلكتروني (Drawer Kick)"
-        >
-          <Unlock className="w-3.5 h-3.5 text-slate-400" />
-          <span>فتح الدرج 🔓</span>
-        </button>
-
-        {/* Shift Close Quick Button */}
-        {onOpenShiftClose && (
-          <button
-            type="button"
-            onClick={onOpenShiftClose}
-            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-            title="تقفيل الصندوق وجرد الوردية الحالية"
-          >
-            <Lock className="w-3.5 h-3.5 text-amber-400" />
-            <span>تقفيل الوردية (Z-Report) 🔒</span>
-          </button>
-        )}
       </div>
 
       {/* 🌟 Master 3-Column POS Workspace Layout */}
