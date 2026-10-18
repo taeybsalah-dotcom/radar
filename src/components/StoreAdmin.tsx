@@ -113,6 +113,8 @@ import {
   Building2,
   Ticket,
   Receipt,
+  ArrowRight,
+  ArrowLeft,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BranchesManagementTab } from './BranchesManagementTab';
@@ -122,6 +124,7 @@ interface StoreAdminProps {
 }
 
 type AdminTab =
+  | 'hub'
   | 'analytics'
   | 'catalog'
   | 'loyalty'
@@ -147,12 +150,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [loading, setLoading] = useState(true);
 
   // Active Admin Navigation Tab & Sub-Sections
-  const [activeTab, setActiveTab] = useState<AdminTab>('analytics');
+  const [activeTab, setActiveTab] = useState<AdminTab>('hub');
   const [catalogSection, setCatalogSection] = useState<'products' | 'services' | 'modifiers'>('products');
   const [loyaltySection, setLoyaltySection] = useState<'perks' | 'tiers' | 'coupons'>('perks');
   const [customersSection, setCustomersSection] = useState<'crm' | 'logs'>('crm');
   const [settingsSection, setSettingsSection] = useState<'identity' | 'modules' | 'billing'>('identity');
-  const [showQuickLinks, setShowQuickLinks] = useState(true);
+  const [showQuickLinks, setShowQuickLinks] = useState(false);
+  const [showQuickLinksModal, setShowQuickLinksModal] = useState(false);
 
   // Authentication & Session State
   const [authenticatedAdmin, setAuthenticatedAdmin] = useState<StoreStaff | null>(() =>
@@ -2895,49 +2899,100 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const tabsConfig = [
     {
       id: 'analytics' as AdminTab,
-      label: 'التحليلات والأداء',
+      label: 'التحليلات ومؤشرات الأداء',
+      shortLabel: 'التحليلات والأداء',
+      description: 'مؤشرات تفاعل الزبائن، المبيعات، ومعدل عودة العملاء المباشرة',
       icon: BarChart3,
       badge: null,
+      glowColor: 'bg-emerald-500/20',
+      iconBg: 'bg-emerald-500/15',
+      iconBorder: 'border-emerald-500/30',
+      iconColor: 'text-emerald-400',
+      statHighlight: `${customers.length} عميل نشط • تقارير حية`,
     },
     {
       id: 'catalog' as AdminTab,
-      label: 'الكتالوج والخدمات',
+      label: 'الكتالوج والمنتجات والخدمات',
+      shortLabel: 'الكتالوج والخدمات',
+      description: 'أصناف وقوائم المنيو، الأسعار، الخدمات، ومعدات التحضير',
       icon: ShoppingBag,
       badge: `${catalogItems.length}`,
+      glowColor: 'bg-amber-500/20',
+      iconBg: 'bg-amber-500/15',
+      iconBorder: 'border-amber-500/30',
+      iconColor: 'text-amber-400',
+      statHighlight: `${catalogItems.length} صنف (${productItemsCount} منتج • ${serviceItemsCount} خدمة)`,
     },
     {
       id: 'loyalty' as AdminTab,
-      label: 'برنامج الولاء',
+      label: 'برنامج الولاء والمكافآت',
+      shortLabel: 'برنامج الولاء',
+      description: 'مستويات العضوية (Tiers)، المكافآت الترحيبية، وقسائم الخصم',
       icon: Gift,
       badge: `${privileges.length}`,
+      glowColor: 'bg-purple-500/20',
+      iconBg: 'bg-purple-500/15',
+      iconBorder: 'border-purple-500/30',
+      iconColor: 'text-purple-400',
+      statHighlight: `${tiers.length} مستويات • ${privileges.length} مكافأة نشطة`,
     },
     {
       id: 'customers' as AdminTab,
-      label: 'العملاء والعمليات',
+      label: 'قاعدة العملاء وسجل العمليات',
+      shortLabel: 'العملاء والعمليات',
+      description: 'سجل الزبائن، محفظة النقاط، تاريخ الزيارات، واستدعاء العملاء',
       icon: Users,
       badge: `${customers.length}`,
+      glowColor: 'bg-blue-500/20',
+      iconBg: 'bg-blue-500/15',
+      iconBorder: 'border-blue-500/30',
+      iconColor: 'text-blue-400',
+      statHighlight: `${customers.length} عميل مسجل بالمتجر`,
     },
     {
       id: 'pos_operations' as AdminTab,
-      label: 'الورديات والمصروفات',
+      label: 'ورديات الكاشير والمصروفات',
+      shortLabel: 'الورديات والمصروفات',
+      description: 'إغلاق الورديات، حركة النقدية، المصروفات والإيرادات النثرية',
       icon: Receipt,
       badge: 'جديد ⚡',
+      glowColor: 'bg-teal-500/20',
+      iconBg: 'bg-teal-500/15',
+      iconBorder: 'border-teal-500/30',
+      iconColor: 'text-teal-400',
+      statHighlight: 'مطابقة الصندوق والقيود النقدية',
     },
     {
       id: 'staff' as AdminTab,
-      label: 'طاقم العمل والـ PIN',
+      label: 'طاقم العمل ورموز الـ PIN',
+      shortLabel: 'طاقم العمل والـ PIN',
+      description: 'إدارة الكاشيرية، المشرفين، رموز PIN السريعة، وصلاحيات الفروع',
       icon: ShieldCheck,
       badge: `${staffList.length}`,
+      glowColor: 'bg-indigo-500/20',
+      iconBg: 'bg-indigo-500/15',
+      iconBorder: 'border-indigo-500/30',
+      iconColor: 'text-indigo-400',
+      statHighlight: `${staffList.length} موظف معتمد`,
     },
     {
       id: 'branches' as AdminTab,
       label: 'الفروع وأوقات العمل',
+      shortLabel: 'الفروع وأوقات العمل',
+      description: 'ساعات العمل الأسبوعية، الفروع النشطة، والمواقع الجغرافية',
       icon: Building2,
       badge: null,
+      glowColor: 'bg-cyan-500/20',
+      iconBg: 'bg-cyan-500/15',
+      iconBorder: 'border-cyan-500/30',
+      iconColor: 'text-cyan-400',
+      statHighlight: `${branches.length} فرع مسجل`,
     },
     {
       id: 'settings' as AdminTab,
-      label: 'الإعدادات والفوترة',
+      label: 'الإعدادات والفوترة وطرق الدفع',
+      shortLabel: 'الإعدادات والفوترة',
+      description: 'سياسة الدفع (أونلاين/كاش)، الهوية والألوان، والاشتراك',
       icon: Sliders,
       badge: isStoreSuspended
         ? 'معلق ⚠️'
@@ -2946,8 +3001,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         : subscriptionInfo?.status === 'trial'
         ? `${Math.max(1, Math.ceil(subscriptionInfo.daysLeft))} ${Math.ceil(subscriptionInfo.daysLeft) === 1 ? 'يوم' : Math.ceil(subscriptionInfo.daysLeft) === 2 ? 'يومان' : 'أيام'}`
         : 'نشط ✅',
+      glowColor: 'bg-amber-500/20',
+      iconBg: 'bg-amber-500/15',
+      iconBorder: 'border-amber-500/30',
+      iconColor: 'text-amber-400',
+      statHighlight: 'بوابة الدفع الإلكتروني والاشتراك',
     },
   ];
+
+  const currentTabConfig = tabsConfig.find((t) => t.id === activeTab);
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 animate-fade-in text-slate-200">
@@ -3084,12 +3146,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             />
 
             <button
-              onClick={() => setShowQuickLinks(!showQuickLinks)}
-              className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1.5 rtl:space-x-reverse"
+              type="button"
+              onClick={() => setShowQuickLinksModal(true)}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 transition flex items-center space-x-1.5 rtl:space-x-reverse shadow-md shadow-amber-500/5 active:scale-95"
             >
-              <Share2 className="w-3.5 h-3.5 text-slate-400" />
-              <span>الروابط السريعة</span>
-              {showQuickLinks ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+              <Share2 className="w-3.5 h-3.5 text-amber-400" />
+              <span>روابط ومشاركة المتجر 🔗</span>
             </button>
 
             <button
@@ -3097,74 +3159,148 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 const plainText = `مرحباً بك في ${store.name} ⚡\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${posUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
                 window.open(`https://wa.me/?text=${encodeURIComponent(plainText)}`, '_blank');
               }}
-              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-xs flex items-center space-x-1.5 rtl:space-x-reverse transition"
+              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-emerald-950/40 text-slate-300 hover:text-emerald-400 border border-slate-700/80 hover:border-emerald-500/40 font-semibold text-xs flex items-center space-x-1.5 rtl:space-x-reverse transition active:scale-95"
             >
               <Send className="w-3.5 h-3.5 text-emerald-400" />
-              <span>مشاركة واتساب</span>
+              <span className="hidden sm:inline">واتساب</span>
             </button>
 
             <button
               onClick={handleLogout}
-              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-red-950/60 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/40 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition"
+              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-red-950/60 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/40 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition active:scale-95"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>تسجيل الخروج</span>
+              <span className="hidden sm:inline">تسجيل الخروج</span>
             </button>
           </div>
         </div>
 
-        {/* 🔗 Collapsible Quick Shareable Links Capsule */}
-        {showQuickLinks && (
-          <div className="mt-4 pt-4 border-t border-slate-800/80 grid grid-cols-1 md:grid-cols-3 gap-3 animate-fade-in">
-            <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-200 font-semibold text-xs flex items-center gap-1.5">
-                  <Smartphone className="w-3.5 h-3.5 text-slate-400" />
-                  <span>رابط الزبائن (PWA):</span>
-                </span>
+        {/* 🔗 Luxury Quick Shareable Links Modal Dialog */}
+        {showQuickLinksModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+            <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5 animate-scale-up">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <Share2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white">روابط ومشاركة متجر {store.name}</h3>
+                    <p className="text-[11px] text-slate-400">انسخ الروابط أو افتحها مباشرة في المتصفح</p>
+                  </div>
+                </div>
                 <button
-                  onClick={() => copyToClipboard(custUrl, 'cust_link')}
-                  className="text-[10px] text-slate-400 hover:text-white bg-slate-800 px-2 py-0.5 rounded-lg flex items-center gap-1 transition"
+                  type="button"
+                  onClick={() => setShowQuickLinksModal(false)}
+                  className="w-8 h-8 rounded-xl bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition"
                 >
-                  {copiedLinkKey === 'cust_link' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedLinkKey === 'cust_link' ? 'تم النسخ!' : 'نسخ'}</span>
+                  <X className="w-4 h-4" />
                 </button>
               </div>
-              <p className="text-[10px] text-slate-400 font-mono truncate select-all">{custUrl}</p>
-            </div>
 
-            <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-200 font-semibold text-xs flex items-center gap-1.5">
-                  <Globe className="w-3.5 h-3.5 text-slate-400" />
-                  <span>رابط الكاشير (POS):</span>
-                </span>
-                <button
-                  onClick={() => copyToClipboard(posUrl, 'pos_link')}
-                  className="text-[10px] text-slate-400 hover:text-white bg-slate-800 px-2 py-0.5 rounded-lg flex items-center gap-1 transition"
-                >
-                  {copiedLinkKey === 'pos_link' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedLinkKey === 'pos_link' ? 'تم النسخ!' : 'نسخ'}</span>
-                </button>
-              </div>
-              <p className="text-[10px] text-slate-400 font-mono truncate select-all">{posUrl}</p>
-            </div>
+              <div className="space-y-3">
+                {/* 1. رابط الزبائن PWA */}
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Smartphone className="w-4 h-4 text-emerald-400" />
+                      <span>رابط بطاقة وتطبيق الزبائن (PWA)</span>
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <a
+                        href={custUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold flex items-center gap-1 transition"
+                      >
+                        <ExternalLink className="w-3 h-3 text-slate-400" />
+                        <span>فتح</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(custUrl, 'cust_link')}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 text-[11px] font-bold flex items-center gap-1 transition"
+                      >
+                        {copiedLinkKey === 'cust_link' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedLinkKey === 'cust_link' ? 'تم النسخ!' : 'نسخ'}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-mono truncate select-all bg-slate-900/60 p-2 rounded-xl border border-slate-800/60">{custUrl}</p>
+                </div>
 
-            <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-200 font-semibold text-xs flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
-                  <span>لوحة تحكم التاجر:</span>
-                </span>
+                {/* 2. رابط الكاشير POS */}
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Globe className="w-4 h-4 text-amber-400" />
+                      <span>رابط شاشة الكاشير السريعة (POS)</span>
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <a
+                        href={posUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold flex items-center gap-1 transition"
+                      >
+                        <ExternalLink className="w-3 h-3 text-slate-400" />
+                        <span>فتح</span>
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(posUrl, 'pos_link')}
+                        className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 text-[11px] font-bold flex items-center gap-1 transition"
+                      >
+                        {copiedLinkKey === 'pos_link' ? <Check className="w-3 h-3 text-amber-400" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedLinkKey === 'pos_link' ? 'تم النسخ!' : 'نسخ'}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-mono truncate select-all bg-slate-900/60 p-2 rounded-xl border border-slate-800/60">{posUrl}</p>
+                </div>
+
+                {/* 3. رابط لوحة تحكم التاجر */}
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-purple-400" />
+                      <span>رابط لوحة تحكم وإدارة المتجر (Admin)</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(adminUrl, 'admin_link')}
+                      className="px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 hover:bg-purple-500/25 text-[11px] font-bold flex items-center gap-1 transition"
+                    >
+                      {copiedLinkKey === 'admin_link' ? <Check className="w-3 h-3 text-purple-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedLinkKey === 'admin_link' ? 'تم النسخ!' : 'نسخ'}</span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-mono truncate select-all bg-slate-900/60 p-2 rounded-xl border border-slate-800/60">{adminUrl}</p>
+                </div>
+              </div>
+
+              {/* Action Buttons: WhatsApp & Close */}
+              <div className="flex items-center justify-between pt-2">
                 <button
-                  onClick={() => copyToClipboard(adminUrl, 'admin_link')}
-                  className="text-[10px] text-slate-400 hover:text-white bg-slate-800 px-2 py-0.5 rounded-lg flex items-center gap-1 transition"
+                  type="button"
+                  onClick={() => {
+                    const plainText = `مرحباً بك في ${store.name} ⚡\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${posUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
+                    window.open(`https://wa.me/?text=${encodeURIComponent(plainText)}`, '_blank');
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 transition shadow-md shadow-emerald-600/20"
                 >
-                  {copiedLinkKey === 'admin_link' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedLinkKey === 'admin_link' ? 'تم النسخ!' : 'نسخ'}</span>
+                  <Send className="w-4 h-4" />
+                  <span>إرسال الروابط عبر الواتساب 📲</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowQuickLinksModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+                >
+                  إغلاق
                 </button>
               </div>
-              <p className="text-[10px] text-slate-400 font-mono truncate select-all">{adminUrl}</p>
             </div>
           </div>
         )}
@@ -3212,41 +3348,174 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         </div>
       )}
 
-      {/* 🧭 Luxury Executive Navigation Hub (Tab Bar) */}
-      <div className="rounded-2xl p-2 border border-slate-800 bg-slate-900/80 shadow-xl backdrop-blur-md">
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-          {tabsConfig.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`w-full py-3 px-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center space-x-2 rtl:space-x-reverse transition-all duration-200 relative ${
-                  isActive
-                    ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/20'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/70 border border-transparent hover:border-slate-700/60'
-                }`}
-              >
-                <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-slate-950' : 'text-slate-400'}`} />
-                <span className="truncate">{tab.label}</span>
-                {tab.badge !== null && (
-                  <span
-                    className={`text-[11px] font-mono px-2 py-0.5 rounded-full border font-bold shrink-0 ${
-                      isActive
-                        ? 'bg-slate-950 text-amber-400 border-slate-900'
-                        : 'bg-slate-800 text-slate-400 border-slate-700/60'
-                    }`}
-                  >
-                    {tab.badge}
-                  </span>
+      {/* 🧭 Executive Hub & Focused Workspace View */}
+      {!isStoreSuspended && (
+        <>
+          {activeTab === 'hub' ? (
+            <div className="space-y-6 animate-fade-in">
+              {/* Executive Welcome & Key Metrics Strip */}
+              <div className="rounded-3xl p-5 sm:p-6 bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-950 border border-slate-800 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl pointer-events-none -ml-20 -mt-20" />
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span className="text-xs font-bold text-emerald-400">لوحة التحكم المركزية نشطة ومحدثة لحظياً</span>
+                    </div>
+                    <h3 className="text-xl sm:text-2xl font-black text-white mt-1">
+                      أقسام وإدارة المتجر التنفيذية ⚡
+                    </h3>
+                    <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                      اختر أحد الأقسام بالأسفل لإدارته والتحكم فيه بشكل كامل. عند فتح أي قسم يختفي باقي الأقسام للتركيز ويمكنك العودة في أي لحظة.
+                    </p>
+                  </div>
+
+                  {/* Quick Counters */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="px-3.5 py-2 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                      <span className="text-[10px] text-slate-400 block font-bold">المنتجات والخدمات</span>
+                      <span className="text-base font-black text-amber-400 font-mono">{catalogItems.length}</span>
+                    </div>
+                    <div className="px-3.5 py-2 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                      <span className="text-[10px] text-slate-400 block font-bold">قاعدة العملاء</span>
+                      <span className="text-base font-black text-blue-400 font-mono">{customers.length}</span>
+                    </div>
+                    <div className="px-3.5 py-2 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                      <span className="text-[10px] text-slate-400 block font-bold">المكافآت النشطة</span>
+                      <span className="text-base font-black text-purple-400 font-mono">{privileges.length}</span>
+                    </div>
+                    <div className="px-3.5 py-2 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                      <span className="text-[10px] text-slate-400 block font-bold">الفروع المعتمدة</span>
+                      <span className="text-base font-black text-cyan-400 font-mono">{branches.length}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 🔲 The 8 Executive Section Cards (المربعات) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+                {tabsConfig.map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveTab(tab.id);
+                        window.scrollTo({ top: 300, behavior: 'smooth' });
+                      }}
+                      className="group relative rounded-3xl p-6 bg-slate-900/90 hover:bg-slate-800/95 border border-slate-800 hover:border-amber-500/50 shadow-xl hover:shadow-2xl hover:shadow-amber-500/10 transition-all duration-300 text-right flex flex-col justify-between overflow-hidden cursor-pointer hover:-translate-y-1 active:scale-[0.99]"
+                    >
+                      {/* Ambient Glow Corner */}
+                      <div className={`absolute top-0 left-0 w-28 h-28 ${tab.glowColor} rounded-full blur-2xl pointer-events-none opacity-40 group-hover:opacity-80 transition-opacity`} />
+
+                      {/* Top Row: Icon & Badge */}
+                      <div className="flex items-center justify-between w-full relative z-10 mb-4">
+                        <div className={`w-12 h-12 rounded-2xl ${tab.iconBg} border ${tab.iconBorder} flex items-center justify-center ${tab.iconColor} shadow-inner group-hover:scale-110 group-hover:shadow-lg transition-transform duration-300`}>
+                          <Icon className="w-6 h-6" />
+                        </div>
+                        {tab.badge !== null && (
+                          <span className="text-[11px] font-mono font-bold px-3 py-1 rounded-full bg-slate-950/80 border border-slate-800 text-amber-300 shadow-sm">
+                            {tab.badge}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Title & Description */}
+                      <div className="relative z-10 space-y-2 mb-6">
+                        <h4 className="text-base sm:text-lg font-black text-white group-hover:text-amber-400 transition-colors flex items-center justify-between">
+                          <span>{tab.label}</span>
+                        </h4>
+                        <p className="text-xs text-slate-400 group-hover:text-slate-300 transition-colors leading-relaxed line-clamp-2">
+                          {tab.description}
+                        </p>
+                      </div>
+
+                      {/* Bottom Footer: Stat Highlight & Arrow Button */}
+                      <div className="relative z-10 pt-4 border-t border-slate-800/80 flex items-center justify-between w-full">
+                        <span className="text-[11px] font-mono font-bold text-slate-300 bg-slate-950/70 px-2.5 py-1 rounded-xl border border-slate-800/80 truncate max-w-[70%]">
+                          {tab.statHighlight}
+                        </span>
+                        <div className="flex items-center gap-1 text-xs font-black text-amber-400 group-hover:text-amber-300 shrink-0">
+                          <span>فتح القسم</span>
+                          <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1 transition-transform" />
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            /* ⬅️ Focused Active Workspace Navigation Header (When a tile is open) */
+            <div className="rounded-2xl p-3.5 sm:p-4 bg-slate-900/95 border border-slate-800 shadow-xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-2 z-30 animate-fade-in">
+              {/* Back to Hub Button & Section Title */}
+              <div className="flex items-center gap-3 flex-wrap min-w-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('hub');
+                    window.scrollTo({ top: 200, behavior: 'smooth' });
+                  }}
+                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-amber-500/20 transition-all hover:scale-[1.02] active:scale-95 group shrink-0"
+                >
+                  <ArrowRight className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+                  <span>العودة للوحة الرئيسية (كافة الأقسام)</span>
+                </button>
+
+                <div className="h-6 w-px bg-slate-800 hidden sm:block" />
+
+                {/* Current Section Title & Icon */}
+                {currentTabConfig && (
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className={`w-8 h-8 rounded-xl ${currentTabConfig.iconBg} border ${currentTabConfig.iconBorder} flex items-center justify-center ${currentTabConfig.iconColor} shrink-0`}>
+                      <currentTabConfig.icon className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm sm:text-base font-black text-white truncate">
+                          {currentTabConfig.label}
+                        </h3>
+                        {currentTabConfig.badge && (
+                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-amber-300 shrink-0">
+                            {currentTabConfig.badge}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+              </div>
+
+              {/* Quick Jump Dropdown & Close X Button */}
+              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                <span className="text-[11px] text-slate-400 hidden lg:inline font-bold">انتقال سريع:</span>
+                <select
+                  value={activeTab}
+                  onChange={(e) => setActiveTab(e.target.value as AdminTab)}
+                  className="bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-200 text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-amber-500 transition cursor-pointer"
+                >
+                  <option value="hub">⬅️ لوحة الأقسام (الرئيسية)</option>
+                  {tabsConfig.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('hub')}
+                  title="إغلاق القسم والعودة للرئيسية (X)"
+                  className="w-8 h-8 rounded-xl bg-slate-800/90 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-700/80 hover:border-red-500/40 flex items-center justify-center transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* ========================================== */}
       {/* 🔒 1. شاشة الإيقاف المؤقت بقرار إداري / بطلب المتجر (مع بقاء الاشتراك سارياً ومحفوظاً) */}
