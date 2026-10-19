@@ -57,6 +57,7 @@ import { CashierCustomItemModal } from './CashierCustomItemModal';
 import { CashierTableSelectorModal } from './CashierTableSelectorModal';
 import { CashierCashMovementModal } from './CashierCashMovementModal';
 import { CashierAppointmentsModal } from './CashierAppointmentsModal';
+import { DriverService } from '../lib/driverService';
 
 export interface POSCartItem {
   id: string; // unique cart entry id
@@ -135,6 +136,17 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
   const [orderType, setOrderType] = useState<'dine_in' | 'takeaway' | 'delivery' | 'car'>('dine_in');
   const [tableNumber, setTableNumber] = useState('');
   const [carPlate, setCarPlate] = useState('');
+  const [selectedDriverId, setSelectedDriverId] = useState<string>('');
+
+  // 🛵 Branch Drivers (كباتن الفرع المتاحين)
+  const branchDrivers = useMemo(() => {
+    if (!store?.id) return [];
+    return DriverService.getDrivers(store.id, activeBranch?.id);
+  }, [store?.id, activeBranch?.id]);
+
+  const selectedDriver = useMemo(() => {
+    return branchDrivers.find((d) => d.id === selectedDriverId) || null;
+  }, [branchDrivers, selectedDriverId]);
 
   // 📱 Transferred Online Order / Booking Metadata
   const [transferredMetadata, setTransferredMetadata] = useState<{
@@ -752,6 +764,10 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
           table_number: orderType === 'dine_in' ? tableNumber.trim() || undefined : undefined,
           car_plate: orderType === 'car' ? carPlate.trim() || undefined : undefined,
         },
+        driver_id: orderType === 'delivery' && selectedDriverId ? selectedDriverId : undefined,
+        driver_name: orderType === 'delivery' && selectedDriver ? selectedDriver.name : undefined,
+        driver_phone: orderType === 'delivery' && selectedDriver ? selectedDriver.phone : undefined,
+        delivery_status: orderType === 'delivery' ? (selectedDriverId ? 'assigned' : 'unassigned') : undefined,
         subtotal: cartSubtotal,
         discount_amount: cartDiscountAmount,
         discount_reason: appliedDiscount ? appliedDiscount.reason : customerTier ? `خصم فئة ولاء (${customerTier.tier_name})` : null,
@@ -791,7 +807,12 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             items: orderPayload.items,
             total_price: cartGrandTotal,
             loyalty_points_earned: 0,
+            driver_id: orderType === 'delivery' && selectedDriverId ? selectedDriverId : undefined,
+            driver_name: orderType === 'delivery' && selectedDriver ? selectedDriver.name : undefined,
+            driver_phone: orderType === 'delivery' && selectedDriver ? selectedDriver.phone : undefined,
+            delivery_status: orderType === 'delivery' ? (selectedDriverId ? 'assigned' : 'unassigned') : undefined,
             branch_id: activeBranch?.id || null,
+            branch_name: activeBranch?.name || null,
           };
           savedOrder = await LoyaltyService.updateStoreOrder(transferredMetadata.originalOrderId, updateFields);
           if (!savedOrder) {
@@ -1126,6 +1147,18 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 <Car className="w-3.5 h-3.5" />
                 <span>سيارة 🚗</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => setOrderType('delivery')}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+                  orderType === 'delivery'
+                    ? 'bg-amber-500 text-black shadow-md font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>🛵 توصيل</span>
+              </button>
             </div>
 
             {/* Dynamic Detail input based on order type */}
@@ -1161,6 +1194,24 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   onChange={(e) => setCarPlate(e.target.value)}
                   className="bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3 py-1.5 text-xs text-white font-bold w-40 outline-none"
                 />
+              </div>
+            )}
+
+            {orderType === 'delivery' && (
+              <div className="flex items-center gap-1.5 animate-fade-in flex-wrap">
+                <span className="text-xs text-slate-400 font-bold">كابتن الفرع:</span>
+                <select
+                  value={selectedDriverId}
+                  onChange={(e) => setSelectedDriverId(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-2.5 py-1.5 text-xs text-amber-400 font-bold outline-none max-w-[200px]"
+                >
+                  <option value="">بدون إسناد (متاح لكل سائقي الفرع)</option>
+                  {branchDrivers.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({DriverService.getVehicleLabel(d.vehicle_type)})
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
           </div>

@@ -25,6 +25,7 @@ import {
   Utensils,
 } from 'lucide-react';
 import { TablesManagementView } from './merchant/TablesManagementView';
+import { DriversManagementView } from './merchant/DriversManagementView';
 
 interface BranchesManagementTabProps {
   store: Store;
@@ -37,7 +38,7 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
   staffList,
   onStaffUpdated,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'branches' | 'tables'>('branches');
+  const [activeSubTab, setActiveSubTab] = useState<'branches' | 'tables' | 'drivers'>('branches');
   const [branches, setBranches] = useState<StoreBranch[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -335,12 +336,27 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
           }`}
         >
           <Utensils className="w-4 h-4" />
-          <span>إدارة الصالة والطاولات ورموز QR 🍽️</span>
+          <span>إدارة الصالة والطاولات 🍽️</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('drivers')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 ${
+            activeSubTab === 'drivers'
+              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+          }`}
+        >
+          <span className="text-sm">🛵</span>
+          <span>كباتن وأسطول التوصيل</span>
         </button>
       </div>
 
       {activeSubTab === 'tables' ? (
         <TablesManagementView store={store} branches={branches} />
+      ) : activeSubTab === 'drivers' ? (
+        <DriversManagementView store={store} branches={branches} />
       ) : (
         <>
           {/* Header */}

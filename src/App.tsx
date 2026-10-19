@@ -82,6 +82,10 @@ const KitchenDisplaySystem = lazyWithRetry(
   () => import('./components/KitchenDisplaySystem').then((m) => ({ default: m.KitchenDisplaySystem })),
   'KitchenDisplaySystem'
 );
+const DriverPortal = lazyWithRetry(
+  () => import('./components/DriverPortal').then((m) => ({ default: m.DriverPortal })),
+  'DriverPortal'
+);
 import { RadarQuickSwitcher } from './components/RadarQuickSwitcher';
 
 type PortalTab =
@@ -93,7 +97,8 @@ type PortalTab =
   | 'partner'
   | 'partner-landing'
   | 'onboarding'
-  | 'kds';
+  | 'kds'
+  | 'driver';
 
 function getInitialStoreSync(targetSlug?: string | null): Store | null {
   if (typeof window === 'undefined') return null;
@@ -329,7 +334,38 @@ function parseRouteParams() {
     };
   }
 
-  // 7. Check Subpaths like /:slug/pos, /:slug/admin, /:slug/cashier, /:slug/kds
+  // 6.6. Check Driver Portal Route (/driver, portal=driver, #driver, #-driver)
+  const isDriverPath =
+    pathname === '/driver' ||
+    pathname === '/driver/' ||
+    portalParam === 'driver' ||
+    rawHash === 'driver' ||
+    rawHash.endsWith('-driver');
+  if (isDriverPath) {
+    let resolvedDriverSlug = slugParam || (rawHash.endsWith('-driver') ? rawHash.replace(/-driver$/, '') : null);
+    if (!resolvedDriverSlug) {
+      try {
+        const rawAuth = localStorage.getItem('radar_unified_auth_user');
+        if (rawAuth) {
+          const parsed = JSON.parse(rawAuth);
+          if (parsed && (parsed.storeSlug || parsed.storeId)) {
+            resolvedDriverSlug = parsed.storeSlug || parsed.storeId;
+          }
+        }
+        if (!resolvedDriverSlug) {
+          resolvedDriverSlug = localStorage.getItem('radar_last_store_slug') || 'demo-cafe';
+        }
+      } catch {}
+    }
+    return {
+      portal: 'driver' as const,
+      isPreview: previewParam,
+      storeSlug: resolvedDriverSlug,
+      partnerSlug: null,
+    };
+  }
+
+  // 7. Check Subpaths like /:slug/pos, /:slug/admin, /:slug/cashier, /:slug/kds, /:slug/driver
   const pathSegments = pathname.split('/').filter(Boolean);
   const hashSegments = rawHash ? rawHash.split('/').filter(Boolean) : [];
   const effectiveSegments = pathSegments.length >= 2 ? pathSegments : hashSegments.length >= 2 ? hashSegments : [];
@@ -356,6 +392,14 @@ function parseRouteParams() {
     if (secondSeg === 'kds' || secondSeg === 'kitchen') {
       return {
         portal: 'kds' as const,
+        isPreview: previewParam,
+        storeSlug: firstSeg,
+        partnerSlug: null,
+      };
+    }
+    if (secondSeg === 'driver') {
+      return {
+        portal: 'driver' as const,
         isPreview: previewParam,
         storeSlug: firstSeg,
         partnerSlug: null,
@@ -392,6 +436,7 @@ function parseRouteParams() {
     'cashier',
     'kds',
     'kitchen',
+    'driver',
     'dashboard',
     'app',
     'super-admin',
@@ -1050,12 +1095,26 @@ export function App() {
             </div>
           )}
 
+          {activeTab === 'driver' && store && (
+            <div className="fixed inset-0 z-50 bg-slate-950 overflow-y-auto">
+              <DriverPortal
+                store={store}
+                activeBranch={null}
+                onClose={() => {
+                  const url = new URL(window.location.origin + '/' + store.slug);
+                  window.location.href = url.toString();
+                }}
+              />
+            </div>
+          )}
+
           {activeTab !== 'super-admin' &&
             activeTab !== 'join' &&
             activeTab !== 'partner' &&
             activeTab !== 'partner-landing' &&
             activeTab !== 'onboarding' &&
             activeTab !== 'kds' &&
+            activeTab !== 'driver' &&
             (!store || !store.id) && (
               <div className="min-h-[60vh] flex items-center justify-center p-4">
                 <div className="max-w-md w-full p-8 rounded-3xl bg-slate-900/95 border border-slate-800 text-center space-y-5 shadow-2xl">

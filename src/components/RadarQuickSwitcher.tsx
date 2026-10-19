@@ -105,6 +105,10 @@ export const RadarQuickSwitcher: React.FC<RadarQuickSwitcherProps> = ({
         return { label: 'كاشير المحل (POS)', icon: '⚡', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' };
       case 'customer':
         return { label: 'محفظة الزبون (PWA)', icon: '📱', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' };
+      case 'driver':
+        return { label: 'بوابة كابتن التوصيل 🛵', icon: '🛵', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
+      case 'kds':
+        return { label: 'شاشة المطبخ (KDS)', icon: '👨‍🍳', color: 'bg-orange-500/20 text-orange-400 border-orange-500/30' };
       case 'onboarding':
         return { label: 'معالج التأسيس', icon: '🚀', color: 'bg-rose-500/20 text-rose-400 border-rose-500/30' };
       default:
@@ -278,6 +282,32 @@ export const RadarQuickSwitcher: React.FC<RadarQuickSwitcherProps> = ({
               >
                 <span className="text-base">💼</span>
                 <span className="text-[10px] font-bold">لوحة التاجر</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              <button
+                disabled={!selectedStoreSlug}
+                onClick={() => {
+                  setIsOpen(false);
+                  window.location.href = `${window.location.origin}/?store=${selectedStoreSlug}&portal=driver`;
+                }}
+                className="p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-amber-500/50 disabled:opacity-40 text-slate-300 hover:text-amber-400 text-center transition flex flex-col items-center gap-1"
+              >
+                <span className="text-base">🛵</span>
+                <span className="text-[10px] font-bold">كابتن التوصيل</span>
+              </button>
+
+              <button
+                disabled={!selectedStoreSlug}
+                onClick={() => {
+                  setIsOpen(false);
+                  window.location.href = `${window.location.origin}/${selectedStoreSlug}/kds`;
+                }}
+                className="p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-orange-500/50 disabled:opacity-40 text-slate-300 hover:text-orange-400 text-center transition flex flex-col items-center gap-1"
+              >
+                <span className="text-base">👨‍🍳</span>
+                <span className="text-[10px] font-bold">شاشة المطبخ</span>
               </button>
             </div>
           </div>

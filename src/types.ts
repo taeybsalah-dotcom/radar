@@ -620,6 +620,17 @@ export interface WhatsAppOrderPayload {
     specialist_name?: string;
     general_notes?: string;
   };
+  branch_id?: string;
+  branch_name?: string;
+  driver_id?: string;
+  driver_name?: string;
+  driver_phone?: string;
+  delivery_status?: 'unassigned' | 'assigned' | 'picked_up' | 'delivered' | 'failed';
+  driver_assigned_at?: string;
+  driver_picked_up_at?: string;
+  delivered_at?: string;
+  driver_collected_amount?: number;
+  driver_payment_method?: 'cash' | 'card' | 'online_link';
   created_at: string;
 }
 
@@ -1362,8 +1373,42 @@ export interface DiningTable {
   updated_at: string;
 }
 
+// ==========================================
+// 🛵 أسطول وسائقي التوصيل الميداني (Driver Fleet)
+// ==========================================
+export type DriverVehicleType = 'motorcycle' | 'car' | 'bicycle' | 'van';
+export type DriverWorkStatus = 'available' | 'delivering' | 'off_duty';
+export type DeliveryOrderStatus = 'unassigned' | 'assigned' | 'picked_up' | 'delivered' | 'failed';
 
+export interface StoreDriver {
+  id: string;
+  store_id: string;
+  branch_id: string; // الفرع التابع له السائق إلزامياً
+  branch_name?: string;
+  name: string;
+  phone: string;
+  vehicle_type: DriverVehicleType;
+  plate_number?: string;
+  pin_code?: string; // رمز دخول سريع 4 أرقام
+  is_active: boolean;
+  status: DriverWorkStatus; // متاح، يوصل، غير متاح
+  commission_per_order?: number; // عمولة توصيل إضافية للسائق إن وجدت
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
 
-
-
-
+export interface DriverShiftSettlement {
+  driver_id: string;
+  driver_name: string;
+  branch_id: string;
+  store_id: string;
+  date: string;
+  delivered_orders_count: number;
+  total_cash_collected: number;
+  total_card_collected: number;
+  total_online_collected: number;
+  total_delivery_fees: number;
+  settled: boolean;
+  settled_at?: string;
+}

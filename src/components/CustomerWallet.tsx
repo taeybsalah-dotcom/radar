@@ -68,6 +68,8 @@ import {
   Trash2,
   Send,
   MessageCircle,
+  Phone,
+  MessageSquare,
   Search,
   Filter,
   RotateCcw,
@@ -6787,6 +6789,53 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-xl transition-all duration-500 ${step >= 3 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : 'bg-slate-800 border-2 border-slate-700'}`}>✅</div>
               <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">{fulfillmentType === 'delivery' ? 'في الطريق' : 'جاهز للاستلام'}</span>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🛵 Assigned Driver Live Tracking Card */}
+      {order.driver_name && isLive && (
+        <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/15 to-amber-600/20 border border-amber-500/40 text-amber-200 shadow-lg flex items-center justify-between gap-3 animate-fade-in my-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl shrink-0">
+              🛵
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-black text-white">{order.driver_name}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black">
+                  {order.delivery_status === 'picked_up' ? 'في الطريق إليك 🛵' : 'كابتن التوصيل'}
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-300/80 font-mono mt-0.5 truncate">
+                {order.driver_phone}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {order.driver_phone && (
+              <a
+                href={`tel:${order.driver_phone}`}
+                className="w-8 h-8 rounded-xl bg-slate-900 border border-amber-500/40 text-amber-400 flex items-center justify-center hover:bg-amber-500 hover:text-slate-950 transition shadow"
+                title="اتصال بالسائق"
+              >
+                <Phone className="w-4 h-4" />
+              </a>
+            )}
+            {order.driver_phone && (
+              <a
+                href={`https://wa.me/${order.driver_phone.replace(/^0/, '966').replace(/\D/g, '')}?text=${encodeURIComponent(
+                  `مرحباً كابتن ${order.driver_name}، أنا صاحب الطلب #${orderNumber}`
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-8 h-8 rounded-xl bg-slate-900 border border-emerald-500/40 text-emerald-400 flex items-center justify-center hover:bg-emerald-500 hover:text-slate-950 transition shadow"
+                title="محادثة واتساب"
+              >
+                <MessageSquare className="w-4 h-4" />
+              </a>
+            )}
           </div>
         </div>
       )}
