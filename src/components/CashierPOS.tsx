@@ -57,7 +57,9 @@ import {
   Scissors,
   ExternalLink,
   Copy,
+  MessageSquare,
 } from 'lucide-react';
+import { DriverService } from '../lib/driverService';
 
 interface CashierPOSProps {
   store: Store;
@@ -432,6 +434,55 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   activeBranchIdRef.current = activeBranchId;
   const isGMModeRef = useRef<boolean>(isGeneralManager);
   isGMModeRef.current = isGeneralManager;
+
+  // 🛵 Branch Delivery Drivers
+  const branchDrivers = useMemo(() => {
+    if (!store?.id) return [];
+    return DriverService.getDrivers(store.id, activeBranchId);
+  }, [store?.id, activeBranchId, liveOrders]);
+
+  const handleAssignDriver = (order: any, driverId: string) => {
+    if (!store?.id) return;
+    const orderId = order.id || order.order_id || order.order_number;
+    const updated = DriverService.assignOrderToDriver(store.id, orderId, driverId);
+    if (updated) {
+      setLiveOrders((prev) =>
+        prev.map((o) =>
+          o.id === order.id || o.order_id === order.id || o.order_number === order.order_number
+            ? { ...o, ...updated, driver_id: driverId, driver_name: updated.driver_name, driver_phone: updated.driver_phone, delivery_status: 'assigned' }
+            : o
+        )
+      );
+      playBeepSound('success');
+    }
+  };
+
+  const handleNotifyDriverWhatsApp = (order: any) => {
+    const driverPhone = order.driver_phone;
+    if (!driverPhone) return;
+    const cleanPhone = driverPhone.replace(/^0/, '966').replace(/\D/g, '');
+    const itemsText = Array.isArray(order.items)
+      ? order.items.map((it: any) => `- ${it.quantity || 1}x ${it.catalog_item?.name || it.name || 'صنف'}`).join('\n')
+      : '';
+    const portalUrl = `${window.location.origin}/?store=${encodeURIComponent(store.slug || store.id)}&portal=driver&driver=${order.driver_id || ''}&branch=${order.branch_id || activeBranchId || ''}`;
+
+    const msg = `🛵 *طلب توصيل جديد من ${store.name}*
+رقم الطلب: #${order.order_number || order.id}
+اسم العميل: ${order.customer_name || 'عميل'}
+جوال العميل: ${order.customer_phone || '-'}
+العنوان: ${order.delivery_address || order.fulfillment_details?.delivery_address || 'حسب اللوكيشن'}
+${order.delivery_gps_link || order.fulfillment_details?.delivery_gps_link ? `📍 اللوكيشن: ${order.delivery_gps_link || order.fulfillment_details?.delivery_gps_link}\n` : ''}
+المبلغ المطلوب: ${Number(order.total_price || 0).toFixed(2)} ر.س
+حالة الدفع: ${order.payment_status === 'paid' ? 'مدفوع مسبقاً بالتطبيق ✅' : 'تحصيل عند الباب (كاش/شبكة) 💵'}
+
+📋 *الأصناف:*
+${itemsText}
+
+📲 *افتح تطبيق السائق لتأكيد الاستلام والتسليم:*
+${portalUrl}`;
+
+    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
 
   const handleSwitchBranch = (branchId: string | null) => {
     setSelectedBranchId(branchId || 'ALL');
@@ -2435,6 +2486,74 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
                               )}
                             </div>
                           </div>
+
+                          {/* 🛵 Delivery Driver Dispatch Section */}
+                          {(order.order_type === 'delivery' || order.fulfillment_type === 'delivery') && (
+                            <div className="mb-3 p-3 rounded-2xl bg-slate-950 border border-amber-500/30 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
+                                  <span>🛵</span>
+                                  <span>كابتن التوصيل:</span>
+                                </span>
+                                {order.driver_name ? (
+                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                    {order.delivery_status === 'picked_up' ? 'في الطريق 🛵' : order.delivery_status === 'delivered' ? 'تم التسليم ✅' : 'تم الإسناد ⏳'}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                                    بانتظار إسناد سائق ⏳
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Customer Address & GPS */}
+                              {(order.delivery_address || order.fulfillment_details?.delivery_address) && (
+                                <div className="text-[11px] text-slate-300 flex items-start gap-1">
+                                  <span className="text-slate-500 shrink-0">📍</span>
+                                  <span className="truncate">{order.delivery_address || order.fulfillment_details?.delivery_address}</span>
+                                </div>
+                              )}
+
+                              {/* Driver Select Dropdown & WhatsApp Dispatch */}
+                              {!isDone && !isCancelled && (
+                                <div className="flex items-center gap-1.5 pt-1">
+                                  <select
+                                    value={order.driver_id || ''}
+                                    onChange={(e) => handleAssignDriver(order, e.target.value)}
+                                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                                  >
+                                    <option value="">-- اختر سائق من الفرع --</option>
+                                    {branchDrivers.map((d) => (
+                                      <option key={d.id} value={d.id}>
+                                        {d.name} ({DriverService.getVehicleLabel(d.vehicle_type)}) {d.status === 'available' ? '🟢' : '🟡'}
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  {order.driver_phone && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleNotifyDriverWhatsApp(order)}
+                                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1 shadow"
+                                        title="إشعار السائق بتفاصيل الطلب عبر واتساب"
+                                      >
+                                        <MessageSquare className="w-3.5 h-3.5" />
+                                        <span className="hidden sm:inline">إشعار واتساب</span>
+                                      </button>
+                                      <a
+                                        href={`tel:${order.driver_phone}`}
+                                        className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                                        title="اتصال بالسائق"
+                                      >
+                                        <Phone className="w-3.5 h-3.5" />
+                                      </a>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
 
                           {/* Transfer to POS Cart & Invoice */}
                           {!isDone && !isCancelled && (

@@ -3,7 +3,31 @@ import { LoyaltyEvents } from './events';
 
 const DRIVERS_STORAGE_PREFIX = 'radar_store_drivers_';
 const DRIVER_SETTLEMENTS_PREFIX = 'radar_driver_settlements_';
-const LOCAL_ORDERS_KEY = 'radar_local_store_orders';
+const PRIMARY_ORDERS_KEY = 'radar_local_whatsapp_orders';
+const FALLBACK_ORDERS_KEY = 'radar_local_store_orders';
+
+function getAllStoredOrders(): WhatsAppOrderPayload[] {
+  try {
+    const list1 = JSON.parse(localStorage.getItem(PRIMARY_ORDERS_KEY) || '[]');
+    const list2 = JSON.parse(localStorage.getItem(FALLBACK_ORDERS_KEY) || '[]');
+    const map = new Map<string, WhatsAppOrderPayload>();
+    [...list2, ...list1].forEach((o) => {
+      const key = String(o.order_id || (o as any).id || (o as any).order_number || '');
+      if (key) map.set(key, o);
+    });
+    return Array.from(map.values());
+  } catch {
+    return [];
+  }
+}
+
+function saveAllStoredOrders(orders: WhatsAppOrderPayload[]): void {
+  try {
+    const json = JSON.stringify(orders);
+    localStorage.setItem(PRIMARY_ORDERS_KEY, json);
+    localStorage.setItem(FALLBACK_ORDERS_KEY, json);
+  } catch {}
+}
 
 export const INITIAL_DEMO_DRIVERS: StoreDriver[] = [
   {
@@ -167,8 +191,7 @@ export class DriverService {
     if (!driver) return null;
 
     try {
-      const rawOrders = localStorage.getItem(LOCAL_ORDERS_KEY);
-      const orders: WhatsAppOrderPayload[] = rawOrders ? JSON.parse(rawOrders) : [];
+      const orders = getAllStoredOrders();
       const orderIdx = orders.findIndex(
         (o) => o.order_id === orderId || (o as any).id === orderId || (o as any).order_number === orderId
       );
@@ -180,7 +203,7 @@ export class DriverService {
         orders[orderIdx].delivery_status = 'assigned';
         orders[orderIdx].driver_assigned_at = new Date().toISOString();
 
-        localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(orders));
+        saveAllStoredOrders(orders);
 
         // إشعار فوري وتحديث الحالة
         LoyaltyEvents.emit({
@@ -210,8 +233,7 @@ export class DriverService {
     driverId: string
   ): WhatsAppOrderPayload | null {
     try {
-      const rawOrders = localStorage.getItem(LOCAL_ORDERS_KEY);
-      const orders: WhatsAppOrderPayload[] = rawOrders ? JSON.parse(rawOrders) : [];
+      const orders = getAllStoredOrders();
       const orderIdx = orders.findIndex(
         (o) => o.order_id === orderId || (o as any).id === orderId || (o as any).order_number === orderId
       );
@@ -223,7 +245,7 @@ export class DriverService {
           orders[orderIdx].status = 'ready'; // أو جاري التوصيل
         }
 
-        localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(orders));
+        saveAllStoredOrders(orders);
 
         LoyaltyEvents.emit({
           type: 'ORDER_STATUS_UPDATED',
@@ -253,8 +275,7 @@ export class DriverService {
     notes?: string
   ): WhatsAppOrderPayload | null {
     try {
-      const rawOrders = localStorage.getItem(LOCAL_ORDERS_KEY);
-      const orders: WhatsAppOrderPayload[] = rawOrders ? JSON.parse(rawOrders) : [];
+      const orders = getAllStoredOrders();
       const orderIdx = orders.findIndex(
         (o) => o.order_id === orderId || (o as any).id === orderId || (o as any).order_number === orderId
       );
@@ -274,7 +295,7 @@ export class DriverService {
           };
         }
 
-        localStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(orders));
+        saveAllStoredOrders(orders);
 
         // تسجيل العملية في عهدة السائق اليومية
         this.recordSettlementTransaction(storeId, driverId, paymentMethod, collectedAmount, orders[orderIdx].delivery_fee || 0);
@@ -315,13 +336,12 @@ export class DriverService {
     completedToday: WhatsAppOrderPayload[];
   } {
     try {
-      const rawOrders = localStorage.getItem(LOCAL_ORDERS_KEY);
-      const orders: WhatsAppOrderPayload[] = rawOrders ? JSON.parse(rawOrders) : [];
+      const orders = getAllStoredOrders();
       const todayStr = new Date().toISOString().split('T')[0];
 
       // فلترة طلبات التوصيل للفرع المحدد
       const branchOrders = orders.filter((o) => {
-        const isDelivery = o.fulfillment_type === 'delivery';
+        const isDelivery = o.fulfillment_type === 'delivery' || (o as any).order_type === 'delivery';
         const matchBranch = !branchId || branchId === 'ALL' || !o.branch_id || o.branch_id === branchId;
         return isDelivery && matchBranch;
       });
