@@ -204,6 +204,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [selectedThemePreset, setSelectedThemePreset] = useState<string>(
     currentStore?.theme_preset || ''
   );
+  const isDarkTheme = themeMode === 'dark';
+  const isWarmTheme = themeMode === 'warm_cream';
   const [pointsPerRiyal, setPointsPerRiyal] = useState<number>(currentStore?.points_per_riyal || 1.0);
   const [storeLogoUrl, setStoreLogoUrl] = useState<string>(currentStore?.logo_url || '');
   const [logoStats, setLogoStats] = useState<CompressionResult | null>(null);
@@ -3192,11 +3194,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       )}
 
       {/* 👑 Executive Command Header */}
-      <div className="relative overflow-hidden rounded-3xl bg-slate-900/90 border border-slate-800 p-5 sm:p-6 shadow-2xl backdrop-blur-xl">
+      <div className={`relative overflow-hidden rounded-3xl border p-5 sm:p-6 shadow-2xl backdrop-blur-xl transition-colors ${
+        isDarkTheme
+          ? 'bg-slate-900/90 border-slate-800'
+          : isWarmTheme
+          ? 'bg-[#FAF6F0] border-[#EFE6D8]'
+          : 'bg-white border-slate-200 shadow-sm'
+      }`}>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
           {/* Manager & Store Info */}
           <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
-            <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center shadow-inner shrink-0 overflow-hidden">
+            <div className={`w-12 h-12 rounded-2xl border flex items-center justify-center shadow-inner shrink-0 overflow-hidden ${
+              isDarkTheme ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-100 border-slate-200'
+            }`}>
               {store.logo_url ? (
                 <img
                   src={store.logo_url}
@@ -3212,24 +3222,28 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
             <div>
               <div className="flex items-center space-x-2 rtl:space-x-reverse flex-wrap gap-y-1">
-                <h2 className="text-base sm:text-lg font-bold text-white">
+                <h2 className={`text-base sm:text-lg font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                   أهلاً بك، {authenticatedAdmin.name}
                 </h2>
-                <span className="text-[10px] font-semibold px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${
+                  isDarkTheme ? 'bg-slate-800 text-slate-300 border-slate-700' : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}>
                   مدير المتجر المعتمد
                 </span>
                 {store.custom_domain && (
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                    isDarkTheme ? 'bg-slate-800 text-slate-300 border-slate-700' : 'bg-slate-100 text-slate-700 border-slate-200'
+                  }`}>
                     🌐 {store.custom_domain}
                   </span>
                 )}
               </div>
-              <p className="text-xs text-slate-400 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
-                <span>لوحة القيادة التنفيذية: <strong className="text-slate-200 font-sans">{store.name}</strong> (/{store.slug})</span>
+              <p className={`text-xs font-mono mt-0.5 flex items-center gap-1.5 flex-wrap ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                <span>لوحة القيادة التنفيذية: <strong className={`font-sans ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>{store.name}</strong> (/{store.slug})</span>
                 {(store.store_code || store.id) && (
                   <span
                     title="كود المتجر التعريفي السريع"
-                    className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 font-extrabold tracking-wider"
+                    className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-500 font-extrabold tracking-wider"
                   >
                     كود المتجر: {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
                   </span>
@@ -3249,9 +3263,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             <button
               type="button"
               onClick={() => setShowQuickLinksModal(true)}
-              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 transition flex items-center space-x-1.5 rtl:space-x-reverse shadow-md shadow-amber-500/5 active:scale-95"
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition flex items-center space-x-1.5 rtl:space-x-reverse shadow-md active:scale-95 ${
+                isDarkTheme
+                  ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/40 shadow-amber-500/5'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+              }`}
             >
-              <Share2 className="w-3.5 h-3.5 text-amber-400" />
+              <Share2 className="w-3.5 h-3.5 text-amber-500" />
               <span>روابط ومشاركة المتجر 🔗</span>
             </button>
 
@@ -3260,15 +3278,23 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 const plainText = `مرحباً بك في ${store.name} ⚡\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${posUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
                 window.open(`https://wa.me/?text=${encodeURIComponent(plainText)}`, '_blank');
               }}
-              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-emerald-950/40 text-slate-300 hover:text-emerald-400 border border-slate-700/80 hover:border-emerald-500/40 font-semibold text-xs flex items-center space-x-1.5 rtl:space-x-reverse transition active:scale-95"
+              className={`px-3.5 py-2 rounded-xl border font-semibold text-xs flex items-center space-x-1.5 rtl:space-x-reverse transition active:scale-95 ${
+                isDarkTheme
+                  ? 'bg-slate-800/90 hover:bg-emerald-950/40 text-slate-300 hover:text-emerald-400 border-slate-700/80 hover:border-emerald-500/40'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 hover:text-emerald-900 border-emerald-200'
+              }`}
             >
-              <Send className="w-3.5 h-3.5 text-emerald-400" />
+              <Send className="w-3.5 h-3.5 text-emerald-500" />
               <span className="hidden sm:inline">واتساب</span>
             </button>
 
             <button
               onClick={handleLogout}
-              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-red-950/60 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/40 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition active:scale-95"
+              className={`px-3.5 py-2 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition active:scale-95 ${
+                isDarkTheme
+                  ? 'bg-slate-800/90 hover:bg-red-950/60 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/40'
+                  : 'bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 border-slate-200 hover:border-red-200'
+              }`}
             >
               <LogOut className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">تسجيل الخروج</span>
@@ -3549,7 +3575,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             </div>
           ) : (
             /* ⬅️ Focused Active Workspace Navigation Header (When a tile is open) */
-            <div className="rounded-2xl p-3.5 sm:p-4 bg-slate-900/95 border border-slate-800 shadow-xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-2 z-30 animate-fade-in">
+            <div className={`rounded-2xl p-3.5 sm:p-4 border shadow-xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-2 z-30 animate-fade-in transition-colors ${
+              isDarkTheme
+                ? 'bg-slate-900/95 border-slate-800 text-slate-100'
+                : isWarmTheme
+                ? 'bg-[#FAF6F0]/95 border-[#EFE6D8] text-[#2A1F17]'
+                : 'bg-white/95 border-slate-200 text-slate-900'
+            }`}>
               {/* Back to Hub Button & Section Title */}
               <div className="flex items-center gap-3 flex-wrap min-w-0">
                 <button
@@ -3564,7 +3596,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   <span>العودة للوحة الرئيسية (كافة الأقسام)</span>
                 </button>
 
-                <div className="h-6 w-px bg-slate-800 hidden sm:block" />
+                <div className={`h-6 w-px hidden sm:block ${isDarkTheme ? 'bg-slate-800' : 'bg-slate-200'}`} />
 
                 {/* Current Section Title & Icon */}
                 {currentTabConfig && (
@@ -3574,11 +3606,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm sm:text-base font-black text-white truncate">
+                        <h3 className={`text-sm sm:text-base font-black truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                           {currentTabConfig.label}
                         </h3>
                         {currentTabConfig.badge && (
-                          <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-amber-300 shrink-0">
+                          <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                            isDarkTheme ? 'bg-slate-800 border-slate-700 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
+                          }`}>
                             {currentTabConfig.badge}
                           </span>
                         )}
@@ -3590,11 +3624,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
               {/* Quick Jump Dropdown & Close X Button */}
               <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                <span className="text-[11px] text-slate-400 hidden lg:inline font-bold">انتقال سريع:</span>
+                <span className={`text-[11px] hidden lg:inline font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>انتقال سريع:</span>
                 <select
                   value={activeTab}
                   onChange={(e) => setActiveTab(e.target.value as AdminTab)}
-                  className="bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-200 text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-amber-500 transition cursor-pointer"
+                  className={`text-xs font-bold rounded-xl px-3 py-2 outline-none border transition cursor-pointer ${
+                    isDarkTheme
+                      ? 'bg-slate-950 border-slate-800 hover:border-slate-700 text-slate-200 focus:border-amber-500'
+                      : 'bg-white border-slate-200 hover:border-slate-300 text-slate-800 focus:border-amber-500 shadow-sm'
+                  }`}
                 >
                   <option value="hub">⬅️ لوحة الأقسام (الرئيسية)</option>
                   {tabsConfig.map((t) => (
@@ -3608,7 +3646,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   type="button"
                   onClick={() => setActiveTab('hub')}
                   title="إغلاق القسم والعودة للرئيسية (X)"
-                  className="w-8 h-8 rounded-xl bg-slate-800/90 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-700/80 hover:border-red-500/40 flex items-center justify-center transition"
+                  className={`w-8 h-8 rounded-xl border flex items-center justify-center transition ${
+                    isDarkTheme
+                      ? 'bg-slate-800/90 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border-slate-700/80 hover:border-red-500/40'
+                      : 'bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-600 border-slate-200 hover:border-red-200'
+                  }`}
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -7104,7 +7146,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </div>
                 ) : (
                   /* ⬅️ Focused Active Settings Workspace Header */
-                  <div className="rounded-2xl p-3.5 sm:p-4 bg-slate-900/95 border border-slate-800 shadow-xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-2 z-20 animate-fade-in">
+                  <div className={`rounded-2xl p-3.5 sm:p-4 border shadow-xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-2 z-20 animate-fade-in transition-colors ${
+                    isDarkTheme
+                      ? 'bg-slate-900/95 border-slate-800 text-slate-100'
+                      : isWarmTheme
+                      ? 'bg-[#FAF6F0]/95 border-[#EFE6D8] text-[#2A1F17]'
+                      : 'bg-white/95 border-slate-200 text-slate-900'
+                  }`}>
                     <div className="flex items-center gap-3 flex-wrap min-w-0">
                       <button
                         type="button"
@@ -7118,7 +7166,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         <span>العودة لقائمة الإعدادات (كافة الأقسام)</span>
                       </button>
 
-                      <div className="h-6 w-px bg-slate-800 hidden sm:block" />
+                      <div className={`h-6 w-px hidden sm:block ${isDarkTheme ? 'bg-slate-800' : 'bg-slate-200'}`} />
 
                       {currentSettingsConfig && (
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -7126,7 +7174,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             <currentSettingsConfig.icon className="w-4 h-4" />
                           </div>
                           <div className="min-w-0">
-                            <h3 className="text-sm sm:text-base font-black text-white truncate">
+                            <h3 className={`text-sm sm:text-base font-black truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                               {currentSettingsConfig.label}
                             </h3>
                           </div>
@@ -7135,11 +7183,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     </div>
 
                     <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                      <span className="text-[11px] text-slate-400 hidden lg:inline font-bold">انتقال سريع:</span>
+                      <span className={`text-[11px] hidden lg:inline font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>انتقال سريع:</span>
                       <select
                         value={settingsSection}
                         onChange={(e) => setSettingsSection(e.target.value as SettingsSection)}
-                        className="bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-200 text-xs font-bold rounded-xl px-3 py-2 outline-none focus:border-amber-500 transition cursor-pointer"
+                        className={`text-xs font-bold rounded-xl px-3 py-2 outline-none border transition cursor-pointer ${
+                          isDarkTheme
+                            ? 'bg-slate-950 border-slate-800 hover:border-slate-700 text-slate-200 focus:border-amber-500'
+                            : 'bg-white border-slate-200 hover:border-slate-300 text-slate-800 focus:border-amber-500 shadow-sm'
+                        }`}
                       >
                         <option value="hub">⬅️ لوحة الإعدادات (الرئيسية)</option>
                         {settingsSectionsConfig.map((s) => (
@@ -7153,7 +7205,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         type="button"
                         onClick={() => setSettingsSection('hub')}
                         title="إغلاق والعودة للإعدادات (X)"
-                        className="w-8 h-8 rounded-xl bg-slate-800/90 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-700/80 hover:border-red-500/40 flex items-center justify-center transition"
+                        className={`w-8 h-8 rounded-xl border flex items-center justify-center transition ${
+                          isDarkTheme
+                            ? 'bg-slate-800/90 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border-slate-700/80 hover:border-red-500/40'
+                            : 'bg-slate-100 hover:bg-red-50 text-slate-500 hover:text-red-600 border-slate-200 hover:border-red-200'
+                        }`}
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -7168,15 +7224,23 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           {/* 🎨 1. SUB-SECTION: هوية ومظهر المتجر (Branding) */}
           {/* ======================================================== */}
           {settingsSection === 'branding' && (
-            <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/80 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className={`rounded-3xl p-6 sm:p-8 border space-y-6 animate-fade-in shadow-xl transition-colors ${
+              isDarkTheme
+                ? 'bg-slate-900/80 border-slate-800'
+                : isWarmTheme
+                ? 'bg-[#FDFBF7] border-[#EFE6D8]'
+                : 'bg-white border-slate-200'
+            }`}>
+              <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b ${
+                isDarkTheme ? 'border-slate-800' : isWarmTheme ? 'border-[#EFE6D8]' : 'border-slate-200'
+              }`}>
                 <div className="flex items-center space-x-3 rtl:space-x-reverse">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-500 shadow-sm">
                     <Palette className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-white">هوية ومظهر المتجر والشعار</h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <h3 className={`text-lg font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>هوية ومظهر المتجر والشعار</h3>
+                    <p className={`text-xs mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                       تعديل اسم المتجر، ألوان الهوية، الشعار الرسمي، ومعرض صور واجهة العميل
                     </p>
                   </div>
@@ -7184,7 +7248,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                 <a
                   href={`/merchant/onboarding?store_id=${store.id}`}
-                  className="px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-bold transition flex items-center gap-1.5 self-start md:self-auto"
+                  className="px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-500 text-xs font-bold transition flex items-center gap-1.5 self-start md:self-auto"
                 >
                   <span>معالج تهيئة المتجر 🚀</span>
                 </a>
@@ -7192,38 +7256,46 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
               <form onSubmit={handleSaveLoyaltySettings} className="grid grid-cols-1 md:grid-cols-12 gap-6">
                 {/* Store Identifiers Banner (Unified UUID & Short Code) */}
-                <div className="md:col-span-12 p-4 rounded-2xl bg-slate-950/80 border border-slate-800/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className={`md:col-span-12 p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-colors ${
+                  isDarkTheme ? 'bg-slate-950/80 border-slate-800/80' : isWarmTheme ? 'bg-white border-[#EFE6D8] shadow-sm' : 'bg-white border-slate-200 shadow-sm'
+                }`}>
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-sm">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-500 font-black text-sm">
                       #
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-white">كود المتجر التعريفي (Store Code):</span>
-                        <span className="text-xs font-mono font-black px-2.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40 tracking-wider">
+                        <span className={`text-xs font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>كود المتجر التعريفي (Store Code):</span>
+                        <span className="text-xs font-mono font-black px-2.5 py-0.5 rounded-lg bg-amber-500/20 text-amber-500 border border-amber-500/40 tracking-wider">
                           {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
+                      <p className={`text-[11px] mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                         كود مختصر وسهل للتعريف السريع بالمتجر وربط الكاشير والفروع.
                       </p>
                     </div>
                   </div>
-                  <div className="text-left sm:text-right bg-slate-900/60 px-3 py-1.5 rounded-xl border border-slate-800">
+                  <div className={`text-left sm:text-right px-3 py-1.5 rounded-xl border ${
+                    isDarkTheme ? 'bg-slate-900/60 border-slate-800' : 'bg-slate-50 border-slate-200'
+                  }`}>
                     <span className="text-[10px] text-slate-500 block font-sans">المعرف البرمجي الموحد (UUID):</span>
-                    <span className="text-[10px] font-mono text-slate-400 select-all font-bold">{store.id}</span>
+                    <span className={`text-[10px] font-mono select-all font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-700'}`}>{store.id}</span>
                   </div>
                 </div>
 
                 {/* Store Name (Editable) */}
                 <div className="md:col-span-6 space-y-1.5">
-                  <label className="text-xs font-medium text-slate-300 block">اسم المتجر / العلامة التجارية</label>
+                  <label className={`text-xs font-medium block ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>اسم المتجر / العلامة التجارية</label>
                   <input
                     type="text"
                     value={storeName}
                     onChange={(e) => setStoreName(e.target.value)}
                     placeholder="اسم المتجر"
-                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-3 text-sm font-bold text-white outline-none transition"
+                    className={`w-full border rounded-2xl px-4 py-3 text-sm font-bold outline-none transition ${
+                      isDarkTheme
+                        ? 'bg-slate-950 border-slate-800 focus:border-amber-400 text-white'
+                        : 'bg-white border-slate-200 focus:border-amber-500 text-slate-900 shadow-sm'
+                    }`}
                     required
                   />
                 </div>
@@ -7231,13 +7303,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 {/* Store Slug (Locked & Read-only) */}
                 <div className="md:col-span-6 space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-medium text-slate-300">الاسم التعريفي بالرابط (Slug)</label>
-                    <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1 font-mono">
-                      <Lock className="w-3 h-3 text-amber-400" />
+                    <label className={`text-xs font-medium ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الاسم التعريفي بالرابط (Slug)</label>
+                    <span className="text-[10px] text-amber-500 font-bold flex items-center gap-1 font-mono">
+                      <Lock className="w-3 h-3 text-amber-500" />
                       <span>مقفل (التحكم من لوحة المالك)</span>
                     </span>
                   </div>
-                  <div className="w-full bg-slate-950/70 border border-slate-800 rounded-2xl px-4 py-3 text-xs font-mono text-slate-300 flex items-center justify-between select-all" dir="ltr">
+                  <div className={`w-full border rounded-2xl px-4 py-3 text-xs font-mono flex items-center justify-between select-all ${
+                    isDarkTheme ? 'bg-slate-950/70 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-800'
+                  }`} dir="ltr">
                     <span>{store.slug}</span>
                     <span className="text-[10px] text-slate-500 font-sans">معتمد</span>
                   </div>
@@ -7247,18 +7321,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 </div>
 
                 {/* Custom Domain (Locked & Read-only) */}
-                <div className="md:col-span-12 space-y-1.5 p-4 rounded-2xl bg-slate-950/80 border border-slate-800">
+                <div className={`md:col-span-12 space-y-1.5 p-4 rounded-2xl border ${
+                  isDarkTheme ? 'bg-slate-950/80 border-slate-800' : isWarmTheme ? 'bg-white border-[#EFE6D8] shadow-sm' : 'bg-white border-slate-200 shadow-sm'
+                }`}>
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-200 flex items-center space-x-1.5 rtl:space-x-reverse">
+                    <label className={`text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
                       <Globe className="w-4 h-4 text-slate-400" />
                       <span>الدومين المخصص لمتجرك (Custom Domain):</span>
                     </label>
-                    <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1 font-mono">
-                      <Lock className="w-3 h-3 text-amber-400" />
+                    <span className="text-[10px] text-amber-500 font-bold flex items-center gap-1 font-mono">
+                      <Lock className="w-3 h-3 text-amber-500" />
                       <span>White-Label (التحكم من لوحة المالك)</span>
                     </span>
                   </div>
-                  <div className="w-full bg-slate-900/70 border border-slate-800 rounded-xl px-4 py-2.5 text-xs font-mono text-white flex items-center justify-between mt-1">
+                  <div className={`w-full border rounded-xl px-4 py-2.5 text-xs font-mono flex items-center justify-between mt-1 ${
+                    isDarkTheme ? 'bg-slate-900/70 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'
+                  }`}>
                     <span>{store.custom_domain ? `https://${store.custom_domain}` : 'لم يتم ربط دومين خاص (المتجر يعمل على نطاق المنصة الافتراضي)'}</span>
                     <span className="text-[10px] text-slate-400 font-sans">{store.custom_domain ? 'مفعل وموثق ✅' : 'نطاق افتراضي'}</span>
                   </div>
@@ -7270,16 +7348,20 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 {/* ======================================================== */}
                 {/* 🎨 استوديو الهوية ومظهر المنصة المخصص (White-Label Theme Studio) */}
                 {/* ======================================================== */}
-                <div className="md:col-span-12 p-5 rounded-3xl bg-slate-950/90 border border-slate-800 space-y-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+                <div className={`md:col-span-12 p-5 sm:p-6 rounded-3xl border space-y-6 transition-all duration-300 ${
+                  isDarkTheme ? 'bg-slate-950/90 border-slate-800' : isWarmTheme ? 'bg-white border-[#EFE6D8] shadow-sm' : 'bg-white border-slate-200 shadow-sm'
+                }`}>
+                  <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b ${
+                    isDarkTheme ? 'border-slate-800/80' : isWarmTheme ? 'border-[#EFE6D8]' : 'border-slate-200'
+                  }`}>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-base font-black text-white">🎨 استوديو تخصيص مظهر وهوية المنصة</span>
-                        <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                        <span className={`text-base font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>🎨 استوديو تخصيص مظهر وهوية المنصة</span>
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/30 text-[10px] font-bold">
                           White-Label 100%
                         </span>
                       </div>
-                      <p className="text-xs text-slate-400 mt-1">
+                      <p className={`text-xs mt-1 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                         اختر المظهر العام لمنصتك (فاتح ناصع للمطاعم والكافيهات، كريمي دافئ، أو داكن فاخر) مع حرية كاملة في تحديد ألوان الهوية والخلفيات والبطاقات
                       </p>
                     </div>
@@ -7287,7 +7369,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                   {/* 1. Theme Mode Switcher */}
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-200 block">
+                    <label className={`text-xs font-bold block ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
                       1. نمط المظهر العام للمنصة (Theme Mode):
                     </label>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -7304,18 +7386,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         }}
                         className={`p-3.5 rounded-2xl border text-right transition flex items-center justify-between ${
                           themeMode === 'light'
-                            ? 'bg-amber-500/10 border-amber-500 text-white shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/50'
-                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                            ? 'bg-amber-50 border-amber-500 shadow-md ring-2 ring-amber-500/30'
+                            : isDarkTheme
+                            ? 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                            : isWarmTheme
+                            ? 'bg-[#FAF6F0] border-[#EFE6D8] hover:border-[#DFD4C2]'
+                            : 'bg-slate-50 border-slate-200 hover:border-slate-300'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <span className="text-2xl">☀️</span>
                           <div>
-                            <span className="text-xs font-black block text-white">فاتح ناصع عصري (Clean Light)</span>
-                            <span className="text-[10px] text-slate-400 block">مثالي للمطاعم والبرغر والعصائر</span>
+                            <span className={`text-xs font-black block ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>فاتح ناصع عصري (Clean Light)</span>
+                            <span className={`text-[10px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>مثالي للمطاعم والبرغر والعصائر</span>
                           </div>
                         </div>
-                        {themeMode === 'light' && <CheckCircle className="w-4 h-4 text-amber-400 shrink-0" />}
+                        {themeMode === 'light' && <CheckCircle className="w-4 h-4 text-amber-500 shrink-0" />}
                       </button>
 
                       <button
@@ -7331,18 +7417,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         }}
                         className={`p-3.5 rounded-2xl border text-right transition flex items-center justify-between ${
                           themeMode === 'warm_cream'
-                            ? 'bg-amber-500/10 border-amber-500 text-white shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/50'
-                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                            ? 'bg-amber-50 border-amber-500 shadow-md ring-2 ring-amber-500/30'
+                            : isDarkTheme
+                            ? 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                            : isWarmTheme
+                            ? 'bg-[#FAF6F0] border-[#EFE6D8] hover:border-[#DFD4C2]'
+                            : 'bg-slate-50 border-slate-200 hover:border-slate-300'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <span className="text-2xl">☕</span>
                           <div>
-                            <span className="text-xs font-black block text-white">فانيلا وبيج دافئ (Warm Cream)</span>
-                            <span className="text-[10px] text-slate-400 block">مخصص للكافيهات والمخابز المختصة</span>
+                            <span className={`text-xs font-black block ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>فانيلا وبيج دافئ (Warm Cream)</span>
+                            <span className={`text-[10px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>مخصص للكافيهات والمخابز المختصة</span>
                           </div>
                         </div>
-                        {themeMode === 'warm_cream' && <CheckCircle className="w-4 h-4 text-amber-400 shrink-0" />}
+                        {themeMode === 'warm_cream' && <CheckCircle className="w-4 h-4 text-amber-500 shrink-0" />}
                       </button>
 
                       <button
@@ -7358,15 +7448,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         }}
                         className={`p-3.5 rounded-2xl border text-right transition flex items-center justify-between ${
                           themeMode === 'dark'
-                            ? 'bg-amber-500/10 border-amber-500 text-white shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/50'
-                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                            ? 'bg-amber-500/10 border-amber-500 shadow-lg ring-1 ring-amber-500/50'
+                            : isDarkTheme
+                            ? 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                            : isWarmTheme
+                            ? 'bg-[#FAF6F0] border-[#EFE6D8] hover:border-[#DFD4C2]'
+                            : 'bg-slate-50 border-slate-200 hover:border-slate-300'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <span className="text-2xl">🌙</span>
                           <div>
-                            <span className="text-xs font-black block text-white">داكن ملكي (Sleek Dark)</span>
-                            <span className="text-[10px] text-slate-400 block">للمطاعم الفاخرة وسهرات اللاونج</span>
+                            <span className={`text-xs font-black block ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>داكن ملكي (Sleek Dark)</span>
+                            <span className={`text-[10px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>للمطاعم الفاخرة وسهرات اللاونج</span>
                           </div>
                         </div>
                         {themeMode === 'dark' && <CheckCircle className="w-4 h-4 text-amber-400 shrink-0" />}
@@ -7377,10 +7471,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   {/* 2. Ready-Made Industry Presets (1-Click Selector) */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-slate-200 block">
+                      <label className={`text-xs font-bold block ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
                         2. قوالب ألوان جاهزة بضغطة زر واحدة (Curated Presets):
                       </label>
-                      <span className="text-[10px] text-slate-400">اختر قالباً لضبط كافة الألوان المتناسقة فوراً</span>
+                      <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>اختر قالباً لضبط كافة الألوان المتناسقة فوراً</span>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
                       {BRAND_PRESETS.map((preset) => {
@@ -7399,30 +7493,34 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             }}
                             className={`p-3 rounded-2xl border text-right transition flex flex-col justify-between gap-2.5 relative group ${
                               isSelected
-                                ? 'bg-slate-900 border-amber-500 shadow-md ring-1 ring-amber-500'
-                                : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                                ? 'border-amber-500 shadow-md ring-2 ring-amber-500/40 ' + (isDarkTheme ? 'bg-slate-900' : 'bg-amber-50/50')
+                                : isDarkTheme
+                                ? 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                                : isWarmTheme
+                                ? 'bg-[#FAF6F0] border-[#EFE6D8] hover:border-[#DFD4C2]'
+                                : 'bg-slate-50 border-slate-200 hover:border-slate-300'
                             }`}
                           >
                             <div className="flex items-center justify-between w-full">
                               <span className="text-xl">{preset.icon}</span>
                               <div className="flex items-center -space-x-1.5 rtl:space-x-reverse">
                                 <span
-                                  className="w-4 h-4 rounded-full border border-black/30 shadow-sm"
+                                  className="w-4 h-4 rounded-full border border-black/20 shadow-sm"
                                   style={{ backgroundColor: preset.primary_color }}
                                 />
                                 <span
-                                  className="w-4 h-4 rounded-full border border-black/30 shadow-sm"
+                                  className="w-4 h-4 rounded-full border border-black/20 shadow-sm"
                                   style={{ backgroundColor: preset.secondary_color }}
                                 />
                                 <span
-                                  className="w-4 h-4 rounded-full border border-black/30 shadow-sm"
+                                  className="w-4 h-4 rounded-full border border-black/20 shadow-sm"
                                   style={{ backgroundColor: preset.background_color }}
                                 />
                               </div>
                             </div>
                             <div>
-                              <span className="text-[11px] font-bold text-white block truncate">{preset.name}</span>
-                              <span className="text-[9px] text-slate-400 block line-clamp-1">{preset.description}</span>
+                              <span className={`text-[11px] font-bold block truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{preset.name}</span>
+                              <span className={`text-[9px] block line-clamp-1 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>{preset.description}</span>
                             </div>
                             {isSelected && (
                               <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
@@ -7436,8 +7534,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   {/* 3. Detailed Color Pickers */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-2">
                     {/* Primary Color */}
-                    <div className="space-y-1.5 bg-slate-900/70 p-3 rounded-2xl border border-slate-800/80">
-                      <label className="text-[11px] font-bold text-slate-300 block">
+                    <div className={`space-y-1.5 p-3 rounded-2xl border transition-colors ${
+                      isDarkTheme ? 'bg-slate-900/70 border-slate-800/80' : isWarmTheme ? 'bg-[#FAF6F0] border-[#EFE6D8]' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <label className={`text-[11px] font-bold block ${isDarkTheme ? 'text-slate-300' : 'text-slate-800'}`}>
                         اللون الأساسي للعلامة (Primary)
                       </label>
                       <div className="flex items-center space-x-2 rtl:space-x-reverse">
@@ -7448,7 +7548,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             setPrimaryColor(e.target.value);
                             setSelectedThemePreset('');
                           }}
-                          className="w-9 h-9 rounded-xl border border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
+                          className="w-9 h-9 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
                         />
                         <input
                           type="text"
@@ -7457,15 +7557,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             setPrimaryColor(e.target.value);
                             setSelectedThemePreset('');
                           }}
-                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 outline-none uppercase"
+                          className={`flex-1 min-w-0 border rounded-xl px-2.5 py-1.5 text-xs font-mono outline-none uppercase ${
+                            isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-900 focus:border-amber-500'
+                          }`}
                         />
                       </div>
                       <span className="text-[10px] text-slate-500 block">الهيدر والبطاقة والنصوص</span>
                     </div>
 
                     {/* Secondary Color */}
-                    <div className="space-y-1.5 bg-slate-900/70 p-3 rounded-2xl border border-slate-800/80">
-                      <label className="text-[11px] font-bold text-slate-300 block">
+                    <div className={`space-y-1.5 p-3 rounded-2xl border transition-colors ${
+                      isDarkTheme ? 'bg-slate-900/70 border-slate-800/80' : isWarmTheme ? 'bg-[#FAF6F0] border-[#EFE6D8]' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <label className={`text-[11px] font-bold block ${isDarkTheme ? 'text-slate-300' : 'text-slate-800'}`}>
                         لون التمييز والأكشن (Secondary)
                       </label>
                       <div className="flex items-center space-x-2 rtl:space-x-reverse">
@@ -7476,7 +7580,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             setSecondaryColor(e.target.value);
                             setSelectedThemePreset('');
                           }}
-                          className="w-9 h-9 rounded-xl border border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
+                          className="w-9 h-9 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
                         />
                         <input
                           type="text"
@@ -7485,15 +7589,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             setSecondaryColor(e.target.value);
                             setSelectedThemePreset('');
                           }}
-                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 outline-none uppercase"
+                          className={`flex-1 min-w-0 border rounded-xl px-2.5 py-1.5 text-xs font-mono outline-none uppercase ${
+                            isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-900 focus:border-amber-500'
+                          }`}
                         />
                       </div>
                       <span className="text-[10px] text-slate-500 block">النقاط والعروض وأزرار الشراء</span>
                     </div>
 
                     {/* Background Color */}
-                    <div className="space-y-1.5 bg-slate-900/70 p-3 rounded-2xl border border-slate-800/80">
-                      <label className="text-[11px] font-bold text-slate-300 block">
+                    <div className={`space-y-1.5 p-3 rounded-2xl border transition-colors ${
+                      isDarkTheme ? 'bg-slate-900/70 border-slate-800/80' : isWarmTheme ? 'bg-[#FAF6F0] border-[#EFE6D8]' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <label className={`text-[11px] font-bold block ${isDarkTheme ? 'text-slate-300' : 'text-slate-800'}`}>
                         لون خلفية المنصة (Background)
                       </label>
                       <div className="flex items-center space-x-2 rtl:space-x-reverse">
@@ -7504,7 +7612,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             setBackgroundColor(e.target.value);
                             setSelectedThemePreset('');
                           }}
-                          className="w-9 h-9 rounded-xl border border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
+                          className="w-9 h-9 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
                         />
                         <input
                           type="text"
@@ -7513,15 +7621,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             setBackgroundColor(e.target.value);
                             setSelectedThemePreset('');
                           }}
-                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 outline-none uppercase"
+                          className={`flex-1 min-w-0 border rounded-xl px-2.5 py-1.5 text-xs font-mono outline-none uppercase ${
+                            isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-900 focus:border-amber-500'
+                          }`}
                         />
                       </div>
                       <span className="text-[10px] text-slate-500 block">خلفية بوابات العميل والكاشير</span>
                     </div>
 
                     {/* Card Surface Color */}
-                    <div className="space-y-1.5 bg-slate-900/70 p-3 rounded-2xl border border-slate-800/80">
-                      <label className="text-[11px] font-bold text-slate-300 block">
+                    <div className={`space-y-1.5 p-3 rounded-2xl border transition-colors ${
+                      isDarkTheme ? 'bg-slate-900/70 border-slate-800/80' : isWarmTheme ? 'bg-[#FAF6F0] border-[#EFE6D8]' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <label className={`text-[11px] font-bold block ${isDarkTheme ? 'text-slate-300' : 'text-slate-800'}`}>
                         لون البطاقات والأسطح (Card Color)
                       </label>
                       <div className="flex items-center space-x-2 rtl:space-x-reverse">
@@ -7532,7 +7644,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             setCardColor(e.target.value);
                             setSelectedThemePreset('');
                           }}
-                          className="w-9 h-9 rounded-xl border border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
+                          className="w-9 h-9 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
                         />
                         <input
                           type="text"
@@ -7541,7 +7653,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                             setCardColor(e.target.value);
                             setSelectedThemePreset('');
                           }}
-                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 outline-none uppercase"
+                          className={`flex-1 min-w-0 border rounded-xl px-2.5 py-1.5 text-xs font-mono outline-none uppercase ${
+                            isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-white border-slate-200 text-slate-900 focus:border-amber-500'
+                          }`}
                         />
                       </div>
                       <span className="text-[10px] text-slate-500 block">لون بطاقات المنتجات والحاويات</span>
@@ -7649,8 +7763,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 </div>
 
             {/* Store Logo with Auto-Compressor */}
-            <div className="md:col-span-12 space-y-2 p-4 rounded-2xl bg-slate-950 border border-slate-800">
-              <label className="text-xs font-bold text-slate-200 block">
+            <div className={`md:col-span-12 space-y-2 p-4 rounded-2xl border transition-colors ${
+              isDarkTheme ? 'bg-slate-950 border-slate-800' : isWarmTheme ? 'bg-white border-[#EFE6D8] shadow-sm' : 'bg-white border-slate-200 shadow-sm'
+            }`}>
+              <label className={`text-xs font-bold block ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
                 شعار المتجر (Store Logo - مع ضغط ذكي فوري للحجم):
               </label>
 
@@ -7668,7 +7784,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     <img
                       src={storeLogoUrl}
                       alt="Logo Preview"
-                      className="w-16 h-16 rounded-2xl object-cover border border-slate-700 shadow-md bg-slate-950"
+                      className={`w-16 h-16 rounded-2xl object-cover border shadow-md ${
+                        isDarkTheme ? 'border-slate-700 bg-slate-950' : 'border-slate-200 bg-white'
+                      }`}
                     />
                     <button
                       type="button"
@@ -7682,7 +7800,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     </button>
                   </div>
                 ) : (
-                  <div className="w-16 h-16 rounded-2xl bg-slate-900 border-2 border-dashed border-slate-800 flex items-center justify-center text-slate-500 shrink-0">
+                  <div className={`w-16 h-16 rounded-2xl border-2 border-dashed flex items-center justify-center text-slate-400 shrink-0 ${
+                    isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'
+                  }`}>
                     <ImageIcon className="w-6 h-6" />
                   </div>
                 )}
@@ -7691,7 +7811,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isCompressing}
-                  className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold flex items-center space-x-2 rtl:space-x-reverse transition"
+                  className={`py-3 px-4 rounded-xl border text-xs font-semibold flex items-center space-x-2 rtl:space-x-reverse transition ${
+                    isDarkTheme
+                      ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+                      : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-800'
+                  }`}
                 >
                   <Upload className="w-4 h-4 text-slate-400" />
                   <span>{isCompressing ? 'جاري الضغط...' : 'اختر صورة من جهازك'}</span>
@@ -7699,25 +7823,29 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </div>
 
               {logoStats && (
-                <p className="text-[11px] text-emerald-400">
+                <p className="text-[11px] text-emerald-500 font-bold">
                   تم ضغط الصورة بنسبة <strong>{logoStats.savingsPercent}%</strong> (الحجم: {logoStats.compressedSizeKB} KB)
                 </p>
               )}
             </div>
 
             {/* 📸 Showcase Slider / Hero Banners Management */}
-            <div className="md:col-span-12 p-4 sm:p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
+            <div className={`md:col-span-12 p-4 sm:p-5 rounded-2xl border space-y-4 transition-colors ${
+              isDarkTheme ? 'bg-slate-950 border-slate-800' : isWarmTheme ? 'bg-white border-[#EFE6D8] shadow-sm' : 'bg-white border-slate-200 shadow-sm'
+            }`}>
               <div className="flex items-center justify-between">
                 <div>
-                  <h4 className="text-xs font-bold text-slate-200 flex items-center space-x-1.5 rtl:space-x-reverse">
-                    <Sparkles className="w-4 h-4 text-amber-400" />
+                  <h4 className={`text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                    <Sparkles className="w-4 h-4 text-amber-500" />
                     <span>معرض صور وسلايدر واجهة العميل (VIP Showcase Slider):</span>
                   </h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
+                  <p className={`text-[11px] mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                     أضف صور منتجاتك، عباراتك التسويقية، وشارات التميز لتظهر في السلايدر المتحرك أعلى شاشة العميل
                   </p>
                 </div>
-                <span className="text-[11px] bg-slate-900 px-2.5 py-0.5 rounded-full border border-slate-800 text-slate-300 font-mono font-bold">
+                <span className={`text-[11px] px-2.5 py-0.5 rounded-full border font-mono font-bold ${
+                  isDarkTheme ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
+                }`}>
                   {sliderImages.length} شرائح
                 </span>
               </div>
@@ -7848,15 +7976,17 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </div>
             </div>
 
-            <div className="md:col-span-12 flex items-center justify-between pt-3 border-t border-slate-800">
-              <span className="text-xs text-slate-500">
+            <div className={`md:col-span-12 flex items-center justify-between pt-3 border-t ${
+              isDarkTheme ? 'border-slate-800' : isWarmTheme ? 'border-[#EFE6D8]' : 'border-slate-200'
+            }`}>
+              <span className={`text-xs ${isDarkTheme ? 'text-slate-500' : 'text-slate-500'}`}>
                 التغييرات تنعكس فوراً على شاشات الكاشير ومحفظة الزبائن
               </span>
 
               <button
                 type="submit"
                 disabled={updatingSettings || isCompressing}
-                className="py-3 px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-sm flex items-center space-x-2 rtl:space-x-reverse shadow-md transition disabled:opacity-50"
+                className="py-3 px-6 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-sm flex items-center space-x-2 rtl:space-x-reverse shadow-lg shadow-amber-500/25 transition disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
                 <span>{updatingSettings ? 'جاري الحفظ...' : 'حفظ هوية وإعدادات المتجر'}</span>
@@ -7865,8 +7995,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           </form>
 
           {settingsSavedMessage && (
-            <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-slate-200 text-xs font-semibold animate-fade-in flex items-center space-x-2 rtl:space-x-reverse">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <div className={`p-3.5 rounded-2xl border text-xs font-semibold animate-fade-in flex items-center space-x-2 rtl:space-x-reverse ${
+              isDarkTheme
+                ? 'bg-slate-950 border-slate-800 text-slate-200'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-800 shadow-sm'
+            }`}>
+              <ShieldCheck className="w-4 h-4 text-emerald-500" />
               <span>{settingsSavedMessage}</span>
             </div>
           )}
