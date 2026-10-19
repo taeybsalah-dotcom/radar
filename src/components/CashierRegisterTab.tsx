@@ -2721,6 +2721,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         onClose={() => setIsTableSelectorModalOpen(false)}
         selectedTable={tableNumber}
         activeOrders={liveOrders}
+        storeId={store.id}
+        activeBranchId={activeBranch?.id}
         onSelectTable={(tableNum) => {
           setTableNumber(tableNum);
           if (tableNum) setOrderType('dine_in');

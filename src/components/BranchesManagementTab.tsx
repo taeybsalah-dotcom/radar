@@ -22,7 +22,9 @@ import {
   Calendar,
   Save,
   RotateCcw,
+  Utensils,
 } from 'lucide-react';
+import { TablesManagementView } from './merchant/TablesManagementView';
 
 interface BranchesManagementTabProps {
   store: Store;
@@ -35,6 +37,7 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
   staffList,
   onStaffUpdated,
 }) => {
+  const [activeSubTab, setActiveSubTab] = useState<'branches' | 'tables'>('branches');
   const [branches, setBranches] = useState<StoreBranch[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -307,9 +310,42 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-        <div className="flex items-center space-x-3 rtl:space-x-reverse">
+      {/* 🧭 Subtabs: Branches vs Tables */}
+      <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800 w-fit shadow-lg">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('branches')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 ${
+            activeSubTab === 'branches'
+              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>الفروع ومواعيد العمل ({branches.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('tables')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 ${
+            activeSubTab === 'tables'
+              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
+          }`}
+        >
+          <Utensils className="w-4 h-4" />
+          <span>إدارة الصالة والطاولات ورموز QR 🍽️</span>
+        </button>
+      </div>
+
+      {activeSubTab === 'tables' ? (
+        <TablesManagementView store={store} branches={branches} />
+      ) : (
+        <>
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+            <div className="flex items-center space-x-3 rtl:space-x-reverse">
           <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
             <Building2 className="w-6 h-6" />
           </div>
@@ -557,6 +593,8 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
             );
           })}
         </div>
+      )}
+      </>
       )}
 
       {/* ======================================================== */}

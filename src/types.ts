@@ -1340,6 +1340,29 @@ export interface ProximityDistanceResult {
   suggestedLockscreenMessage: string;
 }
 
+// ==========================================
+// 🍽️ إدارة الصالة والطاولات ورموز QR الذكية
+// ==========================================
+export type DiningTableZone = 'singles' | 'families' | 'outdoor' | 'vip' | 'bar' | 'general';
+
+export interface DiningTable {
+  id: string;
+  store_id: string;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  table_number: string; // e.g. "1", "12", "VIP-1"
+  name: string; // e.g. "طاولة 1", "كابينة عوائل 12"
+  zone: DiningTableZone | string;
+  capacity: number; // عدد المقاعد: 2، 4، 6، 8
+  shape?: 'round' | 'square' | 'rectangle';
+  is_active: boolean;
+  notes?: string;
+  qr_code_url?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+
 
 
 

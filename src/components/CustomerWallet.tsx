@@ -412,6 +412,39 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [isCartModalOpen, setIsCartModalOpen] = useState(false);
   const [fulfillmentType, setFulfillmentType] = useState<'dine_in' | 'takeaway' | 'delivery' | 'service_booking'>('dine_in');
   const [tableNumber, setTableNumber] = useState('');
+  const [tableQrBanner, setTableQrBanner] = useState<{ tableNumber: string; branchId?: string } | null>(null);
+
+  // 🍽️ Direct Table QR Detection from URL
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      let detectedTable = searchParams.get('table') || searchParams.get('table_number');
+      let detectedBranch = searchParams.get('branch') || searchParams.get('branch_id');
+
+      if (!detectedTable && window.location.hash.includes('?')) {
+        const hashQuery = window.location.hash.split('?')[1];
+        if (hashQuery) {
+          const hashParams = new URLSearchParams(hashQuery);
+          detectedTable = hashParams.get('table') || hashParams.get('table_number');
+          if (!detectedBranch) detectedBranch = hashParams.get('branch') || hashParams.get('branch_id');
+        }
+      }
+
+      if (detectedTable) {
+        const cleanTable = detectedTable.trim();
+        setTableNumber(cleanTable);
+        setFulfillmentType('dine_in');
+        setTableQrBanner({
+          tableNumber: cleanTable,
+          branchId: detectedBranch || undefined,
+        });
+      }
+    } catch (e) {
+      console.warn('Error reading table QR params:', e);
+    }
+  }, []);
+
   const [partySize, setPartySize] = useState(1);
   const [arrivalDate, setArrivalDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [arrivalTime, setArrivalTime] = useState('18:00');
@@ -2342,6 +2375,35 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   return (
     <div className="max-w-md mx-auto space-y-5 pb-28 animate-fade-in" style={{ accentColor: brandSecondary }}>
       
+      {/* 🍽️ Table QR Direct Dine-in Banner */}
+      {tableQrBanner && (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/15 to-amber-600/20 border border-amber-500/40 text-amber-200 shadow-xl flex items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 text-amber-400 font-bold text-base">
+              🍽️
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-black text-white">الطلب المباشر من الصالة</span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black text-[10px]">
+                  طاولة #{tableQrBanner.tableNumber}
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-200/80 truncate mt-0.5">
+                تم تثبيت رقم طاولتك بنجاح — ستصلك طلباتك إليها مباشرة!
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setTableQrBanner(null)}
+            className="p-1 rounded-lg hover:bg-amber-500/20 text-amber-300/70 hover:text-white transition shrink-0"
+            title="إغلاق التنبيه"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {customer && customer.is_active === false && (
         <div className="p-4 rounded-3xl bg-rose-950/80 border-2 border-rose-500/60 text-rose-200 text-xs font-semibold flex items-center space-x-3 rtl:space-x-reverse animate-shake shadow-2xl">
           <AlertCircle className="w-6 h-6 text-rose-400 shrink-0" />
