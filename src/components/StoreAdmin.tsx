@@ -126,6 +126,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BranchesManagementTab } from './BranchesManagementTab';
+import { InventoryManagementTab } from './merchant/InventoryManagementTab';
 
 interface StoreAdminProps {
   store: Store;
@@ -140,7 +141,8 @@ type AdminTab =
   | 'pos_operations'
   | 'staff'
   | 'branches'
-  | 'settings';
+  | 'settings'
+  | 'inventory';
 
 type SettingsSection =
   | 'hub'
@@ -2965,6 +2967,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       iconBorder: 'border-amber-500/30',
       iconColor: 'text-amber-400',
       statHighlight: `${catalogItems.length} صنف (${productItemsCount} منتج • ${serviceItemsCount} خدمة)`,
+    },
+    {
+      id: 'inventory' as AdminTab,
+      label: 'المخزون وتكاليف الأطباق والموردين',
+      shortLabel: 'المخزون وتكلفة الأطباق',
+      description: 'المواد الخام، هندسة وصفات المنيو، وقارئ فواتير الموردين الذكي بالتصوير',
+      icon: Package,
+      badge: 'جديد ⚡',
+      glowColor: 'bg-orange-500/20',
+      iconBg: 'bg-orange-500/15',
+      iconBorder: 'border-orange-500/30',
+      iconColor: 'text-orange-400',
+      statHighlight: 'خصم تلقائي مع المبيعات • قارئ فواتير OCR',
     },
     {
       id: 'loyalty' as AdminTab,
@@ -6852,6 +6867,16 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           onStaffUpdated={() => {
             LoyaltyService.getStoreStaff(store.id).then(setStaffList);
           }}
+        />
+      )}
+
+      {/* ========================================== */}
+      {/* 📦 TAB: إدارة المخزون والمواد الخام وتكاليف الأطباق */}
+      {/* ========================================== */}
+      {!isStoreSuspended && activeTab === 'inventory' && (
+        <InventoryManagementTab
+          store={store}
+          catalogItems={catalogItems}
         />
       )}
 

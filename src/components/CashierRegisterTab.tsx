@@ -49,6 +49,7 @@ import {
   Smartphone,
 } from 'lucide-react';
 import { OfflineSyncEngine } from '../lib/offlineSync';
+import { InventoryService } from '../lib/inventoryService';
 import { OfflineSyncModal } from './OfflineSyncModal';
 import { CashierDiscountModal } from './CashierDiscountModal';
 import { CashierRecentReceiptsModal } from './CashierRecentReceiptsModal';
@@ -905,6 +906,19 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
       } else if (isOfflineOrder && customer && customer.phone) {
         const multiplier = Number(store.points_per_riyal) > 0 ? Number(store.points_per_riyal) : 1.0;
         pointsEarned = Math.floor(cartGrandTotal * multiplier);
+      }
+
+      // 2b. 📦 الخصم التلقائي للمخزون والمواد الخام وتنبيهات النفاد الوشيك
+      try {
+        const deductRes = InventoryService.deductInventoryForOrder(
+          store.id,
+          cartItems.map((c) => ({ catalog_item: c.catalog_item, quantity: c.quantity }))
+        );
+        if (deductRes.lowStockAlerts && deductRes.lowStockAlerts.length > 0) {
+          console.warn('تنبيه: بعض المواد الخام وصلت للحد الأدنى:', deductRes.lowStockAlerts.map((i) => i.name));
+        }
+      } catch (invErr) {
+        console.warn('Inventory auto-deduction error on POS checkout:', invErr);
       }
 
       // 3. Play celebratory cash register ka-ching & throw confetti

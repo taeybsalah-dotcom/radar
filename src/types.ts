@@ -518,6 +518,66 @@ export interface StoreFulfillmentSettings {
   payment_config?: StorePaymentConfig;
 }
 
+// ==========================================
+// 📦 المخزون والوصفات وحساب التكاليف (Inventory & Food Costing)
+// ==========================================
+export type StockUnit = 'kg' | 'g' | 'liter' | 'ml' | 'piece' | 'box' | 'pack';
+
+export interface InventoryItem {
+  id: string;
+  store_id: string;
+  name: string; // اسم المادة (مثال: لحم بقري مفروم، بن إسبريسو، حليب مراعي)
+  category?: string; // تصنيف المادة (لحوم، خضروات، ألبان، تغليف)
+  unit: StockUnit; // وحدة القياس
+  current_stock: number; // الكمية المتوفرة حالياً
+  min_alert_stock: number; // حد التنبيه عند الانخفاض
+  cost_per_unit: number; // تكلفة الوحدة بالريال
+  supplier_name?: string; // اسم المورد
+  sku?: string; // الباركود أو الرمز
+  last_restocked_at?: string;
+  updated_at?: string;
+}
+
+export interface RecipeIngredient {
+  inventory_item_id: string;
+  inventory_item_name?: string;
+  quantity: number; // الكمية المستخدمة في هذا الطبق
+  unit?: StockUnit;
+  unit_cost?: number; // تكلفة الوحدة
+  total_cost?: number; // التكلفة الإجمالية لهذا المكون في الطبق
+}
+
+export interface CatalogItemRecipe {
+  catalog_item_id: string;
+  ingredients: RecipeIngredient[];
+  total_cost: number; // إجمالي تكلفة المواد للطبق الواحد
+  profit_margin?: number; // هامش الربح %
+  food_cost_percentage?: number; // نسبة تكلفة الطعام من سعر البيع
+  updated_at?: string;
+}
+
+export interface ScannedSupplierInvoiceItem {
+  raw_text: string;
+  matched_inventory_item_id?: string;
+  item_name: string;
+  quantity: number;
+  unit: StockUnit;
+  unit_price: number;
+  total_price: number;
+}
+
+export interface ScannedSupplierInvoice {
+  id: string;
+  store_id?: string;
+  supplier_name?: string;
+  invoice_number?: string;
+  invoice_date?: string;
+  total_amount?: number;
+  items: ScannedSupplierInvoiceItem[];
+  scanned_image_url?: string;
+  created_at: string;
+}
+
 export interface CartItem {
   id: string; // فريد لكل صنف داخل السلة
   catalog_item: CatalogItem;
@@ -1241,5 +1301,7 @@ export interface FinancialPlatformConfig {
   business_legal_status: 'FREELANCE_DOCUMENT' | 'ESTABLISHMENT_TAXABLE' | 'COMPANY_ZATCA';
   tax_number?: string;
 }
+
+
 
 
