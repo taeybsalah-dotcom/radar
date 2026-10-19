@@ -787,7 +787,7 @@ export function App() {
         if (found) {
           setStore(found);
           const targetPortal =
-            config.portal && ['cashier', 'customer', 'admin', 'kds'].includes(config.portal)
+            config.portal && ['cashier', 'customer', 'admin', 'kds', 'driver'].includes(config.portal)
               ? config.portal
               : 'customer';
           setActiveTab(targetPortal);
@@ -825,8 +825,8 @@ export function App() {
         }
       }
 
-      // 7. Resolving default store if portal is cashier, admin, customer, or kds without slug
-      if (config.portal && ['cashier', 'customer', 'admin', 'kds'].includes(config.portal)) {
+      // 7. Resolving default store if portal is cashier, admin, customer, kds, or driver without slug
+      if (config.portal && ['cashier', 'customer', 'admin', 'kds', 'driver'].includes(config.portal)) {
         const defaultStore = await LoyaltyService.getStore();
         if (defaultStore) {
           setStore(defaultStore);
@@ -1186,6 +1186,8 @@ export function App() {
                 ? 'لوحة إدارة المتجر'
                 : activeTab === 'super-admin'
                 ? 'لوحة المالك (Super Admin)'
+                : activeTab === 'driver'
+                ? 'تطبيق كابتن التوصيل'
                 : store?.name || 'محفظة الولاء'
             }
             role={role || activeTab}

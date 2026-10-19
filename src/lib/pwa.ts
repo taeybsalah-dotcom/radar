@@ -86,6 +86,20 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
       secondaryColor = '#F59E0B';
       break;
 
+    case 'driver':
+      pageTitle = effectiveStore?.name
+        ? `${effectiveStore.name} - تطبيق كابتن التوصيل 🛵`
+        : 'كابتن التوصيل | RADAR';
+      manifestName = effectiveStore?.name
+        ? `${effectiveStore.name} - كابتن التوصيل`
+        : 'كابتن توصيل رادار';
+      manifestShortName = effectiveStore?.name
+        ? `${effectiveStore.name.slice(0, 8)} سائق`
+        : 'كابتن التوصيل';
+      primaryColor = effectiveStore?.primary_color || '#0F172A';
+      secondaryColor = effectiveStore?.secondary_color || '#F59E0B';
+      break;
+
     case 'customer':
       pageTitle = effectiveStore?.name
         ? effectiveStore.name

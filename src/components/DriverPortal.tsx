@@ -55,6 +55,12 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     if (typeof window !== 'undefined') {
       const qBranch = new URLSearchParams(window.location.search).get('branch');
       if (qBranch && qBranch !== 'ALL') return qBranch;
+      const qDriver = new URLSearchParams(window.location.search).get('driver');
+      if (qDriver && store?.id) {
+        const allDrivers = DriverService.getDrivers(store.id);
+        const match = allDrivers.find((d) => d.id === qDriver);
+        if (match && match.branch_id) return match.branch_id;
+      }
     }
     if (initialBranch?.id) return initialBranch.id;
     if (store?.branches && store.branches.length > 0) return store.branches[0].id;
@@ -81,7 +87,19 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   // Load and reload drivers
   const reloadDrivers = () => {
     if (!store?.id) return;
-    const list = DriverService.getDrivers(store.id, selectedBranchId);
+    let list = DriverService.getDrivers(store.id, selectedBranchId);
+    if (activeDriverId && !list.some((d) => d.id === activeDriverId)) {
+      const allDrivers = DriverService.getDrivers(store.id);
+      const match = allDrivers.find((d) => d.id === activeDriverId);
+      if (match) {
+        if (match.branch_id && match.branch_id !== selectedBranchId) {
+          setSelectedBranchId(match.branch_id);
+          list = DriverService.getDrivers(store.id, match.branch_id);
+        } else {
+          list = allDrivers;
+        }
+      }
+    }
     setDrivers(list);
     if (!activeDriverId && list.length > 0) {
       setActiveDriverId(list[0].id);
