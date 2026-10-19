@@ -2071,44 +2071,53 @@ export const LoyaltyService = {
           lifecycle_stage,
           plan,
           matchedStore,
-          theme_mode,
-          background_color,
-          card_color,
-          card_text_color,
-          theme_preset,
-          ...rawDbUpdates
+          ...allRawUpdates
         } = stripDataUrls({ ...(updates as any) });
 
-        // Package theme into fulfillment_settings JSONB so Supabase schema doesn't throw column-not-found error
+        // Package white-label theme and extra config into fulfillment_settings JSONB
         const themePayload: any = {};
-        if (theme_mode !== undefined) themePayload.theme_mode = theme_mode;
-        if (background_color !== undefined) themePayload.background_color = background_color;
-        if (card_color !== undefined) themePayload.card_color = card_color;
-        if (card_text_color !== undefined) themePayload.card_text_color = card_text_color;
-        if (theme_preset !== undefined) themePayload.theme_preset = theme_preset;
+        if (updates.theme_mode !== undefined) themePayload.theme_mode = updates.theme_mode;
+        if (updates.background_color !== undefined) themePayload.background_color = updates.background_color;
+        if (updates.card_color !== undefined) themePayload.card_color = updates.card_color;
+        if (updates.card_text_color !== undefined) themePayload.card_text_color = updates.card_text_color;
+        if (updates.theme_preset !== undefined) themePayload.theme_preset = updates.theme_preset;
+        if (updates.admin_pin !== undefined) themePayload.admin_pin = updates.admin_pin;
+        if (updates.catalog_enabled !== undefined) themePayload.catalog_enabled = updates.catalog_enabled;
+        if (updates.max_cashier_invoice_amount !== undefined) themePayload.max_cashier_invoice_amount = updates.max_cashier_invoice_amount;
 
         const currentFulfillment =
           typeof currentStore.fulfillment_settings === 'object' && currentStore.fulfillment_settings !== null
             ? currentStore.fulfillment_settings
             : {};
 
-        const dbUpdates: any = {
-          ...rawDbUpdates,
-          fulfillment_settings: {
-            ...currentFulfillment,
-            ...(rawDbUpdates.fulfillment_settings || {}),
-            ...themePayload,
-          },
+        const mergedFulfillment = {
+          ...currentFulfillment,
+          ...(typeof allRawUpdates.fulfillment_settings === 'object' ? allRawUpdates.fulfillment_settings : {}),
+          ...themePayload,
         };
 
-        const query = supabase.from('stores').update(dbUpdates);
+        const validCols = new Set(
+          STORE_SAFE_COLS.split(',').map((c) => c.trim()).filter(Boolean)
+        );
+
+        const safeDbUpdates: any = {
+          fulfillment_settings: mergedFulfillment,
+        };
+
+        for (const [key, val] of Object.entries(allRawUpdates)) {
+          if (validCols.has(key) && key !== 'fulfillment_settings') {
+            safeDbUpdates[key] = val;
+          }
+        }
+
+        const query = supabase.from('stores').update(safeDbUpdates);
         const res = isUUID(currentStore.id)
           ? await query.eq('id', currentStore.id).select(await storeCols(supabase)).maybeSingle()
           : await query.eq('slug', currentStore.slug).select(await storeCols(supabase)).maybeSingle();
 
         if (!res.error && res.data) {
-          updatedSupabaseStore = { ...(res.data as any), ...pickStoreAssets(dbUpdates), ...themePayload } as Store;
-          noteStoreAssetUpdates(currentStore.id, dbUpdates);
+          updatedSupabaseStore = { ...(res.data as any), ...pickStoreAssets(safeDbUpdates), ...themePayload } as Store;
+          noteStoreAssetUpdates(currentStore.id, safeDbUpdates);
         } else if (res.error) {
           console.warn('Supabase updateStoreSettings error:', res.error);
         }

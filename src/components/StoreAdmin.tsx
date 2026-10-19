@@ -801,6 +801,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     document.title = store?.name || 'لوحة التاجر';
   }, [store?.name]);
 
+  // Live White-Label theme synchronization for active view
+  useEffect(() => {
+    if (primaryColor) {
+      document.documentElement.style.setProperty('--brand-primary', primaryColor);
+    }
+    if (secondaryColor) {
+      document.documentElement.style.setProperty('--brand-secondary', secondaryColor);
+    }
+    if (themeMode && themeMode !== 'system') {
+      document.documentElement.setAttribute('data-theme', themeMode);
+    }
+    if (backgroundColor) {
+      document.body.style.backgroundColor = backgroundColor;
+    }
+  }, [primaryColor, secondaryColor, themeMode, backgroundColor]);
+
   useEffect(() => {
     if (currentStore?.id) {
       const session = LoyaltyService.getStaffSession(currentStore.id, 'admin', currentStore.slug);
