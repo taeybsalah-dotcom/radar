@@ -6795,6 +6795,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           amount={paymentModalConfig.amount}
           currency="ر.س"
           storeName={store.name}
+          provider={store.fulfillment_settings?.payment_config?.online_provider || 'sandbox'}
+          gatewayMode={store.fulfillment_settings?.payment_config?.online_mode || 'sandbox'}
           onProcessPayment={paymentModalConfig.onSuccess}
         />
       )}

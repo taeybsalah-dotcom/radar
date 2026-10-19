@@ -478,6 +478,29 @@ export interface CatalogItem {
 
 export type FulfillmentType = 'dine_in' | 'takeaway' | 'delivery' | 'service_booking';
 
+export type OnlineGatewayProvider = 'sandbox' | 'moyasar' | 'geidea' | 'tap';
+export type SoftPOSProvider = 'none' | 'nearpay' | 'geidea';
+
+export interface StorePaymentConfig {
+  // 1. الدفع الإلكتروني عبر التطبيق (Online In-App Payments)
+  online_enabled: boolean;
+  online_provider: OnlineGatewayProvider;
+  online_mode: 'sandbox' | 'live';
+  online_public_key?: string;
+  online_secret_key?: string;
+
+  // 2. الدفع الحضوري باللمس على التابلت (SoftPOS / Tap-to-Phone)
+  softpos_enabled: boolean;
+  softpos_provider: SoftPOSProvider;
+  softpos_mode: 'sandbox' | 'live';
+  softpos_api_key?: string;
+  softpos_terminal_id?: string;
+
+  // 3. الدفع الحضوري التقليدي (Traditional In-Store POS)
+  allow_cash: boolean;
+  allow_external_pos: boolean; // جهاز شبكة بنكي خارجي عادي
+}
+
 export interface StoreFulfillmentSettings {
   allow_dine_in: boolean; // متاح تناول محلي (طاولات)
   allow_takeaway: boolean; // متاح استلام سفري / سيارة
@@ -490,6 +513,9 @@ export interface StoreFulfillmentSettings {
   online_payment_enabled?: boolean; // تفعيل الدفع الإلكتروني العام بالمتجر
   orders_payment_policy?: 'both' | 'online_only' | 'pay_at_store_only'; // سياسة دفع طلبات المنيو
   bookings_payment_policy?: 'both' | 'online_only' | 'pay_at_store_only'; // سياسة دفع حجوزات المواعيد
+
+  // 💳 تكوين بوابات الدفع والدفع باللمس الموحد
+  payment_config?: StorePaymentConfig;
 }
 
 export interface CartItem {

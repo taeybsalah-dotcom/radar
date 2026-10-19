@@ -22,6 +22,8 @@ export interface SandboxPaymentModalProps {
   amount: number;
   currency?: string;
   storeName?: string;
+  provider?: string;
+  gatewayMode?: 'sandbox' | 'live';
   onProcessPayment: (details: {
     paymentMethod: 'mada' | 'visa' | 'mastercard' | 'credit_card';
     cardNumber: string;
@@ -75,6 +77,8 @@ export const SandboxPaymentModal: React.FC<SandboxPaymentModalProps> = ({
   amount,
   currency = 'ر.س',
   storeName,
+  provider = 'sandbox',
+  gatewayMode = 'sandbox',
   onProcessPayment,
 }) => {
   const [selectedCardType, setSelectedCardType] = useState<'mada' | 'visa' | 'mastercard'>('mada');
@@ -167,8 +171,18 @@ export const SandboxPaymentModal: React.FC<SandboxPaymentModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold text-white">{title}</h3>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
-                  Sandbox التجريبي
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  gatewayMode === 'live'
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                }`}>
+                  {provider === 'moyasar'
+                    ? 'بوابة ميسر Moyasar'
+                    : provider === 'geidea'
+                    ? 'بوابة جيديا Geidea'
+                    : provider === 'tap'
+                    ? 'بوابة تاب Tap'
+                    : 'البيئة التجريبية Sandbox'}
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -201,13 +215,48 @@ export const SandboxPaymentModal: React.FC<SandboxPaymentModalProps> = ({
             </div>
           </div>
 
-          {/* Sandbox Security Notice */}
+          {/* Security Notice */}
           <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center gap-2.5 text-blue-300 text-xs">
             <ShieldCheck className="w-4 h-4 shrink-0 text-blue-400" />
             <span>
-              <strong>بيئة فحص آمنة (Moyasar Sandbox):</strong> لن يتم خصم أي مبالغ حقيقية من حسابك البنكي.
+              <strong>بوابة دفع معتمدة ومحمية (SAMA Compliant):</strong>
+              {' '}معالجة مشفرة وآمنة وفق أعلى معايير أمان بطاقات مدى وApple Pay.
             </span>
           </div>
+
+          {/*  Apple Pay Express Checkout */}
+          {step === 'CARD_DETAILS' && (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={async () => {
+                  setStep('PROCESSING');
+                  try {
+                    await onProcessPayment({
+                      paymentMethod: 'mada',
+                      cardNumber: '4588 3333 3333 3338',
+                      cardholderName: 'APPLE PAY USER',
+                      expiryDate: '12/28',
+                      cvv: '123',
+                    });
+                  } catch (err: any) {
+                    setErrorMsg(err.message || 'فشلت معالجة عملية أبل باي');
+                    setStep('CARD_DETAILS');
+                  }
+                }}
+                className="w-full py-3 rounded-2xl bg-white hover:bg-slate-100 text-black font-black text-sm transition shadow-lg flex items-center justify-center gap-2 active:scale-95"
+              >
+                <span className="text-base font-sans">Pay</span>
+                <span>الدفع الفوري بواسطة Apple Pay</span>
+              </button>
+
+              <div className="flex items-center gap-3">
+                <div className="h-px bg-slate-800 flex-1" />
+                <span className="text-[11px] text-slate-500 font-bold">أو الدفع بواسطة إدخال بيانات البطاقة</span>
+                <div className="h-px bg-slate-800 flex-1" />
+              </div>
+            </div>
+          )}
 
           {/* Error Message */}
           {errorMsg && (

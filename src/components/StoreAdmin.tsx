@@ -16,6 +16,9 @@ import {
   CatalogModifierGroup,
   CatalogModifierOption,
   StoreFulfillmentSettings,
+  StorePaymentConfig,
+  OnlineGatewayProvider,
+  SoftPOSProvider,
   StoreSpecialist,
   GlobalCategory,
   GlobalModifierGroup,
@@ -115,6 +118,11 @@ import {
   Receipt,
   ArrowRight,
   ArrowLeft,
+  Tablet,
+  Radio,
+  HelpCircle,
+  Info,
+  Wifi,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BranchesManagementTab } from './BranchesManagementTab';
@@ -285,6 +293,27 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [ordersPaymentPolicy, setOrdersPaymentPolicy] = useState<'both' | 'online_only' | 'pay_at_store_only'>(currentStore?.fulfillment_settings?.orders_payment_policy || 'both');
   const [bookingsPaymentPolicy, setBookingsPaymentPolicy] = useState<'both' | 'online_only' | 'pay_at_store_only'>(currentStore?.fulfillment_settings?.bookings_payment_policy || 'both');
 
+  // 💳 Unified Payment Channels State (Online In-App Gateway & Cashier SoftPOS)
+  const [paymentConfig, setPaymentConfig] = useState<StorePaymentConfig>(() => {
+    return currentStore?.fulfillment_settings?.payment_config || {
+      online_enabled: currentStore?.fulfillment_settings?.online_payment_enabled !== false,
+      online_provider: 'sandbox',
+      online_mode: 'sandbox',
+      online_public_key: '',
+      online_secret_key: '',
+      softpos_enabled: false,
+      softpos_provider: 'nearpay',
+      softpos_mode: 'sandbox',
+      softpos_api_key: '',
+      softpos_terminal_id: '',
+      allow_cash: true,
+      allow_external_pos: true,
+    };
+  });
+  const [softposTestModalOpen, setSoftposTestModalOpen] = useState(false);
+  const [softposTestStatus, setSoftposTestStatus] = useState<'idle' | 'scanning' | 'processing' | 'approved'>('idle');
+  const [softposAuthCode, setSoftposAuthCode] = useState<string | null>(null);
+
   // 🎛️ Module Toggles State (SaaS Architecture)
   const [enableOrders, setEnableOrders] = useState(currentStore?.enable_orders !== false);
   const [enableBookings, setEnableBookings] = useState(currentStore?.enable_bookings !== false);
@@ -373,6 +402,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     const nextDelivery = overrides?.allow_delivery !== undefined ? overrides.allow_delivery : allowDelivery;
     const nextDeliveryFee = overrides?.delivery_fee !== undefined ? overrides.delivery_fee : (deliveryFee === '' ? 0 : Number(deliveryFee));
     const nextServiceBooking = overrides?.allow_service_booking !== undefined ? overrides.allow_service_booking : allowServiceBooking;
+    const nextPaymentConfig = overrides?.payment_config || paymentConfig;
 
     try {
       const newSettings: StoreFulfillmentSettings = {
@@ -385,6 +415,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         online_payment_enabled: nextOnline,
         orders_payment_policy: nextOrders,
         bookings_payment_policy: nextBookings,
+        payment_config: nextPaymentConfig,
       };
 
       const updated = await LoyaltyService.updateStoreSettings(targetStoreId, {
@@ -395,7 +426,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setStore(updated);
       }
       LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: targetStoreId });
-      setPaymentPolicyStatus('⚡ تم حفظ وتطبيق سياسة الدفع فوراً على المتجر وتطبيق العميل!');
+      setPaymentPolicyStatus('⚡ تم حفظ وتطبيق إعدادات الدفع فوراً على المتجر وتطبيق العميل والكاشير!');
       setTimeout(() => setPaymentPolicyStatus(null), 4000);
     } catch (e: any) {
       console.error('Failed to auto-save payment policy', e);
@@ -1046,6 +1077,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setOnlinePaymentEnabled(activeStore.fulfillment_settings.online_payment_enabled !== false);
         setOrdersPaymentPolicy(activeStore.fulfillment_settings.orders_payment_policy || 'both');
         setBookingsPaymentPolicy(activeStore.fulfillment_settings.bookings_payment_policy || 'both');
+        if (activeStore.fulfillment_settings.payment_config) {
+          setPaymentConfig(activeStore.fulfillment_settings.payment_config);
+        }
       }
       setEnableOrders(activeStore.enable_orders !== false);
       setEnableBookings(activeStore.enable_bookings !== false);
@@ -7417,7 +7451,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       )}
 
       {/* ======================================================== */}
-      {/* 💳 2. SUB-SECTION: طرق وسياسة الدفع الإلكتروني (Payments) */}
+      {/* 💳 2. SUB-SECTION: مركز إدارة المدفوعات والتحصيل (Unified Payments) */}
       {/* ======================================================== */}
       {settingsSection === 'payments' && (
         <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 space-y-8 animate-fade-in shadow-xl">
@@ -7429,40 +7463,77 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </div>
               <div>
                 <h3 className="text-base sm:text-lg font-black text-white">
-                  طرق وسياسة الدفع الإلكتروني (Online & Cash Policies)
+                  مركز إدارة المدفوعات وطرق التحصيل (Omnichannel Payments)
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  تحكم شامل في تفعيل بوابة الدفع الإلكتروني (مدى / Apple Pay) أو حصر الطلبات والحجوزات على الدفع المسبق
+                  تحكم مرن وشامل في قناتي الدفع: الدفع داخل التطبيق (عن بُعد) والدفع عند الكاشير (حضوري في الفرع)
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-start sm:self-auto">
-              {onlinePaymentEnabled ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold font-mono">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  بوابة الدفع: مفعلة ومتاحة ✅
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-bold font-mono">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  الدفع: كاش / عند الاستلام فقط 💵
-                </span>
-              )}
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold font-mono ${
+                onlinePaymentEnabled
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${onlinePaymentEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                دفع التطبيق: {onlinePaymentEnabled ? 'مفعل ✅' : 'معطل ⏸️'}
+              </span>
+
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold font-mono ${
+                paymentConfig.softpos_enabled
+                  ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
+                  : 'bg-blue-500/15 border-blue-500/30 text-blue-300'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${paymentConfig.softpos_enabled ? 'bg-purple-400 animate-pulse' : 'bg-blue-400'}`} />
+                كاشير: {paymentConfig.softpos_enabled ? 'تابلت SoftPOS باللمس 📲' : 'جهاز شبكة بنكي 💳'}
+              </span>
             </div>
           </div>
 
-          {/* Master Gateway Activation Card */}
-          <div className={`p-5 sm:p-6 rounded-2xl border transition-all ${
-            onlinePaymentEnabled
-              ? 'bg-emerald-950/20 border-emerald-500/40 shadow-lg shadow-emerald-950/20'
-              : 'bg-slate-950/80 border-slate-800'
-          }`}>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-1 max-w-xl">
-                <div className="flex items-center gap-2.5">
+          {/* 💡 Smart Educational Guide Card (دليل توضيحي بسيط يريح التاجر) */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border border-slate-800/80 space-y-3">
+            <div className="flex items-center gap-2 text-amber-400 text-xs font-black">
+              <Sparkles className="w-4 h-4" />
+              <span>دليلك السريع: كيف تعمل المدفوعات في منصة رادار؟</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs leading-relaxed">
+              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/70 space-y-1">
+                <div className="font-black text-emerald-400 flex items-center gap-1.5">
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>1. الدفع داخل التطبيق (عن بُعد):</span>
+                </div>
+                <p className="text-slate-400 text-[11px]">
+                  للزبون الذي يتصفح ويطلب من جواله عبر Apple Pay أو بطاقة مدى. يتطلب بوابة دفع إلكتروني (مثل ميسر أو جيديا)، ويمكنك تفعيل البيئة التجريبية فوراً مجاناً.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/70 space-y-1">
+                <div className="font-black text-purple-400 flex items-center gap-1.5">
+                  <Radio className="w-3.5 h-3.5" />
+                  <span>2. الدفع عند الكاشير (حضوري في المحل):</span>
+                </div>
+                <p className="text-slate-400 text-[11px]">
+                  للزبون الواقف أمام المحاسب. يمكنك استخدام جهاز شبكة مدى العادي بدون أي اشتراكات، أو تفعيل خاصية SoftPOS لتحويل تابلت الكاشير نفسه لجهاز شبكة باللمس!
+                </p>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-500 pt-1">
+              ✨ <strong>ملاحظة مريحة:</strong> كافة الخدمات اختيارية بالكامل؛ لن يُلزمك النظام بأي اشتراك أو رسوم إضافية ما لم ترغب بتفعيلها بنفسك.
+            </p>
+          </div>
+
+          {/* ======================================================== */}
+          {/* 📱 CHANNEL 1: الدفع الإلكتروني عبر التطبيق (Online In-App) */}
+          {/* ======================================================== */}
+          <div className="space-y-5 p-5 sm:p-6 rounded-2xl bg-slate-950/70 border border-slate-800">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Smartphone className="w-5 h-5 text-emerald-400" />
                   <h4 className="text-sm sm:text-base font-black text-white">
-                    تفعيل بوابة الدفع الإلكتروني لمتجرك (Mada / Visa / Apple Pay)
+                    قناة الدفع الإلكتروني عبر التطبيق (Mada / Apple Pay / Visa)
                   </h4>
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
                     onlinePaymentEnabled
@@ -7472,8 +7543,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     {onlinePaymentEnabled ? 'مفعل' : 'معطل'}
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  عند التفعيل، يمكن لعملائك الدفع الإلكتروني الفوري في صفحة المتجر عبر بطاقات مدى والبطاقات الائتمانية وApple Pay. في حال التعطيل، يتحول المتجر بالكامل إلى الدفع اليدوي عند الاستلام أو الكاشير فقط.
+                <p className="text-xs text-slate-400">
+                  تمكين عملائك من الدفع الفوري عند الطلب أو الحجز من جوالاتهم
                 </p>
               </div>
 
@@ -7483,7 +7554,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 onClick={() => {
                   const next = !onlinePaymentEnabled;
                   setOnlinePaymentEnabled(next);
-                  handleInstantSavePaymentPolicy({ online_payment_enabled: next });
+                  const nextCfg: StorePaymentConfig = { ...paymentConfig, online_enabled: next };
+                  setPaymentConfig(nextCfg);
+                  handleInstantSavePaymentPolicy({ online_payment_enabled: next, payment_config: nextCfg });
                 }}
                 className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                   onlinePaymentEnabled ? 'bg-emerald-500' : 'bg-slate-800'
@@ -7496,221 +7569,622 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 />
               </button>
             </div>
-          </div>
 
-          {/* Sub-Policy 1: الطلبات (Orders Payment Policy) */}
-          <div className="space-y-3.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
-                <ShoppingBag className="w-4 h-4 text-amber-400" />
-                <span>سياسة الدفع لطلبات المنيو (محلي، سفري، توصيل):</span>
-              </label>
-              <span className="text-[11px] text-slate-400">حفظ تلقائي فوري ⚡</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-              {/* Option 1: Both */}
-              <div
-                onClick={() => {
-                  if (!onlinePaymentEnabled) return;
-                  setOrdersPaymentPolicy('both');
-                  handleInstantSavePaymentPolicy({ orders_payment_policy: 'both' });
-                }}
-                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                  !onlinePaymentEnabled
-                    ? 'opacity-40 cursor-not-allowed bg-slate-950/40 border-slate-800/60'
-                    : ordersPaymentPolicy === 'both'
-                    ? 'bg-amber-500/10 border-amber-500/50 shadow-md ring-1 ring-amber-500/30'
-                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-white flex items-center gap-1.5">
-                      <span>الخياران متاحان (مرن)</span>
-                      <span className="text-[10px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">افتراضي</span>
-                    </span>
-                    {ordersPaymentPolicy === 'both' && onlinePaymentEnabled && (
-                      <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
-                    )}
+            {onlinePaymentEnabled && (
+              <div className="space-y-5 animate-fade-in">
+                {/* Provider Selection */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    اختر مزود بوابة الدفع الإلكتروني لمتجرك:
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    {[
+                      {
+                        id: 'sandbox' as const,
+                        name: 'البيئة التجريبية (Sandbox)',
+                        desc: 'مدمج ومجاني للاختبار الفوري دون اشتراك أو أوراق',
+                        badge: 'جاهز فوراً ⚡',
+                        badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
+                      },
+                      {
+                        id: 'moyasar' as const,
+                        name: 'ميسر (Moyasar)',
+                        desc: 'الأسرع تفعيلاً لمدى وApple Pay بحسابك البنكي',
+                        badge: 'معتمد من ساما 🇸🇦',
+                        badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+                      },
+                      {
+                        id: 'geidea' as const,
+                        name: 'جيديا (Geidea E-Com)',
+                        desc: 'حل موحد ممتاز للمتجر والكاشير معاً في حساب واحد',
+                        badge: 'حل موحد 🔄',
+                        badgeColor: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
+                      },
+                      {
+                        id: 'tap' as const,
+                        name: 'تاب (Tap Payments)',
+                        desc: 'بوابة إقليمية موثوقة تدعم بطاقات الخليج كافة',
+                        badge: 'إقليمي 🌐',
+                        badgeColor: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
+                      },
+                    ].map((prov) => {
+                      const isSelected = (paymentConfig.online_provider || 'sandbox') === prov.id;
+                      return (
+                        <div
+                          key={prov.id}
+                          onClick={() => {
+                            const nextCfg: StorePaymentConfig = { ...paymentConfig, online_provider: prov.id };
+                            setPaymentConfig(nextCfg);
+                            handleInstantSavePaymentPolicy({ payment_config: nextCfg });
+                          }}
+                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                            isSelected
+                              ? 'bg-emerald-500/10 border-emerald-500 shadow-md ring-1 ring-emerald-500/40'
+                              : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-black text-white">{prov.name}</span>
+                              {isSelected && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                            </div>
+                            <p className="text-[10px] text-slate-400 leading-relaxed mb-2">
+                              {prov.desc}
+                            </p>
+                          </div>
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border inline-block w-fit ${prov.badgeColor}`}>
+                            {prov.badge}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    يمنح العميل حرية الاختيار بين الدفع أونلاين فوراً أو الدفع عند الاستلام/الكاشير.
-                  </p>
                 </div>
-              </div>
 
-              {/* Option 2: Online Only */}
-              <div
-                onClick={() => {
-                  if (!onlinePaymentEnabled) return;
-                  setOrdersPaymentPolicy('online_only');
-                  handleInstantSavePaymentPolicy({ orders_payment_policy: 'online_only' });
-                }}
-                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                  !onlinePaymentEnabled
-                    ? 'opacity-40 cursor-not-allowed bg-slate-950/40 border-slate-800/60'
-                    : ordersPaymentPolicy === 'online_only'
-                    ? 'bg-emerald-500/10 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
-                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
+                {/* Provider Settings / Key Input */}
+                <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
                     <span className="text-xs font-black text-white flex items-center gap-1.5">
-                      <span>دفع أونلاين إلزامي فقط 🔒</span>
+                      <Key className="w-3.5 h-3.5 text-amber-400" />
+                      <span>بيانات تشغيل بوابة {paymentConfig.online_provider === 'sandbox' ? 'البيئة التجريبية' : paymentConfig.online_provider === 'moyasar' ? 'ميسر Moyasar' : paymentConfig.online_provider === 'geidea' ? 'جيديا Geidea' : 'تاب Tap'}</span>
                     </span>
-                    {ordersPaymentPolicy === 'online_only' && onlinePaymentEnabled && (
+
+                    {/* Mode Toggle */}
+                    <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] font-bold">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextCfg: StorePaymentConfig = { ...paymentConfig, online_mode: 'sandbox' };
+                          setPaymentConfig(nextCfg);
+                          handleInstantSavePaymentPolicy({ payment_config: nextCfg });
+                        }}
+                        className={`px-2.5 py-1 rounded-lg transition ${
+                          paymentConfig.online_mode === 'sandbox'
+                            ? 'bg-amber-500 text-black shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        تجريبي (Sandbox)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextCfg: StorePaymentConfig = { ...paymentConfig, online_mode: 'live' };
+                          setPaymentConfig(nextCfg);
+                          handleInstantSavePaymentPolicy({ payment_config: nextCfg });
+                        }}
+                        className={`px-2.5 py-1 rounded-lg transition ${
+                          paymentConfig.online_mode === 'live'
+                            ? 'bg-emerald-500 text-black shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        حي (Live الإنتاج)
+                      </button>
+                    </div>
+                  </div>
+
+                  {paymentConfig.online_provider === 'sandbox' ? (
+                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    )}
+                      <span>
+                        البيئة التجريبية المدمجة جاهزة ونشطة الآن. يمكن لعملائك ولكم تجربة الدفع ببطاقات مدى وأبل باي تجريبية بدون أي تكاليف.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <label className="text-[11px] text-slate-300 font-bold block mb-1">
+                          المفتاح العام (Publishable / Public API Key):
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={paymentConfig.online_provider === 'moyasar' ? 'pk_live_...' : 'pk_...'}
+                          value={paymentConfig.online_public_key || ''}
+                          onChange={(e) => {
+                            const nextCfg: StorePaymentConfig = { ...paymentConfig, online_public_key: e.target.value };
+                            setPaymentConfig(nextCfg);
+                          }}
+                          onBlur={() => handleInstantSavePaymentPolicy({ payment_config: paymentConfig })}
+                          className="w-full bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2 text-xs font-mono text-white outline-none dir-ltr text-left"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-slate-300 font-bold block mb-1">
+                          المفتاح السري / المرجع (Secret Key / Merchant ID):
+                        </label>
+                        <input
+                          type="password"
+                          placeholder="••••••••••••••••"
+                          value={paymentConfig.online_secret_key || ''}
+                          onChange={(e) => {
+                            const nextCfg: StorePaymentConfig = { ...paymentConfig, online_secret_key: e.target.value };
+                            setPaymentConfig(nextCfg);
+                          }}
+                          onBlur={() => handleInstantSavePaymentPolicy({ payment_config: paymentConfig })}
+                          className="w-full bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-2 text-xs font-mono text-white outline-none dir-ltr text-left"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sub-Policy 1: الطلبات (Orders Payment Policy) */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
+                      <ShoppingBag className="w-4 h-4 text-amber-400" />
+                      <span>سياسة الدفع لطلبات المنيو (محلي، سفري، توصيل):</span>
+                    </label>
+                    <span className="text-[11px] text-slate-400">حفظ تلقائي فوري ⚡</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    لا يُقبل أي طلب إلا بعد سداد قيمته إلكترونياً بالكامل. يلغي خيار الدفع عند الاستلام.
-                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Option 1: Both */}
+                    <div
+                      onClick={() => {
+                        setOrdersPaymentPolicy('both');
+                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'both' });
+                      }}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        ordersPaymentPolicy === 'both'
+                          ? 'bg-amber-500/10 border-amber-500/50 shadow-md ring-1 ring-amber-500/30'
+                          : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <span>الخياران متاحان (مرن)</span>
+                            <span className="text-[10px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">افتراضي</span>
+                          </span>
+                          {ordersPaymentPolicy === 'both' && <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          يمنح العميل حرية الاختيار بين الدفع أونلاين فوراً أو الدفع عند الاستلام/الكاشير.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Option 2: Online Only */}
+                    <div
+                      onClick={() => {
+                        setOrdersPaymentPolicy('online_only');
+                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'online_only' });
+                      }}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        ordersPaymentPolicy === 'online_only'
+                          ? 'bg-emerald-500/10 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
+                          : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <span>دفع أونلاين إلزامي فقط 🔒</span>
+                          </span>
+                          {ordersPaymentPolicy === 'online_only' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          لا يُقبل أي طلب إلا بعد سداد قيمته إلكترونياً بالكامل. يلغي خيار الدفع عند الاستلام.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Option 3: Pay at store only */}
+                    <div
+                      onClick={() => {
+                        setOrdersPaymentPolicy('pay_at_store_only');
+                        handleInstantSavePaymentPolicy({ orders_payment_policy: 'pay_at_store_only' });
+                      }}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        ordersPaymentPolicy === 'pay_at_store_only'
+                          ? 'bg-blue-500/10 border-blue-500/50 shadow-md ring-1 ring-blue-500/30'
+                          : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <span>دفع عند الاستلام / في الفرع فقط 💵</span>
+                          </span>
+                          {ordersPaymentPolicy === 'pay_at_store_only' && <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          يتم تجهيز الطلب ويسدد العميل نقداً أو بجهاز مدى في الفرع مباشرة.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sub-Policy 2: الحجوزات والمواعيد (Bookings Payment Policy) */}
+                <div className="space-y-3 pt-3 border-t border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-purple-400" />
+                      <span>سياسة الدفع لحجوزات الخدمات والمواعيد:</span>
+                    </label>
+                    <span className="text-[11px] text-slate-400">حفظ تلقائي فوري ⚡</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {/* Option 1: Both */}
+                    <div
+                      onClick={() => {
+                        setBookingsPaymentPolicy('both');
+                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'both' });
+                      }}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        bookingsPaymentPolicy === 'both'
+                          ? 'bg-purple-500/10 border-purple-500/50 shadow-md ring-1 ring-purple-500/30'
+                          : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <span>الخياران متاحان (مرن)</span>
+                            <span className="text-[10px] text-purple-400 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded">افتراضي</span>
+                          </span>
+                          {bookingsPaymentPolicy === 'both' && <CheckCircle2 className="w-4 h-4 text-purple-400 shrink-0" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          يمكن للعميل تأكيد الحجز فوراً مع خيار الدفع أونلاين أو الدفع عند الحضور في الموعد.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Option 2: Online Only */}
+                    <div
+                      onClick={() => {
+                        setBookingsPaymentPolicy('online_only');
+                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'online_only' });
+                      }}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        bookingsPaymentPolicy === 'online_only'
+                          ? 'bg-emerald-500/10 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
+                          : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <span>دفع أونلاين إلزامي لتأكيد الحجز 🔒</span>
+                          </span>
+                          {bookingsPaymentPolicy === 'online_only' && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          حجز الموعد يتطلب السداد مقدماً عبر المتجر لتثبيت وتأكيد الحجز ومنع التغيب.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Option 3: Pay at store only */}
+                    <div
+                      onClick={() => {
+                        setBookingsPaymentPolicy('pay_at_store_only');
+                        handleInstantSavePaymentPolicy({ bookings_payment_policy: 'pay_at_store_only' });
+                      }}
+                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
+                        bookingsPaymentPolicy === 'pay_at_store_only'
+                          ? 'bg-blue-500/10 border-blue-500/50 shadow-md ring-1 ring-blue-500/30'
+                          : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <span>الدفع عند الحضور في الموعد فقط 💵</span>
+                          </span>
+                          {bookingsPaymentPolicy === 'pay_at_store_only' && <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          يتم تثبيت الحجز ويسدد العميل تكلفة الخدمة عند الحضور في الفرع نقداً أو مدى.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              {/* Option 3: Pay at store only */}
-              <div
-                onClick={() => {
-                  setOrdersPaymentPolicy('pay_at_store_only');
-                  handleInstantSavePaymentPolicy({ orders_payment_policy: 'pay_at_store_only' });
-                }}
-                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                  ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
-                    ? 'bg-blue-500/10 border-blue-500/50 shadow-md ring-1 ring-blue-500/30'
-                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-white flex items-center gap-1.5">
-                      <span>دفع عند الاستلام / في الفرع فقط 💵</span>
-                    </span>
-                    {(ordersPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled) && (
-                      <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    يتم تجهيز الطلب ويسدد العميل نقداً أو بجهاز مدى في الفرع مباشرة.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {!onlinePaymentEnabled && (
-              <p className="text-[11px] text-amber-400/90 font-medium bg-amber-500/10 border border-amber-500/20 px-3.5 py-2 rounded-xl">
-                ℹ️ تم تعطيل بوابة الدفع الإلكتروني، لذا فإن كافة الطلبات تعمل حالياً بنمط "الدفع عند الاستلام / الفرع فقط". قم بتفعيل بوابة الدفع أعلاه لتفعيل خيارات الدفع أونلاين.
-              </p>
             )}
           </div>
 
-          {/* Sub-Policy 2: الحجوزات والمواعيد (Bookings Payment Policy) */}
-          <div className="space-y-3.5 pt-3 border-t border-slate-800">
-            <div className="flex items-center justify-between">
-              <label className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-purple-400" />
-                <span>سياسة الدفع لحجوزات الخدمات والمواعيد:</span>
-              </label>
-              <span className="text-[11px] text-slate-400">حفظ تلقائي فوري ⚡</span>
+          {/* ======================================================== */}
+          {/* 📟 CHANNEL 2: الدفع الحضوري عند الكاشير (In-Store & SoftPOS) */}
+          {/* ======================================================== */}
+          <div className="space-y-5 p-5 sm:p-6 rounded-2xl bg-slate-950/70 border border-slate-800">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Tablet className="w-5 h-5 text-purple-400" />
+                  <h4 className="text-sm sm:text-base font-black text-white">
+                    قناة الدفع الحضوري عند الكاشير (In-Store POS & SoftPOS)
+                  </h4>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
+                    paymentConfig.softpos_enabled
+                      ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                      : 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                  }`}>
+                    {paymentConfig.softpos_enabled ? 'SoftPOS مفعل' : 'شبكة بنكية خارجية'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  حدد كيف يقوم الكاشير بتحصيل مبالغ الشبكة من الزبائن في الفرع
+                </p>
+              </div>
+
+              {/* Quick SoftPOS Test Button */}
+              {paymentConfig.softpos_enabled && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSoftposTestStatus('idle');
+                    setSoftposAuthCode(null);
+                    setSoftposTestModalOpen(true);
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-300 text-xs font-bold transition flex items-center gap-1.5 self-start sm:self-auto"
+                >
+                  <Radio className="w-3.5 h-3.5 animate-pulse text-purple-400" />
+                  <span>محاكاة تجربة اللمس (NFC Tap) 📲</span>
+                </button>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-              {/* Option 1: Both */}
+            {/* Mode Cards: External Terminal vs SoftPOS */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Option A: Traditional External POS */}
               <div
                 onClick={() => {
-                  if (!onlinePaymentEnabled) return;
-                  setBookingsPaymentPolicy('both');
-                  handleInstantSavePaymentPolicy({ bookings_payment_policy: 'both' });
+                  const nextCfg: StorePaymentConfig = { ...paymentConfig, softpos_enabled: false };
+                  setPaymentConfig(nextCfg);
+                  handleInstantSavePaymentPolicy({ payment_config: nextCfg });
                 }}
                 className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                  !onlinePaymentEnabled
-                    ? 'opacity-40 cursor-not-allowed bg-slate-950/40 border-slate-800/60'
-                    : bookingsPaymentPolicy === 'both'
-                    ? 'bg-purple-500/10 border-purple-500/50 shadow-md ring-1 ring-purple-500/30'
-                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                  !paymentConfig.softpos_enabled
+                    ? 'bg-blue-500/10 border-blue-500 shadow-md ring-1 ring-blue-500/40'
+                    : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
                 }`}
               >
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-white flex items-center gap-1.5">
-                      <span>الخياران متاحان (مرن)</span>
-                      <span className="text-[10px] text-purple-400 font-bold bg-purple-500/10 px-1.5 py-0.5 rounded">افتراضي</span>
-                    </span>
-                    {bookingsPaymentPolicy === 'both' && onlinePaymentEnabled && (
-                      <CheckCircle2 className="w-4 h-4 text-purple-400 shrink-0" />
-                    )}
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-blue-400" />
+                      <span className="text-xs font-black text-white">جهاز شبكة بنكي خارجي (التقليدي)</span>
+                    </div>
+                    {!paymentConfig.softpos_enabled && <CheckCircle2 className="w-4 h-4 text-blue-400" />}
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    يمكن للعميل تأكيد الحجز فوراً مع خيار الدفع أونلاين أو الدفع عند الحضور في الموعد.
+                  <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
+                    استخدم جهاز مدى البنكي العادي الممنوح لك من بنكك (بدون أي رسوم أو إعدادات برمجية إضافية). يقوم الكاشير بتمرير البطاقة على جهاز البنك واعتماد الفاتورة فوراً.
                   </p>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-blue-300 font-bold bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded-lg w-fit">
+                  <span>✓ بدون اشتراك</span>
+                  <span>•</span>
+                  <span>✓ أسهل خيار للبدء</span>
                 </div>
               </div>
 
-              {/* Option 2: Online Only */}
+              {/* Option B: SoftPOS Tap-to-Phone */}
               <div
                 onClick={() => {
-                  if (!onlinePaymentEnabled) return;
-                  setBookingsPaymentPolicy('online_only');
-                  handleInstantSavePaymentPolicy({ bookings_payment_policy: 'online_only' });
+                  const nextCfg: StorePaymentConfig = { ...paymentConfig, softpos_enabled: true };
+                  setPaymentConfig(nextCfg);
+                  handleInstantSavePaymentPolicy({ payment_config: nextCfg });
                 }}
                 className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                  !onlinePaymentEnabled
-                    ? 'opacity-40 cursor-not-allowed bg-slate-950/40 border-slate-800/60'
-                    : bookingsPaymentPolicy === 'online_only'
-                    ? 'bg-emerald-500/10 border-emerald-500/50 shadow-md ring-1 ring-emerald-500/30'
-                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                  paymentConfig.softpos_enabled
+                    ? 'bg-purple-500/10 border-purple-500 shadow-md ring-1 ring-purple-500/40'
+                    : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
                 }`}
               >
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-white flex items-center gap-1.5">
-                      <span>دفع أونلاين إلزامي لتأكيد الحجز 🔒</span>
-                    </span>
-                    {bookingsPaymentPolicy === 'online_only' && onlinePaymentEnabled && (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    )}
+                    <div className="flex items-center gap-2">
+                      <Tablet className="w-4 h-4 text-purple-400" />
+                      <span className="text-xs font-black text-white">تحويل التابلت لشبكة SoftPOS (Tap-to-Phone)</span>
+                    </div>
+                    {paymentConfig.softpos_enabled && <CheckCircle2 className="w-4 h-4 text-purple-400" />}
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    حجز الموعد يتطلب السداد مقدماً عبر المتجر لتثبيت وتأكيد الحجز ومنع التغيب.
+                  <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
+                    استغنِ عن جهاز الشبكة المنفصل! حوّل تابلت الكاشير العامل بنظام أندرويد إلى جهاز شبكة يستقبل لمس بطاقات مدى وأبل باي عبر شريحة الـ NFC بظهر الجهاز مباشرة.
                   </p>
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-purple-300 font-bold bg-purple-500/10 border border-purple-500/20 px-2.5 py-1 rounded-lg w-fit">
+                  <span>⚡ بدون أجهزة إضافية</span>
+                  <span>•</span>
+                  <span>معتمد من ساما ومدى 🇸🇦</span>
                 </div>
               </div>
+            </div>
 
-              {/* Option 3: Pay at store only */}
-              <div
-                onClick={() => {
-                  setBookingsPaymentPolicy('pay_at_store_only');
-                  handleInstantSavePaymentPolicy({ bookings_payment_policy: 'pay_at_store_only' });
-                }}
-                className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                  bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled
-                    ? 'bg-blue-500/10 border-blue-500/50 shadow-md ring-1 ring-blue-500/30'
-                    : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-black text-white flex items-center gap-1.5">
-                      <span>الدفع عند الحضور في الموعد فقط 💵</span>
-                    </span>
-                    {(bookingsPaymentPolicy === 'pay_at_store_only' || !onlinePaymentEnabled) && (
-                      <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
-                    )}
+            {/* SoftPOS Configuration Drawer (Shown when SoftPOS enabled) */}
+            {paymentConfig.softpos_enabled && (
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 animate-fade-in">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <span className="text-xs font-black text-white flex items-center gap-1.5">
+                    <Radio className="w-4 h-4 text-purple-400" />
+                    <span>إعدادات مزود خدمة SoftPOS للتابلت:</span>
+                  </span>
+
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextCfg: StorePaymentConfig = { ...paymentConfig, softpos_mode: 'sandbox' };
+                        setPaymentConfig(nextCfg);
+                        handleInstantSavePaymentPolicy({ payment_config: nextCfg });
+                      }}
+                      className={`px-2.5 py-1 rounded-lg transition ${
+                        paymentConfig.softpos_mode === 'sandbox'
+                          ? 'bg-amber-500 text-black shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      تجريبي (Sandbox)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextCfg: StorePaymentConfig = { ...paymentConfig, softpos_mode: 'live' };
+                        setPaymentConfig(nextCfg);
+                        handleInstantSavePaymentPolicy({ payment_config: nextCfg });
+                      }}
+                      className={`px-2.5 py-1 rounded-lg transition ${
+                        paymentConfig.softpos_mode === 'live'
+                          ? 'bg-purple-500 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      حي (Live إنتاج)
+                    </button>
                   </div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    يتم تثبيت الحجز ويسدد العميل تكلفة الخدمة عند الحضور في الفرع نقداً أو مدى.
-                  </p>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Nearpay */}
+                  <div
+                    onClick={() => {
+                      const nextCfg: StorePaymentConfig = { ...paymentConfig, softpos_provider: 'nearpay' };
+                      setPaymentConfig(nextCfg);
+                      handleInstantSavePaymentPolicy({ payment_config: nextCfg });
+                    }}
+                    className={`p-3 rounded-xl border cursor-pointer transition ${
+                      paymentConfig.softpos_provider === 'nearpay'
+                        ? 'bg-purple-500/15 border-purple-500 text-purple-200'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-black">نيرباي (Nearpay SDK)</span>
+                      {paymentConfig.softpos_provider === 'nearpay' && <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />}
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      الرائد والأكثر انتشاراً في السعودية للدفع عبر التابلت بنقرة واحدة
+                    </p>
+                  </div>
+
+                  {/* Geidea Tap on Phone */}
+                  <div
+                    onClick={() => {
+                      const nextCfg: StorePaymentConfig = { ...paymentConfig, softpos_provider: 'geidea' };
+                      setPaymentConfig(nextCfg);
+                      handleInstantSavePaymentPolicy({ payment_config: nextCfg });
+                    }}
+                    className={`p-3 rounded-xl border cursor-pointer transition ${
+                      paymentConfig.softpos_provider === 'geidea'
+                        ? 'bg-purple-500/15 border-purple-500 text-purple-200'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-black">جيديا (Geidea Tap-on-Phone)</span>
+                      {paymentConfig.softpos_provider === 'geidea' && <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />}
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      يسمح لك باستخدام حسابك التجاري في جيديا للمتجر والتابلت معاً
+                    </p>
+                  </div>
+                </div>
+
+                {/* API Key / Terminal ID Input */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="text-[11px] text-slate-300 font-bold block mb-1">
+                      مفتاح التطبيق للتابلت (App / Client Key):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={paymentConfig.softpos_provider === 'nearpay' ? 'nearpay_live_...' : 'geidea_term_...'}
+                      value={paymentConfig.softpos_api_key || ''}
+                      onChange={(e) => {
+                        const nextCfg: StorePaymentConfig = { ...paymentConfig, softpos_api_key: e.target.value };
+                        setPaymentConfig(nextCfg);
+                      }}
+                      onBlur={() => handleInstantSavePaymentPolicy({ payment_config: paymentConfig })}
+                      className="w-full bg-slate-950 border border-slate-700 focus:border-purple-400 rounded-xl px-3 py-2 text-xs font-mono text-white outline-none dir-ltr text-left"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-300 font-bold block mb-1">
+                      معرّف نقطة البيع (Terminal ID):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="مثال: TID-BRANCH-01"
+                      value={paymentConfig.softpos_terminal_id || ''}
+                      onChange={(e) => {
+                        const nextCfg: StorePaymentConfig = { ...paymentConfig, softpos_terminal_id: e.target.value };
+                        setPaymentConfig(nextCfg);
+                      }}
+                      onBlur={() => handleInstantSavePaymentPolicy({ payment_config: paymentConfig })}
+                      className="w-full bg-slate-950 border border-slate-700 focus:border-purple-400 rounded-xl px-3 py-2 text-xs font-mono text-white outline-none dir-ltr text-left"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ======================================================== */}
+          {/* 💡 FAQ: إجابات سريعة تريح التاجر (Smart Merchant FAQ) */}
+          {/* ======================================================== */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+            <div className="flex items-center gap-2 text-amber-400 text-xs font-black">
+              <HelpCircle className="w-4 h-4" />
+              <span>أسئلة شائعة تهمك حول المدفوعات والاشتراكات:</span>
+            </div>
+
+            <div className="space-y-2.5 text-xs text-slate-300">
+              <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800/80 space-y-1">
+                <span className="font-bold text-white block">س: هل أنا ملزم بالاشتراك في بوابات الدفع الإلكتروني أو الـ SoftPOS؟</span>
+                <p className="text-slate-400 text-[11px] leading-relaxed">
+                  ج: أبداً! يمكنك تشغيل متجرك وفروعك مجاناً وبأبسط الطرق بالاعتماد على الدفع النقدي (كاش) وجهاز الشبكة العادي الممنوح لك من بنكك، دون أي رسوم اشتراك إضافية.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800/80 space-y-1">
+                <span className="font-bold text-white block">س: هل يمكنني التعامل مع مزود خدمة واحد للمتجر والكاشير معاً؟</span>
+                <p className="text-slate-400 text-[11px] leading-relaxed">
+                  ج: نعم، شركة مثل <strong>جيديا (Geidea)</strong> تتيح لك فتح حساب واحد يغطي بوابة الدفع للمتجر وخدمة Tap-on-Phone للتابلت، وتودع كافة المبيعات في نفس الحساب البنكي. كما يمكنك اختيار <strong>ميسر (Moyasar)</strong> للتطبيق و<strong>نيرباي (Nearpay)</strong> للتابلت وكلاهما يحوّل المبالغ مباشرة لنفس آيبانك.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800/80 space-y-1">
+                <span className="font-bold text-white block">س: أين تذهب مبالغ المبيعات التي يدفعها العملاء؟</span>
+                <p className="text-slate-400 text-[11px] leading-relaxed">
+                  ج: كافة بوابات الدفع وخدمات الـ SoftPOS السعودية المعتمدة من البنك المركزي (ساما) تقوم بإيداع المبالغ مباشرة في حسابك التجاري البنكي (الآيبان) بشكل دوري وتلقائي.
+                </p>
               </div>
             </div>
           </div>
 
           {/* Status footer */}
-          <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-4 border-t border-slate-800">
             <span className="text-xs text-slate-400 flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>تنعكس هذه السياسات فوراً على شاشة الدفع وسلة التسوق للزبائن</span>
+              <span>تنعكس إعدادات الدفع فوراً على تطبيق العميل وشاشة الكاشير</span>
             </span>
             {paymentPolicyStatus && (
               <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 rounded-xl">
@@ -7718,6 +8192,118 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </span>
             )}
           </div>
+
+          {/* 📲 Modal: محاكاة تجربة SoftPOS Tap-to-Phone التفاعلية */}
+          {softposTestModalOpen && (
+            <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in" dir="rtl">
+              <div className="bg-slate-900 border-2 border-purple-500/40 rounded-3xl p-6 w-full max-w-md shadow-2xl relative space-y-5 text-center">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <Radio className="w-5 h-5 text-purple-400" />
+                    <h3 className="text-base font-black text-white">محاكاة الدفع باللمس (SoftPOS NFC)</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSoftposTestModalOpen(false)}
+                    className="text-slate-400 hover:text-white text-sm"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Radar Contactless Waves Visual */}
+                <div className="py-4 relative flex flex-col items-center justify-center">
+                  <div className="relative w-32 h-32 flex items-center justify-center">
+                    <div className="absolute inset-0 rounded-full border-2 border-purple-500/20 animate-ping" />
+                    <div className="absolute inset-2 rounded-full border-2 border-purple-500/40 animate-pulse" />
+                    <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center text-white shadow-xl shadow-purple-500/30">
+                      <Radio className="w-10 h-10" />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 space-y-1">
+                    <p className="text-sm font-black text-white">
+                      {softposTestStatus === 'idle' && 'قرّب البطاقة أو الجوال من شريحة الـ NFC 💳'}
+                      {softposTestStatus === 'scanning' && 'جاري قراءة البطاقة... 📡'}
+                      {softposTestStatus === 'processing' && 'جاري معالجة العملية مع شبكة مدى... ⏳'}
+                      {softposTestStatus === 'approved' && 'تمت العملية بنجاح! مسدد ومقبول ✅'}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      المبلغ المطلوب في الاختبار: <span className="font-mono text-purple-300 font-bold">150.00 ﷼</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Result Display */}
+                {softposTestStatus === 'approved' && softposAuthCode && (
+                  <div className="p-4 rounded-2xl bg-emerald-950/60 border border-emerald-500/40 space-y-2 animate-fade-in text-center">
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto text-xl border border-emerald-500/30">
+                      ✓
+                    </div>
+                    <div className="text-emerald-400 font-black text-sm">
+                      تم تفويض عملية مدى (MADA APPROVED)
+                    </div>
+                    <p className="text-xs font-mono text-emerald-200">
+                      رقم التفويض: <strong className="text-white">{softposAuthCode}</strong>
+                    </p>
+                    <div className="flex justify-center gap-2 pt-1">
+                      <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded text-slate-300 font-mono">EMV Contactless</span>
+                      <span className="text-[10px] bg-slate-900 px-2 py-0.5 rounded text-emerald-300 font-mono">Mada Debit</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="space-y-2 pt-2">
+                  {softposTestStatus !== 'approved' ? (
+                    <button
+                      type="button"
+                      disabled={softposTestStatus !== 'idle'}
+                      onClick={() => {
+                        setSoftposTestStatus('scanning');
+                        playBeepSound();
+                        setTimeout(() => {
+                          setSoftposTestStatus('processing');
+                          setTimeout(() => {
+                            playBeepSound();
+                            setSoftposAuthCode(`AUTH-MADA-${Math.floor(100000 + Math.random() * 900000)}`);
+                            setSoftposTestStatus('approved');
+                          }, 900);
+                        }, 700);
+                      }}
+                      className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-sm transition shadow-lg shadow-purple-500/25 active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      <Radio className="w-4 h-4" />
+                      <span>
+                        {softposTestStatus === 'idle'
+                          ? 'محاكاة لمس بطاقة مدى الآن (Tap Card)'
+                          : 'جاري قراءة وتفويض مدى...'}
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSoftposTestStatus('idle');
+                        setSoftposAuthCode(null);
+                      }}
+                      className="w-full py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition"
+                    >
+                      إعادة الاختبار 🔄
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setSoftposTestModalOpen(false)}
+                    className="w-full py-2.5 text-xs text-slate-400 hover:text-white"
+                  >
+                    إغلاق النافذة
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

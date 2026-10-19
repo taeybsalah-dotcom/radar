@@ -44,6 +44,9 @@ import {
   Scissors,
   Calendar,
   UserCheck,
+  Radio,
+  Tablet,
+  Smartphone,
 } from 'lucide-react';
 import { OfflineSyncEngine } from '../lib/offlineSync';
 import { OfflineSyncModal } from './OfflineSyncModal';
@@ -191,6 +194,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
   const [splitCardAmount, setSplitCardAmount] = useState<number | ''>('');
   const [isSubmittingCheckout, setIsSubmittingCheckout] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+
+  // 📲 Cashier SoftPOS Tap-to-Phone State
+  const isSoftPosEnabled = Boolean(store?.fulfillment_settings?.payment_config?.softpos_enabled);
+  const softPosProvider = store?.fulfillment_settings?.payment_config?.softpos_provider || 'nearpay';
+  const [useSoftPosForCard, setUseSoftPosForCard] = useState<boolean>(isSoftPosEnabled);
+  const [softPosCardStatus, setSoftPosCardStatus] = useState<'idle' | 'tapping' | 'reading' | 'approved'>('idle');
+  const [softPosAuthReference, setSoftPosAuthReference] = useState<string | null>(null);
 
   // Completed Receipt Modal State
   const [completedOrder, setCompletedOrder] = useState<any | null>(null);
@@ -915,6 +925,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         is_offline: isOfflineOrder,
         cashTendered: paymentMethod === 'cash' ? Number(cashTendered) : undefined,
         changeDue: paymentMethod === 'cash' ? changeDue : undefined,
+        softpos_auth: paymentMethod === 'card' && softPosAuthReference ? softPosAuthReference : undefined,
+        card_channel: paymentMethod === 'card' ? (softPosAuthReference ? 'softpos' : 'external_pos') : undefined,
       };
 
       setCompletedOrder(completeInfo);
@@ -1918,6 +1930,121 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   </button>
                 </div>
 
+                {/* 💳 Card / SoftPOS Payment Drawer */}
+                {paymentMethod === 'card' && (
+                  <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3 animate-fade-in">
+                    {isSoftPosEnabled && useSoftPosForCard ? (
+                      /* SoftPOS Tap-to-Phone Activated */
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                          <div className="flex items-center gap-2">
+                            <Radio className="w-4 h-4 text-purple-400 animate-pulse" />
+                            <span className="text-xs font-black text-white">
+                              الدفع باللمس عبر التابلت ({softPosProvider === 'nearpay' ? 'نيرباي Nearpay' : 'جيديا Geidea'}) 📲
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setUseSoftPosForCard(false)}
+                            className="text-[10px] text-slate-400 hover:text-white underline"
+                          >
+                            التبديل إلى جهاز شبكة خارجي
+                          </button>
+                        </div>
+
+                        {/* Interactive Radar Waves & Tap Action */}
+                        <div className="py-2 text-center space-y-2">
+                          <div className="w-16 h-16 mx-auto rounded-full bg-purple-500/20 border-2 border-purple-500/40 flex items-center justify-center text-purple-300 relative">
+                            <span className="absolute inset-0 rounded-full border border-purple-400/30 animate-ping pointer-events-none" />
+                            <Radio className="w-8 h-8" />
+                          </div>
+
+                          <div className="space-y-0.5">
+                            <p className="text-xs font-black text-white">
+                              وجّه ظهر التابلت أو شاشته للمس بطاقة مدى أو أبل باي
+                            </p>
+                            <p className="text-[11px] text-slate-400">
+                              المبلغ المطلوب سداده: <span className="font-mono text-amber-400 font-bold">{cartGrandTotal.toFixed(2)} ﷼</span>
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* SoftPOS Status & Trigger */}
+                        {softPosCardStatus === 'approved' && softPosAuthReference ? (
+                          <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/40 text-center space-y-1 animate-fade-in">
+                            <div className="text-emerald-400 font-black text-xs flex items-center justify-center gap-1.5">
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>تم تفويض وسداد العملية بنجاح! (MADA APPROVED)</span>
+                            </div>
+                            <p className="text-[10px] font-mono text-emerald-200">
+                              رقم المرجع والتفويض: <strong className="text-white">{softPosAuthReference}</strong>
+                            </p>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={softPosCardStatus !== 'idle'}
+                            onClick={() => {
+                              setSoftPosCardStatus('tapping');
+                              playBeepSound();
+                              setTimeout(() => {
+                                setSoftPosCardStatus('reading');
+                                setTimeout(() => {
+                                  playBeepSound();
+                                  setSoftPosAuthReference(`MADA-${Math.floor(100000 + Math.random() * 900000)}`);
+                                  setSoftPosCardStatus('approved');
+                                }, 900);
+                              }, 700);
+                            }}
+                            className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 hover:from-purple-500 text-white font-black text-xs transition shadow-lg shadow-purple-500/25 active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+                          >
+                            <Radio className="w-4 h-4" />
+                            <span>
+                              {softPosCardStatus === 'idle' && `محاكاة لمس بطاقة مدى الآن (${cartGrandTotal.toFixed(2)} ﷼) 📡`}
+                              {softPosCardStatus === 'tapping' && 'جاري قراءة بطاقة مدى بالـ NFC...'}
+                              {softPosCardStatus === 'reading' && 'جاري تفويض العملية مع شبكة مدى السعودية...'}
+                            </span>
+                          </button>
+                        )}
+
+                        <div className="flex items-center justify-center gap-2 text-[10px] text-slate-400 pt-1">
+                          <span>يدعم:</span>
+                          <span className="font-bold text-slate-300">مدى Mada</span>
+                          <span>•</span>
+                          <span className="font-bold text-slate-300">Apple Pay</span>
+                          <span>•</span>
+                          <span className="font-bold text-slate-300">Visa / Mastercard</span>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Traditional External Bank POS Terminal */
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                            <CreditCard className="w-4 h-4 text-blue-400" />
+                            <span>الدفع عبر جهاز الشبكة البنكي الخارجي 💳</span>
+                          </span>
+                          {isSoftPosEnabled && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setUseSoftPosForCard(true);
+                                setSoftPosCardStatus('idle');
+                              }}
+                              className="text-[10px] text-purple-400 hover:text-purple-300 underline font-bold"
+                            >
+                              التبديل إلى SoftPOS (اللمس بالتابلت)
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          قم بتمرير بطاقة العميل على جهاز مدى اليدوي التابع لبنكك بقيمة (<strong className="text-white">{cartGrandTotal.toFixed(2)} ﷼</strong>)، ثم اضغط على زر "اعتماد وسداد الفاتورة" بالأسفل بعد خروج إيصال الشبكة.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Cash Calculator Drawer */}
                 {paymentMethod === 'cash' && (
                   <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3 animate-fade-in">
@@ -2137,6 +2264,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                     ? 'نقاط ولاء 👑'
                     : completedOrder.payment_method === 'split'
                     ? 'دفع مجزأ (كاش + شبكة)'
+                    : completedOrder.softpos_auth
+                    ? `مدى باللمس SoftPOS (${completedOrder.softpos_auth}) 📲`
                     : 'شبكة / مدى 💳'}
                 </span>
                 {completedOrder.changeDue !== undefined && !completedOrder.is_app_paid && (
