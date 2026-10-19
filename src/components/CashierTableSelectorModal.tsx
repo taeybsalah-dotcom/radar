@@ -47,8 +47,6 @@ export const CashierTableSelectorModal: React.FC<CashierTableSelectorModalProps>
     }
   }, [isOpen, storeId, activeBranchId]);
 
-  if (!isOpen) return null;
-
   const zonesList: { id: string; label: string }[] = [
     { id: 'all', label: 'الكل' },
     { id: 'singles', label: 'الأفراد 👤' },
@@ -83,6 +81,8 @@ export const CashierTableSelectorModal: React.FC<CashierTableSelectorModalProps>
       total: tables.length,
     };
   }, [tables, activeOrders]);
+
+  if (!isOpen) return null;
 
   const handleChoose = (tableNum: string) => {
     onSelectTable(tableNum);

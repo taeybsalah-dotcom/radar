@@ -2684,82 +2684,94 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
       )}
 
       {/* 🏷️ Cart Discount Modal */}
-      <CashierDiscountModal
-        isOpen={isDiscountModalOpen}
-        onClose={() => setIsDiscountModalOpen(false)}
-        subtotal={cartSubtotal}
-        currentDiscount={appliedDiscount}
-        onApplyDiscount={(discount) => setAppliedDiscount(discount)}
-        onRemoveDiscount={() => setAppliedDiscount(null)}
-      />
+      {isDiscountModalOpen && (
+        <CashierDiscountModal
+          isOpen={isDiscountModalOpen}
+          onClose={() => setIsDiscountModalOpen(false)}
+          subtotal={cartSubtotal}
+          currentDiscount={appliedDiscount}
+          onApplyDiscount={(discount) => setAppliedDiscount(discount)}
+          onRemoveDiscount={() => setAppliedDiscount(null)}
+        />
+      )}
 
       {/* 🧾 Recent Shift Receipts Modal */}
-      <CashierRecentReceiptsModal
-        isOpen={isRecentReceiptsModalOpen}
-        onClose={() => setIsRecentReceiptsModalOpen(false)}
-        store={store}
-        activeStaff={activeStaff}
-        activeBranch={activeBranch}
-        orders={liveOrders}
-        onReprintReceipt={(ord) => {
-          setCompletedOrder(ord);
-          setIsReceiptModalOpen(true);
-        }}
-        onOpenRefundForOrder={onOpenRefund}
-      />
+      {isRecentReceiptsModalOpen && (
+        <CashierRecentReceiptsModal
+          isOpen={isRecentReceiptsModalOpen}
+          onClose={() => setIsRecentReceiptsModalOpen(false)}
+          store={store}
+          activeStaff={activeStaff}
+          activeBranch={activeBranch}
+          orders={liveOrders}
+          onReprintReceipt={(ord) => {
+            setCompletedOrder(ord);
+            setIsReceiptModalOpen(true);
+          }}
+          onOpenRefundForOrder={onOpenRefund}
+        />
+      )}
 
       {/* ➕ Custom Open Price Item Modal */}
-      <CashierCustomItemModal
-        isOpen={isCustomItemModalOpen}
-        onClose={() => setIsCustomItemModalOpen(false)}
-        onAddCustomItem={handleAddCustomItem}
-      />
+      {isCustomItemModalOpen && (
+        <CashierCustomItemModal
+          isOpen={isCustomItemModalOpen}
+          onClose={() => setIsCustomItemModalOpen(false)}
+          onAddCustomItem={handleAddCustomItem}
+        />
+      )}
 
       {/* 🪑 Visual Table Selector Modal */}
-      <CashierTableSelectorModal
-        isOpen={isTableSelectorModalOpen}
-        onClose={() => setIsTableSelectorModalOpen(false)}
-        selectedTable={tableNumber}
-        activeOrders={liveOrders}
-        storeId={store.id}
-        activeBranchId={activeBranch?.id}
-        onSelectTable={(tableNum) => {
-          setTableNumber(tableNum);
-          if (tableNum) setOrderType('dine_in');
-        }}
-      />
+      {isTableSelectorModalOpen && (
+        <CashierTableSelectorModal
+          isOpen={isTableSelectorModalOpen}
+          onClose={() => setIsTableSelectorModalOpen(false)}
+          selectedTable={tableNumber}
+          activeOrders={liveOrders}
+          storeId={store.id}
+          activeBranchId={activeBranch?.id}
+          onSelectTable={(tableNum) => {
+            setTableNumber(tableNum);
+            if (tableNum) setOrderType('dine_in');
+          }}
+        />
+      )}
 
       {/* 💵 Cash In / Out Movement Modal */}
-      <CashierCashMovementModal
-        isOpen={isCashMovementModalOpen}
-        onClose={() => setIsCashMovementModalOpen(false)}
-        store={store}
-        activeStaff={activeStaff}
-        activeBranch={activeBranch}
-        activeShift={activeShift}
-        initialType={cashMovementInitialType}
-        onMovementRecorded={() => {
-          if (onRefreshOrders) onRefreshOrders();
-        }}
-      />
+      {isCashMovementModalOpen && (
+        <CashierCashMovementModal
+          isOpen={isCashMovementModalOpen}
+          onClose={() => setIsCashMovementModalOpen(false)}
+          store={store}
+          activeStaff={activeStaff}
+          activeBranch={activeBranch}
+          activeShift={activeShift}
+          initialType={cashMovementInitialType}
+          onMovementRecorded={() => {
+            if (onRefreshOrders) onRefreshOrders();
+          }}
+        />
+      )}
 
       {/* 📅 Service Appointments & Bookings Modal */}
-      <CashierAppointmentsModal
-        isOpen={isAppointmentsModalOpen}
-        onClose={() => setIsAppointmentsModalOpen(false)}
-        store={store}
-        activeBranch={activeBranch}
-        activeStaff={activeStaff}
-        specialists={specialists}
-        catalogItems={catalogItems}
-        bookings={bookingsList}
-        onCheckInBooking={handleCheckInBooking}
-        onRefreshBookings={() => {
-          if (store?.id) {
-            LoyaltyService.getStoreBookings(store.id).then(setBookingsList).catch(() => {});
-          }
-        }}
-      />
+      {isAppointmentsModalOpen && (
+        <CashierAppointmentsModal
+          isOpen={isAppointmentsModalOpen}
+          onClose={() => setIsAppointmentsModalOpen(false)}
+          store={store}
+          activeBranch={activeBranch}
+          activeStaff={activeStaff}
+          specialists={specialists}
+          catalogItems={catalogItems}
+          bookings={bookingsList}
+          onCheckInBooking={handleCheckInBooking}
+          onRefreshBookings={() => {
+            if (store?.id) {
+              LoyaltyService.getStoreBookings(store.id).then(setBookingsList).catch(() => {});
+            }
+          }}
+        />
+      )}
     </div>
   );
 };
