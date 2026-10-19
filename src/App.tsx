@@ -624,8 +624,8 @@ export function App() {
   const debouncedSyncAppStore = useMemo(
     () =>
       debounce((currentStoreId?: string, currentSlug?: string) => {
-        LoyaltyService.getAllStores().then((all) => {
-          const updated = all.find((s) => s.id === currentStoreId || s.slug === currentSlug);
+        LoyaltyService.getAllStores(true).then((all) => {
+          const updated = all.find((s) => (currentStoreId && s.id === currentStoreId) || (currentSlug && s.slug === currentSlug) || (store?.id && s.id === store.id) || (store?.slug && s.slug === store.slug));
           if (updated) {
             setStore(updated);
             updateDynamicPWA(updated, activeTab);
@@ -636,13 +636,13 @@ export function App() {
           }
         });
       }, 300),
-    [activeTab]
+    [activeTab, store]
   );
 
   useEffect(() => {
     const unsubscribe = LoyaltyEvents.listen((event) => {
       if (event.type === 'STORE_UPDATED') {
-        debouncedSyncAppStore(store?.id, store?.slug);
+        debouncedSyncAppStore(event.storeId || store?.id, store?.slug);
       }
 
       if (event.type === 'CUSTOM_NOTIFICATION') {

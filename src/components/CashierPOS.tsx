@@ -1693,11 +1693,17 @@ ${portalUrl}`;
       {/* 🧭 Top POS Status Bar & Active Staff Switcher */}
 
       <div
-        className="p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl border border-slate-800"
+        className="p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl border border-slate-800 transition-colors duration-300"
         style={{
-          background: `linear-gradient(to right, ${store.secondary_color || '#F59E0B'}20, #0B0F17 60%, ${store.primary_color || '#0F172A'}40)`,
+          background:
+            store.theme_mode === 'light'
+              ? `linear-gradient(to right, ${store.secondary_color || '#F59E0B'}18, #FFFFFF 50%, ${store.primary_color || '#0F172A'}10)`
+              : store.theme_mode === 'warm_cream'
+              ? `linear-gradient(to right, ${store.secondary_color || '#F59E0B'}18, #FFFFFF 50%, #FAF6F0 100%)`
+              : `linear-gradient(to right, ${store.secondary_color || '#F59E0B'}20, #0B0F17 60%, ${store.primary_color || '#0F172A'}40)`,
           borderRightWidth: '4px',
           borderRightColor: store.secondary_color || '#F59E0B',
+          borderColor: store.theme_mode === 'light' ? '#E2E8F0' : store.theme_mode === 'warm_cream' ? '#EFE6D8' : undefined,
         }}
       >
         {/* Right side: Store Logo + Name, with Cashier & Branch directly underneath */}

@@ -834,7 +834,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           }).catch(() => {});
 
           if (event.type === 'STORE_UPDATED' || event.type === 'BRANCHES_UPDATED') {
-            LoyaltyService.resolveStore(store.id || store.slug).then((fresh) => {
+            LoyaltyService.resolveStore(store.id || store.slug, true).then((fresh) => {
               if (fresh) setStore(fresh);
             }).catch(() => {});
             LoyaltyService.getStoreBranches(store.id).then((brs) => {

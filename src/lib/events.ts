@@ -62,6 +62,7 @@ const CLIENT_INSTANCE_ID =
 // 🛡️ Whitelist of events that genuinely require cross-device Supabase Realtime broadcast (POS <-> Wallet)
 // Internal admin/metadata events (stores, subscriptions, leads, staff) NEVER pollute the WebSocket quota.
 const CROSS_DEVICE_REALTIME_EVENTS = new Set<LoyaltyEventType>([
+  'STORE_UPDATED',
   'POINTS_ADDED',
   'REWARD_REDEEMED',
   'COUPON_REDEEMED',

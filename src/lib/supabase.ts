@@ -506,8 +506,27 @@ export function normalizeStore(s: any): Store {
 
   const storeCode = s.store_code || (s.id && isUUID(s.id) ? `RD-${s.id.replace(/-/g, '').substring(0, 4).toUpperCase()}` : undefined);
 
+  const rawFulfill = s.fulfillment_settings ?? localExistingStore?.fulfillment_settings;
+  let parsedFulfill: any = rawFulfill;
+  if (typeof parsedFulfill === 'string') {
+    try { parsedFulfill = JSON.parse(parsedFulfill); } catch { parsedFulfill = null; }
+  }
+
+  const effectiveThemeMode = s.theme_mode || parsedFulfill?.theme_mode || localExistingStore?.theme_mode || 'light';
+  const effectiveBgColor = s.background_color || parsedFulfill?.background_color || localExistingStore?.background_color || (effectiveThemeMode === 'warm_cream' ? '#FAF6F0' : effectiveThemeMode === 'dark' ? '#080B11' : '#F8FAFC');
+  const effectiveCardColor = s.card_color || parsedFulfill?.card_color || localExistingStore?.card_color || (effectiveThemeMode === 'dark' ? '#131A26' : '#FFFFFF');
+  const effectiveCardTextColor = s.card_text_color || parsedFulfill?.card_text_color || localExistingStore?.card_text_color || undefined;
+  const effectiveThemePreset = s.theme_preset || parsedFulfill?.theme_preset || localExistingStore?.theme_preset || undefined;
+
   return {
     ...s,
+    primary_color: s.primary_color || localExistingStore?.primary_color || '#0F172A',
+    secondary_color: s.secondary_color || localExistingStore?.secondary_color || '#F59E0B',
+    theme_mode: effectiveThemeMode,
+    background_color: effectiveBgColor,
+    card_color: effectiveCardColor,
+    card_text_color: effectiveCardTextColor,
+    theme_preset: effectiveThemePreset,
     store_code: storeCode,
     setup_fee_paid: isPaid,
     status: isSuspended ? 'suspended' : (s.status || 'active'),
@@ -532,10 +551,7 @@ export function normalizeStore(s: any): Store {
     owner_enable_bookings: s.owner_enable_bookings !== false,
     owner_enable_loyalty: s.owner_enable_loyalty !== false,
     fulfillment_settings: (() => {
-      let raw = s.fulfillment_settings ?? localExistingStore?.fulfillment_settings;
-      if (typeof raw === 'string') {
-        try { raw = JSON.parse(raw); } catch { raw = null; }
-      }
+      let raw = parsedFulfill;
       return {
         allow_dine_in: raw?.allow_dine_in !== false,
         allow_takeaway: raw?.allow_takeaway !== false,
@@ -546,6 +562,11 @@ export function normalizeStore(s: any): Store {
         online_payment_enabled: raw?.online_payment_enabled !== false,
         orders_payment_policy: (raw?.orders_payment_policy as any) || 'both',
         bookings_payment_policy: (raw?.bookings_payment_policy as any) || 'both',
+        theme_mode: effectiveThemeMode,
+        background_color: effectiveBgColor,
+        card_color: effectiveCardColor,
+        card_text_color: effectiveCardTextColor,
+        theme_preset: effectiveThemePreset,
       };
     })(),
   };
@@ -2046,15 +2067,50 @@ export const LoyaltyService = {
     let updatedSupabaseStore: Store | null = null;
     if (supabase) {
       try {
-        const { lifecycle_stage, plan, matchedStore, ...dbUpdates } = stripDataUrls({ ...(updates as any) });
+        const {
+          lifecycle_stage,
+          plan,
+          matchedStore,
+          theme_mode,
+          background_color,
+          card_color,
+          card_text_color,
+          theme_preset,
+          ...rawDbUpdates
+        } = stripDataUrls({ ...(updates as any) });
+
+        // Package theme into fulfillment_settings JSONB so Supabase schema doesn't throw column-not-found error
+        const themePayload: any = {};
+        if (theme_mode !== undefined) themePayload.theme_mode = theme_mode;
+        if (background_color !== undefined) themePayload.background_color = background_color;
+        if (card_color !== undefined) themePayload.card_color = card_color;
+        if (card_text_color !== undefined) themePayload.card_text_color = card_text_color;
+        if (theme_preset !== undefined) themePayload.theme_preset = theme_preset;
+
+        const currentFulfillment =
+          typeof currentStore.fulfillment_settings === 'object' && currentStore.fulfillment_settings !== null
+            ? currentStore.fulfillment_settings
+            : {};
+
+        const dbUpdates: any = {
+          ...rawDbUpdates,
+          fulfillment_settings: {
+            ...currentFulfillment,
+            ...(rawDbUpdates.fulfillment_settings || {}),
+            ...themePayload,
+          },
+        };
+
         const query = supabase.from('stores').update(dbUpdates);
         const res = isUUID(currentStore.id)
           ? await query.eq('id', currentStore.id).select(await storeCols(supabase)).maybeSingle()
           : await query.eq('slug', currentStore.slug).select(await storeCols(supabase)).maybeSingle();
 
         if (!res.error && res.data) {
-          updatedSupabaseStore = { ...(res.data as any), ...pickStoreAssets(dbUpdates) } as Store;
+          updatedSupabaseStore = { ...(res.data as any), ...pickStoreAssets(dbUpdates), ...themePayload } as Store;
           noteStoreAssetUpdates(currentStore.id, dbUpdates);
+        } else if (res.error) {
+          console.warn('Supabase updateStoreSettings error:', res.error);
         }
       } catch (e) {
         console.warn('Supabase updateStoreSettings failed', e);
@@ -2063,7 +2119,13 @@ export const LoyaltyService = {
 
     const merged: Store = normalizeStore({
       ...currentStore,
-      ...(updatedSupabaseStore || updates),
+      ...updates,
+      ...(updatedSupabaseStore || {}),
+      theme_mode: updates.theme_mode || currentStore.theme_mode || 'light',
+      background_color: updates.background_color || currentStore.background_color,
+      card_color: updates.card_color || currentStore.card_color,
+      card_text_color: updates.card_text_color || currentStore.card_text_color,
+      theme_preset: updates.theme_preset || currentStore.theme_preset,
       updated_at: new Date().toISOString(),
     });
     if (idx !== -1) {
