@@ -15,32 +15,72 @@ import { registerRadarServiceWorker, sendPortalNotification, saveInboxNotificati
 import { playBeepSound } from './lib/sound';
 import { Bell, Coins, X } from 'lucide-react';
 
-const SuperAdminDashboard = React.lazy(() =>
-  import('./components/SuperAdminDashboard').then((m) => ({ default: m.SuperAdminDashboard }))
+// 🛡️ Safe Lazy Import with Automatic Stale Chunk Invalidation
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  componentImport: () => Promise<{ default: T } | any>,
+  name?: string
+) {
+  return React.lazy(async () => {
+    const sessionKey = `radar_lazy_retry_${name || 'module'}`;
+    try {
+      const module = await componentImport();
+      sessionStorage.removeItem(sessionKey);
+      return module.default ? module : { default: module };
+    } catch (error: any) {
+      const msg = error?.message || String(error);
+      const isChunkError =
+        msg.includes('dynamically imported module') ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('Loading chunk') ||
+        error?.name === 'ChunkLoadError';
+
+      const alreadyRetried = sessionStorage.getItem(sessionKey);
+      if (isChunkError && !alreadyRetried) {
+        sessionStorage.setItem(sessionKey, 'true');
+        console.warn(`[Radar Engine] Stale module detected for ${name || 'module'} after deployment. Auto-refreshing...`);
+        window.location.reload();
+        return new Promise(() => {}); // Never resolves, page is reloading cleanly
+      }
+      throw error;
+    }
+  });
+}
+
+const SuperAdminDashboard = lazyWithRetry(
+  () => import('./components/SuperAdminDashboard').then((m) => ({ default: m.SuperAdminDashboard })),
+  'SuperAdminDashboard'
 );
-const CashierPOS = React.lazy(() =>
-  import('./components/CashierPOS').then((m) => ({ default: m.CashierPOS }))
+const CashierPOS = lazyWithRetry(
+  () => import('./components/CashierPOS').then((m) => ({ default: m.CashierPOS })),
+  'CashierPOS'
 );
-const CustomerWallet = React.lazy(() =>
-  import('./components/CustomerWallet').then((m) => ({ default: m.CustomerWallet }))
+const CustomerWallet = lazyWithRetry(
+  () => import('./components/CustomerWallet').then((m) => ({ default: m.CustomerWallet })),
+  'CustomerWallet'
 );
-const StoreAdmin = React.lazy(() =>
-  import('./components/StoreAdmin').then((m) => ({ default: m.StoreAdmin }))
+const StoreAdmin = lazyWithRetry(
+  () => import('./components/StoreAdmin').then((m) => ({ default: m.StoreAdmin })),
+  'StoreAdmin'
 );
-const MerchantJoinLanding = React.lazy(() =>
-  import('./components/MerchantJoinLanding').then((m) => ({ default: m.MerchantJoinLanding }))
+const MerchantJoinLanding = lazyWithRetry(
+  () => import('./components/MerchantJoinLanding').then((m) => ({ default: m.MerchantJoinLanding })),
+  'MerchantJoinLanding'
 );
-const PartnerDashboard = React.lazy(() =>
-  import('./components/PartnerDashboard').then((m) => ({ default: m.PartnerDashboard }))
+const PartnerDashboard = lazyWithRetry(
+  () => import('./components/PartnerDashboard').then((m) => ({ default: m.PartnerDashboard })),
+  'PartnerDashboard'
 );
-const PartnerPublicLanding = React.lazy(() =>
-  import('./components/PartnerPublicLanding').then((m) => ({ default: m.PartnerPublicLanding }))
+const PartnerPublicLanding = lazyWithRetry(
+  () => import('./components/PartnerPublicLanding').then((m) => ({ default: m.PartnerPublicLanding })),
+  'PartnerPublicLanding'
 );
-const MerchantOnboardingConsole = React.lazy(() =>
-  import('./components/MerchantOnboardingConsole').then((m) => ({ default: m.MerchantOnboardingConsole }))
+const MerchantOnboardingConsole = lazyWithRetry(
+  () => import('./components/MerchantOnboardingConsole').then((m) => ({ default: m.MerchantOnboardingConsole })),
+  'MerchantOnboardingConsole'
 );
-const KitchenDisplaySystem = React.lazy(() =>
-  import('./components/KitchenDisplaySystem').then((m) => ({ default: m.KitchenDisplaySystem }))
+const KitchenDisplaySystem = lazyWithRetry(
+  () => import('./components/KitchenDisplaySystem').then((m) => ({ default: m.KitchenDisplaySystem })),
+  'KitchenDisplaySystem'
 );
 import { RadarQuickSwitcher } from './components/RadarQuickSwitcher';
 

@@ -242,7 +242,29 @@ export default {
       return handleParseMenu(request, env);
     }
 
-    // Default to serving static assets
-    return env.ASSETS.fetch(request);
+    // Serve static assets with anti-stale caching rules
+    const response = await env.ASSETS.fetch(request);
+
+    // If it's a pre-hashed build asset (/assets/*.js, /assets/*.css), cache aggressively
+    const pathname = url.pathname.toLowerCase();
+    const isHashedAsset = pathname.startsWith('/assets/') && (pathname.endsWith('.js') || pathname.endsWith('.css'));
+
+    const headers = new Headers(response.headers);
+
+    if (isHashedAsset) {
+      // 1 year cache for immutable content-hashed assets
+      headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      // HTML, SPA routes, and root MUST NEVER be cached so browsers always fetch newest index.html & chunk hashes
+      headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+      headers.set('Pragma', 'no-cache');
+      headers.set('Expires', '0');
+    }
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   },
 };
