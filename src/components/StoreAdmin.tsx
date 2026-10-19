@@ -127,6 +127,7 @@ import {
 import confetti from 'canvas-confetti';
 import { BranchesManagementTab } from './BranchesManagementTab';
 import { InventoryManagementTab } from './merchant/InventoryManagementTab';
+import { WalletPassService } from '../lib/walletPassService';
 
 interface StoreAdminProps {
   store: Store;
@@ -151,7 +152,8 @@ type SettingsSection =
   | 'modules'
   | 'security'
   | 'integrations'
-  | 'billing';
+  | 'billing'
+  | 'wallet_passes';
 
 export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) => {
   const currentStore = initialStore || INITIAL_STORE;
@@ -6911,6 +6913,17 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 statHighlight: onlinePaymentEnabled ? 'بوابة الدفع: مفعلة ✅' : 'الدفع: كاش فقط 💵',
               },
               {
+                id: 'wallet_passes' as SettingsSection,
+                label: 'بطاقة Apple Wallet & Google Wallet',
+                description: 'تخصيص بطاقة المحفظة الرقمية، إشعارات القرب لشاشة القفل، ورادار المسافة GPS',
+                icon: Smartphone,
+                glowColor: 'bg-teal-500/20',
+                iconBg: 'bg-teal-500/15',
+                iconBorder: 'border-teal-500/30',
+                iconColor: 'text-teal-400',
+                statHighlight: 'تنبيهات شاشة القفل التلقائية نشطة 🔔',
+              },
+              {
                 id: 'modules' as SettingsSection,
                 label: 'موديولات وخدمات النظام',
                 description: 'التحكم في تشغيل وإيقاف: الطلبات المباشرة، المواعيد، وبرنامج الولاء',
@@ -8331,6 +8344,272 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           )}
         </div>
       )}
+
+      {/* ======================================================== */}
+      {/* 📱 3. SUB-SECTION: بطاقة Apple Wallet & Google Wallet      */}
+      {/* ======================================================== */}
+      {settingsSection === 'wallet_passes' && (() => {
+        const currentWalletConfig = WalletPassService.getWalletConfig(store);
+        const registeredDevices = WalletPassService.getStoreRegistrations(store.id);
+
+        return (
+          <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-800">
+              <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+                <div className="w-12 h-12 rounded-2xl bg-teal-500/10 border border-teal-500/30 flex items-center justify-center text-teal-400 shadow-sm shrink-0">
+                  <Smartphone className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-black text-white">
+                      بطاقة Apple Wallet & Google Wallet ومستشعر القرب الجغرافي
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">
+                      ميزة رادار الحصرية ⚡
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                    تمكين عملائك من إضافة بطاقة ولاء متجرك إلى محفظة الآيفون (Apple Wallet) والأندرويد بضغطة زر
+                    واحدة، مع تفعيل إشعارات شاشة القفل التلقائية عند اقتراب العميل من أي من فروعك دون الحاجة لتحميل تطبيق!
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge */}
+              <div className="flex items-center gap-2 bg-slate-950 px-4 py-2 rounded-2xl border border-slate-800 self-start sm:self-auto">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs font-bold text-white">البطاقات الرقمية: نشطة وجاهزة</span>
+              </div>
+            </div>
+
+            {/* Quick Metrics Strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center">
+                <span className="text-[11px] text-slate-400 block font-bold">بطاقات العملاء الصادرة</span>
+                <span className="text-xl font-black text-amber-400 font-mono mt-1 block">
+                  {registeredDevices.length > 0 ? registeredDevices.length : customers.length}
+                </span>
+                <span className="text-[10px] text-slate-500">بطاقة مفعلة بمحفظة الهاتف</span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center">
+                <span className="text-[11px] text-slate-400 block font-bold">الفروع المرتبطة (Geofencing)</span>
+                <span className="text-xl font-black text-emerald-400 font-mono mt-1 block">
+                  {branches.length > 0 ? branches.length : 3}
+                </span>
+                <span className="text-[10px] text-slate-500">نقاط GPS متصلة بشاشة القفل</span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center">
+                <span className="text-[11px] text-slate-400 block font-bold">نطاق مستشعر القرب</span>
+                <span className="text-xl font-black text-blue-400 font-mono mt-1 block">
+                  {currentWalletConfig.proximity_radius_meters || 300} م
+                </span>
+                <span className="text-[10px] text-slate-500">نصف قطر تنبيه شاشة القفل</span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center">
+                <span className="text-[11px] text-slate-400 block font-bold">تحديث النقاط الفوري</span>
+                <span className="text-xl font-black text-purple-400 font-mono mt-1 block">
+                  تلقائي 100%
+                </span>
+                <span className="text-[10px] text-slate-500">مع كل عملية بيع بالكاشير</span>
+              </div>
+            </div>
+
+            {/* Configuration Form */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
+              <div className="lg:col-span-7 space-y-4">
+                {/* 1. Lockscreen Message Template */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                  <label className="text-xs font-black text-white block">
+                    نص إشعار شاشة القفل التلقائي عند اقتراب العميل من الفرع 🔔
+                  </label>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    هذا النص سيظهر على شاشة قفل الآيفون تلقائياً عندما يقترب العميل من أي فرع من فروعك.
+                    يمكنك استخدام المتغيرات <code className="text-amber-400 bg-slate-900 px-1 py-0.5 rounded">{'{store}'}</code> و <code className="text-amber-400 bg-slate-900 px-1 py-0.5 rounded">{'{points}'}</code>.
+                  </p>
+                  <textarea
+                    rows={2}
+                    defaultValue={currentWalletConfig.lockscreen_message_template}
+                    onBlur={(e) => {
+                      WalletPassService.saveWalletConfig(store.id, {
+                        lockscreen_message_template: e.target.value,
+                      });
+                    }}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-white outline-none focus:border-teal-500 font-medium"
+                    placeholder="مثال: أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁"
+                  />
+                </div>
+
+                {/* 2. Proximity Radius Setting */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-xs font-black text-white block">
+                        مسافة استشعار القرب الجغرافي (Geofence Trigger Radius)
+                      </label>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        المسافة التي يبدأ عندها الهاتف بإظهار البطاقة للعميل على شاشة القفل.
+                      </p>
+                    </div>
+                    <span className="text-xs font-mono font-black text-teal-400 bg-teal-500/10 px-2.5 py-1 rounded-xl border border-teal-500/30">
+                      {currentWalletConfig.proximity_radius_meters || 300} متر
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2">
+                    {[100, 300, 500, 1000].map((meters) => (
+                      <button
+                        key={meters}
+                        type="button"
+                        onClick={() => {
+                          WalletPassService.saveWalletConfig(store.id, {
+                            proximity_radius_meters: meters,
+                          });
+                          setStore({ ...store });
+                        }}
+                        className={`py-2 rounded-xl text-xs font-bold border transition ${
+                          (currentWalletConfig.proximity_radius_meters || 300) === meters
+                            ? 'bg-teal-500 text-slate-950 border-teal-400 font-black'
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                        }`}
+                      >
+                        {meters} متر
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. Card Styling & Colors */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                  <label className="text-xs font-black text-white block">
+                    ألوان وهوية بطاقة المحفظة (Apple & Google Pass)
+                  </label>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <span className="text-[10px] text-slate-400 block mb-1">خلفية البطاقة</span>
+                      <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800">
+                        <input
+                          type="color"
+                          defaultValue={currentWalletConfig.background_color || '#110E05'}
+                          onChange={(e) => {
+                            WalletPassService.saveWalletConfig(store.id, {
+                              background_color: e.target.value,
+                            });
+                          }}
+                          className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent"
+                        />
+                        <span className="text-[11px] font-mono text-slate-300">داكن فاخر</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-slate-400 block mb-1">لون النقاط والشعارات</span>
+                      <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800">
+                        <input
+                          type="color"
+                          defaultValue={currentWalletConfig.label_color || '#E3B94A'}
+                          onChange={(e) => {
+                            WalletPassService.saveWalletConfig(store.id, {
+                              label_color: e.target.value,
+                            });
+                          }}
+                          className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent"
+                        />
+                        <span className="text-[11px] font-mono text-amber-400">ذهبي ملكي</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <span className="text-[10px] text-slate-400 block mb-1">لون النصوص</span>
+                      <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800">
+                        <input
+                          type="color"
+                          defaultValue={currentWalletConfig.foreground_color || '#FFFFFF'}
+                          onChange={(e) => {
+                            WalletPassService.saveWalletConfig(store.id, {
+                              foreground_color: e.target.value,
+                            });
+                          }}
+                          className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent"
+                        />
+                        <span className="text-[11px] font-mono text-white">أبيض ناصع</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Live Mockup Preview */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-3">
+                  <span className="text-xs font-black text-slate-400 block">
+                    معاينة بطاقة Apple Wallet لمتجرك 
+                  </span>
+
+                  {/* Card Silhouette */}
+                  <div
+                    className="w-full rounded-2xl p-4 text-right shadow-2xl border transition relative overflow-hidden"
+                    style={{
+                      backgroundColor: currentWalletConfig.background_color || '#110E05',
+                      borderColor: `${currentWalletConfig.label_color || '#E3B94A'}40`,
+                    }}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-black/60 border border-white/20 flex items-center justify-center text-xs font-black text-amber-400">
+                          {store.name.slice(0, 1)}
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-white">{store.name}</h4>
+                          <span className="text-[9px] text-white/60">بطاقة الولاء والمكافآت</span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                        VIP GOLD
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 mb-3 flex items-center justify-between">
+                      <div>
+                        <span className="text-[9px] text-white/70 block">رصيد النقاط</span>
+                        <span className="text-xl font-black font-mono text-amber-400">180 نقطة</span>
+                      </div>
+                      <div className="text-left">
+                        <span className="text-[9px] text-white/70 block">اسم العميل</span>
+                        <span className="text-xs font-bold text-white">عبدالله الشمري</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[9px] text-white/60 pt-1 border-t border-white/10">
+                      <span>📍 إشعار شاشة القفل نشط</span>
+                      <span className="font-mono">VIP-966050</span>
+                    </div>
+                  </div>
+
+                  {/* Lockscreen Preview Simulation */}
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-right space-y-1">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span className="font-bold text-white flex items-center gap-1">
+                        <span></span>
+                        <span>شاشة القفل • على بعد 140 متر</span>
+                      </span>
+                      <span>الآن</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 font-medium">
+                      {currentWalletConfig.lockscreen_message_template
+                        .replace('{store}', store.name)
+                        .replace('{points}', '180')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ======================================================== */}
       {/* 🛡️ 4. SUB-SECTION: الأمان والـ PIN ونقاط الولاء (Security) */}

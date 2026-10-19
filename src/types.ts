@@ -340,6 +340,7 @@ export interface Store {
   store_code?: string; // كود العرض المختصر للمتجر مثل RD-1001 للتعريف السريع
   tax_number?: string; // الرقم الضريبي للمتجر لدى هيئة الزكاة والضريبة والجمارك (ZATCA)
   vat_number?: string;
+  phone?: string;
   is_demo?: boolean;
   logo_url: string | null;
   primary_color: string;
@@ -1301,6 +1302,44 @@ export interface FinancialPlatformConfig {
   business_legal_status: 'FREELANCE_DOCUMENT' | 'ESTABLISHMENT_TAXABLE' | 'COMPANY_ZATCA';
   tax_number?: string;
 }
+
+// ==========================================
+// 📱 بطاقات المحفظة الرقمية وإشعارات القرب الجغرافي
+// (Apple Wallet & Google Wallet Passes & Proximity Radar)
+// ==========================================
+export interface StoreWalletPassConfig {
+  enabled: boolean;
+  background_color: string; // e.g. '#110e05' or '#1e293b'
+  foreground_color: string; // e.g. '#ffffff'
+  label_color: string; // e.g. '#e3b94a'
+  lockscreen_message_template: string; // 'أهلاً بك بالقرب من {store}! لديك {points} نقطة بانتظارك ☕'
+  proximity_radius_meters: number; // Default 300 meters
+  apple_pass_type_id?: string;
+  google_issuer_id?: string;
+  updated_at?: string;
+}
+
+export interface WalletDeviceRegistration {
+  id: string;
+  customer_id: string;
+  store_id: string;
+  platform: 'apple' | 'google';
+  device_id: string;
+  push_token: string;
+  pass_serial_number: string;
+  registered_at: string;
+  last_notified_at?: string;
+}
+
+export interface ProximityDistanceResult {
+  nearestBranchName: string;
+  nearestBranchId?: string;
+  distanceMeters: number;
+  formattedDistance: string;
+  isWithinProximity: boolean; // True if <= radius
+  suggestedLockscreenMessage: string;
+}
+
 
 
 

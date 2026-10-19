@@ -27,6 +27,8 @@ import confetti from 'canvas-confetti';
 import { checkBranchOpenStatus } from '../lib/branchUtils';
 import { saveActiveStoreBranding } from '../lib/storeBranding';
 import { SandboxPaymentModal } from './SandboxPaymentModal';
+import { WalletPassModal } from './WalletPassModal';
+import { WalletPassService } from '../lib/walletPassService';
 import {
   Building2,
   Sparkles,
@@ -341,6 +343,46 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [branches, setBranches] = useState<StoreBranch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<StoreBranch | null>(null);
   const branchStatus = checkBranchOpenStatus(selectedBranch);
+
+  // 📱 Apple & Google Wallet Pass and Proximity Distance Radar State
+  const [isWalletPassModalOpen, setIsWalletPassModalOpen] = useState(false);
+  const [walletPassPlatform, setWalletPassPlatform] = useState<'apple' | 'google'>('apple');
+  const [proximityInfo, setProximityInfo] = useState<any>(null);
+
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const status = WalletPassService.getProximityStatus(
+            { lat: pos.coords.latitude, lng: pos.coords.longitude },
+            store,
+            customer?.wallet_balance || 0,
+            branches
+          );
+          setProximityInfo(status);
+        },
+        () => {
+          const status = WalletPassService.getProximityStatus(
+            null,
+            store,
+            customer?.wallet_balance || 0,
+            branches
+          );
+          setProximityInfo(status);
+        },
+        { timeout: 4000 }
+      );
+    } else {
+      const status = WalletPassService.getProximityStatus(
+        null,
+        store,
+        customer?.wallet_balance || 0,
+        branches
+      );
+      setProximityInfo(status);
+    }
+  }, [store, customer?.wallet_balance, branches]);
+
 
   const [specialists, setSpecialists] = useState<StoreSpecialist[]>([]);
   const [storeBookings, setStoreBookings] = useState<ServiceBooking[]>([]);
@@ -2565,6 +2607,44 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           </div>
 
+          {/* 📍 Proximity Distance Radar Strip (كم يبعد العميل عن المتجر مع تنبيه شاشة القفل) */}
+          {proximityInfo && (
+            <div className="relative z-20 mb-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setWalletPassPlatform('apple');
+                  setIsWalletPassModalOpen(true);
+                }}
+                className="w-full p-2.5 sm:p-3 rounded-2xl bg-slate-900/95 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 shadow-xl backdrop-blur-xl flex items-center justify-between gap-2.5 transition text-right group active:scale-[0.99]"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                    <MapPin className="w-4 h-4 animate-bounce" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] font-bold text-slate-300">
+                        أقرب فرع لك ({proximityInfo.nearestBranchName}):
+                      </span>
+                      <span className="text-xs font-black text-emerald-400 font-mono">
+                        {proximityInfo.formattedDistance}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 block truncate">
+                      تنبيه شاشة القفل التلقائي نشط ببطاقة المحفظة 🔔
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1 text-[11px] font-bold text-amber-400 shrink-0 group-hover:translate-x-[-2px] transition-transform">
+                  <span>بطاقة المحفظة </span>
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </div>
+              </button>
+            </div>
+          )}
+
           {/* 🌟 04 - VIP Gold Pass (Authentic Pass Silhouette & Proportions matching Approved Preview) */}
           <div className="relative group select-none -mt-10 sm:-mt-12 z-20">
             {/* Ambient Gold Glow Behind Card */}
@@ -2680,6 +2760,33 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* 📱 1-Click Add to Apple Wallet & Google Wallet Strip */}
+          <div className="relative z-20 mt-3 grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                setWalletPassPlatform('apple');
+                setIsWalletPassModalOpen(true);
+              }}
+              className="py-2.5 px-3 rounded-2xl bg-black hover:bg-neutral-900 border border-white/20 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-95 group"
+            >
+              <span className="text-base group-hover:scale-110 transition-transform"></span>
+              <span className="truncate">Add to Apple Wallet</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setWalletPassPlatform('google');
+                setIsWalletPassModalOpen(true);
+              }}
+              className="py-2.5 px-3 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-95 group"
+            >
+              <span className="text-sm font-bold text-blue-400 group-hover:scale-110 transition-transform">G</span>
+              <span className="truncate">Save to Google Wallet</span>
+            </button>
           </div>
 
           {/* Active Privilege/Coupon Notice if selected */}
@@ -6800,6 +6907,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           onProcessPayment={paymentModalConfig.onSuccess}
         />
       )}
+
+      {/* 📱 نافذة ومحاكي بطاقة Apple Wallet & Google Wallet الذكية */}
+      <WalletPassModal
+        isOpen={isWalletPassModalOpen}
+        onClose={() => setIsWalletPassModalOpen(false)}
+        store={store}
+        customer={customer}
+        tier={currentTierObj}
+        storeBranches={branches}
+        initialPlatform={walletPassPlatform}
+      />
 
     </div>
   );
