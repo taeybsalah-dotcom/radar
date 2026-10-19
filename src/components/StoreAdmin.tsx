@@ -31,7 +31,7 @@ import {
 } from '../types';
 import { LoyaltyService, normalizeStore, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
-import { saveActiveStoreBranding } from '../lib/storeBranding';
+import { saveActiveStoreBranding, BRAND_PRESETS, BrandThemePreset } from '../lib/storeBranding';
 import { debounce } from '../lib/debounce';
 import { INITIAL_STORE } from '../lib/demoData';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
@@ -192,6 +192,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [managerContact, setManagerContact] = useState<string>(currentStore?.manager_contact || '');
   const [primaryColor, setPrimaryColor] = useState<string>(currentStore?.primary_color || '#0F172A');
   const [secondaryColor, setSecondaryColor] = useState<string>(currentStore?.secondary_color || '#F59E0B');
+  const [themeMode, setThemeMode] = useState<'light' | 'dark' | 'warm_cream' | 'system'>(
+    ((currentStore?.theme_mode as any) || 'light')
+  );
+  const [backgroundColor, setBackgroundColor] = useState<string>(
+    currentStore?.background_color || (currentStore?.theme_mode === 'warm_cream' ? '#FAF6F0' : currentStore?.theme_mode === 'dark' ? '#080B11' : '#F8FAFC')
+  );
+  const [cardColor, setCardColor] = useState<string>(
+    currentStore?.card_color || (currentStore?.theme_mode === 'dark' ? '#131A26' : '#FFFFFF')
+  );
+  const [selectedThemePreset, setSelectedThemePreset] = useState<string>(
+    currentStore?.theme_preset || ''
+  );
   const [pointsPerRiyal, setPointsPerRiyal] = useState<number>(currentStore?.points_per_riyal || 1.0);
   const [storeLogoUrl, setStoreLogoUrl] = useState<string>(currentStore?.logo_url || '');
   const [logoStats, setLogoStats] = useState<CompressionResult | null>(null);
@@ -921,6 +933,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
             if (payload.new.slug) setStoreSlug(payload.new.slug);
             if (payload.new.primary_color) setPrimaryColor(payload.new.primary_color);
             if (payload.new.secondary_color) setSecondaryColor(payload.new.secondary_color);
+            if (payload.new.theme_mode) setThemeMode(payload.new.theme_mode);
+            if (payload.new.background_color) setBackgroundColor(payload.new.background_color);
+            if (payload.new.card_color) setCardColor(payload.new.card_color);
+            if (payload.new.theme_preset !== undefined) setSelectedThemePreset(payload.new.theme_preset || '');
             if (payload.new.enable_orders !== undefined) setEnableOrders(payload.new.enable_orders);
             if (payload.new.enable_bookings !== undefined) setEnableBookings(payload.new.enable_bookings);
             if (payload.new.enable_loyalty !== undefined) setEnableLoyalty(payload.new.enable_loyalty);
@@ -1063,6 +1079,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setManagerContact(activeStore.manager_contact || '');
       setPrimaryColor(activeStore.primary_color || '#0F172A');
       setSecondaryColor(activeStore.secondary_color || '#F59E0B');
+      setThemeMode(activeStore.theme_mode || 'light');
+      setBackgroundColor(activeStore.background_color || (activeStore.theme_mode === 'warm_cream' ? '#FAF6F0' : activeStore.theme_mode === 'dark' ? '#080B11' : '#F8FAFC'));
+      setCardColor(activeStore.card_color || (activeStore.theme_mode === 'dark' ? '#131A26' : '#FFFFFF'));
+      setSelectedThemePreset(activeStore.theme_preset || '');
       setPointsPerRiyal(activeStore.points_per_riyal || 1.0);
       setStoreLogoUrl(activeStore.logo_url || '');
       setSliderImages(activeStore.slider_images || []);
@@ -1381,6 +1401,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         manager_contact: store.manager_contact || (store as any).phone, // 🔒 المقفل أمنياً - يتم تحديثه حصراً من لوحة المالك
         primary_color: primaryColor,
         secondary_color: secondaryColor,
+        theme_mode: themeMode,
+        background_color: backgroundColor,
+        card_color: cardColor,
+        theme_preset: selectedThemePreset,
         points_per_riyal: Number(pointsPerRiyal),
         logo_url: storeLogoUrl,
         slider_images: sliderImages,
@@ -1417,6 +1441,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
 
       setStore(updated);
+      saveActiveStoreBranding(updated);
       LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: store.id });
       setSettingsSavedMessage(
         `تم بنجاح حفظ وتحديث هوية وإعدادات المتجر والدومين (${updated.name})`
@@ -7226,42 +7251,386 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </p>
                 </div>
 
-                {/* Colors */}
-            <div className="md:col-span-6 space-y-2">
-              <label className="text-xs font-medium text-slate-300 block">اللون الأساسي للعلامة (Primary Color)</label>
-              <div className="flex items-center space-x-3 rtl:space-x-reverse">
-                <input
-                  type="color"
-                  value={primaryColor}
-                  onChange={(e) => setPrimaryColor(e.target.value)}
-                  className="w-10 h-10 rounded-xl border border-slate-800 bg-transparent cursor-pointer p-0.5"
-                />
-                <input
-                  type="text"
-                  value={primaryColor}
-                  onChange={(e) => setPrimaryColor(e.target.value)}
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 outline-none uppercase"
-                />
-              </div>
-            </div>
+                {/* ======================================================== */}
+                {/* 🎨 استوديو الهوية ومظهر المنصة المخصص (White-Label Theme Studio) */}
+                {/* ======================================================== */}
+                <div className="md:col-span-12 p-5 rounded-3xl bg-slate-950/90 border border-slate-800 space-y-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-base font-black text-white">🎨 استوديو تخصيص مظهر وهوية المنصة</span>
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                          White-Label 100%
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">
+                        اختر المظهر العام لمنصتك (فاتح ناصع للمطاعم والكافيهات، كريمي دافئ، أو داكن فاخر) مع حرية كاملة في تحديد ألوان الهوية والخلفيات والبطاقات
+                      </p>
+                    </div>
+                  </div>
 
-            <div className="md:col-span-6 space-y-2">
-              <label className="text-xs font-medium text-slate-300 block">اللون الثانوي والتمييز (Secondary Color)</label>
-              <div className="flex items-center space-x-3 rtl:space-x-reverse">
-                <input
-                  type="color"
-                  value={secondaryColor}
-                  onChange={(e) => setSecondaryColor(e.target.value)}
-                  className="w-10 h-10 rounded-xl border border-slate-800 bg-transparent cursor-pointer p-0.5"
-                />
-                <input
-                  type="text"
-                  value={secondaryColor}
-                  onChange={(e) => setSecondaryColor(e.target.value)}
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-300 outline-none uppercase"
-                />
-              </div>
-            </div>
+                  {/* 1. Theme Mode Switcher */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-200 block">
+                      1. نمط المظهر العام للمنصة (Theme Mode):
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setThemeMode('light');
+                          if (backgroundColor === '#080B11' || backgroundColor === '#FAF6F0') {
+                            setBackgroundColor('#F8FAFC');
+                          }
+                          if (cardColor === '#131A26') {
+                            setCardColor('#FFFFFF');
+                          }
+                        }}
+                        className={`p-3.5 rounded-2xl border text-right transition flex items-center justify-between ${
+                          themeMode === 'light'
+                            ? 'bg-amber-500/10 border-amber-500 text-white shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/50'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">☀️</span>
+                          <div>
+                            <span className="text-xs font-black block text-white">فاتح ناصع عصري (Clean Light)</span>
+                            <span className="text-[10px] text-slate-400 block">مثالي للمطاعم والبرغر والعصائر</span>
+                          </div>
+                        </div>
+                        {themeMode === 'light' && <CheckCircle className="w-4 h-4 text-amber-400 shrink-0" />}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setThemeMode('warm_cream');
+                          if (backgroundColor === '#080B11' || backgroundColor === '#F8FAFC') {
+                            setBackgroundColor('#FAF6F0');
+                          }
+                          if (cardColor === '#131A26') {
+                            setCardColor('#FFFFFF');
+                          }
+                        }}
+                        className={`p-3.5 rounded-2xl border text-right transition flex items-center justify-between ${
+                          themeMode === 'warm_cream'
+                            ? 'bg-amber-500/10 border-amber-500 text-white shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/50'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">☕</span>
+                          <div>
+                            <span className="text-xs font-black block text-white">فانيلا وبيج دافئ (Warm Cream)</span>
+                            <span className="text-[10px] text-slate-400 block">مخصص للكافيهات والمخابز المختصة</span>
+                          </div>
+                        </div>
+                        {themeMode === 'warm_cream' && <CheckCircle className="w-4 h-4 text-amber-400 shrink-0" />}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setThemeMode('dark');
+                          if (backgroundColor === '#F8FAFC' || backgroundColor === '#FAF6F0') {
+                            setBackgroundColor('#080B11');
+                          }
+                          if (cardColor === '#FFFFFF') {
+                            setCardColor('#131A26');
+                          }
+                        }}
+                        className={`p-3.5 rounded-2xl border text-right transition flex items-center justify-between ${
+                          themeMode === 'dark'
+                            ? 'bg-amber-500/10 border-amber-500 text-white shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/50'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">🌙</span>
+                          <div>
+                            <span className="text-xs font-black block text-white">داكن ملكي (Sleek Dark)</span>
+                            <span className="text-[10px] text-slate-400 block">للمطاعم الفاخرة وسهرات اللاونج</span>
+                          </div>
+                        </div>
+                        {themeMode === 'dark' && <CheckCircle className="w-4 h-4 text-amber-400 shrink-0" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. Ready-Made Industry Presets (1-Click Selector) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-200 block">
+                        2. قوالب ألوان جاهزة بضغطة زر واحدة (Curated Presets):
+                      </label>
+                      <span className="text-[10px] text-slate-400">اختر قالباً لضبط كافة الألوان المتناسقة فوراً</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+                      {BRAND_PRESETS.map((preset) => {
+                        const isSelected = selectedThemePreset === preset.id;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedThemePreset(preset.id);
+                              setThemeMode(preset.theme_mode);
+                              setPrimaryColor(preset.primary_color);
+                              setSecondaryColor(preset.secondary_color);
+                              setBackgroundColor(preset.background_color);
+                              setCardColor(preset.card_color);
+                            }}
+                            className={`p-3 rounded-2xl border text-right transition flex flex-col justify-between gap-2.5 relative group ${
+                              isSelected
+                                ? 'bg-slate-900 border-amber-500 shadow-md ring-1 ring-amber-500'
+                                : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between w-full">
+                              <span className="text-xl">{preset.icon}</span>
+                              <div className="flex items-center -space-x-1.5 rtl:space-x-reverse">
+                                <span
+                                  className="w-4 h-4 rounded-full border border-black/30 shadow-sm"
+                                  style={{ backgroundColor: preset.primary_color }}
+                                />
+                                <span
+                                  className="w-4 h-4 rounded-full border border-black/30 shadow-sm"
+                                  style={{ backgroundColor: preset.secondary_color }}
+                                />
+                                <span
+                                  className="w-4 h-4 rounded-full border border-black/30 shadow-sm"
+                                  style={{ backgroundColor: preset.background_color }}
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-[11px] font-bold text-white block truncate">{preset.name}</span>
+                              <span className="text-[9px] text-slate-400 block line-clamp-1">{preset.description}</span>
+                            </div>
+                            {isSelected && (
+                              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 3. Detailed Color Pickers */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-2">
+                    {/* Primary Color */}
+                    <div className="space-y-1.5 bg-slate-900/70 p-3 rounded-2xl border border-slate-800/80">
+                      <label className="text-[11px] font-bold text-slate-300 block">
+                        اللون الأساسي للعلامة (Primary)
+                      </label>
+                      <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                        <input
+                          type="color"
+                          value={primaryColor}
+                          onChange={(e) => {
+                            setPrimaryColor(e.target.value);
+                            setSelectedThemePreset('');
+                          }}
+                          className="w-9 h-9 rounded-xl border border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={primaryColor}
+                          onChange={(e) => {
+                            setPrimaryColor(e.target.value);
+                            setSelectedThemePreset('');
+                          }}
+                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 outline-none uppercase"
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-500 block">الهيدر والبطاقة والنصوص</span>
+                    </div>
+
+                    {/* Secondary Color */}
+                    <div className="space-y-1.5 bg-slate-900/70 p-3 rounded-2xl border border-slate-800/80">
+                      <label className="text-[11px] font-bold text-slate-300 block">
+                        لون التمييز والأكشن (Secondary)
+                      </label>
+                      <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                        <input
+                          type="color"
+                          value={secondaryColor}
+                          onChange={(e) => {
+                            setSecondaryColor(e.target.value);
+                            setSelectedThemePreset('');
+                          }}
+                          className="w-9 h-9 rounded-xl border border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={secondaryColor}
+                          onChange={(e) => {
+                            setSecondaryColor(e.target.value);
+                            setSelectedThemePreset('');
+                          }}
+                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 outline-none uppercase"
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-500 block">النقاط والعروض وأزرار الشراء</span>
+                    </div>
+
+                    {/* Background Color */}
+                    <div className="space-y-1.5 bg-slate-900/70 p-3 rounded-2xl border border-slate-800/80">
+                      <label className="text-[11px] font-bold text-slate-300 block">
+                        لون خلفية المنصة (Background)
+                      </label>
+                      <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                        <input
+                          type="color"
+                          value={backgroundColor}
+                          onChange={(e) => {
+                            setBackgroundColor(e.target.value);
+                            setSelectedThemePreset('');
+                          }}
+                          className="w-9 h-9 rounded-xl border border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={backgroundColor}
+                          onChange={(e) => {
+                            setBackgroundColor(e.target.value);
+                            setSelectedThemePreset('');
+                          }}
+                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 outline-none uppercase"
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-500 block">خلفية بوابات العميل والكاشير</span>
+                    </div>
+
+                    {/* Card Surface Color */}
+                    <div className="space-y-1.5 bg-slate-900/70 p-3 rounded-2xl border border-slate-800/80">
+                      <label className="text-[11px] font-bold text-slate-300 block">
+                        لون البطاقات والأسطح (Card Color)
+                      </label>
+                      <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                        <input
+                          type="color"
+                          value={cardColor}
+                          onChange={(e) => {
+                            setCardColor(e.target.value);
+                            setSelectedThemePreset('');
+                          }}
+                          className="w-9 h-9 rounded-xl border border-slate-700 bg-transparent cursor-pointer p-0.5 shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={cardColor}
+                          onChange={(e) => {
+                            setCardColor(e.target.value);
+                            setSelectedThemePreset('');
+                          }}
+                          className="flex-1 min-w-0 bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 outline-none uppercase"
+                        />
+                      </div>
+                      <span className="text-[10px] text-slate-500 block">لون بطاقات المنتجات والحاويات</span>
+                    </div>
+                  </div>
+
+                  {/* 4. Interactive Live Simulator Preview */}
+                  <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                        <Smartphone className="w-4 h-4 text-amber-400" />
+                        <span>معاينة حية فورية لتطبيق وبوابة العميل (Live Simulator):</span>
+                      </label>
+                      <span className="text-[10px] text-emerald-400 font-medium">مباشر حسب اختياراتك الحالية ⚡</span>
+                    </div>
+
+                    <div
+                      className="p-5 sm:p-6 rounded-3xl border transition-all duration-300 flex flex-col md:flex-row items-center justify-center gap-6"
+                      style={{ backgroundColor: backgroundColor, borderColor: themeMode === 'dark' ? '#1E293B' : '#CBD5E1' }}
+                    >
+                      {/* Live Customer Membership Card */}
+                      <div
+                        className="w-full max-w-[290px] h-[170px] rounded-3xl p-4 shadow-xl flex flex-col justify-between relative overflow-hidden transition-all duration-300"
+                        style={{
+                          backgroundColor: primaryColor,
+                          color: '#FFFFFF',
+                          boxShadow: `0 14px 28px -6px ${primaryColor}40`,
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {storeLogoUrl ? (
+                              <img
+                                src={storeLogoUrl}
+                                alt="Logo"
+                                className="w-8 h-8 rounded-xl object-cover bg-white/10 border border-white/20"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center font-black text-xs text-white">
+                                {storeName.slice(0, 2) || 'RD'}
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-xs font-black block leading-tight text-white">{storeName || 'اسم المتجر'}</span>
+                              <span className="text-[9px] opacity-80 block text-white/80">عضوية ولاء VIP</span>
+                            </div>
+                          </div>
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[9px] font-black shadow-sm"
+                            style={{ backgroundColor: secondaryColor, color: '#000000' }}
+                          >
+                            ذهبي ★
+                          </span>
+                        </div>
+
+                        <div className="space-y-0.5">
+                          <span className="text-[9px] opacity-75 block text-white/75">رصيد النقاط المتاحة</span>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-2xl font-black tracking-tight text-white">750</span>
+                            <span className="text-[10px] font-bold" style={{ color: secondaryColor }}>نقطة</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 border-t border-white/15 text-[9px] opacity-85">
+                          <span className="font-mono text-white/90">#RD-9821</span>
+                          <span className="text-white/90">مسح بالكاشير 📱</span>
+                        </div>
+                      </div>
+
+                      {/* Live Menu Product Card */}
+                      <div
+                        className="w-full max-w-[240px] rounded-2xl p-3.5 shadow-md flex flex-col gap-2.5 transition-all duration-300"
+                        style={{
+                          backgroundColor: cardColor,
+                          borderColor: themeMode === 'dark' ? '#334155' : '#E2E8F0',
+                          borderWidth: '1px',
+                          color: themeMode === 'dark' ? '#F8FAFC' : '#0F172A',
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black">منتج تجريبي في المنيو</span>
+                          <span
+                            className="text-[9px] font-bold px-1.5 py-0.5 rounded-md"
+                            style={{ backgroundColor: `${secondaryColor}25`, color: secondaryColor }}
+                          >
+                            الأكثر طلباً
+                          </span>
+                        </div>
+                        <p className="text-[10px] opacity-70 leading-relaxed">
+                          مذاق متوازن ومكونات طازجة مختارة بعناية لأجلك
+                        </p>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-sm font-black">24.00 ر.س</span>
+                          <button
+                            type="button"
+                            className="px-3 py-1.5 rounded-xl text-[10px] font-black text-white shadow-sm flex items-center gap-1 transition"
+                            style={{ backgroundColor: secondaryColor }}
+                          >
+                            <span>+ إضافة</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
             {/* Store Logo with Auto-Compressor */}
             <div className="md:col-span-12 space-y-2 p-4 rounded-2xl bg-slate-950 border border-slate-800">

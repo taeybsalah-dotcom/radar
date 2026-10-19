@@ -181,3 +181,180 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/* 🎨 RADAR RESTAURANT & CAFE WHITE-LABEL THEME ENGINE                   */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+[data-theme="light"] {
+  --theme-bg: #F8FAFC;
+  --theme-card-bg: #FFFFFF;
+  --theme-card-border: #E2E8F0;
+  --theme-text-main: #0F172A;
+  --theme-text-muted: #64748B;
+  color-scheme: light;
+}
+
+[data-theme="warm_cream"] {
+  --theme-bg: #FAF6F0;
+  --theme-card-bg: #FFFFFF;
+  --theme-card-border: #EFE6D8;
+  --theme-text-main: #2A1F17;
+  --theme-text-muted: #7C6C5E;
+  color-scheme: light;
+}
+
+/* 1. Frosted Glass Capsule in Light & Warm themes */
+[data-theme="light"] .frosted-glass-capsule {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-theme="warm_cream"] .frosted-glass-capsule {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-color: rgba(138, 106, 31, 0.15) !important;
+  box-shadow: 0 10px 25px -5px rgba(80, 50, 20, 0.06) !important;
+}
+
+/* 2. Floating Dock Navigation in Light & Warm themes */
+[data-theme="light"] .glass-dock {
+  background: rgba(255, 255, 255, 0.94) !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.12), 0 0 15px -3px rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="warm_cream"] .glass-dock {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border-color: rgba(138, 106, 31, 0.15) !important;
+  box-shadow: 0 20px 40px -10px rgba(80, 50, 20, 0.1), 0 0 15px -3px rgba(138, 106, 31, 0.05) !important;
+}
+
+[data-theme="light"] .glass-dock .text-slate-400,
+[data-theme="light"] .glass-dock .text-slate-500 {
+  color: #64748B !important;
+}
+
+[data-theme="warm_cream"] .glass-dock .text-slate-400,
+[data-theme="warm_cream"] .glass-dock .text-slate-500 {
+  color: #7C6C5E !important;
+}
+
+/* 3. Surface & Card Containers */
+[data-theme="light"] .bg-slate-900,
+[data-theme="light"] .bg-slate-900\/80,
+[data-theme="light"] .bg-slate-900\/90,
+[data-theme="light"] .bg-slate-900\/95 {
+  background-color: #FFFFFF !important;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.04), 0 2px 6px -1px rgba(0, 0, 0, 0.02) !important;
+}
+
+[data-theme="warm_cream"] .bg-slate-900,
+[data-theme="warm_cream"] .bg-slate-900\/80,
+[data-theme="warm_cream"] .bg-slate-900\/90,
+[data-theme="warm_cream"] .bg-slate-900\/95 {
+  background-color: #FFFFFF !important;
+  box-shadow: 0 4px 20px -2px rgba(80, 50, 20, 0.04), 0 2px 6px -1px rgba(80, 50, 20, 0.02) !important;
+}
+
+[data-theme="light"] .bg-slate-950,
+[data-theme="light"] .bg-slate-950\/70,
+[data-theme="light"] .bg-slate-950\/80,
+[data-theme="light"] .bg-slate-950\/90 {
+  background-color: #F8FAFC !important;
+}
+
+[data-theme="warm_cream"] .bg-slate-950,
+[data-theme="warm_cream"] .bg-slate-950\/70,
+[data-theme="warm_cream"] .bg-slate-950\/80,
+[data-theme="warm_cream"] .bg-slate-950\/90 {
+  background-color: #F6EFE5 !important;
+}
+
+/* 4. Borders */
+[data-theme="light"] .border-slate-800,
+[data-theme="light"] .border-slate-800\/80,
+[data-theme="light"] .border-slate-800\/60 {
+  border-color: #E2E8F0 !important;
+}
+
+[data-theme="warm_cream"] .border-slate-800,
+[data-theme="warm_cream"] .border-slate-800\/80,
+[data-theme="warm_cream"] .border-slate-800\/60 {
+  border-color: #EFE6D8 !important;
+}
+
+[data-theme="light"] .border-slate-700 {
+  border-color: #CBD5E1 !important;
+}
+
+[data-theme="warm_cream"] .border-slate-700 {
+  border-color: #E2D7C5 !important;
+}
+
+/* 5. Typography in Cards */
+[data-theme="light"] .bg-slate-900 h1,
+[data-theme="light"] .bg-slate-900 h2,
+[data-theme="light"] .bg-slate-900 h3,
+[data-theme="light"] .bg-slate-900 h4,
+[data-theme="light"] .bg-slate-950 h1,
+[data-theme="light"] .bg-slate-950 h2,
+[data-theme="light"] .bg-slate-950 h3,
+[data-theme="light"] .bg-slate-950 h4 {
+  color: #0F172A !important;
+}
+
+[data-theme="warm_cream"] .bg-slate-900 h1,
+[data-theme="warm_cream"] .bg-slate-900 h2,
+[data-theme="warm_cream"] .bg-slate-900 h3,
+[data-theme="warm_cream"] .bg-slate-900 h4,
+[data-theme="warm_cream"] .bg-slate-950 h1,
+[data-theme="warm_cream"] .bg-slate-950 h2,
+[data-theme="warm_cream"] .bg-slate-950 h3,
+[data-theme="warm_cream"] .bg-slate-950 h4 {
+  color: #2A1F17 !important;
+}
+
+/* Secondary / muted text in cards */
+[data-theme="light"] .bg-slate-900 p.text-slate-400,
+[data-theme="light"] .bg-slate-900 span.text-slate-400,
+[data-theme="light"] .bg-slate-950 p.text-slate-400,
+[data-theme="light"] .bg-slate-950 span.text-slate-400 {
+  color: #64748B !important;
+}
+
+[data-theme="warm_cream"] .bg-slate-900 p.text-slate-400,
+[data-theme="warm_cream"] .bg-slate-900 span.text-slate-400,
+[data-theme="warm_cream"] .bg-slate-950 p.text-slate-400,
+[data-theme="warm_cream"] .bg-slate-950 span.text-slate-400 {
+  color: #7C6C5E !important;
+}
+
+/* 6. Form Inputs in Light & Warm themes */
+[data-theme="light"] input.bg-slate-950,
+[data-theme="light"] select.bg-slate-950,
+[data-theme="light"] textarea.bg-slate-950 {
+  background-color: #FFFFFF !important;
+  color: #0F172A !important;
+  border-color: #CBD5E1 !important;
+}
+
+[data-theme="warm_cream"] input.bg-slate-950,
+[data-theme="warm_cream"] select.bg-slate-950,
+[data-theme="warm_cream"] textarea.bg-slate-950 {
+  background-color: #FFFFFF !important;
+  color: #2A1F17 !important;
+  border-color: #E2D7C5 !important;
+}
+
+/* 7. Retain Crisp White Text on Solid Color Buttons */
+[data-theme="light"] button[class*="bg-emerald"] *,
+[data-theme="light"] button[class*="bg-amber"] *,
+[data-theme="light"] button[class*="bg-rose"] *,
+[data-theme="light"] button[class*="bg-blue"] *,
+[data-theme="warm_cream"] button[class*="bg-emerald"] *,
+[data-theme="warm_cream"] button[class*="bg-amber"] *,
+[data-theme="warm_cream"] button[class*="bg-rose"] *,
+[data-theme="warm_cream"] button[class*="bg-blue"] * {
+  color: inherit !important;
+}
+

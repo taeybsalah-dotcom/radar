@@ -13,9 +13,95 @@ export interface StoreBranding {
   logo_url?: string;
   primary_color?: string;
   secondary_color?: string;
+  theme_mode?: 'light' | 'dark' | 'warm_cream' | 'system';
+  background_color?: string;
+  card_color?: string;
+  card_text_color?: string;
+  theme_preset?: string;
   branch_id?: string | null;
   cached_at?: number;
 }
+
+export interface BrandThemePreset {
+  id: string;
+  name: string;
+  description: string;
+  theme_mode: 'light' | 'dark' | 'warm_cream';
+  primary_color: string;
+  secondary_color: string;
+  background_color: string;
+  card_color: string;
+  icon: string;
+}
+
+export const BRAND_PRESETS: BrandThemePreset[] = [
+  {
+    id: 'cafe_warm',
+    name: 'قهوة وكافيه مختص ☕',
+    description: 'درجات الفانيلا والبيج الدافئ مع بني الموكا والكراميل',
+    theme_mode: 'warm_cream',
+    primary_color: '#3B2314',
+    secondary_color: '#D97706',
+    background_color: '#FAF6F0',
+    card_color: '#FFFFFF',
+    icon: '☕',
+  },
+  {
+    id: 'clean_restaurant',
+    name: 'مطاعم وبرغر راقي 🍔',
+    description: 'أبيض ناصع مع كحلي عصري وأحمر كلاسيكي دافئ',
+    theme_mode: 'light',
+    primary_color: '#0F172A',
+    secondary_color: '#DC2626',
+    background_color: '#F8FAFC',
+    card_color: '#FFFFFF',
+    icon: '🍔',
+  },
+  {
+    id: 'healthy_juice',
+    name: 'هيلثي وعصائر طازجة 🌿',
+    description: 'أخضر نعناعي مشرق مع خلفية طبيعية منعشة',
+    theme_mode: 'light',
+    primary_color: '#047857',
+    secondary_color: '#EAB308',
+    background_color: '#F0FDF4',
+    card_color: '#FFFFFF',
+    icon: '🌿',
+  },
+  {
+    id: 'salon_spa',
+    name: 'صوالين وسبا فاخر 🌸',
+    description: 'وردي بلش راقي مع ذهبي روز وخلفية لؤلؤية هادئة',
+    theme_mode: 'light',
+    primary_color: '#9D174D',
+    secondary_color: '#F59E0B',
+    background_color: '#FFF5F7',
+    card_color: '#FFFFFF',
+    icon: '🌸',
+  },
+  {
+    id: 'royal_gold',
+    name: 'فخامة ملكية ذهبية 👑',
+    description: 'كحلي إمبراطوري عميق مع ذهبي مطفي كلاسيكي',
+    theme_mode: 'light',
+    primary_color: '#1E1B4B',
+    secondary_color: '#B45309',
+    background_color: '#FDFBF7',
+    card_color: '#FFFFFF',
+    icon: '👑',
+  },
+  {
+    id: 'sleek_dark',
+    name: 'ليلي فاخر (سهرة ولاونج) 🌙',
+    description: 'أسود ملكي مع تدرجات ذهبية للمطاعم الفاخرة',
+    theme_mode: 'dark',
+    primary_color: '#0F172A',
+    secondary_color: '#F59E0B',
+    background_color: '#080B11',
+    card_color: '#131A26',
+    icon: '🌙',
+  },
+];
 
 export const BRANDING_STORAGE_KEY = 'radar_active_store_branding';
 
@@ -33,6 +119,11 @@ export function saveActiveStoreBranding(store: Store | null | undefined, branchI
     logo_url: store.logo_url || undefined,
     primary_color: store.primary_color || '#0F172A',
     secondary_color: store.secondary_color || '#F59E0B',
+    theme_mode: store.theme_mode || 'light',
+    background_color: store.background_color || (store.theme_mode === 'warm_cream' ? '#FAF6F0' : store.theme_mode === 'dark' ? '#080B11' : '#F8FAFC'),
+    card_color: store.card_color || (store.theme_mode === 'dark' ? '#131A26' : '#FFFFFF'),
+    card_text_color: store.card_text_color || undefined,
+    theme_preset: store.theme_preset || undefined,
     branch_id: branchId || undefined,
     cached_at: Date.now(),
   };

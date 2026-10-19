@@ -570,8 +570,44 @@ export function App() {
     };
   }, []);
 
+  const isPlatformPortal =
+    activeTab === 'super-admin' ||
+    activeTab === 'join' ||
+    activeTab === 'partner' ||
+    activeTab === 'partner-landing';
+
+  const activeBranding = useMemo(() => {
+    if (isPlatformPortal) return null;
+    return store || getActiveStoreBranding();
+  }, [isPlatformPortal, store]);
+
+  const currentThemeMode = useMemo<'light' | 'dark' | 'warm_cream'>(() => {
+    if (isPlatformPortal) return 'dark';
+    return (activeBranding?.theme_mode as any) || 'light';
+  }, [isPlatformPortal, activeBranding]);
+
+  const currentBgColor = useMemo<string>(() => {
+    if (isPlatformPortal) return '#080B11';
+    if (activeBranding?.background_color) return activeBranding.background_color;
+    if (currentThemeMode === 'warm_cream') return '#FAF6F0';
+    if (currentThemeMode === 'dark') return '#080B11';
+    return '#F8FAFC';
+  }, [isPlatformPortal, activeBranding, currentThemeMode]);
+
   useEffect(() => {
-    if (activeTab === 'super-admin' || activeTab === 'join' || activeTab === 'partner' || activeTab === 'partner-landing') {
+    // 🎨 White-Label Dynamic Theme Sync
+    document.documentElement.setAttribute('data-theme', currentThemeMode);
+    document.body.style.backgroundColor = currentBgColor;
+
+    let metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (!metaTheme) {
+      metaTheme = document.createElement('meta');
+      metaTheme.setAttribute('name', 'theme-color');
+      document.head.appendChild(metaTheme);
+    }
+    metaTheme.setAttribute('content', currentBgColor);
+
+    if (isPlatformPortal) {
       document.documentElement.style.setProperty('--brand-primary', '#0B0F17');
       document.documentElement.style.setProperty('--brand-secondary', '#F59E0B');
       updateDynamicPWA(null, activeTab as any);
@@ -583,7 +619,7 @@ export function App() {
       updateDynamicPWA(store, activeTab);
       saveActiveStoreBranding(store);
     }
-  }, [store, activeTab]);
+  }, [store, activeTab, isPlatformPortal, currentThemeMode, currentBgColor]);
 
   const debouncedSyncAppStore = useMemo(
     () =>
@@ -880,20 +916,19 @@ export function App() {
   };
 
   if (loading || authLoading) {
-    const isPlatformPortal =
-      activeTab === 'super-admin' ||
-      activeTab === 'partner' ||
-      activeTab === 'join' ||
-      activeTab === 'partner-landing';
-
-    const activeBranding = (!isPlatformPortal && (store || getActiveStoreBranding())) || null;
-
     if (activeBranding && activeBranding.name) {
       const primaryColor = activeBranding.primary_color || '#0F172A';
       const secondaryColor = activeBranding.secondary_color || '#F59E0B';
+      const isDark = currentThemeMode === 'dark';
 
       return (
-        <div className="min-h-screen bg-[#080B11] flex flex-col items-center justify-center text-slate-100 selection:bg-amber-500 selection:text-black">
+        <div
+          data-theme={currentThemeMode}
+          style={{ backgroundColor: currentBgColor }}
+          className={`min-h-screen flex flex-col items-center justify-center selection:bg-amber-500 selection:text-black transition-colors duration-300 ${
+            isDark ? 'text-slate-100' : 'text-slate-800'
+          }`}
+        >
           <div className="flex flex-col items-center gap-4 text-center px-4 max-w-sm w-full animate-fade-in">
             {/* Store Dynamic Logo / Monogram */}
             <div
@@ -921,16 +956,18 @@ export function App() {
 
             {/* Store Name & Portal Tagline */}
             <div className="space-y-1">
-              <h1 className="text-2xl font-black tracking-wide text-white drop-shadow-sm">
+              <h1 className={`text-2xl font-black tracking-wide drop-shadow-sm ${isDark ? 'text-white' : 'text-slate-900'}`}>
                 {activeBranding.name}
               </h1>
-              <p className="text-xs text-slate-400 font-medium">
+              <p className={`text-xs font-medium ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                 بوابة الولاء والمكافآت الذكية
               </p>
             </div>
 
             {/* Loading Indicator themed with store's brand accent */}
-            <div className="flex items-center gap-2 text-slate-400 font-mono text-xs mt-3 bg-slate-900/90 px-4 py-2 rounded-full border border-slate-800 shadow-xl">
+            <div className={`flex items-center gap-2 font-mono text-xs mt-3 px-4 py-2 rounded-full border shadow-xl ${
+              isDark ? 'bg-slate-900/90 text-slate-400 border-slate-800' : 'bg-white/90 text-slate-700 border-slate-200'
+            }`}>
               <div
                 className="w-3.5 h-3.5 border-2 rounded-full animate-spin"
                 style={{
@@ -966,7 +1003,13 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#080B11] text-slate-100 flex flex-col selection:bg-amber-500 selection:text-black">
+    <div
+      data-theme={currentThemeMode}
+      style={{ backgroundColor: currentBgColor }}
+      className={`min-h-screen flex flex-col selection:bg-amber-500 selection:text-black transition-colors duration-300 ${
+        currentThemeMode === 'light' || currentThemeMode === 'warm_cream' ? 'text-slate-900' : 'text-slate-100'
+      }`}
+    >
       {/* 👁️ Super Admin Preview Banner (Visible ONLY to platform owner during preview) */}
       {isSuperAdminPreview && activeTab !== 'super-admin' && store && (
         <div className="sticky top-0 z-50 bg-amber-500/20 backdrop-blur-md border-b border-amber-500/40 px-4 py-2.5 text-xs flex items-center justify-between text-amber-300 shadow-xl">

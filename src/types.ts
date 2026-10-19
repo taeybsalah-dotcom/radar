@@ -345,6 +345,11 @@ export interface Store {
   logo_url: string | null;
   primary_color: string;
   secondary_color: string;
+  theme_mode?: 'light' | 'dark' | 'warm_cream' | 'system';
+  background_color?: string; // لون خلفية المنصة المخصصة
+  card_color?: string; // لون البطاقات والأسطح المخصصة
+  card_text_color?: string; // لون نصوص البطاقة
+  theme_preset?: string; // اسم القالب المختار
   points_per_riyal: number;
   subscription_active: boolean;
   status?: StoreSubscriptionStatus | UnifiedLifecycleStage | string; // حالة المتجر العامة
