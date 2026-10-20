@@ -2196,7 +2196,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setIsCheckoutModalOpen(false)}
-                className="text-slate-400 hover:text-white text-sm"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
               </button>
@@ -2526,8 +2526,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setIsReceiptModalOpen(false)}
-                className="text-slate-400 hover:text-white text-sm"
+                onClick={() => setIsCheckoutModalOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
               </button>
@@ -2735,8 +2735,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               </h3>
               <button
                 type="button"
-                onClick={() => setIsCustomerLookupOpen(false)}
-                className="text-slate-400 hover:text-white text-xs"
+                onClick={() => setIsCheckoutModalOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
               </button>
@@ -2846,8 +2846,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               </h3>
               <button
                 type="button"
-                onClick={() => setIsParkModalOpen(false)}
-                className="text-slate-400 hover:text-white text-xs"
+                onClick={() => setIsCheckoutModalOpen(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
               </button>
@@ -2936,7 +2936,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setIsParkedOrdersModalOpen(false)}
-                className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
               </button>

@@ -2554,93 +2554,93 @@ ${portalUrl}`;
                         >
                           {/* Top Order Card Header */}
                           <div>
-                            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-sm font-black font-mono text-amber-400">
-                                  #{order.order_number || String(order.id).slice(0, 6)}
-                                </span>
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800 text-slate-300 font-bold">
-                                  {order.order_type === 'dine_in'
-                                    ? `🍽️ محلي ${order.table_number ? `(طاولة ${order.table_number})` : ''}`
-                                    : order.order_type === 'takeaway'
-                                    ? '🥡 استلام سفري'
-                                    : '🛵 توصيل'}
-                                </span>
-                                {order.order_source === 'customer_app' ? (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold flex items-center gap-1">
-                                    <span>📱 تطبيق العميل</span>
+                            <div className="flex items-start justify-between gap-2 border-b border-slate-200 dark:border-slate-800/80 pb-3 mb-3">
+                              <div className="space-y-1.5 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-sm font-black font-mono text-amber-500 dark:text-amber-400">
+                                    #{order.order_number || String(order.id).slice(0, 6)}
                                   </span>
-                                ) : (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 font-bold">
-                                    🏬 كاشير
+                                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
+                                    {order.order_type === 'dine_in'
+                                      ? `🍽️ محلي ${order.table_number ? `(${order.table_number})` : ''}`
+                                      : order.order_type === 'takeaway'
+                                      ? '🥡 سفري'
+                                      : '🛵 توصيل'}
                                   </span>
-                                )}
-                                {order.payment_status === 'paid' ? (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
-                                    مدفوع بالتطبيق ✅
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
-                                    الدفع بالفرع ⏳
-                                  </span>
-                                )}
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {order.order_source === 'customer_app' && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-blue-50 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30">
+                                      📱 تطبيق
+                                    </span>
+                                  )}
+                                  {order.payment_status === 'paid' ? (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30">
+                                      مدفوع بالتطبيق ✅
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30">
+                                      الدفع بالفرع ⏳
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
                               <span
-                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 ${
+                                className={`text-[10px] font-black px-2.5 py-1 rounded-full shrink-0 flex items-center gap-1 shadow-2xs ${
                                   isPending
-                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
+                                    ? 'bg-rose-50 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/40 animate-pulse'
                                     : isAccepted
-                                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                                    ? 'bg-blue-50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/40'
                                     : isPrep
-                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                    ? 'bg-amber-50 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/40'
                                     : isReady
-                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                    ? 'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/40'
                                     : isCancelled
-                                    ? 'bg-slate-800 text-rose-400'
-                                    : 'bg-slate-800 text-slate-400'
+                                    ? 'bg-slate-100 dark:bg-slate-800 text-rose-600 dark:text-rose-400 border border-slate-200 dark:border-slate-700'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
                                 }`}
                               >
-                                {isPending ? '🔴 بانتظار موافقة الكاشير' : isAccepted ? '👨‍🍳 معتمد بالمطبخ' : isPrep ? '🟡 قيد التحضير' : isReady ? '🟢 جاهز للتسليم' : isCancelled ? '❌ ملغي' : '🏁 مكتمل'}
+                                {isPending ? '🔴 بانتظار الموافقة' : isAccepted ? '👨‍🍳 بالمطبخ' : isPrep ? '🟡 قيد التحضير' : isReady ? '🟢 جاهز للتسليم' : isCancelled ? '❌ ملغي' : '🏁 مكتمل'}
                               </span>
                             </div>
 
                             {/* Customer & Time Info */}
                             <div className="flex items-start justify-between mb-3 text-xs">
                               <div>
-                                <div className="font-bold text-white text-sm">
+                                <div className="font-bold text-slate-900 dark:text-white text-sm">
                                   {order.customer_name || 'عميل المتجر'}
                                 </div>
                                 {order.customer_phone && (
                                   <a
                                     href={`tel:${order.customer_phone}`}
-                                    className="text-slate-400 hover:text-amber-400 font-mono text-[11px] flex items-center gap-1 mt-0.5"
+                                    className="text-slate-500 dark:text-slate-400 hover:text-amber-500 font-mono text-[11px] flex items-center gap-1 mt-0.5"
                                     dir="ltr"
                                   >
-                                    <Phone className="w-3 h-3 text-slate-500" />
+                                    <Phone className="w-3 h-3 text-slate-400" />
                                     {order.customer_phone}
                                   </a>
                                 )}
                               </div>
                               <div className="text-left rtl:text-right">
-                                <span className="text-[10px] text-slate-500 font-mono block">
+                                <span className="text-[10px] text-slate-400 font-mono block">
                                   {order.created_at
                                     ? new Date(order.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })
                                     : ''}
                                 </span>
-                                <span className="text-sm font-black font-mono text-emerald-400 block mt-0.5">
+                                <span className="text-sm font-black font-mono text-emerald-600 dark:text-emerald-400 block mt-0.5">
                                   {Number(order.total_price || 0).toFixed(2)} ر.س
                                 </span>
                               </div>
                             </div>
 
                             {/* Items Breakdown */}
-                            <div className="space-y-1.5 mb-4 bg-slate-950/90 p-3 rounded-2xl border border-slate-800/80">
+                            <div className="space-y-1.5 mb-4 bg-slate-50 dark:bg-slate-950/90 p-3 rounded-2xl border border-slate-200 dark:border-slate-800/80">
                               {Array.isArray(order.items) && order.items.length > 0 ? (
                                 order.items.map((it: any, idx: number) => (
                                   <div key={idx} className="flex justify-between items-center text-xs">
-                                    <div className="text-slate-300 min-w-0 pr-1">
-                                      <strong className="text-amber-400 font-mono ml-1">{it.quantity || 1}x</strong>
+                                    <div className="text-slate-800 dark:text-slate-300 min-w-0 pr-1">
+                                      <strong className="text-amber-600 dark:text-amber-400 font-mono ml-1">{it.quantity || 1}x</strong>
                                       <span>{it.catalog_item?.name || it.name || 'صنف'}</span>
                                     </div>
                                     <span className="text-slate-500 font-mono text-[11px] shrink-0">
@@ -2649,31 +2649,31 @@ ${portalUrl}`;
                                   </div>
                                 ))
                               ) : (
-                                <div className="text-[11px] text-slate-500">تفاصيل الطلب غير متوفرة</div>
+                                <div className="text-[11px] text-slate-400">تفاصيل الطلب غير متوفرة</div>
                               )}
 
                               {order.notes && (
-                                <div className="mt-2 pt-2 border-t border-slate-800/80 text-[11px] text-amber-300/90 bg-amber-500/10 p-2 rounded-xl border border-amber-500/20 leading-relaxed">
+                                <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800/80 text-[11px] text-amber-800 dark:text-amber-300/90 bg-amber-50 dark:bg-amber-500/10 p-2 rounded-xl border border-amber-200 dark:border-amber-500/20 leading-relaxed">
                                   <strong>ملاحظات:</strong> {order.notes}
                                 </div>
                               )}
                             </div>
                           </div>
 
-                          {/* 🛵 Delivery Driver Dispatch Section */}
-                          {(order.order_type === 'delivery' || order.fulfillment_type === 'delivery') && (
-                            <div className="mb-3 p-3 rounded-2xl bg-slate-950 border border-amber-500/30 space-y-2">
+                          {/* 🛵 Delivery Driver Dispatch Section (Only for Accepted/Preparing/Ready delivery orders) */}
+                          {(order.order_type === 'delivery' || order.fulfillment_type === 'delivery') && !isPending && (
+                            <div className="mb-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-amber-500/30 space-y-2">
                               <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
+                                <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
                                   <span>🛵</span>
                                   <span>كابتن التوصيل:</span>
                                 </span>
                                 {order.driver_name ? (
-                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40">
                                     {order.delivery_status === 'picked_up' ? 'في الطريق 🛵' : order.delivery_status === 'delivered' ? 'تم التسليم ✅' : 'تم الإسناد ⏳'}
                                   </span>
                                 ) : (
-                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-500/20 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-500/40 animate-pulse">
                                     بانتظار إسناد سائق ⏳
                                   </span>
                                 )}
@@ -2681,8 +2681,8 @@ ${portalUrl}`;
 
                               {/* Customer Address & GPS */}
                               {(order.delivery_address || order.fulfillment_details?.delivery_address) && (
-                                <div className="text-[11px] text-slate-300 flex items-start gap-1">
-                                  <span className="text-slate-500 shrink-0">📍</span>
+                                <div className="text-[11px] text-slate-700 dark:text-slate-300 flex items-start gap-1">
+                                  <span className="text-slate-400 shrink-0">📍</span>
                                   <span className="truncate">{order.delivery_address || order.fulfillment_details?.delivery_address}</span>
                                 </div>
                               )}
@@ -2693,7 +2693,7 @@ ${portalUrl}`;
                                   <select
                                     value={order.driver_id || ''}
                                     onChange={(e) => handleAssignDriver(order, e.target.value)}
-                                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                                    className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
                                   >
                                     <option value="">-- اختر سائق من الفرع --</option>
                                     {branchDrivers.map((d) => (
@@ -2708,7 +2708,7 @@ ${portalUrl}`;
                                       <button
                                         type="button"
                                         onClick={() => handleNotifyDriverWhatsApp(order)}
-                                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1 shadow"
+                                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-bold text-xs transition flex items-center gap-1 shadow"
                                         title="إشعار السائق بتفاصيل الطلب عبر واتساب"
                                       >
                                         <MessageSquare className="w-3.5 h-3.5" />
@@ -2716,7 +2716,7 @@ ${portalUrl}`;
                                       </button>
                                       <a
                                         href={`tel:${order.driver_phone}`}
-                                        className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                                        className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 transition"
                                         title="اتصال بالسائق"
                                       >
                                         <Phone className="w-3.5 h-3.5" />
@@ -2733,21 +2733,25 @@ ${portalUrl}`;
                             <button
                               type="button"
                               onClick={() => handleTransferOrderToPOS(order)}
-                              className="w-full mb-2 py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/35 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow"
+                              className={`w-full mb-2 py-2 px-3 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 border ${
+                                isDarkTheme
+                                  ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/35'
+                                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+                              }`}
                             >
-                              <Receipt className="w-3.5 h-3.5 text-amber-400" />
+                              <Receipt className="w-3.5 h-3.5 text-amber-500" />
                               <span>🧾 تحويل للسلة والمحاسبة (POS)</span>
                             </button>
                           )}
 
                           {/* Action Buttons */}
-                          <div className="flex gap-2 pt-1 border-t border-slate-800/80 mt-auto">
+                          <div className="flex gap-2 pt-1 border-t border-slate-200 dark:border-slate-800/80 mt-auto">
                             {isPending && (
                               <>
                                 <button
                                   type="button"
                                   onClick={() => updateOrderStatus(order.id, 'accepted')}
-                                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-1.5"
+                                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition shadow-md shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95"
                                 >
                                   <ChefHat className="w-3.5 h-3.5" />
                                   <span>قبول وإرسال للمطبخ 👨‍🍳</span>
@@ -2755,7 +2759,7 @@ ${portalUrl}`;
                                 <button
                                   type="button"
                                   onClick={() => updateOrderStatus(order.id, 'cancelled')}
-                                  className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition"
+                                  className="px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/15 dark:hover:bg-rose-500/30 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30 font-bold text-xs transition"
                                   title="إلغاء الطلب"
                                 >
                                   إلغاء ❌
@@ -2768,7 +2772,7 @@ ${portalUrl}`;
                                 <button
                                   type="button"
                                   onClick={() => updateOrderStatus(order.id, 'preparing')}
-                                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition shadow-lg shadow-blue-900/30 flex items-center justify-center gap-1.5"
+                                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white keep-white font-black text-xs transition shadow-md shadow-blue-900/20 flex items-center justify-center gap-1.5 active:scale-95"
                                 >
                                   <ChefHat className="w-3.5 h-3.5" />
                                   <span>بدء التحضير 🍳</span>
@@ -2776,7 +2780,7 @@ ${portalUrl}`;
                                 <button
                                   type="button"
                                   onClick={() => updateOrderStatus(order.id, 'cancelled')}
-                                  className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition"
+                                  className="px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/15 dark:hover:bg-rose-500/30 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30 font-bold text-xs transition"
                                   title="إلغاء الطلب"
                                 >
                                   إلغاء ❌
@@ -2788,7 +2792,7 @@ ${portalUrl}`;
                               <button
                                 type="button"
                                 onClick={() => updateOrderStatus(order.id, 'ready')}
-                                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-1.5"
+                                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition shadow-md shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95"
                               >
                                 <CheckCircle2 className="w-4 h-4" />
                                 <span>الطلب جاهز للاستلام 📦</span>
@@ -2799,9 +2803,9 @@ ${portalUrl}`;
                               <button
                                 type="button"
                                 onClick={() => updateOrderStatus(order.id, 'completed')}
-                                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition flex items-center justify-center gap-1.5 border border-slate-700"
+                                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/20 active:scale-95"
                               >
-                                <Check className="w-4 h-4 text-emerald-400" />
+                                <Check className="w-4 h-4 text-white" />
                                 <span>تسليم وإنهاء الطلب ✅</span>
                               </button>
                             )}
@@ -3012,155 +3016,171 @@ ${portalUrl}`;
                               : 'border-slate-800 opacity-75'
                           }`}
                         >
-                          <div>
-                            {/* Booking Card Header */}
-                            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-sm font-black font-mono text-amber-400">
-                                  #{bk.booking_number || String(bk.id).slice(0, 6)}
-                                </span>
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold">
-                                  📅 حجز تطبيق
-                                </span>
-                                {bk.payment_status === 'paid' ? (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
-                                    مدفوع بالتطبيق ✅
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
-                                    الدفع بالمركز ⏳
-                                  </span>
-                                )}
-                              </div>
-                              <span
-                                className={`text-[10px] font-bold px-2.5 py-1 rounded-full ${
-                                  isPending
-                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
-                                    : isConfirmed
-                                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                                    : isCompleted
-                                    ? 'bg-emerald-500/20 text-emerald-300'
-                                    : isNoShow
-                                    ? 'bg-slate-800 text-amber-400'
-                                    : 'bg-slate-800 text-rose-400'
-                                }`}
-                              >
-                                {isPending
-                                  ? '🔴 في الانتظار'
-                                  : isConfirmed
-                                  ? '🔵 مؤكد'
-                                  : isCompleted
-                                  ? '🏁 اكتمل الحضور'
-                                  : isNoShow
-                                  ? '🏖️ لم يحضر'
-                                  : '❌ ملغي'}
-                              </span>
-                            </div>
+                          {(() => {
+                            const rawId = String(bk.booking_number || bk.id || '').trim();
+                            const digitsOnly = rawId.replace(/^BKG-?/i, '');
+                            const displayCode = digitsOnly.length > 5 ? digitsOnly.slice(-5).toUpperCase() : digitsOnly.toUpperCase();
+                            const cleanBookingNumber = `#BKG-${displayCode}`;
 
-                            {/* Customer & Price */}
-                            <div className="flex items-start justify-between mb-3 text-xs">
-                              <div>
-                                <div className="font-bold text-white text-sm">{bk.customer_name || 'العميل'}</div>
-                                {bk.customer_phone && (
-                                  <a
-                                    href={`tel:${bk.customer_phone}`}
-                                    className="text-slate-400 hover:text-amber-400 font-mono text-[11px] flex items-center gap-1 mt-0.5"
-                                    dir="ltr"
-                                  >
-                                    <Phone className="w-3 h-3 text-slate-500" />
-                                    {bk.customer_phone}
-                                  </a>
-                                )}
-                              </div>
-                              <div className="text-left">
-                                <div className="text-sm font-black font-mono text-emerald-400">
-                                  {Number(bk.service_price ?? bk.total_price ?? 0).toFixed(2)} ر.س
-                                </div>
-                                {Number(bk.loyalty_points_earned ?? bk.points_to_earn ?? 0) > 0 && (
-                                  <div className="text-[10px] font-bold text-amber-400 flex items-center gap-1 justify-end mt-0.5 font-mono">
-                                    <span>+{Number(bk.loyalty_points_earned ?? bk.points_to_earn ?? 0)} نقطة ولاء 👑</span>
+                            return (
+                              <>
+                                <div>
+                                  {/* Booking Card Header */}
+                                  <div className="flex items-start justify-between gap-2 border-b border-slate-200 dark:border-slate-800/80 pb-3 mb-3">
+                                    <div className="space-y-1.5 min-w-0">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-sm font-black font-mono text-purple-600 dark:text-purple-400">
+                                          {cleanBookingNumber}
+                                        </span>
+                                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30">
+                                          📅 حجز تطبيق
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        {bk.payment_status === 'paid' ? (
+                                          <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30">
+                                            مدفوع بالتطبيق ✅
+                                          </span>
+                                        ) : (
+                                          <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30">
+                                            الدفع بالمركز ⏳
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <span
+                                      className={`text-[10px] font-black px-2.5 py-1 rounded-full shrink-0 flex items-center gap-1 shadow-2xs ${
+                                        isPending
+                                          ? 'bg-rose-50 dark:bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/40 animate-pulse'
+                                          : isConfirmed
+                                          ? 'bg-blue-50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/40'
+                                          : isCompleted
+                                          ? 'bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30'
+                                          : isNoShow
+                                          ? 'bg-slate-100 dark:bg-slate-800 text-amber-800 dark:text-amber-400 border border-slate-200 dark:border-slate-700'
+                                          : 'bg-slate-100 dark:bg-slate-800 text-rose-700 dark:text-rose-400 border border-slate-200 dark:border-slate-700'
+                                      }`}
+                                    >
+                                      {isPending
+                                        ? '🔴 في الانتظار'
+                                        : isConfirmed
+                                        ? '🔵 مؤكد'
+                                        : isCompleted
+                                        ? '🏁 اكتمل الحضور'
+                                        : isNoShow
+                                        ? '🏖️ لم يحضر'
+                                        : '❌ ملغي'}
+                                    </span>
                                   </div>
-                                )}
-                              </div>
-                            </div>
 
-                            {/* Service Details Card */}
-                            <div className="bg-slate-950/90 p-3 rounded-2xl border border-slate-800/80 space-y-1.5 mb-4">
-                              <div className="text-xs text-white font-bold">{bk.service_name || 'خدمة'}</div>
-                              <div className="text-[11px] text-slate-400 flex items-center justify-between">
-                                <span>مع: {bk.specialist_name || 'أي مختص متاح'}</span>
-                                <span className="font-mono text-slate-300" dir="ltr">
-                                  {bk.booking_date} • {bk.booking_time}
-                                </span>
-                              </div>
+                                  {/* Customer & Price */}
+                                  <div className="flex items-start justify-between mb-3 text-xs">
+                                    <div>
+                                      <div className="font-bold text-slate-900 dark:text-white text-sm">{bk.customer_name || 'العميل'}</div>
+                                      {bk.customer_phone && (
+                                        <a
+                                          href={`tel:${bk.customer_phone}`}
+                                          className="text-slate-500 dark:text-slate-400 hover:text-amber-500 font-mono text-[11px] flex items-center gap-1 mt-0.5"
+                                          dir="ltr"
+                                        >
+                                          <Phone className="w-3 h-3 text-slate-400" />
+                                          {bk.customer_phone}
+                                        </a>
+                                      )}
+                                    </div>
+                                    <div className="text-left">
+                                      <div className="text-sm font-black font-mono text-emerald-600 dark:text-emerald-400">
+                                        {Number(bk.service_price ?? bk.total_price ?? 0).toFixed(2)} ر.س
+                                      </div>
+                                      {Number(bk.loyalty_points_earned ?? bk.points_to_earn ?? 0) > 0 && (
+                                        <div className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1 justify-end mt-0.5 font-mono">
+                                          <span>+{Number(bk.loyalty_points_earned ?? bk.points_to_earn ?? 0)} نقطة ولاء 👑</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
 
-                              {bk.notes && (
-                                <div className="text-[11px] text-amber-300/90 bg-amber-500/10 p-2 rounded-xl mt-2 border border-amber-500/20 leading-relaxed">
-                                  <strong>ملاحظة العميل:</strong> {bk.notes}
+                                  {/* Service Details Card */}
+                                  <div className="bg-slate-50 dark:bg-slate-950/90 p-3 rounded-2xl border border-slate-200 dark:border-slate-800/80 space-y-1.5 mb-4">
+                                    <div className="text-xs text-slate-900 dark:text-white font-bold">{bk.service_name || 'خدمة'}</div>
+                                    <div className="text-[11px] text-slate-600 dark:text-slate-400 flex items-center justify-between">
+                                      <span>مع: {bk.specialist_name || 'أي مختص متاح'}</span>
+                                      <span className="font-mono text-slate-700 dark:text-slate-300" dir="ltr">
+                                        {bk.booking_date} • {bk.booking_time}
+                                      </span>
+                                    </div>
+
+                                    {bk.notes && (
+                                      <div className="text-[11px] text-amber-800 dark:text-amber-300/90 bg-amber-50 dark:bg-amber-500/10 p-2 rounded-xl mt-2 border border-amber-200 dark:border-amber-500/20 leading-relaxed">
+                                        <strong>ملاحظة العميل:</strong> {bk.notes}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                          </div>
 
-                          {/* Transfer Booking to POS Cart & Invoice */}
-                          {!isCompleted && !isCancelled && !isNoShow && (
-                            <button
-                              type="button"
-                              onClick={() => handleTransferBookingToPOS(bk)}
-                              className="w-full mb-2 py-2 px-3 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-200 border border-purple-500/40 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow"
-                            >
-                              <Receipt className="w-3.5 h-3.5 text-purple-400" />
-                              <span>🧾 استقبال وتحويل للسلة والمحاسبة (POS)</span>
-                            </button>
-                          )}
+                                {/* Transfer Booking to POS Cart & Invoice */}
+                                {!isCompleted && !isCancelled && !isNoShow && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTransferBookingToPOS(bk)}
+                                    className="w-full mb-2 py-2 px-3 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-500/15 dark:hover:bg-purple-500/25 text-purple-900 dark:text-purple-200 border border-purple-200 dark:border-purple-500/40 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow-2xs"
+                                  >
+                                    <Receipt className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                                    <span>🧾 استقبال وتحويل للسلة والمحاسبة (POS)</span>
+                                  </button>
+                                )}
 
-                          {/* Booking Action Buttons */}
-                          <div className="flex gap-2 pt-1 border-t border-slate-800/80 mt-auto">
-                            {isPending && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => updateBookingStatus(bk.id, 'confirmed')}
-                                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/30"
-                                >
-                                  قبول وتأكيد ✅
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => updateBookingStatus(bk.id, 'cancelled')}
-                                  className="flex-1 py-2.5 bg-rose-600/15 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition"
-                                >
-                                  رفض / غير متاح ❌
-                                </button>
+                                {/* Booking Action Buttons */}
+                                <div className="flex gap-2 pt-1 border-t border-slate-200 dark:border-slate-800/80 mt-auto">
+                                  {isPending && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => updateBookingStatus(bk.id, 'confirmed')}
+                                        className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs rounded-xl transition shadow-md shadow-emerald-900/20 active:scale-95"
+                                      >
+                                        قبول وتأكيد ✅
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => updateBookingStatus(bk.id, 'cancelled')}
+                                        className="flex-1 py-2.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-600/15 dark:hover:bg-rose-600/30 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30 font-bold text-xs rounded-xl transition"
+                                      >
+                                        رفض / غير متاح ❌
+                                      </button>
+                                    </>
+                                  )}
+
+                                  {isConfirmed && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => updateBookingStatus(bk.id, 'completed')}
+                                        className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white keep-white font-black text-xs rounded-xl transition shadow-md shadow-blue-900/20 active:scale-95"
+                                      >
+                                        حضر واكتمل 🏁
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => updateBookingStatus(bk.id, 'no_show')}
+                                        className="px-3.5 py-2.5 bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 hover:text-rose-600 dark:text-slate-300 border border-slate-200 hover:border-rose-200 dark:border-slate-700 font-bold text-xs rounded-xl transition"
+                                        title="العميل لم يحضر"
+                                      >
+                                        لم يحضر 🏖️
+                                      </button>
+                                    </>
+                                  )}
+
+                                  {(isCompleted || isCancelled || isNoShow) && (
+                                    <div className="w-full text-center py-1.5 text-[11px] font-bold text-slate-500">
+                                      {isCompleted ? 'اكتمل الموعد بنجاح ✅' : isNoShow ? 'تم تسجيل عدم حضور العميل 🏖️' : 'تم إلغاء الحجز ❌'}
+                                    </div>
+                                  )}
+                                </div>
                               </>
-                            )}
-
-                            {isConfirmed && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => updateBookingStatus(bk.id, 'completed')}
-                                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-blue-900/30"
-                                >
-                                  حضر واكتمل 🏁
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => updateBookingStatus(bk.id, 'no_show')}
-                                  className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 font-bold text-xs rounded-xl transition"
-                                  title="العميل لم يحضر"
-                                >
-                                  لم يحضر 🏖️
-                                </button>
-                              </>
-                            )}
-
-                            {(isCompleted || isCancelled || isNoShow) && (
-                              <div className="w-full text-center py-1.5 text-[11px] font-bold text-slate-500">
-                                {isCompleted ? 'اكتمل الموعد بنجاح ✅' : isNoShow ? 'تم تسجيل عدم حضور العميل 🏖️' : 'تم إلغاء الحجز ❌'}
-                              </div>
-                            )}
-                          </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -3479,7 +3499,7 @@ ${portalUrl}`;
                 setIsAmountModalOpen(false);
                 setPendingCustomerScan(null);
               }}
-              className="absolute top-5 left-5 text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800 border border-slate-700 transition"
+              className="absolute top-4 left-4 w-8 h-8 rounded-full flex items-center justify-center transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
             >
               <X className="w-5 h-5" />
             </button>
@@ -3587,7 +3607,7 @@ ${portalUrl}`;
                 setManagerPinInput('');
                 setManagerPinError(null);
               }}
-              className="absolute top-5 left-5 text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800 border border-slate-700 transition"
+              className="absolute top-4 left-4 w-8 h-8 rounded-full flex items-center justify-center transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
             >
               <X className="w-5 h-5" />
             </button>
@@ -3678,7 +3698,7 @@ ${portalUrl}`;
                 setChangePinError(null);
                 setChangePinSuccess(null);
               }}
-              className="absolute top-5 left-5 text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800 border border-slate-700 transition"
+              className="absolute top-4 left-4 w-8 h-8 rounded-full flex items-center justify-center transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
             >
               <X className="w-5 h-5" />
             </button>
@@ -3882,7 +3902,7 @@ ${portalUrl}`;
               <button
                 type="button"
                 onClick={() => setIsScreensModalOpen(false)}
-                className="p-2 text-slate-400 hover:text-white rounded-xl bg-slate-800 border border-slate-700 transition"
+                className="w-8 h-8 rounded-full flex items-center justify-center transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 <X className="w-4 h-4" />
               </button>

@@ -398,7 +398,7 @@ export const CashierAppointmentsModal: React.FC<CashierAppointmentsModalProps> =
             <button
               type="button"
               onClick={onClose}
-              className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition"
+              className="w-8 h-8 rounded-full flex items-center justify-center transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
             >
               <X className="w-4 h-4" />
             </button>
@@ -984,7 +984,7 @@ export const CashierAppointmentsModal: React.FC<CashierAppointmentsModalProps> =
               <button
                 type="button"
                 onClick={() => setIsNewBookingOpen(false)}
-                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center"
+                className="w-8 h-8 rounded-full flex items-center justify-center transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
               </button>

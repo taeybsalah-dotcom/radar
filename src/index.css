@@ -303,11 +303,11 @@
 }
 
 /* Ensure text-white turns dark on light themes unless explicitly on solid colored/dark buttons */
-[data-theme="light"] .text-white:not(.keep-white):not(.keep-white *):not(.bg-black):not(.bg-black *):not([class*="bg-black"]):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *):not(button[class*="bg-purple"] *):not(button[class*="bg-indigo"] *):not(.bg-emerald-500 *):not(.bg-rose-500 *) {
+[data-theme="light"] .text-white:not(.keep-white):not(.keep-white *):not(.bg-black):not(.bg-black *):not([class*="bg-black"]):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *):not(button[class*="bg-purple"] *):not(button[class*="bg-indigo"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(.bg-emerald-500 *):not(.bg-rose-500 *) {
   color: #0F172A !important;
 }
 
-[data-theme="warm_cream"] .text-white:not(.keep-white):not(.keep-white *):not(.bg-black):not(.bg-black *):not([class*="bg-black"]):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *):not(button[class*="bg-purple"] *):not(button[class*="bg-indigo"] *):not(.bg-emerald-500 *):not(.bg-rose-500 *) {
+[data-theme="warm_cream"] .text-white:not(.keep-white):not(.keep-white *):not(.bg-black):not(.bg-black *):not([class*="bg-black"]):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *):not(button[class*="bg-purple"] *):not(button[class*="bg-indigo"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(.bg-emerald-500 *):not(.bg-rose-500 *) {
   color: #2A1F17 !important;
 }
 
