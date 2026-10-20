@@ -777,6 +777,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           const isMyPoints =
             event.phone && curCust && normalizePhone(event.phone) === normalizePhone(curCust.phone);
           if (isMyPoints && event.points) {
+            setIsFullscreenQR(false);
+            setShowEmbeddedQR(false);
             playBeepSound('success');
             confetti({
               particleCount: 120,

@@ -5261,9 +5261,35 @@ export const LoyaltyService = {
           .sort((a, b) => b.required_xp - a.required_xp)[0]?.tier_name || 'ضيف (Guest)';
     }
 
+    const finalCust = supabaseUpdatedCust || localCust;
+
+    // 🌟 إرسال حدث فوري عبر الشبكة لكافة أجهزة العميل لإطلاق شاشة الاحتفال ونثر الكونفيتي اللحظي
+    if (pointsEarned > 0 && finalCust) {
+      LoyaltyEvents.emit({
+        type: 'POINTS_ADDED',
+        storeId: resolvedStoreId,
+        phone: finalCust.phone,
+        points: pointsEarned,
+        newBalance: finalCust.wallet_balance,
+        newLifetimeXP: finalCust.lifetime_xp,
+        currentTier: computedTier,
+      });
+      LoyaltyEvents.emit({
+        type: 'CUSTOMER_UPDATED',
+        storeId: resolvedStoreId,
+        phone: finalCust.phone,
+        newBalance: finalCust.wallet_balance,
+        newLifetimeXP: finalCust.lifetime_xp,
+      });
+      LoyaltyEvents.emit({
+        type: 'WALLET_UPDATED',
+        storeId: resolvedStoreId,
+      });
+    }
+
     return {
       success: true,
-      customer: supabaseUpdatedCust || localCust,
+      customer: finalCust,
       pointsEarned,
       currentTier: computedTier,
     };

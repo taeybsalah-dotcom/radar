@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Store, StoreStaff, StoreBranch, Customer, CatalogItem, Tier, POSCartDiscount, POSCashMovement, POSShift, StoreSpecialist, ServiceBooking, getStoreActiveModules } from '../types';
 import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyEvents } from '../lib/events';
 import { playBeepSound } from '../lib/sound';
 import { generateZatcaTLVQR } from '../lib/zatcaQR';
 import { QRCodeSVG } from 'qrcode.react';
@@ -1034,6 +1035,30 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
           if (purchaseRes && purchaseRes.customer) {
             setCustomer(purchaseRes.customer);
             pointsEarned = purchaseRes.pointsEarned;
+
+            // 🌟 إرسال حدث فوري للعميل للاحتفال المباشر على جهازه في كافة وسائل الدفع (كاش / شبكة / تقسيم)
+            if (pointsEarned > 0) {
+              LoyaltyEvents.emit({
+                type: 'POINTS_ADDED',
+                storeId: store.id,
+                phone: customer.phone,
+                points: purchaseRes.pointsEarned,
+                newBalance: purchaseRes.customer.wallet_balance,
+                newLifetimeXP: purchaseRes.customer.lifetime_xp,
+                currentTier: purchaseRes.currentTier,
+              });
+              LoyaltyEvents.emit({
+                type: 'CUSTOMER_UPDATED',
+                storeId: store.id,
+                phone: customer.phone,
+                newBalance: purchaseRes.customer.wallet_balance,
+                newLifetimeXP: purchaseRes.customer.lifetime_xp,
+              });
+              LoyaltyEvents.emit({
+                type: 'WALLET_UPDATED',
+                storeId: store.id,
+              });
+            }
           }
         } catch (ptsErr) {
           console.warn('Could not award points to customer:', ptsErr);
