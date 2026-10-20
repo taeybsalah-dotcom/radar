@@ -650,7 +650,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   useEffect(() => {
     document.title = store?.name || 'بطاقة الولاء';
-  }, [store?.name]);
+    const mode = store?.theme_mode || 'light';
+    document.documentElement.setAttribute('data-theme', mode);
+  }, [store?.name, store?.theme_mode]);
 
   useEffect(() => {
     if (!store?.id) return;
@@ -774,8 +776,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         }
 
         if (event.type === 'POINTS_ADDED') {
+          const effectivePhone = curCust?.phone || savedProfile?.phone || guestPhone;
           const isMyPoints =
-            event.phone && curCust && normalizePhone(event.phone) === normalizePhone(curCust.phone);
+            event.phone && effectivePhone && normalizePhone(event.phone) === normalizePhone(effectivePhone);
           if (isMyPoints && event.points) {
             setIsFullscreenQR(false);
             setShowEmbeddedQR(false);
@@ -799,7 +802,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             }
 
             // 📬 Save isolated inbox notification for this customer
-            if (curCust?.phone) {
+            if (effectivePhone) {
               saveInboxNotification(
                 {
                   title: 'نقاط ولاء جديدة 🌟',
@@ -807,13 +810,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   soundType: 'success',
                   targetType: 'customer',
                   storeId: curStore.id,
-                  userPhone: curCust.phone,
+                  userPhone: effectivePhone,
                   portal: 'customer',
                 },
                 {
                   portal: 'customer',
                   storeId: curStore.id,
-                  userPhone: curCust.phone,
+                  userPhone: effectivePhone,
                 }
               );
             }
@@ -1043,6 +1046,27 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               points: pointsGained,
               newBalance: freshCust.wallet_balance,
             });
+
+            // 📬 Save isolated inbox notification for this customer as backup sync
+            const effectivePhone = freshCust.phone || savedProfile?.phone || guestPhone;
+            if (effectivePhone) {
+              saveInboxNotification(
+                {
+                  title: 'نقاط ولاء جديدة 🌟',
+                  body: `تمت إضافة +${pointsGained} نقطة بنجاح! رصيدك الجديد: ${freshCust.wallet_balance} نقطة.`,
+                  soundType: 'success',
+                  targetType: 'customer',
+                  storeId: store.id,
+                  userPhone: effectivePhone,
+                  portal: 'customer',
+                },
+                {
+                  portal: 'customer',
+                  storeId: store.id,
+                  userPhone: effectivePhone,
+                }
+              );
+            }
           } else {
             lastPointsRef.current = freshCust.wallet_balance;
             if (
