@@ -2423,16 +2423,24 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
 
                 {/* Cash Calculator Drawer */}
                 {paymentMethod === 'cash' && (
-                  <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3 animate-fade-in">
+                  <div className={`p-4 rounded-2xl border space-y-3 animate-fade-in ${
+                    isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+                  }`}>
                     <div className="space-y-1">
-                      <label className="text-xs font-bold text-slate-300 block">المبلغ المستلم من العميل:</label>
+                      <label className={`text-xs font-bold block ${
+                        isDarkTheme ? 'text-slate-300' : 'text-slate-700'
+                      }`}>المبلغ المستلم من العميل:</label>
                       <input
                         type="number"
                         step="any"
                         placeholder="0.00"
                         value={cashTendered}
                         onChange={(e) => setCashTendered(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-4 py-2.5 text-lg font-black text-white font-mono outline-none text-center"
+                        className={`w-full rounded-xl px-4 py-2.5 text-lg font-black font-mono outline-none text-center border ${
+                          isDarkTheme
+                            ? 'bg-slate-900 border-slate-700 text-white focus:border-amber-400'
+                            : 'bg-white border-slate-300 text-slate-900 focus:border-amber-500 shadow-xs'
+                        }`}
                       />
                     </div>
 
@@ -2441,7 +2449,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                       <button
                         type="button"
                         onClick={() => setCashTendered(cartGrandTotal)}
-                        className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold font-mono"
+                        className={`flex-1 py-2 rounded-xl text-xs font-bold font-mono transition border ${
+                          isDarkTheme
+                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                            : 'bg-white hover:bg-slate-100 text-slate-800 border-slate-200 shadow-xs active:bg-slate-200'
+                        }`}
                       >
                         بالضبط
                       </button>
@@ -2450,7 +2462,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                           key={val}
                           type="button"
                           onClick={() => setCashTendered(val)}
-                          className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold font-mono"
+                          className={`flex-1 py-2 rounded-xl text-xs font-bold font-mono transition border ${
+                            isDarkTheme
+                              ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                              : 'bg-white hover:bg-slate-100 text-slate-800 border-slate-200 shadow-xs active:bg-slate-200'
+                          }`}
                         >
                           {val} ﷼
                         </button>
@@ -2458,35 +2474,45 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                     </div>
 
                     {/* Change Due Display */}
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs font-bold">
-                      <span className="text-slate-400">المتبقي للعميل (الفكة):</span>
-                      <span className="text-lg font-black text-emerald-400 font-mono">{changeDue.toFixed(2)} ﷼</span>
+                    <div className={`flex items-center justify-between p-3 rounded-xl border text-xs font-bold ${
+                      isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xs'
+                    }`}>
+                      <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-600'}>المتبقي للعميل (الفكة):</span>
+                      <span className={`text-lg font-black font-mono ${
+                        isDarkTheme ? 'text-emerald-400' : 'text-emerald-600'
+                      }`}>{changeDue.toFixed(2)} ﷼</span>
                     </div>
                   </div>
                 )}
 
                 {/* Split Payment Input */}
                 {paymentMethod === 'split' && (
-                  <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5 animate-fade-in text-xs">
+                  <div className={`p-4 rounded-2xl border space-y-2.5 animate-fade-in text-xs ${
+                    isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+                  }`}>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-slate-400 block mb-1">المبلغ كاش (💵):</label>
+                        <label className={`block mb-1 font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-700'}`}>المبلغ كاش (💵):</label>
                         <input
                           type="number"
                           step="any"
                           value={splitCashAmount}
                           onChange={(e) => setSplitCashAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-white font-mono font-bold text-center"
+                          className={`w-full rounded-xl p-2 font-mono font-bold text-center border ${
+                            isDarkTheme ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900 shadow-xs'
+                          }`}
                         />
                       </div>
                       <div>
-                        <label className="text-slate-400 block mb-1">المبلغ شبكة (💳):</label>
+                        <label className={`block mb-1 font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-700'}`}>المبلغ شبكة (💳):</label>
                         <input
                           type="number"
                           step="any"
                           value={splitCardAmount}
                           onChange={(e) => setSplitCardAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2 text-white font-mono font-bold text-center"
+                          className={`w-full rounded-xl p-2 font-mono font-bold text-center border ${
+                            isDarkTheme ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900 shadow-xs'
+                          }`}
                         />
                       </div>
                     </div>
@@ -2506,7 +2532,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setIsCheckoutModalOpen(false)}
-                className="py-3 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs"
+                className={`py-3 px-5 rounded-2xl font-bold text-xs transition border ${
+                  isDarkTheme
+                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 shadow-2xs'
+                }`}
               >
                 إلغاء
               </button>
@@ -2722,9 +2752,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition"
+                className={`flex-1 py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 transition border ${
+                  isDarkTheme
+                    ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200 shadow-2xs'
+                }`}
               >
-                <Printer className="w-4 h-4 text-amber-400" />
+                <Printer className="w-4 h-4 text-amber-500" />
                 <span>طباعة الإيصال 🖨️</span>
               </button>
 
@@ -2817,7 +2851,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsCustomerLookupOpen(false)}
-                  className="py-2.5 px-4 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                  className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border ${
+                    isDarkTheme
+                      ? 'bg-slate-800 text-slate-300 border-slate-700'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                  }`}
                 >
                   إلغاء
                 </button>
@@ -2861,7 +2899,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setEditingCartItem(null)}
-                className="py-2 px-3 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                className={`py-2 px-3 rounded-xl text-xs font-bold transition border ${
+                  isDarkTheme
+                    ? 'bg-slate-800 text-slate-300 border-slate-700'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                }`}
               >
                 إلغاء
               </button>
@@ -2948,7 +2990,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsParkModalOpen(false)}
-                  className="py-2.5 px-4 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+                  className={`py-2.5 px-4 rounded-xl text-xs font-bold transition border ${
+                    isDarkTheme
+                      ? 'bg-slate-800 text-slate-300 border-slate-700'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                  }`}
                 >
                   إلغاء
                 </button>

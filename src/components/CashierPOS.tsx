@@ -3677,7 +3677,11 @@ ${portalUrl}`;
                     setManagerPinInput('');
                     setManagerPinError(null);
                   }}
-                  className="px-4 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-semibold"
+                  className={`px-4 py-3.5 rounded-2xl font-bold text-xs transition border ${
+                    isDarkTheme
+                      ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 shadow-2xs'
+                  }`}
                 >
                   إلغاء
                 </button>
@@ -3784,7 +3788,11 @@ ${portalUrl}`;
                     setChangePinError(null);
                     setChangePinSuccess(null);
                   }}
-                  className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-semibold"
+                  className={`px-4 py-3 rounded-xl font-bold text-xs transition border ${
+                    isDarkTheme
+                      ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 shadow-2xs'
+                  }`}
                 >
                   إلغاء
                 </button>
@@ -4073,11 +4081,15 @@ ${portalUrl}`;
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-800 bg-slate-950/60 flex justify-end">
+            <div className={`p-4 border-t flex justify-end ${isDarkTheme ? 'border-slate-800 bg-slate-950/60' : 'border-slate-200 bg-slate-50'}`}>
               <button
                 type="button"
                 onClick={() => setIsScreensModalOpen(false)}
-                className="py-2.5 px-6 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition border border-slate-700"
+                className={`py-2.5 px-6 rounded-xl font-bold text-xs transition border ${
+                  isDarkTheme
+                    ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200 shadow-2xs'
+                }`}
               >
                 إغلاق
               </button>

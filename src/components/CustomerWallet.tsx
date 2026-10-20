@@ -5794,23 +5794,36 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       )}
 
       {isFullscreenQR && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl animate-fade-in">
-          <div className="relative max-w-sm w-full p-6 sm:p-8 rounded-3xl bg-slate-900 border border-slate-700 shadow-2xl flex flex-col items-center text-center space-y-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl animate-fade-in">
+          <div className={`relative max-w-sm w-full p-6 sm:p-8 rounded-3xl shadow-2xl flex flex-col items-center text-center space-y-5 border ${
+            isDarkTheme ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
+          }`}>
             <button
+              type="button"
               onClick={() => setIsFullscreenQR(false)}
-              className="absolute top-4 left-4 p-2.5 rounded-full bg-slate-800 text-slate-300 hover:text-white transition"
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition absolute top-4 left-4 border ${
+                isDarkTheme
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200 shadow-2xs'
+              }`}
+              title="إغلاق"
             >
               <X className="w-5 h-5" />
             </button>
 
             <div>
-              <h3 className="font-black text-lg text-white">{store.name}</h3>
-              <p className="text-xs font-mono mt-0.5" style={{ color: brandSecondary }}>
+              <h3 className={`font-black text-lg ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{store.name}</h3>
+              <p
+                className={`text-xs font-mono mt-0.5 ${isDarkTheme ? '' : 'font-bold'}`}
+                style={{ color: isDarkTheme ? brandSecondary : (brandColors.textOnLightHex || '#854d0e') }}
+              >
                 {selectedCouponForQR ? `امتياز: ${selectedCouponForQR.privilege_title}` : 'Dynamic VIP Pass'}
               </p>
             </div>
 
-            <div className="p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center">
+            <div className={`p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center border ${
+              isDarkTheme ? 'border-slate-800' : 'border-slate-100'
+            }`}>
               <QRCodeSVG
                 value={qrDataPayload}
                 size={260}
@@ -5819,14 +5832,21 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               />
             </div>
 
-            <div className="text-xs text-slate-300 font-mono">
+            <div className={`text-xs font-mono ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
               <span>يتحدث الرمز خلال: </span>
-              <strong style={{ color: brandSecondary }}>{timeLeft} ثانية</strong>
+              <strong className="font-bold" style={{ color: isDarkTheme ? brandSecondary : (brandColors.textOnLightHex || '#b45309') }}>
+                {timeLeft} ثانية
+              </strong>
             </div>
 
             <button
+              type="button"
               onClick={() => setIsFullscreenQR(false)}
-              className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition"
+              className={`w-full py-3.5 rounded-2xl font-bold text-xs transition border ${
+                isDarkTheme
+                  ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700 shadow-md'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200 shadow-2xs'
+              }`}
             >
               إغلاق وتصغير
             </button>
