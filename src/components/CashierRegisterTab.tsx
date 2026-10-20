@@ -1101,6 +1101,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
 
       // Reset cart and fields
       setCartItems([]);
+      setCustomer(null);
       setAppliedDiscount(null);
       setTableNumber('');
       setCarPlate('');
@@ -1575,7 +1576,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 {cartItems.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => setCartItems([])}
+                    onClick={() => {
+                      setCartItems([]);
+                      setCustomer(null);
+                      setAppliedDiscount(null);
+                    }}
                     className="text-rose-500 hover:text-rose-600 text-xs font-bold flex items-center gap-1 transition"
                     title="تفريغ السلة بالكامل"
                   >
@@ -2541,7 +2546,12 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => setIsCheckoutModalOpen(false)}
+                onClick={() => {
+                  setIsReceiptModalOpen(false);
+                  setCustomer(null);
+                  setCartItems([]);
+                  setAppliedDiscount(null);
+                }}
                 className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
@@ -2720,7 +2730,18 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
 
               <button
                 type="button"
-                onClick={() => setIsReceiptModalOpen(false)}
+                onClick={() => {
+                  setIsReceiptModalOpen(false);
+                  setCustomer(null);
+                  setCartItems([]);
+                  setAppliedDiscount(null);
+                  setTableNumber('');
+                  setCarPlate('');
+                  setCashTendered('');
+                  setSplitCashAmount('');
+                  setSplitCardAmount('');
+                  setTransferredMetadata(null);
+                }}
                 style={{
                   backgroundColor: brandColors.secondary,
                   color: brandColors.contrastOnSecondary
@@ -2875,7 +2896,12 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               </h3>
               <button
                 type="button"
-                onClick={() => setIsCheckoutModalOpen(false)}
+                onClick={() => {
+                  setIsReceiptModalOpen(false);
+                  setCustomer(null);
+                  setCartItems([]);
+                  setAppliedDiscount(null);
+                }}
                 className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
