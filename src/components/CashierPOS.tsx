@@ -78,6 +78,107 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     }
   }, [store]);
 
+  // Memoized brand styling derived from store colors
+  const brandColors = useMemo(() => {
+    const rawPrimary = store?.primary_color || '#0F172A';
+    const rawSecondary = store?.secondary_color || '#535EB2';
+
+    const safePrimary = /^#[0-9A-Fa-f]{6}$/.test(rawPrimary) ? rawPrimary : '#0F172A';
+    const safeSecondary = /^#[0-9A-Fa-f]{6}$/.test(rawSecondary) ? rawSecondary : '#535EB2';
+
+    const hexToRgb = (hex: string) => {
+      const clean = hex.replace('#', '');
+      return {
+        r: parseInt(clean.substring(0, 2), 16) || 0,
+        g: parseInt(clean.substring(2, 4), 16) || 0,
+        b: parseInt(clean.substring(4, 6), 16) || 0,
+      };
+    };
+
+    const rgbToHsl = (r: number, g: number, b: number) => {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h = 0, s = 0;
+      const l = (max + min) / 2;
+      if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+    };
+
+    const hslToRgb = (h: number, s: number, l: number) => {
+      h /= 360; s /= 100; l /= 100;
+      let r, g, b;
+      if (s === 0) {
+        r = g = b = l;
+      } else {
+        const hue2rgb = (p: number, q: number, t: number) => {
+          if (t < 0) t += 1;
+          if (t > 1) t -= 1;
+          if (t < 1/6) return p + (q - p) * 6 * t;
+          if (t < 1/2) return q;
+          if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+          return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1/3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1/3);
+      }
+      return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+    };
+
+    const rgbToHex = (r: number, g: number, b: number) =>
+      `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+
+    const shiftLightness = (hsl: { h: number; s: number; l: number }, deltaPercent: number) => {
+      const newL = Math.max(0, Math.min(100, hsl.l + deltaPercent));
+      const rgb = hslToRgb(hsl.h, hsl.s, newL);
+      return rgbToHex(rgb.r, rgb.g, rgb.b);
+    };
+
+    const secRgb = hexToRgb(safeSecondary);
+    const secHsl = rgbToHsl(secRgb.r, secRgb.g, secRgb.b);
+    const secContrast = (0.299 * secRgb.r + 0.587 * secRgb.g + 0.114 * secRgb.b) / 255;
+    const contrastOnSecondary = secContrast > 0.55 ? '#000000' : '#FFFFFF';
+
+    const priRgb = hexToRgb(safePrimary);
+    const priHsl = rgbToHsl(priRgb.r, priRgb.g, priRgb.b);
+    const priContrast = (0.299 * priRgb.r + 0.587 * priRgb.g + 0.114 * priRgb.b) / 255;
+    const isPrimaryLight = priContrast > 0.60;
+    const contrastOnPrimary = isPrimaryLight ? '#0F172A' : '#FFFFFF';
+
+    let textLightL = secHsl.l;
+    if (textLightL > 42) textLightL = 36;
+    const textOnLightRgb = hslToRgb(secHsl.h, Math.max(secHsl.s, 65), textLightL);
+    const textOnLightHex = rgbToHex(textOnLightRgb.r, textOnLightRgb.g, textOnLightRgb.b);
+
+    const buttonGradient = `linear-gradient(135deg, ${shiftLightness(secHsl, 10)} 0%, ${safeSecondary} 55%, ${shiftLightness(secHsl, -10)} 100%)`;
+
+    return {
+      primary: safePrimary,
+      secondary: safeSecondary,
+      isPrimaryLight,
+      contrastOnPrimary,
+      contrastOnSecondary,
+      textOnLightHex,
+      buttonGradient,
+      glow: `${safeSecondary}40`,
+    };
+  }, [store?.primary_color, store?.secondary_color]);
+
+  const isDarkTheme = store?.theme_mode === 'dark';
+  const isWarmTheme = store?.theme_mode === 'warm_cream';
+  const isLightOrWarm = !isDarkTheme;
+
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [privileges, setPrivileges] = useState<Privilege[]>([]);
@@ -1691,19 +1792,17 @@ ${portalUrl}`;
     <div className="max-w-6xl mx-auto space-y-6 animate-fade-in pb-32 px-2 sm:px-0">
       
       {/* 🧭 Top POS Status Bar & Active Staff Switcher */}
-
       <div
-        className="p-4 sm:p-5 rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl border border-slate-800 transition-colors duration-300"
+        className={`p-4 sm:p-5 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm border transition-colors duration-300 ${
+          isDarkTheme
+            ? 'bg-slate-900/90 border-slate-800 shadow-xl'
+            : isWarmTheme
+            ? 'bg-[#FCFAF6]/95 border-[#EFE6D8] shadow-sm'
+            : 'bg-white/95 border-slate-200/90 shadow-sm'
+        }`}
         style={{
-          background:
-            store.theme_mode === 'light'
-              ? `linear-gradient(to right, ${store.secondary_color || '#F59E0B'}18, #FFFFFF 50%, ${store.primary_color || '#0F172A'}10)`
-              : store.theme_mode === 'warm_cream'
-              ? `linear-gradient(to right, ${store.secondary_color || '#F59E0B'}18, #FFFFFF 50%, #FAF6F0 100%)`
-              : `linear-gradient(to right, ${store.secondary_color || '#F59E0B'}20, #0B0F17 60%, ${store.primary_color || '#0F172A'}40)`,
           borderRightWidth: '4px',
-          borderRightColor: store.secondary_color || '#F59E0B',
-          borderColor: store.theme_mode === 'light' ? '#E2E8F0' : store.theme_mode === 'warm_cream' ? '#EFE6D8' : undefined,
+          borderRightColor: brandColors.secondary,
         }}
       >
         {/* Right side: Store Logo + Name, with Cashier & Branch directly underneath */}
@@ -1712,16 +1811,18 @@ ${portalUrl}`;
             <img
               src={store.logo_url}
               alt={store.name}
-              className="w-12 h-12 rounded-2xl object-cover border bg-slate-950 shrink-0 shadow-md"
-              style={{ borderColor: `${store.secondary_color || '#F59E0B'}60` }}
+              className={`w-12 h-12 rounded-2xl object-cover border shrink-0 shadow-sm ${
+                isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
+              }`}
+              style={{ borderColor: `${brandColors.secondary}50` }}
             />
           ) : (
             <div
-              className="w-12 h-12 rounded-2xl border flex items-center justify-center font-bold text-xl shrink-0 shadow-md"
+              className="w-12 h-12 rounded-2xl border flex items-center justify-center font-bold text-xl shrink-0 shadow-sm"
               style={{
-                backgroundColor: store.primary_color || '#0F172A',
-                borderColor: store.secondary_color || '#F59E0B',
-                color: store.secondary_color || '#F59E0B',
+                backgroundColor: brandColors.primary,
+                borderColor: brandColors.secondary,
+                color: brandColors.contrastOnPrimary,
               }}
             >
               ⚡
@@ -1729,11 +1830,17 @@ ${portalUrl}`;
           )}
           <div>
             <div className="flex items-center space-x-2 rtl:space-x-reverse">
-              <h3 className="text-base sm:text-lg font-black text-white">{store.name}</h3>
+              <h3 className={`text-base sm:text-lg font-black tracking-tight ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                {store.name}
+              </h3>
               {(store.store_code || store.id) && (
                 <span
                   title="كود المتجر التعريفي السريع"
-                  className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 font-extrabold tracking-wider"
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded-md border font-extrabold tracking-wider ${
+                    isDarkTheme
+                      ? 'bg-slate-800/80 border-slate-700 text-slate-300'
+                      : 'bg-slate-100 border-slate-200 text-slate-700'
+                  }`}
                 >
                   {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
                 </span>
@@ -1741,10 +1848,14 @@ ${portalUrl}`;
             </div>
             
             {/* Cashier & Branch underneath store name */}
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mt-1">
-              <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-0.5 rounded-lg border border-slate-800">
-                <User className="w-3.5 h-3.5 text-amber-400" />
-                <span>الكاشير: <strong className="text-white font-bold">{activeStaff?.name || authenticatedCashier.name}</strong></span>
+            <div className="flex flex-wrap items-center gap-2 text-xs mt-1">
+              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs ${
+                isDarkTheme
+                  ? 'bg-slate-950/70 border-slate-800 text-slate-300'
+                  : 'bg-slate-100/90 border-slate-200 text-slate-700'
+              }`}>
+                <User className={`w-3.5 h-3.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`} />
+                <span>الكاشير: <strong className={`font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{activeStaff?.name || authenticatedCashier.name}</strong></span>
                 <button
                   type="button"
                   onClick={() => {
@@ -1755,24 +1866,28 @@ ${portalUrl}`;
                     setChangePinError(null);
                     setChangePinSuccess(null);
                   }}
-                  className="text-slate-500 hover:text-amber-400 mr-1 transition"
+                  className="text-slate-400 hover:text-amber-500 mr-1 transition"
                   title="تغيير رمزي السري"
                 >
                   <KeyRound className="w-3 h-3" />
                 </button>
               </div>
 
-              <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-0.5 rounded-lg border border-slate-800">
-                <Building2 className="w-3.5 h-3.5 text-amber-400" />
-                <span>الفرع: <strong className="text-amber-400 font-bold">{activeBranchObj ? activeBranchObj.name : isGeneralManager ? 'كافة الفروع' : 'الفرع الرئيسي'}</strong></span>
-                <span className="text-[10px] text-slate-500" title="الفرع معتمد ومقفل لوردية الكاشير">🔒</span>
+              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-xs ${
+                isDarkTheme
+                  ? 'bg-slate-950/70 border-slate-800 text-slate-300'
+                  : 'bg-slate-100/90 border-slate-200 text-slate-700'
+              }`}>
+                <Building2 className={`w-3.5 h-3.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`} />
+                <span>الفرع: <strong className={`font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{activeBranchObj ? activeBranchObj.name : isGeneralManager ? 'كافة الفروع' : 'الفرع الرئيسي'}</strong></span>
+                <span className="text-[10px] text-slate-400" title="الفرع معتمد ومقفل لوردية الكاشير">🔒</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Left side: System Controls only */}
-        <div className="flex flex-wrap items-center gap-2 text-xs">
+        {/* Left side: System Controls & Integrated Logout Button */}
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 text-xs">
           <NotificationBell
             portalName={`كاشير (${store.name})`}
             portalFilter="cashier"
@@ -1786,15 +1901,19 @@ ${portalUrl}`;
             onClick={toggleSound}
             className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
               isSoundMuted
-                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
-                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                ? isDarkTheme
+                  ? 'bg-rose-950/30 text-rose-300 border-rose-800/40 hover:bg-rose-900/40'
+                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                : isDarkTheme
+                ? 'bg-emerald-950/30 text-emerald-300 border-emerald-800/40 hover:bg-emerald-900/40 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
             }`}
             title={isSoundMuted ? 'تفعيل جرس التنبيه الصوتي' : 'كتم جرس التنبيه الصوتي'}
           >
             {isSoundMuted ? (
-              <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+              <VolumeX className="w-3.5 h-3.5 text-rose-500" />
             ) : (
-              <Volume2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+              <Volume2 className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
             )}
             <span>{isSoundMuted ? 'صامت 🔕' : 'جرس التنبيه 🔔'}</span>
           </button>
@@ -1805,15 +1924,19 @@ ${portalUrl}`;
             onClick={() => setIsOfflineModalOpen(true)}
             className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
               !OfflineSyncEngine.isOnline() || OfflineSyncEngine.getQueuedOrders(store.id).length > 0
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30'
-                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                ? isDarkTheme
+                  ? 'bg-amber-950/30 text-amber-300 border-amber-800/50 hover:bg-amber-900/40'
+                  : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                : isDarkTheme
+                ? 'bg-emerald-950/20 text-emerald-300 border-emerald-800/40 hover:bg-emerald-900/30'
+                : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
             }`}
             title="حالة الاتصال ومزامنة فواتير الأوفلاين"
           >
             {OfflineSyncEngine.isOnline() ? (
-              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+              <Wifi className="w-3.5 h-3.5 text-emerald-500" />
             ) : (
-              <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+              <WifiOff className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
             )}
             <span>{OfflineSyncEngine.isOnline() ? 'أونلاين 🟢' : 'أوفلاين 🟡'}</span>
             {OfflineSyncEngine.getQueuedOrders(store.id).length > 0 && (
@@ -1831,10 +1954,14 @@ ${portalUrl}`;
                 setScreensModalBranchId(activeBranchId || 'ALL');
                 setIsScreensModalOpen(true);
               }}
-              className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 hover:text-amber-200 border border-slate-700 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
+              className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
+                isDarkTheme
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+              }`}
               title="عرض باركود شاشات العرض للتابلت"
             >
-              <QrCode className="w-3.5 h-3.5 text-amber-400" />
+              <QrCode className="w-3.5 h-3.5 text-slate-400" />
               <span>باركود الشاشات 📱</span>
             </button>
           )}
@@ -1843,17 +1970,27 @@ ${portalUrl}`;
           <button
             type="button"
             onClick={() => setIsShiftCloseModalOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/40 text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm"
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
+              isDarkTheme
+                ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+            }`}
             title="تقفيل الصندوق وجرد الوردية (Z-Report)"
           >
-            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            <Lock className="w-3.5 h-3.5 text-amber-500" />
             <span>تقفيل الصندوق (Z-Report) 🔒</span>
           </button>
 
-          {/* Logout */}
+          {/* Logout Button (Unified in line) */}
           <button
+            type="button"
             onClick={handleLogout}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-red-950/70 text-slate-300 hover:text-red-400 border border-slate-700 hover:border-red-500/40 text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse transition"
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse transition shrink-0 ${
+              isDarkTheme
+                ? 'bg-rose-950/30 hover:bg-rose-900/50 text-rose-300 border-rose-800/40'
+                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+            }`}
+            title="تسجيل خروج الكاشير"
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>خروج 🚪</span>
@@ -2042,19 +2179,28 @@ ${portalUrl}`;
         <div className="space-y-6 max-w-xl mx-auto">
           
           {/* 🌟 HERO CARD: Unified Smart Single QR Scanner */}
-          <div className="glass-card rounded-3xl p-6 sm:p-8 space-y-6 border-slate-800 relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 shadow-2xl">
-            <div className="absolute top-0 left-0 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none -ml-16 -mt-16"></div>
+          <div className={`glass-card rounded-3xl p-6 sm:p-8 space-y-6 relative overflow-hidden shadow-xl border transition-colors duration-300 ${
+            isDarkTheme
+              ? 'bg-slate-900/90 border-slate-800'
+              : isWarmTheme
+              ? 'bg-[#FCFAF6]/95 border-[#EFE6D8]'
+              : 'bg-white/95 border-slate-200/90'
+          }`}>
+            <div
+              className="absolute top-0 left-0 w-48 h-48 rounded-full blur-3xl pointer-events-none -ml-16 -mt-16 opacity-30"
+              style={{ backgroundColor: brandColors.secondary }}
+            />
             
             <div className="flex items-center justify-between">
               <div className="space-y-1">
-                <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 w-fit">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 w-fit">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
                   ماسح ذكي موحد (Single QR Scanner) ⚡
                 </span>
-                <h2 className="text-xl sm:text-2xl font-black text-white pt-1">
+                <h2 className={`text-xl sm:text-2xl font-black pt-1 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                   مسح الباركود الذكي الفوري
                 </h2>
-                <p className="text-xs text-slate-400">
+                <p className={`text-xs ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                   يميز النظام تلقائياً باركود العميل لإضافة النقاط، أو باركود الكوبون لحرقه فوراً دون أي لبس.
                 </p>
               </div>
@@ -2066,11 +2212,13 @@ ${portalUrl}`;
               disabled={loading}
               onClick={handleOpenSmartScanner}
               style={{
-                backgroundColor: store.secondary_color || '#F59E0B',
-                color: '#000000',
-                boxShadow: `0 10px 30px -5px ${store.secondary_color || '#F59E0B'}60`,
+                background: brandColors.buttonGradient,
+                color: brandColors.contrastOnSecondary,
+                boxShadow: `0 10px 30px -5px ${brandColors.glow}`,
               }}
-              className="w-full py-5 sm:py-6 rounded-3xl font-black text-lg sm:text-xl flex items-center justify-center space-x-3 rtl:space-x-reverse transition-all duration-300 transform active:scale-98 group hover:brightness-110 shadow-2xl"
+              className={`w-full py-5 sm:py-6 rounded-3xl font-black text-lg sm:text-xl flex items-center justify-center space-x-3 rtl:space-x-reverse transition-all duration-300 transform active:scale-98 group hover:brightness-110 shadow-2xl ${
+                brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
+              }`}
             >
               <Camera className="w-7 h-7 sm:w-8 sm:h-8 group-hover:scale-110 transition duration-300" />
               <span>افتح الكاميرا وامسح الباركود 📸</span>
@@ -2078,34 +2226,41 @@ ${portalUrl}`;
 
             {/* Features summary under scanner button */}
             <div className="grid grid-cols-2 gap-3 pt-1 text-xs">
-              <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center space-x-2 rtl:space-x-reverse">
-                <div className="w-7 h-7 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-400 shrink-0">
+              <div className={`p-3 rounded-2xl border flex items-center space-x-2 rtl:space-x-reverse ${
+                isDarkTheme ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div
+                  className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: `${brandColors.secondary}15`, color: isDarkTheme ? brandColors.secondary : brandColors.textOnLightHex }}
+                >
                   <Zap className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <strong className="text-white block text-[11px] truncate">باركود العميل</strong>
-                  <span className="text-[10px] text-slate-400">طلب الفاتورة وإضافة النقاط</span>
+                  <strong className={`block text-[11px] truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>باركود العميل</strong>
+                  <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>طلب الفاتورة وإضافة النقاط</span>
                 </div>
               </div>
 
-              <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center space-x-2 rtl:space-x-reverse">
-                <div className="w-7 h-7 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 shrink-0">
+              <div className={`p-3 rounded-2xl border flex items-center space-x-2 rtl:space-x-reverse ${
+                isDarkTheme ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div className="w-7 h-7 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-500 shrink-0">
                   <Flame className="w-4 h-4" />
                 </div>
                 <div className="min-w-0">
-                  <strong className="text-white block text-[11px] truncate">كوبون / هدية ترحيبية</strong>
-                  <span className="text-[10px] text-slate-400">حرق فوري وتسليم الطلب</span>
+                  <strong className={`block text-[11px] truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>كوبون / هدية ترحيبية</strong>
+                  <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>حرق فوري وتسليم الطلب</span>
                 </div>
               </div>
             </div>
 
             {/* ✏️ Manual Input Fallback Bar */}
-            <div className="pt-3 border-t border-slate-800/80">
+            <div className={`pt-3 border-t ${isDarkTheme ? 'border-slate-800/80' : 'border-slate-200'}`}>
               {activeStaff?.can_manual_input_phone ? (
                 <form onSubmit={handleUnifiedManualSubmit} className="space-y-2">
-                  <label className="text-xs font-bold text-slate-300 block flex items-center justify-between">
+                  <label className={`text-xs font-bold block flex items-center justify-between ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                     <span>✏️ خيار الإدخال اليدوي البديل (رقم الجوال أو رمز الكوبون):</span>
-                    <span className="text-[10px] text-amber-400 font-mono">Manual Fallback</span>
+                    <span className="text-[10px] font-mono opacity-70">Manual Fallback</span>
                   </label>
                   <div className="flex space-x-2 rtl:space-x-reverse">
                     <input
@@ -2113,12 +2268,22 @@ ${portalUrl}`;
                       value={manualInput}
                       onChange={(e) => setManualInput(e.target.value)}
                       placeholder="050XXXXXXX أو CPN-... أو WELCOME-..."
-                      className="flex-1 bg-slate-950 border border-slate-700 rounded-2xl px-4 py-3 text-xs sm:text-sm font-mono text-white outline-none focus:border-amber-500 placeholder-slate-600 uppercase"
+                      className={`flex-1 rounded-2xl px-4 py-3 text-xs sm:text-sm font-mono outline-none uppercase transition border ${
+                        isDarkTheme
+                          ? 'bg-slate-950 border-slate-700 text-white placeholder-slate-600 focus:border-slate-500'
+                          : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:border-slate-400'
+                      }`}
                     />
                     <button
                       type="submit"
                       disabled={loading || !manualInput.trim()}
-                      className="px-5 py-3 rounded-2xl bg-slate-800 hover:bg-amber-500 hover:text-black text-amber-300 font-black text-xs border border-slate-700 transition disabled:opacity-50 flex items-center space-x-1 rtl:space-x-reverse shrink-0"
+                      style={{
+                        backgroundColor: brandColors.secondary,
+                        color: brandColors.contrastOnSecondary,
+                      }}
+                      className={`px-5 py-3 rounded-2xl font-black text-xs transition disabled:opacity-40 flex items-center space-x-1 rtl:space-x-reverse shrink-0 ${
+                        brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                      }`}
                     >
                       <Zap className="w-4 h-4" />
                       <span>تنفيذ ذكي</span>
@@ -2126,7 +2291,9 @@ ${portalUrl}`;
                   </div>
                 </form>
               ) : (
-                <div className="flex items-center space-x-2 rtl:space-x-reverse text-[11px] text-slate-500 bg-slate-950/60 p-3 rounded-2xl border border-slate-800">
+                <div className={`flex items-center space-x-2 rtl:space-x-reverse text-[11px] p-3 rounded-2xl border ${
+                  isDarkTheme ? 'text-slate-400 bg-slate-950/60 border-slate-800' : 'text-slate-600 bg-slate-50 border-slate-200'
+                }`}>
                   <Lock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                   <span>
                     الإدخال اليدوي <strong>مقفل لهذا الكاشير ({activeStaff?.name})</strong>. يتم قبول العمليات عبر المسح بالكاميرا فقط لمنع التلاعب 🛡️.
@@ -3156,31 +3323,53 @@ ${portalUrl}`;
 
       {/* 📱 Bottom Navigation Dock */}
       <div className="fixed bottom-3 left-3 right-3 z-40 max-w-lg mx-auto">
-        <nav className="glass-dock rounded-3xl p-1.5 flex items-center justify-around shadow-[0_-8px_30px_rgba(0,0,0,0.4)] bg-slate-950/95 backdrop-blur-3xl border border-slate-800">
+        <nav className={`glass-dock rounded-3xl p-1.5 flex items-center justify-around relative transition-colors duration-300 ${
+          isDarkTheme
+            ? 'shadow-[0_-8px_30px_rgba(0,0,0,0.5)] bg-slate-950/95 backdrop-blur-3xl border border-white/10'
+            : 'shadow-[0_-4px_25px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-3xl border border-slate-200/90'
+        }`}>
           <button
+            type="button"
             onClick={() => setActiveTab('register')}
-            className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 ${
+            style={activeTab === 'register' ? {
+              backgroundColor: brandColors.secondary,
+              color: brandColors.contrastOnSecondary,
+              boxShadow: `0 6px 18px -3px ${brandColors.glow}`
+            } : undefined}
+            className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
               activeTab === 'register'
-                ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                ? `font-black scale-105 ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
             }`}
           >
             <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
             <span>نقطة البيع</span>
+            {activeTab === 'register' && (
+              <span className="w-4 h-0.5 rounded-full bg-current opacity-80" />
+            )}
           </button>
 
           {/* Orders Button (ShoppingBag) */}
           {activeModules.orders && (
             <button
+              type="button"
               onClick={() => setActiveTab('orders')}
-              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 relative ${
+              style={activeTab === 'orders' ? {
+                backgroundColor: brandColors.secondary,
+                color: brandColors.contrastOnSecondary,
+                boxShadow: `0 6px 18px -3px ${brandColors.glow}`
+              } : undefined}
+              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                 activeTab === 'orders'
-                  ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
-                  : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                  ? `font-black scale-105 ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                  : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
               }`}
             >
               <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
               <span>الطلبات</span>
+              {activeTab === 'orders' && (
+                <span className="w-4 h-0.5 rounded-full bg-current opacity-80" />
+              )}
               {(() => {
                 const ordersCount = liveOrders.filter(
                   (o) =>
@@ -3199,15 +3388,24 @@ ${portalUrl}`;
           {/* Bookings Button (Calendar) */}
           {activeModules.bookings && (
             <button
+              type="button"
               onClick={() => setActiveTab('bookings')}
-              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 relative ${
+              style={activeTab === 'bookings' ? {
+                backgroundColor: brandColors.secondary,
+                color: brandColors.contrastOnSecondary,
+                boxShadow: `0 6px 18px -3px ${brandColors.glow}`
+              } : undefined}
+              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                 activeTab === 'bookings'
-                  ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
-                  : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                  ? `font-black scale-105 ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                  : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
               }`}
             >
               <Calendar className="w-5 h-5 sm:w-6 sm:h-6" />
               <span>المواعيد</span>
+              {activeTab === 'bookings' && (
+                <span className="w-4 h-0.5 rounded-full bg-current opacity-80" />
+              )}
               {(() => {
                 const bookingsCount = liveBookings.filter(
                   (b) =>
@@ -3224,28 +3422,46 @@ ${portalUrl}`;
           )}
 
           <button
+            type="button"
             onClick={() => setActiveTab('scanner')}
-            className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 ${
+            style={activeTab === 'scanner' ? {
+              backgroundColor: brandColors.secondary,
+              color: brandColors.contrastOnSecondary,
+              boxShadow: `0 6px 18px -3px ${brandColors.glow}`
+            } : undefined}
+            className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
               activeTab === 'scanner'
-                ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
-                : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                ? `font-black scale-105 ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
             }`}
           >
             <QrCode className="w-5 h-5 sm:w-6 sm:h-6" />
             <span>الماسح</span>
+            {activeTab === 'scanner' && (
+              <span className="w-4 h-0.5 rounded-full bg-current opacity-80" />
+            )}
           </button>
 
           {activeModules.loyalty && (
             <button
+              type="button"
               onClick={() => setActiveTab('rewards')}
-              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center gap-1 transition-all duration-300 ${
+              style={activeTab === 'rewards' ? {
+                backgroundColor: brandColors.secondary,
+                color: brandColors.contrastOnSecondary,
+                boxShadow: `0 6px 18px -3px ${brandColors.glow}`
+              } : undefined}
+              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                 activeTab === 'rewards'
-                  ? 'font-black shadow-lg scale-105 bg-amber-500 text-black'
-                  : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                  ? `font-black scale-105 ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                  : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
               }`}
             >
               <Gift className="w-5 h-5 sm:w-6 sm:h-6" />
               <span>العروض</span>
+              {activeTab === 'rewards' && (
+                <span className="w-4 h-0.5 rounded-full bg-current opacity-80" />
+              )}
             </button>
           )}
         </nav>

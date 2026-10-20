@@ -118,9 +118,108 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
   transferredOrder,
   onClearTransferredOrder,
 }) => {
-  // Brand color scheme
-  const brandPrimary = store.primary_color || '#0F172A';
-  const brandSecondary = store.secondary_color || '#F59E0B';
+  // Memoized brand styling derived from store colors
+  const brandColors = useMemo(() => {
+    const rawPrimary = store?.primary_color || '#0F172A';
+    const rawSecondary = store?.secondary_color || '#535EB2';
+
+    const safePrimary = /^#[0-9A-Fa-f]{6}$/.test(rawPrimary) ? rawPrimary : '#0F172A';
+    const safeSecondary = /^#[0-9A-Fa-f]{6}$/.test(rawSecondary) ? rawSecondary : '#535EB2';
+
+    const hexToRgb = (hex: string) => {
+      const clean = hex.replace('#', '');
+      return {
+        r: parseInt(clean.substring(0, 2), 16) || 0,
+        g: parseInt(clean.substring(2, 4), 16) || 0,
+        b: parseInt(clean.substring(4, 6), 16) || 0,
+      };
+    };
+
+    const rgbToHsl = (r: number, g: number, b: number) => {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h = 0, s = 0;
+      const l = (max + min) / 2;
+      if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+    };
+
+    const hslToRgb = (h: number, s: number, l: number) => {
+      h /= 360; s /= 100; l /= 100;
+      let r, g, b;
+      if (s === 0) {
+        r = g = b = l;
+      } else {
+        const hue2rgb = (p: number, q: number, t: number) => {
+          if (t < 0) t += 1;
+          if (t > 1) t -= 1;
+          if (t < 1/6) return p + (q - p) * 6 * t;
+          if (t < 1/2) return q;
+          if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+          return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1/3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1/3);
+      }
+      return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+    };
+
+    const rgbToHex = (r: number, g: number, b: number) =>
+      `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+
+    const shiftLightness = (hsl: { h: number; s: number; l: number }, deltaPercent: number) => {
+      const newL = Math.max(0, Math.min(100, hsl.l + deltaPercent));
+      const rgb = hslToRgb(hsl.h, hsl.s, newL);
+      return rgbToHex(rgb.r, rgb.g, rgb.b);
+    };
+
+    const secRgb = hexToRgb(safeSecondary);
+    const secHsl = rgbToHsl(secRgb.r, secRgb.g, secRgb.b);
+    const secContrast = (0.299 * secRgb.r + 0.587 * secRgb.g + 0.114 * secRgb.b) / 255;
+    const contrastOnSecondary = secContrast > 0.55 ? '#000000' : '#FFFFFF';
+
+    const priRgb = hexToRgb(safePrimary);
+    const priHsl = rgbToHsl(priRgb.r, priRgb.g, priRgb.b);
+    const priContrast = (0.299 * priRgb.r + 0.587 * priRgb.g + 0.114 * priRgb.b) / 255;
+    const isPrimaryLight = priContrast > 0.60;
+    const contrastOnPrimary = isPrimaryLight ? '#0F172A' : '#FFFFFF';
+
+    let textLightL = secHsl.l;
+    if (textLightL > 42) textLightL = 36;
+    const textOnLightRgb = hslToRgb(secHsl.h, Math.max(secHsl.s, 65), textLightL);
+    const textOnLightHex = rgbToHex(textOnLightRgb.r, textOnLightRgb.g, textOnLightRgb.b);
+
+    const buttonGradient = `linear-gradient(135deg, ${shiftLightness(secHsl, 10)} 0%, ${safeSecondary} 55%, ${shiftLightness(secHsl, -10)} 100%)`;
+
+    return {
+      primary: safePrimary,
+      secondary: safeSecondary,
+      isPrimaryLight,
+      contrastOnPrimary,
+      contrastOnSecondary,
+      textOnLightHex,
+      buttonGradient,
+      glow: `${safeSecondary}40`,
+    };
+  }, [store?.primary_color, store?.secondary_color]);
+
+  const brandPrimary = brandColors.primary;
+  const brandSecondary = brandColors.secondary;
+  const isDarkTheme = store?.theme_mode === 'dark';
+  const isWarmTheme = store?.theme_mode === 'warm_cream';
+  const isLightOrWarm = !isDarkTheme;
 
   // Active store modules based on merchant activity & permissions
   const activeModules = useMemo(() => getStoreActiveModules(store), [store]);
@@ -1103,19 +1202,28 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
     <div className="space-y-4 animate-fade-in text-right" dir="rtl">
       
       {/* 🚀 Bar 1: Order Type & Catalog Search */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-md backdrop-blur-md">
+      <div className={`border rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm backdrop-blur-md transition-colors ${
+        isDarkTheme ? 'bg-slate-900/80 border-slate-800' : isWarmTheme ? 'bg-[#FCFAF6] border-[#EFE6D8]' : 'bg-white border-slate-200'
+      }`}>
         
         {/* Order Type Selector (Only for Stores with Orders / Food / Retail) */}
         {activeModules.orders && (
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-bold">
+            <div className={`flex items-center gap-1 p-1 rounded-xl border text-xs font-bold ${
+              isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
+            }`}>
               <button
                 type="button"
                 onClick={() => setOrderType('dine_in')}
+                style={orderType === 'dine_in' ? {
+                  backgroundColor: brandColors.secondary,
+                  color: brandColors.contrastOnSecondary,
+                  boxShadow: `0 4px 12px ${brandColors.glow}`
+                } : undefined}
                 className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
                   orderType === 'dine_in'
-                    ? 'bg-amber-500 text-black shadow-md font-black'
-                    : 'text-slate-400 hover:text-white'
+                    ? `font-black shadow-sm ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                    : isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Utensils className="w-3.5 h-3.5" />
@@ -1125,10 +1233,15 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setOrderType('takeaway')}
+                style={orderType === 'takeaway' ? {
+                  backgroundColor: brandColors.secondary,
+                  color: brandColors.contrastOnSecondary,
+                  boxShadow: `0 4px 12px ${brandColors.glow}`
+                } : undefined}
                 className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
                   orderType === 'takeaway'
-                    ? 'bg-amber-500 text-black shadow-md font-black'
-                    : 'text-slate-400 hover:text-white'
+                    ? `font-black shadow-sm ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                    : isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Package className="w-3.5 h-3.5" />
@@ -1138,10 +1251,15 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setOrderType('car')}
+                style={orderType === 'car' ? {
+                  backgroundColor: brandColors.secondary,
+                  color: brandColors.contrastOnSecondary,
+                  boxShadow: `0 4px 12px ${brandColors.glow}`
+                } : undefined}
                 className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
                   orderType === 'car'
-                    ? 'bg-amber-500 text-black shadow-md font-black'
-                    : 'text-slate-400 hover:text-white'
+                    ? `font-black shadow-sm ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                    : isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <Car className="w-3.5 h-3.5" />
@@ -1151,10 +1269,15 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setOrderType('delivery')}
+                style={orderType === 'delivery' ? {
+                  backgroundColor: brandColors.secondary,
+                  color: brandColors.contrastOnSecondary,
+                  boxShadow: `0 4px 12px ${brandColors.glow}`
+                } : undefined}
                 className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
                   orderType === 'delivery'
-                    ? 'bg-amber-500 text-black shadow-md font-black'
-                    : 'text-slate-400 hover:text-white'
+                    ? `font-black shadow-sm ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                    : isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <span>🛵 توصيل</span>
@@ -1164,18 +1287,26 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             {/* Dynamic Detail input based on order type */}
             {orderType === 'dine_in' && (
               <div className="flex items-center gap-1.5 animate-fade-in">
-                <span className="text-xs text-slate-400 font-bold">الطاولة:</span>
+                <span className={`text-xs font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>الطاولة:</span>
                 <input
                   type="text"
                   placeholder="رقم 1, 2..."
                   value={tableNumber}
                   onChange={(e) => setTableNumber(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3 py-1.5 text-xs text-white font-bold w-20 outline-none"
+                  className={`rounded-xl px-3 py-1.5 text-xs font-bold w-20 outline-none border transition ${
+                    isDarkTheme
+                      ? 'bg-slate-950 border-slate-800 focus:border-slate-600 text-white'
+                      : 'bg-slate-50 border-slate-200 focus:border-slate-400 text-slate-900'
+                  }`}
                 />
                 <button
                   type="button"
                   onClick={() => setIsTableSelectorModalOpen(true)}
-                  className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-400 border border-amber-500/40 text-xs font-bold transition flex items-center gap-1 shadow-sm"
+                  className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold transition flex items-center gap-1 shadow-sm ${
+                    isDarkTheme
+                      ? 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                  }`}
                   title="خريطة واختيار الطاولات"
                 >
                   <Utensils className="w-3.5 h-3.5" />
@@ -1186,24 +1317,32 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
 
             {orderType === 'car' && (
               <div className="flex items-center gap-1.5 animate-fade-in">
-                <span className="text-xs text-slate-400 font-bold">لوحة/نوع السيارة:</span>
+                <span className={`text-xs font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>لوحة/نوع السيارة:</span>
                 <input
                   type="text"
                   placeholder="كامري أبيض 1234"
                   value={carPlate}
                   onChange={(e) => setCarPlate(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3 py-1.5 text-xs text-white font-bold w-40 outline-none"
+                  className={`rounded-xl px-3 py-1.5 text-xs font-bold w-40 outline-none border transition ${
+                    isDarkTheme
+                      ? 'bg-slate-950 border-slate-800 focus:border-slate-600 text-white'
+                      : 'bg-slate-50 border-slate-200 focus:border-slate-400 text-slate-900'
+                  }`}
                 />
               </div>
             )}
 
             {orderType === 'delivery' && (
               <div className="flex items-center gap-1.5 animate-fade-in flex-wrap">
-                <span className="text-xs text-slate-400 font-bold">كابتن الفرع:</span>
+                <span className={`text-xs font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>كابتن الفرع:</span>
                 <select
                   value={selectedDriverId}
                   onChange={(e) => setSelectedDriverId(e.target.value)}
-                  className="bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-2.5 py-1.5 text-xs text-amber-400 font-bold outline-none max-w-[200px]"
+                  className={`rounded-xl px-2.5 py-1.5 text-xs font-bold outline-none max-w-[200px] border transition ${
+                    isDarkTheme
+                      ? 'bg-slate-950 border-slate-800 text-white'
+                      : 'bg-slate-50 border-slate-200 text-slate-900'
+                  }`}
                 >
                   <option value="">بدون إسناد (متاح لكل سائقي الفرع)</option>
                   {branchDrivers.map((d) => (
@@ -1219,8 +1358,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
 
         {/* Salon / Service Center Badge */}
         {!activeModules.orders && activeModules.bookings && (
-          <div className="flex items-center gap-2 bg-purple-950/60 border border-purple-500/40 px-3.5 py-1.5 rounded-xl text-xs text-purple-200 font-bold shadow-sm">
-            <Scissors className="w-4 h-4 text-purple-400" />
+          <div className="flex items-center gap-2 bg-purple-500/10 border border-purple-500/30 px-3.5 py-1.5 rounded-xl text-xs text-purple-600 dark:text-purple-300 font-bold shadow-sm">
+            <Scissors className="w-4 h-4 text-purple-500" />
             <span>خدمات ومواعيد المركز 💇‍♂️</span>
           </div>
         )}
@@ -1240,36 +1379,48 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   setSearchQuery('');
                 }
               }}
-              className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3.5 py-1.5 text-xs text-white placeholder-slate-500 outline-none transition"
+              className={`w-full rounded-xl px-3.5 py-1.5 text-xs outline-none transition border ${
+                isDarkTheme
+                  ? 'bg-slate-950 border-slate-800 focus:border-slate-600 text-white placeholder-slate-500'
+                  : 'bg-slate-50 border-slate-200 focus:border-slate-400 text-slate-900 placeholder-slate-400'
+              }`}
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white text-xs"
               >
                 ✕
               </button>
             )}
           </div>
 
-          <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400 font-medium bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 shrink-0">
-            <Layers className="w-3.5 h-3.5 text-amber-400" />
-            <span>الأصناف: <strong className="text-white">{filteredItems.length}</strong></span>
+          <div className={`hidden sm:flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-xl border shrink-0 ${
+            isDarkTheme ? 'text-slate-400 bg-slate-950 border-slate-800' : 'text-slate-600 bg-slate-50 border-slate-200'
+          }`}>
+            <Layers className="w-3.5 h-3.5 text-slate-400" />
+            <span>الأصناف: <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{filteredItems.length}</strong></span>
           </div>
         </div>
       </div>
 
       {/* ⚡ Bar 2: Fast Invoicing Utilities & Cash Accounts (Grouped Near Cart / Invoicing) */}
-      <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-sm backdrop-blur-md">
+      <div className={`border rounded-2xl p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-sm backdrop-blur-md transition-colors ${
+        isDarkTheme ? 'bg-slate-900/70 border-slate-800' : isWarmTheme ? 'bg-[#FCFAF6] border-[#EFE6D8]' : 'bg-white border-slate-200'
+      }`}>
         <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
           {/* Electronic Cash Drawer Kick Button */}
           <button
             type="button"
             onClick={handleKickCashDrawer}
-            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 transition flex items-center gap-1.5 shadow-sm active:scale-95"
+            className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
+              isDarkTheme
+                ? 'bg-slate-950 hover:bg-slate-800 text-slate-200 border-slate-800'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+            }`}
             title="إرسال أمر فتح درج الكاشير الإلكتروني (Drawer Kick)"
           >
-            <Unlock className="w-3.5 h-3.5 text-emerald-400" />
+            <Unlock className="w-3.5 h-3.5 text-emerald-500" />
             <span>فتح الدرج 🔓</span>
           </button>
 
@@ -1277,10 +1428,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
           <button
             type="button"
             onClick={() => setIsCustomItemModalOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-amber-300 hover:text-white border border-amber-500/30 transition flex items-center gap-1.5 shadow-sm active:scale-95"
+            className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
+              isDarkTheme
+                ? 'bg-slate-950 hover:bg-slate-800 text-slate-200 border-slate-800'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+            }`}
             title="إضافة صنف مخصص أو خدمة بسعر حر"
           >
-            <Plus className="w-3.5 h-3.5 text-amber-400" />
+            <Plus className="w-3.5 h-3.5 text-amber-500" />
             <span>صنف حر ➕</span>
           </button>
 
@@ -1289,10 +1444,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             <button
               type="button"
               onClick={onOpenRefund}
-              className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-rose-300 hover:text-white border border-rose-500/30 transition flex items-center gap-1.5 shadow-sm active:scale-95"
+              className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
+                isDarkTheme
+                  ? 'bg-slate-950 hover:bg-slate-800 text-rose-300 border-slate-800 hover:border-rose-800/40'
+                  : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+              }`}
               title="استرجاع فاتورة وإصدار إشعار دائن ضريبي معتمد"
             >
-              <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+              <RotateCcw className="w-3.5 h-3.5 text-rose-500" />
               <span>المرتجع (إشعار دائن) 🔄</span>
             </button>
           )}
@@ -1303,12 +1462,16 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             onClick={() => setIsParkedOrdersModalOpen(true)}
             className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 shadow-sm relative active:scale-95 ${
               parkedOrders.length > 0
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 hover:bg-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
-                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                ? isDarkTheme
+                  ? 'bg-amber-950/40 text-amber-300 border-amber-800/60 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                  : 'bg-amber-50 text-amber-800 border-amber-300 shadow-sm'
+                : isDarkTheme
+                ? 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                : 'bg-slate-100 text-slate-600 border-slate-200 hover:text-slate-900'
             }`}
             title="عرض واسترجاع الفواتير المعلقة"
           >
-            <Pause className="w-3.5 h-3.5 text-amber-400" />
+            <Pause className="w-3.5 h-3.5 text-amber-500" />
             <span>الفواتير المعلقة ⏸️</span>
             {parkedOrders.length > 0 && (
               <span className="w-4 h-4 rounded-full bg-amber-500 text-black font-black text-[10px] flex items-center justify-center animate-pulse">
@@ -1321,10 +1484,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
           <button
             type="button"
             onClick={() => setIsRecentReceiptsModalOpen(true)}
-            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 text-blue-300 hover:text-white border border-blue-500/30 transition flex items-center gap-1.5 shadow-sm active:scale-95"
+            className={`px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 shadow-sm active:scale-95 ${
+              isDarkTheme
+                ? 'bg-slate-950 hover:bg-slate-800 text-slate-200 border-slate-800'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+            }`}
             title="سجل فواتير الوردية وإعادة الطباعة"
           >
-            <Receipt className="w-3.5 h-3.5 text-blue-400" />
+            <Receipt className="w-3.5 h-3.5 text-blue-500" />
             <span>فواتير الوردية 🧾</span>
           </button>
         </div>
@@ -1336,10 +1503,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             setCashMovementInitialType('cash_out');
             setIsCashMovementModalOpen(true);
           }}
-          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/15 to-rose-500/15 hover:from-amber-500/25 hover:to-rose-500/25 text-amber-200 hover:text-white border border-amber-500/40 text-xs font-black flex items-center gap-1.5 transition shadow-sm active:scale-95"
+          className={`px-3.5 py-1.5 rounded-xl border text-xs font-black flex items-center gap-1.5 transition shadow-sm active:scale-95 ${
+            isDarkTheme
+              ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+              : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+          }`}
           title="تسجيل المصروفات النثرية وإيداع الفكة والعهدة في الصندوق"
         >
-          <Coins className="w-3.5 h-3.5 text-amber-400" />
+          <Coins className="w-3.5 h-3.5 text-amber-500" />
           <span>حسابات الفرع والنثريات 💸</span>
         </button>
       </div>
@@ -1350,17 +1521,24 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         {/* ======================================================== */}
         {/* 1️⃣ LEFT COLUMN: LIVE TICKET / CART (lg:col-span-4)         */}
         {/* ======================================================== */}
-        <div className="lg:col-span-4 bg-slate-900/90 border-2 border-slate-800 rounded-3xl p-4 flex flex-col justify-between shadow-2xl backdrop-blur-xl relative">
+        <div className={`lg:col-span-4 border rounded-3xl p-4 flex flex-col justify-between shadow-xl backdrop-blur-xl relative transition-colors ${
+          isDarkTheme ? 'bg-slate-900/90 border-slate-800' : isWarmTheme ? 'bg-[#FCFAF6] border-[#EFE6D8]' : 'bg-white border-slate-200'
+        }`}>
           
           <div className="space-y-3.5">
             
             {/* Ticket Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div className={`flex items-center justify-between pb-3 border-b ${isDarkTheme ? 'border-slate-800' : 'border-slate-200'}`}>
               <div className="flex items-center gap-2">
-                <Receipt className="w-5 h-5 text-amber-400" />
-                <h3 className="text-sm font-black text-white">تذكرة الفاتورة الحية</h3>
+                <Receipt className="w-5 h-5 text-amber-500" />
+                <h3 className={`text-sm font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>تذكرة الفاتورة الحية</h3>
                 {cartItems.length > 0 && (
-                  <span className="text-[10px] bg-amber-500 text-black px-2 py-0.5 rounded-full font-black">
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
+                      brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
+                    }`}
+                    style={{ backgroundColor: brandColors.secondary }}
+                  >
                     {cartItems.reduce((s, it) => s + it.quantity, 0)}
                   </span>
                 )}
@@ -1371,7 +1549,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <button
                     type="button"
                     onClick={handleOpenParkModal}
-                    className="text-amber-400 hover:text-amber-300 text-xs font-bold flex items-center gap-1 transition px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20"
+                    className="text-amber-500 hover:text-amber-600 text-xs font-bold flex items-center gap-1 transition px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20"
                     title="تعليق هذا الطلب لخدمة عميل آخر في الطابور"
                   >
                     <Pause className="w-3.5 h-3.5" />
@@ -1383,7 +1561,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <button
                     type="button"
                     onClick={() => setCartItems([])}
-                    className="text-rose-400 hover:text-rose-300 text-xs font-bold flex items-center gap-1 transition"
+                    className="text-rose-500 hover:text-rose-600 text-xs font-bold flex items-center gap-1 transition"
                     title="تفريغ السلة بالكامل"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -1429,25 +1607,28 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             )}
 
             {/* 👤 Customer Loyalty Capsule */}
-            <div className="rounded-2xl p-2.5 bg-slate-950 border border-slate-800 space-y-2">
+            <div className={`rounded-2xl p-2.5 border space-y-2 ${isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
               {customer ? (
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold text-sm shrink-0 border border-amber-500/40">
+                    <div
+                      className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 border"
+                      style={{ backgroundColor: `${brandColors.secondary}15`, borderColor: `${brandColors.secondary}35`, color: isDarkTheme ? brandColors.secondary : brandColors.textOnLightHex }}
+                    >
                       👤
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-black text-white truncate">{customer.name || 'عميل مميز'}</p>
+                        <p className={`text-xs font-black truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{customer.name || 'عميل مميز'}</p>
                         {customerTier && (
-                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-300 font-bold border border-amber-500/30">
                             {customerTier.tier_name}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
+                      <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono">
                         <span dir="ltr">{customer.phone}</span>
-                        <span className="text-amber-400 font-bold">⭐ {customer.wallet_balance} نقطة</span>
+                        <span className="font-bold" style={{ color: isDarkTheme ? brandColors.secondary : brandColors.textOnLightHex }}>⭐ {customer.wallet_balance} نقطة</span>
                       </div>
                     </div>
                   </div>
@@ -1455,7 +1636,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <button
                     type="button"
                     onClick={() => setCustomer(null)}
-                    className="text-slate-500 hover:text-rose-400 p-1 text-xs"
+                    className="text-slate-400 hover:text-rose-500 p-1 text-xs"
                     title="فك ربط العميل"
                   >
                     ✕
@@ -1466,7 +1647,12 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <button
                     type="button"
                     onClick={onOpenCustomerScanner}
-                    className="flex-1 py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95"
+                    style={{
+                      backgroundColor: `${brandColors.secondary}15`,
+                      borderColor: `${brandColors.secondary}35`,
+                      color: isDarkTheme ? brandColors.secondary : brandColors.textOnLightHex
+                    }}
+                    className="flex-1 py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition active:scale-95"
                   >
                     <QrCode className="w-3.5 h-3.5" />
                     <span>مسح باركود العميل 📷</span>
@@ -1475,7 +1661,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsCustomerLookupOpen(true)}
-                    className="py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-bold flex items-center justify-center gap-1 transition"
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1 transition ${
+                      isDarkTheme
+                        ? 'bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-300'
+                        : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-700'
+                    }`}
                   >
                     <User className="w-3.5 h-3.5 text-slate-400" />
                     <span>رقم الجوال</span>
@@ -1484,7 +1674,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               )}
 
               {customerDiscountPct > 0 && (
-                <div className="text-[10px] text-emerald-400 font-bold flex items-center justify-between bg-emerald-950/40 px-2 py-1 rounded-lg border border-emerald-500/30">
+                <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center justify-between bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/25">
                   <span>✨ خصم رتبة العضوية:</span>
                   <span>%{customerDiscountPct}</span>
                 </div>
@@ -1494,46 +1684,54 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             {/* Cart Items List */}
             <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
               {cartItems.length === 0 ? (
-                <div className="py-12 text-center text-slate-500 space-y-2">
-                  <ShoppingBag className="w-10 h-10 mx-auto text-slate-600 opacity-60" />
-                  <p className="text-xs font-bold">السلة فارغة</p>
-                  <p className="text-[10px] text-slate-600">اختر الأصناف من المنيو لإضافتها للتذكرة</p>
+                <div className="py-12 text-center text-slate-400 space-y-2">
+                  <ShoppingBag className="w-10 h-10 mx-auto text-slate-400 opacity-50" />
+                  <p className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>السلة فارغة</p>
+                  <p className="text-[10px] text-slate-400">اختر الأصناف من المنيو لإضافتها للتذكرة</p>
                 </div>
               ) : (
                 cartItems.map((item) => (
                   <div
                     key={item.id}
-                    className="p-2.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-700 space-y-1.5 transition"
+                    className={`p-2.5 rounded-2xl border space-y-1.5 transition ${
+                      isDarkTheme
+                        ? 'bg-slate-950/70 border-slate-800/80 hover:border-slate-700'
+                        : 'bg-slate-50 border-slate-200/80 hover:border-slate-300'
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <p className="text-xs font-bold text-white truncate">{item.catalog_item.name}</p>
+                          <p className={`text-xs font-bold truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{item.catalog_item.name}</p>
                           {item.catalog_item.item_type === 'service' && (
-                            <span className="text-[9px] bg-purple-950/90 text-purple-200 border border-purple-500/30 px-1.5 py-0.2 rounded-md font-bold">
+                            <span className="text-[9px] bg-purple-500/15 text-purple-600 dark:text-purple-300 border border-purple-500/30 px-1.5 py-0.2 rounded-md font-bold">
                               خدمة
                             </span>
                           )}
                         </div>
-                        <p className="text-[10px] text-slate-400 font-mono">
+                        <p className="text-[10px] text-slate-500 font-mono">
                           {item.unit_price.toFixed(2)} ﷼ للقطعة
                         </p>
                       </div>
 
-                      <span className="text-xs font-black text-amber-400 font-mono shrink-0">
+                      <span className={`text-xs font-black font-mono shrink-0 ${isDarkTheme ? 'text-amber-400' : 'text-slate-900'}`}>
                         {item.total_price.toFixed(2)} ﷼
                       </span>
                     </div>
 
                     {/* Specialist Selector for Service Items */}
                     {item.catalog_item.item_type === 'service' && (
-                      <div className="pt-1 flex items-center gap-1.5 text-[11px] bg-purple-950/30 px-2 py-1 rounded-xl border border-purple-500/20">
-                        <Scissors className="w-3 h-3 text-purple-400 shrink-0" />
-                        <span className="text-purple-300 font-bold shrink-0 text-[10px]">المختص:</span>
+                      <div className="pt-1 flex items-center gap-1.5 text-[11px] bg-purple-500/10 px-2 py-1 rounded-xl border border-purple-500/20">
+                        <Scissors className="w-3 h-3 text-purple-500 shrink-0" />
+                        <span className="text-purple-600 dark:text-purple-300 font-bold shrink-0 text-[10px]">المختص:</span>
                         <select
                           value={item.specialist_id || ''}
                           onChange={(e) => handleSetItemSpecialist(item.id, e.target.value)}
-                          className="bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-0.5 text-[10px] font-bold outline-none flex-1 truncate cursor-pointer hover:border-purple-400"
+                          className={`rounded-lg px-2 py-0.5 text-[10px] font-bold outline-none flex-1 truncate cursor-pointer border ${
+                            isDarkTheme
+                              ? 'bg-slate-900 border-slate-700 text-white'
+                              : 'bg-white border-slate-200 text-slate-900'
+                          }`}
                         >
                           <option value="">أي مختص متاح</option>
                           {specialists.map((spec) => (
@@ -1551,20 +1749,22 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                     )}
 
                     {/* Quantity Controls & Notes Button */}
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-900 text-xs">
-                      <div className="flex items-center gap-1.5 bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-800">
+                    <div className={`flex items-center justify-between pt-1 border-t text-xs ${isDarkTheme ? 'border-slate-800' : 'border-slate-200'}`}>
+                      <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg border ${
+                        isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+                      }`}>
                         <button
                           type="button"
                           onClick={() => handleUpdateQty(item.id, -1)}
-                          className="w-5 h-5 rounded flex items-center justify-center text-slate-400 hover:text-white font-black"
+                          className="w-5 h-5 rounded flex items-center justify-center text-slate-400 hover:text-slate-900 dark:hover:text-white font-black"
                         >
                           -
                         </button>
-                        <span className="w-6 text-center font-black text-white font-mono">{item.quantity}</span>
+                        <span className={`w-6 text-center font-black font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{item.quantity}</span>
                         <button
                           type="button"
                           onClick={() => handleUpdateQty(item.id, 1)}
-                          className="w-5 h-5 rounded flex items-center justify-center text-amber-400 hover:text-amber-300 font-black"
+                          className="w-5 h-5 rounded flex items-center justify-center text-amber-500 hover:text-amber-600 font-black"
                         >
                           +
                         </button>
@@ -1576,8 +1776,10 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                           onClick={() => handleOpenItemNote(item)}
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
                             item.notes
-                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                              ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/40'
+                              : isDarkTheme
+                              ? 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                              : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900'
                           }`}
                         >
                           {item.notes ? `ملاحظة: ${item.notes}` : '+ ملاحظة'}
@@ -1586,7 +1788,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                         <button
                           type="button"
                           onClick={() => handleRemoveItem(item.id)}
-                          className="text-slate-500 hover:text-rose-400 p-0.5 transition"
+                          className="text-slate-400 hover:text-rose-500 p-0.5 transition"
                           title="حذف الصنف"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1600,9 +1802,9 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
 
             {/* 🏷️ Discount Action or Active Discount Capsule */}
             {appliedDiscount ? (
-              <div className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border border-amber-500/40 flex items-center justify-between text-xs animate-fade-in">
-                <div className="flex items-center gap-1.5 text-amber-300">
-                  <Tag className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+              <div className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-transparent border border-amber-500/30 flex items-center justify-between text-xs animate-fade-in">
+                <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                  <Tag className="w-3.5 h-3.5 shrink-0 text-amber-500" />
                   <span className="font-bold">
                     {appliedDiscount.type === 'complimentary'
                       ? 'ضيافة 100% (مجاني)'
@@ -1619,11 +1821,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   )}
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <span className="font-mono font-black text-rose-400">-{cartDiscountAmount.toFixed(2)} ﷼</span>
+                  <span className="font-mono font-black text-rose-500">-{cartDiscountAmount.toFixed(2)} ﷼</span>
                   <button
                     type="button"
                     onClick={() => setAppliedDiscount(null)}
-                    className="p-1 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition"
+                    className="p-1 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 transition"
                     title="إلغاء الخصم"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -1635,30 +1837,34 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 type="button"
                 disabled={cartItems.length === 0}
                 onClick={() => setIsDiscountModalOpen(true)}
-                className="w-full py-2 px-3 rounded-2xl bg-slate-950 hover:bg-slate-850 text-slate-400 hover:text-amber-300 border border-slate-800 hover:border-amber-500/40 text-xs font-bold flex items-center justify-between transition disabled:opacity-40"
+                className={`w-full py-2 px-3 rounded-2xl border text-xs font-bold flex items-center justify-between transition disabled:opacity-40 ${
+                  isDarkTheme
+                    ? 'bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-amber-300 border-slate-800'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-600 hover:text-slate-900 border-slate-200'
+                }`}
               >
                 <span className="flex items-center gap-1.5">
-                  <Percent className="w-3.5 h-3.5 text-amber-400" />
+                  <Percent className="w-3.5 h-3.5 text-amber-500" />
                   <span>تطبيق خصم أو كوبون 🏷️</span>
                 </span>
-                <span className="text-[10px] text-slate-500">مباشر / نسبة / كود</span>
+                <span className="text-[10px] text-slate-400">مباشر / نسبة / كود</span>
               </button>
             )}
 
             {/* Financial Summary */}
-            <div className="pt-2.5 border-t border-slate-800 space-y-1.5 text-xs">
-              <div className="flex justify-between text-slate-400">
+            <div className={`pt-2.5 border-t space-y-1.5 text-xs ${isDarkTheme ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+              <div className="flex justify-between">
                 <span>المجموع بدون الضريبة:</span>
-                <span className="font-mono text-slate-300">{cartNetBeforeVat.toFixed(2)} ﷼</span>
+                <span className="font-mono">{cartNetBeforeVat.toFixed(2)} ﷼</span>
               </div>
 
-              <div className="flex justify-between text-slate-400">
+              <div className="flex justify-between">
                 <span>ضريبة القيمة المضافة (15%):</span>
-                <span className="font-mono text-slate-300">{cartVatAmount.toFixed(2)} ﷼</span>
+                <span className="font-mono">{cartVatAmount.toFixed(2)} ﷼</span>
               </div>
 
               {cartDiscountAmount > 0 && (
-                <div className="flex justify-between text-emerald-400 font-bold">
+                <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-bold">
                   <span>
                     {appliedDiscount
                       ? appliedDiscount.type === 'complimentary'
@@ -1672,9 +1878,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 </div>
               )}
 
-              <div className="flex justify-between items-center text-base font-black text-white pt-2 border-t border-slate-800">
+              <div className={`flex justify-between items-center text-base font-black pt-2 border-t ${
+                isDarkTheme ? 'border-slate-800 text-white' : 'border-slate-200 text-slate-900'
+              }`}>
                 <span>الإجمالي الصافي:</span>
-                <span className="text-xl font-mono text-amber-400">{cartGrandTotal.toFixed(2)} ﷼</span>
+                <span className={`text-xl font-mono font-black ${isDarkTheme ? 'text-amber-400' : 'text-slate-900'}`}>
+                  {cartGrandTotal.toFixed(2)} ﷼
+                </span>
               </div>
             </div>
 
@@ -1686,9 +1896,9 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 onClick={() => {
                   setIsCheckoutModalOpen(true);
                 }}
-                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-400 text-black font-black text-sm transition shadow-xl shadow-emerald-500/25 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 text-white keep-white font-black text-sm transition shadow-xl shadow-emerald-500/25 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                <Printer className="w-4 h-4 text-black" />
+                <Printer className="w-4 h-4 text-white" />
                 <span>إصدار فاتورة الطلب المسدد ({cartGrandTotal.toFixed(2)} ﷼) 🖨️</span>
               </button>
             ) : (
@@ -1701,7 +1911,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   setSplitCardAmount(Math.round((cartGrandTotal / 2) * 100) / 100);
                   setIsCheckoutModalOpen(true);
                 }}
-                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 text-black font-black text-sm transition shadow-xl shadow-amber-500/20 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                style={{
+                  background: brandColors.buttonGradient,
+                  color: brandColors.contrastOnSecondary,
+                  boxShadow: `0 10px 25px -4px ${brandColors.glow}`,
+                }}
+                className={`w-full py-3.5 rounded-2xl font-black text-sm transition shadow-xl active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
+                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
+                }`}
               >
                 <CreditCard className="w-4 h-4" />
                 <span>إتمام الدفع ({cartGrandTotal.toFixed(2)} ﷼) 💳</span>
@@ -1716,16 +1933,21 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         <div className="lg:col-span-6 space-y-3">
           
           {/* Quick Filter: Products / Services Strip */}
-          <div className="flex items-center justify-between gap-2 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800">
+          <div className={`flex items-center justify-between gap-2 p-1.5 rounded-2xl border transition-all ${
+            isDarkTheme 
+              ? 'bg-slate-900/90 border-slate-800' 
+              : 'bg-white border-slate-200/90 shadow-xs'
+          }`}>
             {activeModules.orders && activeModules.bookings ? (
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => setItemTypeFilter('all')}
+                  style={itemTypeFilter === 'all' ? { backgroundColor: brandColors.secondary } : undefined}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
                     itemTypeFilter === 'all'
-                      ? 'bg-amber-500 text-black shadow-md'
-                      : 'text-slate-400 hover:text-white'
+                      ? `${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'} shadow-md`
+                      : (isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')
                   }`}
                 >
                   <Package className="w-3.5 h-3.5" />
@@ -1734,10 +1956,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 <button
                   type="button"
                   onClick={() => setItemTypeFilter('product')}
+                  style={itemTypeFilter === 'product' ? { backgroundColor: brandColors.secondary } : undefined}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
                     itemTypeFilter === 'product'
-                      ? 'bg-amber-500 text-black shadow-md'
-                      : 'text-slate-400 hover:text-white'
+                      ? `${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'} shadow-md`
+                      : (isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900')
                   }`}
                 >
                   <ShoppingBag className="w-3.5 h-3.5" />
@@ -1749,7 +1972,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
                     itemTypeFilter === 'service'
                       ? 'bg-purple-600 text-white shadow-md'
-                      : 'text-purple-300 hover:text-white'
+                      : (isDarkTheme ? 'text-purple-300 hover:text-white' : 'text-purple-600 hover:text-purple-800')
                   }`}
                 >
                   <Scissors className="w-3.5 h-3.5" />
@@ -1757,13 +1980,16 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 </button>
               </div>
             ) : activeModules.bookings ? (
-              <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-purple-300">
+              <div className={`flex items-center gap-2 px-3 py-1 text-xs font-bold ${isDarkTheme ? 'text-purple-300' : 'text-purple-700'}`}>
                 <Scissors className="w-4 h-4 text-purple-400" />
                 <span>قائمة خدمات ومختصي المركز 💇‍♂️</span>
               </div>
             ) : (
-              <div className="flex items-center gap-2 px-3 py-1 text-xs font-bold text-amber-300">
-                <Utensils className="w-4 h-4 text-amber-400" />
+              <div 
+                style={{ color: brandColors.textOnLightHex }}
+                className="flex items-center gap-2 px-3 py-1 text-xs font-bold"
+              >
+                <Utensils className="w-4 h-4" />
                 <span>أصناف وقائمة الطعام 🍔</span>
               </div>
             )}
@@ -1773,24 +1999,36 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setIsAppointmentsModalOpen(true)}
-                className="text-[11px] font-bold text-amber-300 hover:text-white bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-xl flex items-center gap-1 transition"
+                style={{
+                  backgroundColor: `${brandColors.secondary}15`,
+                  borderColor: `${brandColors.secondary}40`,
+                  color: brandColors.textOnLightHex
+                }}
+                className="text-[11px] font-bold px-2.5 py-1 rounded-xl flex items-center gap-1 transition border"
               >
-                <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                <Calendar className="w-3.5 h-3.5" />
                 <span>مواعيد اليوم ({bookingsList.filter((b) => b.booking_date === new Date().toISOString().slice(0, 10)).length})</span>
               </button>
             )}
           </div>
 
           {loadingCatalog ? (
-            <div className="py-24 text-center text-slate-400 space-y-3">
-              <div className="w-8 h-8 border-3 border-amber-400 border-t-transparent rounded-full animate-spin mx-auto"></div>
+            <div className={`py-24 text-center space-y-3 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+              <div 
+                style={{ borderTopColor: 'transparent', borderColor: brandColors.secondary }}
+                className="w-8 h-8 border-3 rounded-full animate-spin mx-auto"
+              ></div>
               <p className="text-xs font-bold">جاري تحميل أصناف المنيو...</p>
             </div>
           ) : filteredItems.length === 0 ? (
-            <div className="p-12 text-center rounded-3xl bg-slate-900/60 border border-slate-800 space-y-2">
-              <Tag className="w-8 h-8 text-slate-600 mx-auto" />
-              <p className="text-xs font-bold text-slate-300">لا توجد أصناف تطابق هذا البحث أو القسم</p>
-              <p className="text-[10px] text-slate-500">اختر قسماً آخر أو أضف أصناف جديدة من لوحة الإدارة</p>
+            <div className={`p-12 text-center rounded-3xl border space-y-2 ${
+              isDarkTheme 
+                ? 'bg-slate-900/60 border-slate-800' 
+                : 'bg-white border-slate-200/90 shadow-xs'
+            }`}>
+              <Tag className={`w-8 h-8 mx-auto ${isDarkTheme ? 'text-slate-600' : 'text-slate-400'}`} />
+              <p className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-800'}`}>لا توجد أصناف تطابق هذا البحث أو القسم</p>
+              <p className={`text-[10px] ${isDarkTheme ? 'text-slate-500' : 'text-slate-400'}`}>اختر قسماً آخر أو أضف أصناف جديدة من لوحة الإدارة</p>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -1803,11 +2041,20 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <div
                     key={item.id}
                     onClick={() => handleAddToCart(item)}
-                    className="p-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800/90 border border-slate-800 hover:border-amber-500/50 transition-all duration-150 flex flex-col justify-between cursor-pointer active:scale-95 shadow-md group relative overflow-hidden"
+                    className={`p-3 rounded-2xl border transition-all duration-150 flex flex-col justify-between cursor-pointer active:scale-95 group relative overflow-hidden ${
+                      isDarkTheme
+                        ? 'bg-slate-900/80 hover:bg-slate-800/90 border-slate-800 hover:border-slate-700 shadow-md'
+                        : 'bg-white hover:bg-slate-50/90 border-slate-200/90 hover:border-slate-300 shadow-xs hover:shadow-sm'
+                    }`}
                   >
                     {/* In-Cart Quantity Indicator */}
                     {inCartCount > 0 && (
-                      <span className="absolute top-2 left-2 z-10 bg-amber-500 text-black text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-lg animate-fade-in">
+                      <span 
+                        style={{ backgroundColor: brandColors.secondary, color: brandColors.contrastOnSecondary }}
+                        className={`absolute top-2 left-2 z-10 text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-lg animate-fade-in ${
+                          brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                        }`}
+                      >
                         {inCartCount}
                       </span>
                     )}
@@ -1822,7 +2069,9 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                     )}
 
                     {/* Image Thumbnail */}
-                    <div className="w-full h-24 rounded-xl bg-slate-950 border border-slate-800 overflow-hidden mb-2 relative flex items-center justify-center">
+                    <div className={`w-full h-24 rounded-xl border overflow-hidden mb-2 relative flex items-center justify-center ${
+                      isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200/80'
+                    }`}>
                       {item.image_url ? (
                         <img
                           src={item.image_url}
@@ -1838,14 +2087,25 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
 
                     {/* Item Details */}
                     <div className="space-y-1">
-                      <p className="text-xs font-black text-white truncate group-hover:text-amber-300 transition">
+                      <p className={`text-xs font-black truncate transition ${
+                        isDarkTheme ? 'text-white group-hover:text-amber-300' : 'text-slate-900 group-hover:text-slate-700'
+                      }`}>
                         {item.name}
                       </p>
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-amber-400 font-mono">
+                        <span 
+                          style={{ color: brandColors.textOnLightHex }}
+                          className="text-xs font-bold font-mono"
+                        >
                           {Number(item.price).toFixed(2)} ﷼
                         </span>
-                        <div className="w-6 h-6 rounded-lg bg-amber-500/10 text-amber-400 group-hover:bg-amber-500 group-hover:text-black flex items-center justify-center text-xs font-black transition">
+                        <div 
+                          style={{
+                            backgroundColor: `${brandColors.secondary}18`,
+                            color: brandColors.textOnLightHex
+                          }}
+                          className="w-6 h-6 rounded-lg flex items-center justify-center text-xs font-black transition group-hover:scale-110"
+                        >
                           +
                         </div>
                       </div>
@@ -1861,7 +2121,9 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         {/* 3️⃣ RIGHT COLUMN: CATEGORY SELECTOR (lg:col-span-2)       */}
         {/* ======================================================== */}
         <div className="lg:col-span-2 space-y-2">
-          <div className="text-xs font-black text-slate-400 px-1 pb-1 border-b border-slate-800">
+          <div className={`text-xs font-black px-1 pb-1 border-b ${
+            isDarkTheme ? 'text-slate-400 border-slate-800' : 'text-slate-600 border-slate-200'
+          }`}>
             الأقسام 📑
           </div>
 
@@ -1870,10 +2132,17 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             <button
               type="button"
               onClick={() => setSelectedCategory('ALL')}
-              className={`w-full text-right px-3 py-2.5 rounded-xl text-xs font-black flex items-center justify-between transition whitespace-nowrap ${
+              style={selectedCategory === 'ALL' ? {
+                backgroundColor: `${brandColors.secondary}22`,
+                borderColor: `${brandColors.secondary}66`,
+                color: brandColors.textOnLightHex
+              } : undefined}
+              className={`w-full text-right px-3 py-2.5 rounded-xl text-xs font-black flex items-center justify-between transition whitespace-nowrap border ${
                 selectedCategory === 'ALL'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-md shadow-amber-500/10'
-                  : 'bg-slate-900/60 text-slate-400 border border-slate-800/80 hover:text-white'
+                  ? 'shadow-md'
+                  : (isDarkTheme 
+                      ? 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-white hover:bg-slate-800/60' 
+                      : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900 hover:bg-slate-50 shadow-xs')
               }`}
             >
               <span>⭐ الكل</span>
@@ -1890,10 +2159,17 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   key={cat}
                   type="button"
                   onClick={() => setSelectedCategory(cat)}
-                  className={`w-full text-right px-3 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between transition whitespace-nowrap ${
+                  style={isSelected ? {
+                    backgroundColor: `${brandColors.secondary}22`,
+                    borderColor: `${brandColors.secondary}66`,
+                    color: brandColors.textOnLightHex
+                  } : undefined}
+                  className={`w-full text-right px-3 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between transition whitespace-nowrap border ${
                     isSelected
-                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-md shadow-amber-500/10'
-                      : 'bg-slate-900/60 text-slate-400 border border-slate-800/80 hover:text-white'
+                      ? 'shadow-md'
+                      : (isDarkTheme 
+                          ? 'bg-slate-900/60 text-slate-400 border-slate-800/80 hover:text-white hover:bg-slate-800/60' 
+                          : 'bg-white text-slate-600 border-slate-200 hover:text-slate-900 hover:bg-slate-50 shadow-xs')
                   }`}
                 >
                   <span className="truncate">{cat}</span>
@@ -1958,9 +2234,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('card')}
+                    style={paymentMethod === 'card' ? {
+                      backgroundColor: brandColors.secondary,
+                      borderColor: brandColors.secondary,
+                      color: brandColors.contrastOnSecondary
+                    } : undefined}
                     className={`p-3 rounded-2xl border text-xs font-black flex flex-col items-center justify-center gap-1.5 transition ${
                       paymentMethod === 'card'
-                        ? 'bg-amber-500 text-black border-amber-400 shadow-lg'
+                        ? `shadow-lg ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''}`
                         : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
                     }`}
                   >
@@ -1971,9 +2252,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('cash')}
+                    style={paymentMethod === 'cash' ? {
+                      backgroundColor: brandColors.secondary,
+                      borderColor: brandColors.secondary,
+                      color: brandColors.contrastOnSecondary
+                    } : undefined}
                     className={`p-3 rounded-2xl border text-xs font-black flex flex-col items-center justify-center gap-1.5 transition ${
                       paymentMethod === 'cash'
-                        ? 'bg-amber-500 text-black border-amber-400 shadow-lg'
+                        ? `shadow-lg ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''}`
                         : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
                     }`}
                   >
@@ -1984,9 +2270,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('split')}
+                    style={paymentMethod === 'split' ? {
+                      backgroundColor: brandColors.secondary,
+                      borderColor: brandColors.secondary,
+                      color: brandColors.contrastOnSecondary
+                    } : undefined}
                     className={`p-3 rounded-2xl border text-xs font-black flex flex-col items-center justify-center gap-1.5 transition ${
                       paymentMethod === 'split'
-                        ? 'bg-amber-500 text-black border-amber-400 shadow-lg'
+                        ? `shadow-lg ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''}`
                         : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
                     }`}
                   >
@@ -2415,7 +2706,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={() => setIsReceiptModalOpen(false)}
-                className="flex-1 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs flex items-center justify-center gap-1.5 transition shadow-lg"
+                style={{
+                  backgroundColor: brandColors.secondary,
+                  color: brandColors.contrastOnSecondary
+                }}
+                className={`flex-1 py-3 rounded-2xl font-black text-xs flex items-center justify-center gap-1.5 transition shadow-lg ${
+                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                }`}
               >
                 <RotateCcw className="w-4 h-4" />
                 <span>طلب جديد ➕</span>
@@ -2477,7 +2774,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 <button
                   type="submit"
                   disabled={customerLookupLoading}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition"
+                  style={{
+                    backgroundColor: brandColors.secondary,
+                    color: brandColors.contrastOnSecondary
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl font-black text-xs transition ${
+                    brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                  }`}
                 >
                   {customerLookupLoading ? 'جاري البحث...' : 'ربط العميل ✅'}
                 </button>
@@ -2515,7 +2818,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
               <button
                 type="button"
                 onClick={handleSaveItemNote}
-                className="flex-1 py-2 rounded-xl bg-amber-500 text-black text-xs font-black shadow"
+                style={{
+                  backgroundColor: brandColors.secondary,
+                  color: brandColors.contrastOnSecondary
+                }}
+                className={`flex-1 py-2 rounded-xl text-xs font-black shadow ${
+                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                }`}
               >
                 حفظ الملاحظة ✅
               </button>
@@ -2590,7 +2899,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg"
+                  style={{
+                    backgroundColor: brandColors.secondary,
+                    color: brandColors.contrastOnSecondary
+                  }}
+                  className={`flex-1 py-2.5 rounded-xl font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg ${
+                    brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                  }`}
                 >
                   <Pause className="w-3.5 h-3.5" />
                   <span>تأكيد تعليق الطلب ⏸️</span>
@@ -2693,7 +3008,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                         <button
                           type="button"
                           onClick={() => handleResumeParkedOrder(p)}
-                          className="flex-1 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs flex items-center justify-center gap-1.5 transition shadow"
+                          style={{
+                            backgroundColor: brandColors.secondary,
+                            color: brandColors.contrastOnSecondary
+                          }}
+                          className={`flex-1 py-2 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition shadow ${
+                            brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                          }`}
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
                           <span>استرجاع إلى السلة ⚡</span>
