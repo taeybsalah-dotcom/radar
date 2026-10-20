@@ -295,6 +295,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
   // Inline Customer Lookup by Phone
   const [isCustomerLookupOpen, setIsCustomerLookupOpen] = useState(false);
   const [customerPhoneInput, setCustomerPhoneInput] = useState('');
+  const [customerNameInput, setCustomerNameInput] = useState('');
   const [customerLookupLoading, setCustomerLookupLoading] = useState(false);
   const [customerLookupError, setCustomerLookupError] = useState<string | null>(null);
 
@@ -780,24 +781,38 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
     return Math.max(0, Math.round((num - cartGrandTotal) * 100) / 100);
   }, [paymentMethod, cashTendered, cartGrandTotal]);
 
-  // Quick Customer Lookup by Phone
+  // Quick Customer Lookup or Auto-Register by Phone
   const handleLookupCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerPhoneInput.trim()) return;
     setCustomerLookupLoading(true);
     setCustomerLookupError(null);
     try {
-      const cust = await LoyaltyService.getCustomer(store.id, customerPhoneInput.trim());
+      let cust = await LoyaltyService.getCustomer(store.id, customerPhoneInput.trim());
       if (cust) {
+        if (customerNameInput.trim() && (!cust.name || cust.name === 'عميل' || cust.name === 'عميل جديد' || cust.name === 'عميل مميز')) {
+          cust = await LoyaltyService.updateCustomer(cust.id, { name: customerNameInput.trim() });
+        }
         setCustomer(cust);
         setIsCustomerLookupOpen(false);
         setCustomerPhoneInput('');
+        setCustomerNameInput('');
         playBeepSound('success');
       } else {
-        setCustomerLookupError('لم يتم العثور على عميل مسجل بهذا الرقم. يمكنك مسح رمزه أو إتمام الطلب كعميل نقدي.');
+        // العميل غير مسجل مسبقاً -> تسجيله تلقائياً كعميل جديد لكسب نقاط الفاتورة
+        const newCust = await LoyaltyService.registerCustomer(
+          store.id,
+          customerPhoneInput.trim(),
+          customerNameInput.trim() || 'عميل جديد'
+        );
+        setCustomer(newCust);
+        setIsCustomerLookupOpen(false);
+        setCustomerPhoneInput('');
+        setCustomerNameInput('');
+        playBeepSound('success');
       }
     } catch (err: any) {
-      setCustomerLookupError(err.message || 'فشل البحث عن العميل');
+      setCustomerLookupError(err.message || 'فشل البحث عن العميل أو تسجيله');
     } finally {
       setCustomerLookupLoading(false);
     }
@@ -2731,11 +2746,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h3 className="text-sm font-black text-white flex items-center gap-2">
                 <User className="w-4 h-4 text-amber-400" />
-                <span>ربط عميل برقم الجوال</span>
+                <span>ربط أو تسجيل عميل بالرقم</span>
               </h3>
               <button
                 type="button"
-                onClick={() => setIsCheckoutModalOpen(false)}
+                onClick={() => setIsCustomerLookupOpen(false)}
                 className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
               >
                 ✕
@@ -2757,13 +2772,27 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                 />
               </div>
 
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300 block">اسم العميل (اختياري للعملاء الجدد):</label>
+                <input
+                  type="text"
+                  placeholder="مثال: عبدالمجيد، سعد..."
+                  value={customerNameInput}
+                  onChange={(e) => setCustomerNameInput(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-4 py-2 text-xs font-bold text-white outline-none"
+                />
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  إذا كان الرقم غير مسجل مسبقاً، سيتم إنشاؤه كعميل جديد واحتساب نقاط الفاتورة له فوراً ⭐
+                </p>
+              </div>
+
               {customerLookupError && (
                 <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-300 text-xs font-semibold">
                   {customerLookupError}
                 </div>
               )}
 
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setIsCustomerLookupOpen(false)}
@@ -2778,11 +2807,11 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                     backgroundColor: brandColors.secondary,
                     color: brandColors.contrastOnSecondary
                   }}
-                  className={`flex-1 py-2.5 rounded-xl font-black text-xs transition ${
+                  className={`flex-1 py-2.5 rounded-xl font-black text-xs transition flex items-center justify-center gap-1.5 ${
                     brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
                   }`}
                 >
-                  {customerLookupLoading ? 'جاري البحث...' : 'ربط العميل ✅'}
+                  {customerLookupLoading ? 'جاري الفحص والتسجيل...' : 'ربط أو تسجيل العميل ➕⭐'}
                 </button>
               </div>
             </form>
