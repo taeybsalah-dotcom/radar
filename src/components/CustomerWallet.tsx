@@ -216,9 +216,20 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     const cardGradient = `linear-gradient(135deg, #7a5e1c 0%, #edd98b 24%, ${safeSecondary} 50%, #faeec7 76%, #89671d 100%)`;
     const fabGradient = `linear-gradient(135deg, #ecd98a 0%, ${safeSecondary} 50%, #82631a 100%)`;
 
+    // 5. Contrast Text & Safe Accent for Light Theme
+    const secContrast = (0.299 * secRgb.r + 0.587 * secRgb.g + 0.114 * secRgb.b) / 255;
+    const contrastOnSecondary = secContrast > 0.55 ? '#000000' : '#FFFFFF';
+
+    let textLightL = secHsl.l;
+    if (textLightL > 42) textLightL = 36;
+    const textOnLightRgb = hslToRgb(secHsl.h, Math.max(secHsl.s, 65), textLightL);
+    const textOnLightHex = rgbToHex(textOnLightRgb.r, textOnLightRgb.g, textOnLightRgb.b);
+
     return {
       primary: safePrimary,
       secondary: safeSecondary,
+      contrastOnSecondary,
+      textOnLightHex,
       cardGradient,
       progressGradient,
       progressBarColor: barHex,
@@ -238,6 +249,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const brandPrimary = brandColors.primary;
   const brandSecondary = brandColors.secondary;
+  const isDarkTheme = store?.theme_mode === 'dark';
+  const isWarmTheme = store?.theme_mode === 'warm_cream';
+  const isLightOrWarm = !isDarkTheme;
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
@@ -2418,8 +2432,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* 👑 02 - Frosted Glass Luxury Capsule Header with Merchant Brand Logo */}
-      <div className="frosted-glass-capsule px-3.5 py-2.5 rounded-2xl flex items-center justify-between gap-3 shadow-2xl relative z-20">
+      {/* 👑 02 - Luxury Capsule Header with Merchant Brand Logo */}
+      <div className={`px-3.5 py-2.5 rounded-2xl flex items-center justify-between gap-3 relative z-20 transition-all ${
+        isDarkTheme ? 'frosted-glass-capsule shadow-2xl' : 'bg-white border border-slate-200/90 shadow-sm'
+      }`}>
         <div className="flex items-center space-x-3 rtl:space-x-reverse min-w-0">
           {/* Merchant Brand Logo replacing generic customer avatar */}
           <div
@@ -2442,7 +2458,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             )}
             <span
               className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-slate-950 flex items-center justify-center text-[7px]"
-              style={{ backgroundColor: brandSecondary, color: '#000' }}
+              style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
             >
               👑
             </span>
@@ -2450,15 +2466,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="text-[11px] text-slate-400 font-medium">مرحباً بك،</span>
-              <span className="font-black text-white text-sm sm:text-base truncate">
+              <span className={`text-[11px] font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>مرحباً بك،</span>
+              <span className={`font-black text-sm sm:text-base truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                 {customer?.name || savedProfile?.name || (guestName.trim() ? guestName : 'ضيف رادار')}
               </span>
               {(customer || savedProfile) && (
                 <button
                   onClick={openEditName}
-                  className="text-slate-400 hover:text-white p-0.5 transition"
-                  style={{ color: brandSecondary }}
+                  className="p-0.5 transition"
+                  style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}
                   title="تعديل الاسم"
                 >
                   <Edit3 className="w-3 h-3" />
@@ -2471,12 +2487,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 style={{
                   backgroundColor: `${brandSecondary}15`,
                   borderColor: `${brandSecondary}35`,
-                  color: brandSecondary,
+                  color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
                 }}
               >
                 {currentTierObj?.tier_name ? `عضو ${currentTierObj.tier_name}` : `متجر ${store.name}`}
               </span>
-              <p className="text-[10px] text-slate-400 font-mono truncate" dir="ltr">
+              <p className={`text-[10px] font-mono truncate ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`} dir="ltr">
                 {customer?.phone || savedProfile?.phone || (guestPhone.trim() ? guestPhone : '')}
               </p>
             </div>
@@ -2487,7 +2503,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           <button
             type="button"
             onClick={() => setShowPastOrdersModal(true)}
-            className="w-10 h-10 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-amber-400 flex items-center justify-center transition shadow-md relative"
+            className={`w-10 h-10 rounded-2xl flex items-center justify-center transition shadow-sm relative ${
+              isDarkTheme
+                ? 'bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-amber-400'
+                : 'bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 hover:text-slate-900'
+            }`}
             title="سجل طلباتي ومتابعة الطلب 🕒"
           >
             <Clock className="w-4 h-4" />
@@ -2501,13 +2521,21 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             portalFilter="customer"
             storeId={store.id}
             userPhone={customer?.phone || savedProfile?.phone || guestPhone}
-            buttonClassName="w-10 h-10 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white p-0 shadow-md"
+            buttonClassName={`w-10 h-10 rounded-2xl p-0 shadow-sm flex items-center justify-center transition ${
+              isDarkTheme
+                ? 'bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white'
+                : 'bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 hover:text-slate-900'
+            }`}
           />
 
           {(customer || savedProfile) ? (
             <button
               onClick={handleLogout}
-              className="w-10 h-10 rounded-2xl bg-white/5 hover:bg-rose-950/60 border border-white/10 hover:border-rose-500/40 text-slate-300 hover:text-rose-300 flex items-center justify-center transition shadow-md"
+              className={`w-10 h-10 rounded-2xl flex items-center justify-center transition shadow-sm ${
+                isDarkTheme
+                  ? 'bg-white/5 hover:bg-rose-950/60 border border-white/10 hover:border-rose-500/40 text-slate-300 hover:text-rose-300'
+                  : 'bg-slate-100 hover:bg-rose-50 border border-slate-200 hover:border-rose-300 text-slate-700 hover:text-rose-600'
+              }`}
               title="تسجيل الخروج"
             >
               <LogOut className="w-4 h-4" />
@@ -2523,7 +2551,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               style={{
                 backgroundColor: brandSecondary,
                 borderColor: brandSecondary,
-                color: '#000000',
+                color: brandColors.contrastOnSecondary,
               }}
             >
               <QrCode className="w-4 h-4" />
@@ -2610,7 +2638,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black shadow-lg"
                       style={{
                         backgroundColor: brandSecondary,
-                        color: '#000000',
+                        color: brandColors.contrastOnSecondary,
                       }}
                     >
                       <span>👑</span>
@@ -2636,7 +2664,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     className="px-4 py-1.5 rounded-full font-black text-xs shadow-lg flex items-center gap-1.5 hover:scale-105 active:scale-95 transition"
                     style={{
                       backgroundColor: brandSecondary,
-                      color: '#000000',
+                      color: brandColors.contrastOnSecondary,
                     }}
                   >
                     <span>اطلب الآن</span>
@@ -2680,28 +2708,32 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   setWalletPassPlatform('apple');
                   setIsWalletPassModalOpen(true);
                 }}
-                className="w-full p-2.5 sm:p-3 rounded-2xl bg-slate-900/95 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 shadow-xl backdrop-blur-xl flex items-center justify-between gap-2.5 transition text-right group active:scale-[0.99]"
+                className={`w-full p-2.5 sm:p-3 rounded-2xl border shadow-md flex items-center justify-between gap-2.5 transition text-right group active:scale-[0.99] ${
+                  isDarkTheme
+                    ? 'bg-slate-900/95 hover:bg-slate-800 border-emerald-500/40 hover:border-emerald-400 text-white'
+                    : 'bg-white hover:bg-slate-50 border-emerald-500/40 hover:border-emerald-500 text-slate-900'
+                }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
+                  <span className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-500 shrink-0">
                     <MapPin className="w-4 h-4 animate-bounce" />
                   </span>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[11px] font-bold text-slate-300">
+                      <span className={`text-[11px] font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
                         أقرب فرع لك ({proximityInfo.nearestBranchName}):
                       </span>
-                      <span className="text-xs font-black text-emerald-400 font-mono">
+                      <span className="text-xs font-black text-emerald-500 font-mono">
                         {proximityInfo.formattedDistance}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-400 block truncate">
+                    <span className={`text-[10px] block truncate ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                       تنبيه شاشة القفل التلقائي نشط ببطاقة المحفظة 🔔
                     </span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 text-[11px] font-bold text-amber-400 shrink-0 group-hover:translate-x-[-2px] transition-transform">
+                <div className="flex items-center gap-1 text-[11px] font-bold text-amber-500 shrink-0 group-hover:translate-x-[-2px] transition-transform">
                   <span>بطاقة المحفظة </span>
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </div>
@@ -2834,10 +2866,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 setWalletPassPlatform('apple');
                 setIsWalletPassModalOpen(true);
               }}
-              className="py-2.5 px-3 rounded-2xl bg-black hover:bg-neutral-900 border border-white/20 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-95 group"
+              className="py-2.5 px-3 rounded-2xl bg-black hover:bg-neutral-900 border border-black text-white keep-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-95 group"
+              style={{ backgroundColor: '#000000', color: '#FFFFFF' }}
             >
-              <span className="text-base group-hover:scale-110 transition-transform"></span>
-              <span className="truncate">Add to Apple Wallet</span>
+              <span className="text-base group-hover:scale-110 transition-transform keep-white text-white" style={{ color: '#FFFFFF' }}></span>
+              <span className="truncate keep-white text-white" style={{ color: '#FFFFFF' }}>Add to Apple Wallet</span>
             </button>
 
             <button
@@ -2846,9 +2879,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 setWalletPassPlatform('google');
                 setIsWalletPassModalOpen(true);
               }}
-              className="py-2.5 px-3 rounded-2xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-95 group"
+              className={`py-2.5 px-3 rounded-2xl border font-black text-xs flex items-center justify-center gap-2 shadow-sm transition active:scale-95 group ${
+                isDarkTheme
+                  ? 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-white'
+                  : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-900 shadow-sm'
+              }`}
             >
-              <span className="text-sm font-bold text-blue-400 group-hover:scale-110 transition-transform">G</span>
+              <span className="text-sm font-bold text-blue-500 group-hover:scale-110 transition-transform">G</span>
               <span className="truncate">Save to Google Wallet</span>
             </button>
           </div>
@@ -3056,9 +3093,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   value={catalogSearch}
                   onChange={(e) => setCatalogSearch(e.target.value)}
                   placeholder="ابحث عن وجبتك أو مشروبك المفضل..."
-                  className="w-full bg-white/5 border border-white/10 rounded-full pr-11 pl-10 py-3 text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none focus:border-white/30 backdrop-blur-xl transition shadow-inner"
+                  className={`w-full rounded-full pr-11 pl-10 py-3 text-xs sm:text-sm focus:outline-none transition shadow-sm ${
+                    isDarkTheme
+                      ? 'bg-white/5 border border-white/10 text-white placeholder-slate-400 focus:border-white/30 backdrop-blur-xl shadow-inner'
+                      : 'bg-white border border-slate-200 text-slate-900 placeholder-slate-400 focus:border-slate-400'
+                  }`}
                 />
-                <Search className="w-4 h-4 text-slate-400 absolute right-4 top-3.5 pointer-events-none" />
+                <Search className={`w-4 h-4 absolute right-4 top-3.5 pointer-events-none ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`} />
                 {catalogSearch && (
                   <button
                     type="button"
@@ -3075,13 +3116,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <button
                   type="button"
                   onClick={() => setShowPastOrdersModal(true)}
-                  className="w-11 h-11 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center shrink-0 relative transition shadow-md active:scale-95"
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 relative transition shadow-sm active:scale-95 ${
+                    isDarkTheme
+                      ? 'bg-white/5 hover:bg-white/10 border border-white/10'
+                      : 'bg-white hover:bg-slate-50 border border-slate-200 shadow-sm'
+                  }`}
                   title="سجل طلباتي السابقة"
                 >
-                  <ShoppingBag className="w-5 h-5" style={{ color: brandSecondary }} />
+                  <ShoppingBag className="w-5 h-5" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }} />
                   <span
-                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black flex items-center justify-center shadow-lg text-black"
-                    style={{ backgroundColor: brandSecondary }}
+                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-black flex items-center justify-center shadow-lg"
+                    style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
                   >
                     {pastOrders.length}
                   </span>
@@ -3091,17 +3136,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
             {/* Branch Selector if multiple branches */}
             {branches.length > 1 && (
-              <div className="space-y-1.5 p-2.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md">
+              <div className={`space-y-1.5 p-2.5 rounded-2xl border ${
+                isDarkTheme ? 'bg-white/[0.03] border-white/[0.07] backdrop-blur-md' : 'bg-white border-slate-200 shadow-sm'
+              }`}>
                 <div className="flex items-center justify-between text-xs font-bold">
-                  <span className="flex items-center gap-1.5 text-slate-300 text-[11px]">
+                  <span className={`flex items-center gap-1.5 text-[11px] ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                     <Building2 className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
                     <span>فرع الطلب:</span>
                   </span>
                   {selectedBranch && (
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-black border flex items-center gap-1 ${
                       branchStatus.isOpen
-                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                        : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                        ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30'
+                        : 'bg-rose-500/15 text-rose-500 border-rose-500/30'
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${branchStatus.isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
                       <span>{branchStatus.isOpen ? 'مفتوح للطلبات' : 'مغلق حالياً'}</span>
@@ -3120,8 +3167,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         onClick={() => setSelectedBranch(b)}
                         className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border ${
                           isSel
-                            ? 'bg-slate-800 text-white shadow-md'
-                            : 'bg-white/[0.04] text-slate-400 border-white/[0.06] hover:text-white'
+                            ? 'bg-slate-900 text-white shadow-md'
+                            : isDarkTheme
+                            ? 'bg-white/[0.04] text-slate-400 border-white/[0.06] hover:text-white'
+                            : 'bg-slate-100 text-slate-700 border-slate-200 hover:text-slate-900'
                         }`}
                         style={isSel ? { borderColor: brandSecondary, color: '#ffffff' } : undefined}
                       >
@@ -3142,8 +3191,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 style={
                   selectedCategory === 'ALL'
                     ? {
-                        background: `linear-gradient(135deg, ${brandSecondary}, ${brandSecondary}dd)`,
-                        color: '#000000',
+                        background: brandColors.fabGradient,
+                        color: brandColors.contrastOnSecondary,
                         boxShadow: `0 4px 15px -2px ${brandSecondary}70`,
                       }
                     : undefined
@@ -3151,7 +3200,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 className={`px-4 py-2 rounded-full font-black transition whitespace-nowrap flex items-center gap-1.5 ${
                   selectedCategory === 'ALL'
                     ? 'scale-105'
-                    : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+                    : isDarkTheme
+                    ? 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+                    : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-sm'
                 }`}
               >
                 <span>🌟</span>
@@ -3168,8 +3219,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     style={
                       isSelected
                         ? {
-                            background: `linear-gradient(135deg, ${brandSecondary}, ${brandSecondary}dd)`,
-                            color: '#000000',
+                            background: brandColors.fabGradient,
+                            color: brandColors.contrastOnSecondary,
                             boxShadow: `0 4px 15px -2px ${brandSecondary}70`,
                           }
                         : undefined
@@ -3177,7 +3228,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     className={`px-4 py-2 rounded-full font-black transition whitespace-nowrap flex items-center gap-1.5 ${
                       isSelected
                         ? 'scale-105'
-                        : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+                        : isDarkTheme
+                        ? 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+                        : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-sm'
                     }`}
                   >
                     <span>🍽️</span>
@@ -3190,9 +3243,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
           {/* 🌟 06 - Luxury Product Cards in 2-Column Grid */}
           {filteredCatalogItems.length === 0 ? (
-            <div className="py-14 text-center text-slate-400 border border-dashed border-white/10 rounded-3xl bg-white/[0.02] space-y-3">
-              <ShoppingBag className="w-12 h-12 mx-auto text-slate-600 mb-1" />
-              <h4 className="text-base font-bold text-white">لا توجد أصناف في هذا القسم حالياً</h4>
+            <div className={`py-14 text-center rounded-3xl border border-dashed space-y-3 ${
+              isDarkTheme ? 'text-slate-400 border-white/10 bg-white/[0.02]' : 'text-slate-500 border-slate-200 bg-white shadow-sm'
+            }`}>
+              <ShoppingBag className="w-12 h-12 mx-auto text-slate-400 mb-1" />
+              <h4 className={`text-base font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>لا توجد أصناف في هذا القسم حالياً</h4>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
                 {catalogSearch ? 'جرب البحث بكلمات أخرى' : `سيتم تحديث قائمة ${store.name} قريباً`}
               </p>
@@ -3209,10 +3264,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 return (
                   <div
                     key={item.id}
-                    className="frosted-glass-capsule rounded-[22px] overflow-hidden flex flex-col justify-between transition-all duration-300 hover:border-white/20 shadow-xl group/card relative"
+                    className={`${
+                      isDarkTheme
+                        ? 'frosted-glass-capsule hover:border-white/20'
+                        : 'bg-white border border-slate-200/90 shadow-sm hover:shadow-md hover:border-slate-300'
+                    } rounded-[22px] overflow-hidden flex flex-col justify-between transition-all duration-300 shadow-xl group/card relative`}
                   >
                     {/* Item Image with Floating Points Badge */}
-                    <div className="relative h-28 sm:h-32 w-full overflow-hidden bg-black/40">
+                    <div className={`relative h-28 sm:h-32 w-full overflow-hidden ${isDarkTheme ? 'bg-black/40' : 'bg-slate-50'}`}>
                       {item.image_url ? (
                         <img
                           src={item.image_url}
@@ -3229,8 +3288,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       {/* Earned Points Badge (Top Right) */}
                       {earnedPoints > 0 && (
                         <div
-                          className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-black text-black shadow-lg"
-                          style={{ backgroundColor: brandSecondary }}
+                          className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-black shadow-lg"
+                          style={{
+                            backgroundColor: brandSecondary,
+                            color: brandColors.contrastOnSecondary,
+                          }}
                         >
                           +{earnedPoints} نقطة
                         </div>
@@ -3238,7 +3300,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                       {/* Cart Quantity Badge (Top Left) */}
                       {cartCountForItem > 0 && (
-                        <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-black shadow-lg">
+                        <div
+                          className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-white shadow-lg keep-white"
+                          style={{ color: '#FFFFFF' }}
+                        >
                           {cartCountForItem} بالسلة
                         </div>
                       )}
@@ -3251,11 +3316,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           if (hasModifiers) handleOpenCustomizeModal(item);
                           else handleQuickAddToCart(item);
                         }}
-                        className="absolute bottom-2 left-2 w-9 h-9 rounded-full flex items-center justify-center shadow-2xl transition transform active:scale-90 hover:scale-110 z-10"
+                        className="absolute bottom-2 left-2 w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition transform active:scale-90 hover:scale-110 z-10"
                         style={{
                           backgroundColor: brandSecondary,
-                          color: '#000000',
-                          boxShadow: `0 4px 14px rgba(0,0,0,0.6)`,
+                          color: brandColors.contrastOnSecondary,
+                          boxShadow: `0 4px 14px ${brandSecondary}50`,
                         }}
                         title={hasModifiers ? 'تخصيص الصنف' : 'إضافة سريعة'}
                       >
@@ -3266,28 +3331,29 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     {/* Item Info (Name, Description, Price) */}
                     <div className="p-3 flex-1 flex flex-col justify-between space-y-2">
                       <div>
-                        <h4 className="font-extrabold text-white text-xs sm:text-sm line-clamp-1 leading-tight">
+                        <h4 className={`font-extrabold text-xs sm:text-sm line-clamp-1 leading-tight ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                           {item.name}
                         </h4>
                         {item.description && (
-                          <p className="text-[10px] text-slate-400 line-clamp-2 mt-0.5 leading-relaxed">
+                          <p className={`text-[10px] line-clamp-2 mt-0.5 leading-relaxed ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                             {item.description}
                           </p>
                         )}
                       </div>
 
-                      <div className="flex items-baseline justify-between pt-1 border-t border-white/5">
+                      <div className={`flex items-baseline justify-between pt-1 border-t ${isDarkTheme ? 'border-white/5' : 'border-slate-100'}`}>
                         <div className="flex items-baseline gap-1">
                           <span
-                            className="font-mono font-black text-sm sm:text-base tracking-tight"
-                            style={{ color: brandSecondary }}
+                            className={`font-mono font-black text-sm sm:text-base tracking-tight ${
+                              isDarkTheme ? 'text-white' : 'text-slate-900'
+                            }`}
                           >
                             {item.price}
                           </span>
-                          <span className="text-[10px] text-slate-400 font-bold">ر.س</span>
+                          <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>ر.س</span>
                         </div>
 
-                        <span className="text-[9px] text-slate-500 font-mono">
+                        <span className={`text-[9px] font-mono ${isDarkTheme ? 'text-slate-500' : 'text-slate-400'}`}>
                           {item.category || 'وجبة'}
                         </span>
                       </div>
@@ -3466,39 +3532,41 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       ? 'تم الاعتذار عن الموعد ❌'
                       : 'تم استلام الحجز وبانتظار التأكيد ⏳'}
                   </span>
-                  <h3 className="text-lg font-black text-white mt-1">
-                    حجز موعد برقم <span dir="ltr" className="font-mono" style={{ color: brandSecondary }}>#{bookingSuccessData.booking_number}</span>
+                  <h3 className={`text-lg font-black mt-1 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                    حجز موعد برقم <span dir="ltr" className="font-mono" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>#{bookingSuccessData.booking_number}</span>
                   </h3>
                 </div>
 
-                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.07] text-xs space-y-2 text-right">
+                <div className={`p-4 rounded-2xl border text-xs space-y-2 text-right ${
+                  isDarkTheme ? 'bg-white/[0.02] border-white/[0.07]' : 'bg-slate-50 border-slate-200'
+                }`}>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">الخدمة:</span>
-                    <span className="font-bold text-white">{bookingSuccessData.service_name}</span>
+                    <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>الخدمة:</span>
+                    <span className={`font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{bookingSuccessData.service_name}</span>
                   </div>
                   {bookingSuccessData.selected_modifiers && bookingSuccessData.selected_modifiers.length > 0 && (
                     <div className="flex justify-between items-start gap-2">
-                      <span className="text-slate-400 shrink-0">الإضافات والترقيات:</span>
-                      <span className="font-bold text-left" style={{ color: brandSecondary }}>
+                      <span className={`shrink-0 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>الإضافات والترقيات:</span>
+                      <span className="font-bold text-left" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>
                         {bookingSuccessData.selected_modifiers.map((m: any) => m.name).join('، ')}
                       </span>
                     </div>
                   )}
                   <div className="flex justify-between">
-                    <span className="text-slate-400">المختص:</span>
-                    <span className="font-bold text-white">{bookingSuccessData.specialist_name || 'أي مختص متاح'}</span>
+                    <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>المختص:</span>
+                    <span className={`font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{bookingSuccessData.specialist_name || 'أي مختص متاح'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">التاريخ والوقت:</span>
-                    <span dir="ltr" className="font-mono font-bold text-white">{bookingSuccessData.booking_date} | {bookingSuccessData.booking_time}</span>
+                    <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>التاريخ والوقت:</span>
+                    <span dir="ltr" className={`font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{bookingSuccessData.booking_date} | {bookingSuccessData.booking_time}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">مدة الخدمة:</span>
-                    <span className="font-bold text-slate-300">{bookingSuccessData.duration_minutes} دقيقة</span>
+                    <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>مدة الخدمة:</span>
+                    <span className={`font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>{bookingSuccessData.duration_minutes} دقيقة</span>
                   </div>
-                  <div className="flex justify-between border-t border-white/[0.07] pt-2">
-                    <span className="text-slate-400">المبلغ الإجمالي:</span>
-                    <span className="font-mono font-black text-sm" style={{ color: brandSecondary }}>{bookingSuccessData.total_price} ر.س</span>
+                  <div className={`flex justify-between pt-2 border-t ${isDarkTheme ? 'border-white/[0.07]' : 'border-slate-200'}`}>
+                    <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>المبلغ الإجمالي:</span>
+                    <span className={`font-mono font-black text-sm ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{bookingSuccessData.total_price} ر.س</span>
                   </div>
                 </div>
 
@@ -3512,7 +3580,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       setSelectedBookingSpecialist(null);
                       setBookingStep(1);
                     }}
-                    className="w-full py-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-slate-200 text-xs font-bold transition border border-white/10"
+                    className={`w-full py-2.5 rounded-xl text-xs font-bold transition border ${
+                      isDarkTheme
+                        ? 'bg-white/[0.05] hover:bg-white/[0.1] text-slate-200 border-white/10'
+                        : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200 shadow-sm'
+                    }`}
                   >
                     حجز موعد آخر
                   </button>
@@ -3520,17 +3592,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
             ) : (
               <>
-                {/* 💇 Step 1: Select Service (Luxury Frosted Glass Cards with Circular Image) */}
+                {/* 💇 Step 1: Select Service (Luxury Cards with Circular Image) */}
                 {bookingStep === 1 && (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between px-1">
-                      <span className="text-xs font-bold text-slate-300">الخطوة 1: اختر الخدمة المطلوبة للحجز:</span>
+                      <span className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة 1: اختر الخدمة المطلوبة للحجز:</span>
                     </div>
 
                     {availableServiceItems.length === 0 ? (
-                      <div className="p-8 text-center bg-white/[0.02] rounded-3xl border border-white/[0.07] space-y-2">
-                        <Scissors className="w-8 h-8 text-slate-600 mx-auto" />
-                        <p className="text-xs text-slate-400">لا توجد خدمات متاحة للحجز حالياً.</p>
+                      <div className={`p-8 text-center rounded-3xl border space-y-2 ${
+                        isDarkTheme ? 'bg-white/[0.02] border-white/[0.07]' : 'bg-white border-slate-200 shadow-sm'
+                      }`}>
+                        <Scissors className="w-8 h-8 text-slate-400 mx-auto" />
+                        <p className={`text-xs ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>لا توجد خدمات متاحة للحجز حالياً.</p>
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 gap-2.5">
@@ -3543,17 +3617,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             <div
                               key={srv.id}
                               onClick={() => handleSelectServiceForBooking(srv)}
-                              className={`p-3.5 sm:p-4 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between gap-3 backdrop-blur-md ${
+                              className={`p-3.5 sm:p-4 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between gap-3 ${
                                 isSelected
-                                  ? 'shadow-lg ring-1'
-                                  : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15'
+                                  ? 'shadow-lg ring-2'
+                                  : isDarkTheme
+                                  ? 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15 backdrop-blur-md'
+                                  : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-sm hover:border-slate-300'
                               }`}
                               style={
                                 isSelected
                                   ? {
                                       backgroundColor: `${brandSecondary}12`,
-                                      borderColor: `${brandSecondary}70`,
-                                      boxShadow: `0 8px 24px ${brandSecondary}20`,
+                                      borderColor: brandSecondary,
+                                      boxShadow: `0 8px 24px ${brandSecondary}25`,
                                     }
                                   : undefined
                               }
@@ -3572,7 +3648,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                     <div
                                       className="w-13 h-13 sm:w-14 sm:h-14 rounded-full border flex items-center justify-center text-2xl shadow-inner"
                                       style={{
-                                        background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`,
+                                        background: isDarkTheme
+                                          ? `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`
+                                          : `linear-gradient(135deg, ${brandSecondary}15 0%, #F8FAFC 100%)`,
                                         borderColor: `${brandSecondary}40`,
                                       }}
                                     >
@@ -3582,38 +3660,62 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 </div>
 
                                 <div className="space-y-1 min-w-0">
-                                  <h4 className="text-sm font-black text-white truncate">{srv.name}</h4>
+                                  <h4 className={`text-sm font-black truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{srv.name}</h4>
                                   <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
                                     {srv.category && (
-                                      <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-300 border border-white/[0.08] font-bold">
+                                      <span className={`px-2 py-0.5 rounded-full font-bold border ${
+                                        isDarkTheme ? 'bg-white/[0.06] text-slate-300 border-white/[0.08]' : 'bg-slate-100 text-slate-700 border-slate-200'
+                                      }`}>
                                         {srv.category}
                                       </span>
                                     )}
-                                    <span className="px-2 py-0.5 rounded-full bg-white/[0.04] text-slate-300 border border-white/[0.06] font-medium flex items-center gap-1">
+                                    <span className={`px-2 py-0.5 rounded-full font-medium flex items-center gap-1 border ${
+                                      isDarkTheme ? 'bg-white/[0.04] text-slate-300 border-white/[0.06]' : 'bg-slate-100 text-slate-600 border-slate-200'
+                                    }`}>
                                       <Clock className="w-3 h-3" style={{ color: brandSecondary }} />
                                       <span>{srv.duration_minutes || 30} دقيقة</span>
                                     </span>
                                     {hasServiceModifiers && (
-                                      <span className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 font-bold">
+                                      <span className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-600 font-bold border border-purple-500/30">
                                         ✨ إضافات ({srv.modifier_groups?.length})
                                       </span>
                                     )}
                                     {earnedPoints > 0 && (
-                                      <span className="font-mono font-bold" style={{ color: brandSecondary }}>+{earnedPoints} نقطة</span>
+                                      <span
+                                        className="font-mono font-bold"
+                                        style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}
+                                      >
+                                        +{earnedPoints} نقطة
+                                      </span>
                                     )}
                                   </div>
                                   {srv.description && (
-                                    <p className="text-[11px] text-slate-400 line-clamp-1">{srv.description}</p>
+                                    <p className={`text-[11px] line-clamp-1 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>{srv.description}</p>
                                   )}
                                 </div>
                               </div>
 
                               <div className="text-left shrink-0 pl-1">
-                                <div className="text-base font-black font-mono" style={{ color: brandSecondary }}>
-                                  {srv.price} <span className="text-[10px] text-slate-400 font-bold">ر.س</span>
+                                <div className={`text-base font-black font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                                  {srv.price} <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>ر.س</span>
                                 </div>
                                 <span
-                                  className="inline-block mt-1 text-[11px] text-slate-300 font-bold bg-white/[0.05] px-2.5 py-1 rounded-full border border-white/10 transition"
+                                  className={`inline-block mt-1 text-[11px] font-bold px-2.5 py-1 rounded-full border transition ${
+                                    isSelected
+                                      ? 'shadow-sm'
+                                      : isDarkTheme
+                                      ? 'text-slate-300 bg-white/[0.05] border-white/10 hover:text-white'
+                                      : 'text-slate-700 bg-slate-100 border-slate-200 hover:bg-slate-200'
+                                  }`}
+                                  style={
+                                    isSelected
+                                      ? {
+                                          backgroundColor: brandSecondary,
+                                          borderColor: brandSecondary,
+                                          color: brandColors.contrastOnSecondary,
+                                        }
+                                      : undefined
+                                  }
                                 >
                                   {hasServiceModifiers ? 'تخصيص وحجز ➔' : 'اختر الخدمة ➔'}
                                 </span>
@@ -3629,24 +3731,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 {/* ✨ Step 2: Modifiers & Extras */}
                 {bookingStep === 2 && selectedBookingService && (
                   <div className="space-y-4 animate-fade-in">
-                    <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md flex items-center justify-between text-xs">
+                    <div className={`p-3.5 rounded-2xl border flex items-center justify-between text-xs ${
+                      isDarkTheme ? 'bg-white/[0.03] border-white/[0.07] backdrop-blur-md' : 'bg-white border-slate-200 shadow-sm'
+                    }`}>
                       <div className="flex items-center gap-2">
-                        <span className="text-slate-400">الخدمة الأساسية:</span>
-                        <strong className="text-white">{selectedBookingService.name}</strong>
-                        <span className="font-mono font-bold" style={{ color: brandSecondary }}>({selectedBookingService.price} ر.س)</span>
+                        <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>الخدمة الأساسية:</span>
+                        <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{selectedBookingService.name}</strong>
+                        <span className={`font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>({selectedBookingService.price} ر.س)</span>
                       </div>
                       <button
                         type="button"
                         onClick={() => setBookingStep(1)}
-                        className="text-slate-400 hover:text-white font-bold"
+                        className={`font-bold ${isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}`}
                       >
                         تغيير الخدمة
                       </button>
                     </div>
 
                     <div className="flex items-center justify-between px-1">
-                      <span className="text-xs font-bold text-slate-300">الخطوة 2: حدد الإضافات والترقيات لجلسة الخدمة:</span>
-                      <span className="text-[10px] text-slate-500">(اختياري أو حسب الرغبة)</span>
+                      <span className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة 2: حدد الإضافات والترقيات لجلسة الخدمة:</span>
+                      <span className={`text-[10px] ${isDarkTheme ? 'text-slate-500' : 'text-slate-400'}`}>(اختياري أو حسب الرغبة)</span>
                     </div>
 
                     {selectedBookingService.modifier_groups && selectedBookingService.modifier_groups.length > 0 ? (
@@ -3657,18 +3761,20 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           return (
                             <div
                               key={group.id}
-                              className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md space-y-2.5"
+                              className={`p-4 rounded-2xl border space-y-2.5 ${
+                                isDarkTheme ? 'bg-white/[0.03] border-white/[0.07] backdrop-blur-md' : 'bg-white border-slate-200 shadow-sm'
+                              }`}
                             >
                               <div className="flex items-center justify-between">
-                                <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                                <h4 className={`text-xs font-black flex items-center gap-1.5 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                                   <span>{group.name}</span>
                                   {group.required && (
-                                    <span className="text-[10px] text-rose-400 font-bold bg-rose-500/15 px-1.5 py-0.5 rounded">
+                                    <span className="text-[10px] text-rose-500 font-bold bg-rose-500/10 px-1.5 py-0.5 rounded">
                                       إجباري
                                     </span>
                                   )}
                                 </h4>
-                                <span className="text-[10px] text-slate-400">
+                                <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                                   {group.allow_multiple
                                     ? group.max_selections
                                       ? `حد أقصى ${group.max_selections}`
@@ -3687,14 +3793,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                       onClick={() => handleToggleServiceModifierOption(group, option)}
                                       className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition ${
                                         isSelected
-                                          ? 'text-white'
-                                          : 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.06] text-slate-300'
+                                          ? (isDarkTheme ? 'text-white' : 'text-slate-900 font-bold')
+                                          : isDarkTheme
+                                          ? 'bg-white/[0.02] hover:bg-white/[0.05] border-white/[0.06] text-slate-300'
+                                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
                                       }`}
                                       style={
                                         isSelected
                                           ? {
                                               backgroundColor: `${brandSecondary}15`,
-                                              borderColor: `${brandSecondary}60`,
+                                              borderColor: brandSecondary,
                                             }
                                           : undefined
                                       }
@@ -3704,13 +3812,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                           className={`w-4 h-4 rounded-${group.allow_multiple ? 'md' : 'full'} border flex items-center justify-center transition shrink-0 ${
                                             isSelected
                                               ? 'border-transparent text-black'
-                                              : 'border-slate-600 bg-slate-900'
+                                              : isDarkTheme
+                                              ? 'border-slate-600 bg-slate-900'
+                                              : 'border-slate-300 bg-white'
                                           }`}
                                           style={
                                             isSelected
                                               ? {
                                                   backgroundColor: brandSecondary,
                                                   borderColor: brandSecondary,
+                                                  color: brandColors.contrastOnSecondary,
                                                 }
                                               : undefined
                                           }
@@ -3722,7 +3833,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                                       <span
                                         className="text-xs font-mono font-bold"
-                                        style={option.price_delta > 0 ? { color: brandSecondary } : { color: '#94a3b8' }}
+                                        style={option.price_delta > 0 ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : { color: '#94a3b8' }}
                                       >
                                         {option.price_delta > 0 ? `+${option.price_delta} ر.س` : 'مجاناً'}
                                       </span>
@@ -3735,15 +3846,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         })}
                       </div>
                     ) : (
-                      <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-center text-xs text-slate-400">
+                      <div className={`p-4 rounded-2xl border text-center text-xs ${
+                        isDarkTheme ? 'bg-white/[0.02] border-white/[0.06] text-slate-400' : 'bg-white border-slate-200 text-slate-500 shadow-sm'
+                      }`}>
                         لا توجد إضافات مخصصة لهذه الخدمة. يمكنك المتابعة مباشرة لاختيار المختص.
                       </div>
                     )}
 
-                    <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md flex items-center justify-between">
+                    <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+                      isDarkTheme ? 'bg-white/[0.03] border-white/[0.07] backdrop-blur-md' : 'bg-white border-slate-200 shadow-sm'
+                    }`}>
                       <div>
-                        <span className="text-[11px] text-slate-400 block">الإجمالي الحالي للخدمة:</span>
-                        <strong className="text-base font-black font-mono" style={{ color: brandSecondary }}>
+                        <span className={`text-[11px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>الإجمالي الحالي للخدمة:</span>
+                        <strong className={`text-base font-black font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                           {calculateServiceBookingPrice()} ر.س
                         </strong>
                       </div>
@@ -3751,9 +3866,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       <button
                         type="button"
                         onClick={() => setBookingStep(3)}
-                        className="py-2.5 px-5 rounded-xl text-black font-black text-xs shadow-md transition flex items-center gap-1.5"
+                        className="py-2.5 px-5 rounded-xl font-black text-xs shadow-md transition flex items-center gap-1.5"
                         style={{
                           backgroundColor: brandSecondary,
+                          color: brandColors.contrastOnSecondary,
                           boxShadow: `0 6px 18px ${brandSecondary}40`,
                         }}
                       >
@@ -3780,28 +3896,30 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                   return (
                     <div className="space-y-3 animate-fade-in">
-                      <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md flex items-center justify-between text-xs">
+                      <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
+                        isDarkTheme ? 'bg-white/[0.03] border-white/[0.07] backdrop-blur-md' : 'bg-white border-slate-200 shadow-sm'
+                      }`}>
                         <div className="flex items-center gap-2">
-                          <span className="text-slate-400">الخدمة:</span>
-                          <strong className="text-white">{selectedBookingService.name}</strong>
-                          <span className="text-slate-400 font-mono">({selectedBookingService.duration_minutes || 30} د)</span>
-                          <span className="font-mono font-bold" style={{ color: brandSecondary }}>({calculateServiceBookingPrice()} ر.س)</span>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>الخدمة:</span>
+                          <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{selectedBookingService.name}</strong>
+                          <span className={`font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>({selectedBookingService.duration_minutes || 30} د)</span>
+                          <span className={`font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>({calculateServiceBookingPrice()} ر.س)</span>
                         </div>
                         <button
                           type="button"
                           onClick={() => setBookingStep(hasServiceModifiers ? 2 : 1)}
-                          className="text-slate-400 hover:text-white font-bold"
+                          className={`font-bold ${isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}`}
                         >
                           {hasServiceModifiers ? 'تعديل الإضافات' : 'تغيير الخدمة'}
                         </button>
                       </div>
 
                       <div className="flex items-center justify-between px-1">
-                        <span className="text-xs font-bold text-slate-300 block">الخطوة 3: حدد المختص المؤهل في قسم ({serviceCategory}):</span>
+                        <span className={`text-xs font-bold block ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة 3: حدد المختص المؤهل في قسم ({serviceCategory}):</span>
                         <span
                           className="text-[10px] px-2 py-0.5 rounded-full border font-bold"
                           style={{
-                            color: brandSecondary,
+                            color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
                             backgroundColor: `${brandSecondary}15`,
                             borderColor: `${brandSecondary}30`,
                           }}
@@ -3817,17 +3935,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             setSelectedBookingSpecialist(null);
                             setBookingStep(4);
                           }}
-                          className={`p-3.5 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between backdrop-blur-md ${
+                          className={`p-3.5 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between ${
                             selectedBookingSpecialist === null
-                              ? 'shadow-lg ring-1'
-                              : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15'
+                              ? 'shadow-lg ring-2'
+                              : isDarkTheme
+                              ? 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15'
+                              : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-sm hover:border-slate-300'
                           }`}
                           style={
                             selectedBookingSpecialist === null
                               ? {
                                   backgroundColor: `${brandSecondary}12`,
-                                  borderColor: `${brandSecondary}70`,
-                                  boxShadow: `0 8px 24px ${brandSecondary}20`,
+                                  borderColor: brandSecondary,
+                                  boxShadow: `0 8px 24px ${brandSecondary}25`,
                                 }
                               : undefined
                           }
@@ -3836,22 +3956,24 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             <div
                               className="w-12 h-12 rounded-full border flex items-center justify-center text-xl shadow-inner shrink-0"
                               style={{
-                                background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`,
+                                background: isDarkTheme
+                                  ? `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`
+                                  : `linear-gradient(135deg, ${brandSecondary}15 0%, #F8FAFC 100%)`,
                                 borderColor: `${brandSecondary}40`,
-                                color: brandSecondary,
+                                color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
                               }}
                             >
                               ⚡
                             </div>
                             <div>
-                              <h4 className="text-xs sm:text-sm font-black text-white">أي مختص متاح في قسم ({serviceCategory})</h4>
-                              <p className="text-[10px] text-slate-400 mt-0.5">سيتم التنسيق مع أول موظف متاح فور حضورك (الأسرع للحجز)</p>
+                              <h4 className={`text-xs sm:text-sm font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>أي مختص متاح في قسم ({serviceCategory})</h4>
+                              <p className={`text-[10px] mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>سيتم التنسيق مع أول موظف متاح فور حضورك (الأسرع للحجز)</p>
                             </div>
                           </div>
                           <span
                             className="text-xs font-black shrink-0 px-3 py-1.5 rounded-full border"
                             style={{
-                              color: brandSecondary,
+                              color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
                               backgroundColor: `${brandSecondary}15`,
                               borderColor: `${brandSecondary}30`,
                             }}
@@ -3870,17 +3992,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 setSelectedBookingSpecialist(spec);
                                 setBookingStep(4);
                               }}
-                              className={`p-3.5 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between backdrop-blur-md ${
+                              className={`p-3.5 rounded-2xl border cursor-pointer transition-all duration-300 flex items-center justify-between ${
                                 isSelected
-                                  ? 'shadow-lg ring-1'
-                                  : 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15'
+                                  ? 'shadow-lg ring-2'
+                                  : isDarkTheme
+                                  ? 'bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.07] hover:border-white/15'
+                                  : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-sm hover:border-slate-300'
                               }`}
                               style={
                                 isSelected
                                   ? {
                                       backgroundColor: `${brandSecondary}12`,
-                                      borderColor: `${brandSecondary}70`,
-                                      boxShadow: `0 8px 24px ${brandSecondary}20`,
+                                      borderColor: brandSecondary,
+                                      boxShadow: `0 8px 24px ${brandSecondary}25`,
                                     }
                                   : undefined
                               }
@@ -3897,23 +4021,27 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                   <div
                                     className="w-12 h-12 rounded-full border flex items-center justify-center font-serif font-black text-base shrink-0 shadow-inner"
                                     style={{
-                                      background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`,
+                                      background: isDarkTheme
+                                        ? `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`
+                                        : `linear-gradient(135deg, ${brandSecondary}15 0%, #F8FAFC 100%)`,
                                       borderColor: `${brandSecondary}40`,
-                                      color: brandSecondary,
+                                      color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
                                     }}
                                   >
                                     {spec.name.slice(0, 1)}
                                   </div>
                                 )}
                                 <div className="min-w-0 space-y-0.5">
-                                  <h4 className="text-xs sm:text-sm font-black text-white truncate">{spec.name}</h4>
-                                  <p className="text-[10px]" style={{ color: brandSecondary }}>{spec.specialty || 'أخصائي خدمة'}</p>
+                                  <h4 className={`text-xs sm:text-sm font-black truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{spec.name}</h4>
+                                  <p className="text-[10px]" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>{spec.specialty || 'أخصائي خدمة'}</p>
                                   {spec.service_categories && spec.service_categories.length > 0 && (
                                     <div className="flex items-center gap-1 flex-wrap pt-0.5">
                                       {spec.service_categories.map((cat, idx) => (
                                         <span
                                           key={idx}
-                                          className="text-[9px] px-2 py-0.2 rounded-full bg-white/[0.05] text-slate-300 border border-white/[0.06]"
+                                          className={`text-[9px] px-2 py-0.5 rounded-full border ${
+                                            isDarkTheme ? 'bg-white/[0.05] text-slate-300 border-white/[0.06]' : 'bg-slate-100 text-slate-600 border-slate-200'
+                                          }`}
                                         >
                                           {cat === 'ALL' ? '⭐ جميع الأقسام' : cat}
                                         </span>
@@ -3922,7 +4050,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                   )}
                                 </div>
                               </div>
-                              <span className="text-xs font-bold text-slate-300 bg-white/[0.05] px-3 py-1.5 rounded-full border border-white/10 shrink-0 transition">
+                              <span
+                                className={`text-xs font-bold px-3 py-1.5 rounded-full border shrink-0 transition ${
+                                  isDarkTheme ? 'text-slate-300 bg-white/[0.05] border-white/10' : 'text-slate-700 bg-slate-100 border-slate-200'
+                                }`}
+                              >
                                 اختيار ➔
                               </span>
                             </div>
@@ -3930,9 +4062,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         })}
 
                         {qualifiedSpecialists.length === 0 && (
-                          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs text-center space-y-1">
+                          <div className={`p-4 rounded-2xl border text-xs text-center space-y-1 ${
+                            isDarkTheme ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
+                          }`}>
                             <p className="font-bold">جميع مقدمي الخدمة متاحون لخدمتك في هذا القسم</p>
-                            <p className="text-[11px] text-amber-400/80">اختر "أي مختص متاح" للمتابعة وتأكيد موعدك مباشرة.</p>
+                            <p className={`text-[11px] ${isDarkTheme ? 'text-amber-400/80' : 'text-amber-700'}`}>اختر "أي مختص متاح" للمتابعة وتأكيد موعدك مباشرة.</p>
                           </div>
                         )}
                       </div>
@@ -4035,30 +4169,34 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                   return (
                     <div className="space-y-4 animate-fade-in">
-                      <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md flex items-center justify-between text-xs">
+                      <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
+                        isDarkTheme ? 'bg-white/[0.03] border-white/[0.07] backdrop-blur-md' : 'bg-white border-slate-200 shadow-sm'
+                      }`}>
                         <div className="flex items-center gap-2">
-                          <span className="text-slate-400">المختص:</span>
-                          <strong style={{ color: brandSecondary }}>{selectedBookingSpecialist?.name || 'أي مختص متاح (الأسرع)'}</strong>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>المختص:</span>
+                          <strong style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>
+                            {selectedBookingSpecialist?.name || 'أي مختص متاح (الأسرع)'}
+                          </strong>
                         </div>
                         <button
                           type="button"
                           onClick={() => setBookingStep(3)}
-                          className="text-slate-400 hover:text-white font-bold"
+                          className={`font-bold ${isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}`}
                         >
                           تغيير المختص
                         </button>
                       </div>
 
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-slate-300 block px-1">الخطوة 4: اختر يوم ووقت الحضور:</span>
-                        <span className="text-[10px] text-slate-400 font-mono">
+                        <span className={`text-xs font-bold block px-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة 4: اختر يوم ووقت الحضور:</span>
+                        <span className={`text-[10px] font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                           ساعات العمل: {rawStart} - {rawEnd}
                         </span>
                       </div>
 
                       {/* Day Selector */}
                       <div className="space-y-1.5">
-                        <label className="text-[11px] text-slate-400 block">اختر اليوم:</label>
+                        <label className={`text-[11px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>اختر اليوم:</label>
                         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
                           {Array.from({ length: 7 }).map((_, i) => {
                             const d = new Date();
@@ -4075,14 +4213,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 onClick={() => setSelectedBookingDate(iso)}
                                 className={`p-2.5 rounded-2xl text-center shrink-0 min-w-[72px] border transition-all duration-200 ${
                                   isSelected
-                                    ? 'text-black shadow-lg font-black scale-105'
-                                    : 'bg-white/[0.03] border-white/[0.07] text-slate-300 hover:text-white hover:border-white/20'
+                                    ? 'shadow-lg font-black scale-105'
+                                    : isDarkTheme
+                                    ? 'bg-white/[0.03] border-white/[0.07] text-slate-300 hover:text-white hover:border-white/20'
+                                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm'
                                 }`}
                                 style={
                                   isSelected
                                     ? {
                                         backgroundColor: brandSecondary,
                                         borderColor: brandSecondary,
+                                        color: brandColors.contrastOnSecondary,
                                         boxShadow: `0 4px 14px ${brandSecondary}40`,
                                       }
                                     : undefined
@@ -4097,7 +4238,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
 
                       {isSpecialistOffToday && selectedBookingSpecialist && (
-                        <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2">
+                        <div className={`p-3 rounded-2xl border text-xs flex items-center gap-2 ${
+                          isDarkTheme ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
+                        }`}>
                           <AlertCircle className="w-4 h-4 shrink-0" style={{ color: brandSecondary }} />
                           <span>
                             المختص ({selectedBookingSpecialist.name}) في إجازة أسبوعية يوم ({dayArabicName}). يرجى اختيار يوم آخر أو اختيار &quot;أي مختص متاح&quot;.
@@ -4108,10 +4251,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       {/* Time Slots Grid */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                          <label className="text-[11px] text-slate-400 block">
+                          <label className={`text-[11px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                             اختر الموعد المناسب ({selectedBookingDate}):
                           </label>
-                          <span className="text-[10px] text-slate-500">
+                          <span className={`text-[10px] ${isDarkTheme ? 'text-slate-500' : 'text-slate-400'}`}>
                             (المواعيد المحجوزة تُغلق تلقائياً 🔒)
                           </span>
                         </div>
@@ -4127,11 +4270,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                   key={slot}
                                   type="button"
                                   disabled={true}
-                                  className="py-2.5 px-1.5 rounded-xl border border-white/[0.04] bg-white/[0.01] text-slate-600 line-through cursor-not-allowed flex flex-col items-center justify-center opacity-40 transition"
+                                  className={`py-2.5 px-1.5 rounded-xl border line-through cursor-not-allowed flex flex-col items-center justify-center opacity-40 transition ${
+                                    isDarkTheme ? 'border-white/[0.04] bg-white/[0.01] text-slate-600' : 'border-slate-200 bg-slate-100 text-slate-400'
+                                  }`}
                                   title="هذا الموعد محجوز مسبقاً وغير متاح"
                                 >
                                   <span className="font-mono text-xs font-bold">{slot}</span>
-                                  <span className="text-[9px] text-rose-400 font-sans mt-0.5">{slotInfo.label}</span>
+                                  <span className="text-[9px] text-rose-500 font-sans mt-0.5">{slotInfo.label}</span>
                                 </button>
                               );
                             }
@@ -4143,21 +4288,24 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 onClick={() => setSelectedBookingTime(slot)}
                                 className={`py-2.5 px-1.5 rounded-xl border flex flex-col items-center justify-center transition-all duration-200 shadow-sm ${
                                   isSelected
-                                    ? 'text-black shadow-md scale-[1.02] font-black'
-                                    : 'bg-white/[0.03] border-white/[0.07] text-slate-200 hover:text-white'
+                                    ? 'shadow-md scale-[1.02] font-black'
+                                    : isDarkTheme
+                                    ? 'bg-white/[0.03] border-white/[0.07] text-slate-200 hover:text-white'
+                                    : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
                                 }`}
                                 style={
                                   isSelected
                                     ? {
                                         backgroundColor: brandSecondary,
                                         borderColor: brandSecondary,
+                                        color: brandColors.contrastOnSecondary,
                                         boxShadow: `0 4px 14px ${brandSecondary}40`,
                                       }
                                     : undefined
                                 }
                               >
                                 <span className="font-mono text-xs font-bold">{slot}</span>
-                                <span className={`text-[9px] mt-0.5 font-sans ${isSelected ? 'text-black font-black' : 'text-emerald-400'}`}>
+                                <span className={`text-[9px] mt-0.5 font-sans ${isSelected ? 'font-black' : 'text-emerald-500'}`}>
                                   {isSelected ? 'محدد ✓' : slotInfo.label}
                                 </span>
                               </button>
@@ -4170,9 +4318,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         type="button"
                         disabled={!canProceed}
                         onClick={() => setBookingStep(5)}
-                        className="w-full py-3.5 rounded-2xl text-black font-black text-xs shadow-lg transition mt-2 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="w-full py-3.5 rounded-2xl font-black text-xs shadow-lg transition mt-2 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{
                           backgroundColor: brandSecondary,
+                          color: brandColors.contrastOnSecondary,
                           boxShadow: `0 8px 24px ${brandSecondary}35`,
                         }}
                       >
@@ -4190,33 +4339,39 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                   return (
                     <div className="space-y-4 animate-fade-in">
-                      <div className="p-4 sm:p-5 rounded-3xl bg-white/[0.03] border border-white/[0.08] backdrop-blur-xl space-y-3.5 text-xs shadow-xl">
-                        <h4 className="font-bold text-white text-sm pb-2 border-b border-white/[0.07] flex items-center gap-2">
+                      <div className={`p-4 sm:p-5 rounded-3xl border space-y-3.5 text-xs shadow-sm ${
+                        isDarkTheme ? 'bg-white/[0.03] border-white/[0.08] backdrop-blur-xl' : 'bg-white border-slate-200'
+                      }`}>
+                        <h4 className={`font-bold text-sm pb-2 border-b flex items-center gap-2 ${
+                          isDarkTheme ? 'text-white border-white/[0.07]' : 'text-slate-900 border-slate-100'
+                        }`}>
                           <BookmarkCheck className="w-4 h-4" style={{ color: brandSecondary }} />
                           <span>ملخص تفاصيل الموعد والخدمة:</span>
                         </h4>
 
                         <div className="flex justify-between">
-                          <span className="text-slate-400">الخدمة:</span>
-                          <strong className="text-white">{selectedBookingService.name}</strong>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>الخدمة:</span>
+                          <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{selectedBookingService.name}</strong>
                         </div>
 
                         <div className="flex justify-between">
-                          <span className="text-slate-400">القسم:</span>
-                          <span className="font-bold text-slate-300">{selectedBookingService.category}</span>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>القسم:</span>
+                          <span className={`font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>{selectedBookingService.category}</span>
                         </div>
 
                         {flatModifiers.length > 0 && (
-                          <div className="pt-2 pb-1 border-t border-white/[0.07] space-y-1.5">
-                            <span className="text-slate-400 block font-bold">الإضافات والترقيات المختارة:</span>
+                          <div className={`pt-2 pb-1 border-t space-y-1.5 ${isDarkTheme ? 'border-white/[0.07]' : 'border-slate-100'}`}>
+                            <span className={`block font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>الإضافات والترقيات المختارة:</span>
                             <div className="flex flex-wrap gap-1.5">
                               {flatModifiers.map((mod, idx) => (
                                 <span
                                   key={idx}
-                                  className="px-2.5 py-1 rounded-full bg-white/[0.05] border border-white/[0.08] text-slate-200 text-[11px] font-bold flex items-center gap-1"
+                                  className={`px-2.5 py-1 rounded-full border text-[11px] font-bold flex items-center gap-1 ${
+                                    isDarkTheme ? 'bg-white/[0.05] border-white/[0.08] text-slate-200' : 'bg-slate-100 border-slate-200 text-slate-700'
+                                  }`}
                                 >
                                   <span>{mod.name}</span>
-                                  <span className="font-mono" style={{ color: brandSecondary }}>
+                                  <span className="font-mono" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>
                                     {mod.price_delta > 0 ? `(+${mod.price_delta} ر.س)` : '(مجاناً)'}
                                   </span>
                                 </span>
@@ -4225,62 +4380,70 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           </div>
                         )}
 
-                        <div className="flex justify-between pt-2 border-t border-white/[0.07]">
-                          <span className="text-slate-400">المختص المطلوب:</span>
-                          <strong style={{ color: brandSecondary }}>{selectedBookingSpecialist?.name || 'أي مختص متاح'}</strong>
+                        <div className={`flex justify-between pt-2 border-t ${isDarkTheme ? 'border-white/[0.07]' : 'border-slate-100'}`}>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>المختص المطلوب:</span>
+                          <strong style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>
+                            {selectedBookingSpecialist?.name || 'أي مختص متاح'}
+                          </strong>
                         </div>
 
                         <div className="flex justify-between">
-                          <span className="text-slate-400">اليوم والوقت:</span>
-                          <strong dir="ltr" className="text-white font-mono">{selectedBookingDate} في تمام {selectedBookingTime}</strong>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>اليوم والوقت:</span>
+                          <strong dir="ltr" className={`font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{selectedBookingDate} في تمام {selectedBookingTime}</strong>
                         </div>
 
                         <div className="flex justify-between">
-                          <span className="text-slate-400">مدة الجلسة المتوقعة:</span>
-                          <strong className="text-slate-300">{selectedBookingService.duration_minutes || 30} دقيقة</strong>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>مدة الجلسة المتوقعة:</span>
+                          <strong className={isDarkTheme ? 'text-slate-300' : 'text-slate-700'}>{selectedBookingService.duration_minutes || 30} دقيقة</strong>
                         </div>
 
-                        <div className="flex justify-between pt-2 border-t border-white/[0.07]">
-                          <span className="text-slate-400">السعر الإجمالي النهائي:</span>
-                          <span className="text-base font-black font-mono" style={{ color: brandSecondary }}>{finalTotalPrice} ر.س</span>
+                        <div className={`flex justify-between pt-2 border-t ${isDarkTheme ? 'border-white/[0.07]' : 'border-slate-100'}`}>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>السعر الإجمالي النهائي:</span>
+                          <span className={`text-base font-black font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{finalTotalPrice} ر.س</span>
                         </div>
 
                         <div className="flex justify-between">
-                          <span className="text-slate-400">النقاط المكتسبة بعد الحضور:</span>
-                          <span className="text-xs font-bold" style={{ color: brandSecondary }}>+{pointsToEarn} نقطة ولاء ✨</span>
+                          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>النقاط المكتسبة بعد الحضور:</span>
+                          <span className="text-xs font-bold" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>+{pointsToEarn} نقطة ولاء ✨</span>
                         </div>
                       </div>
 
                       <div className="space-y-1.5">
-                        <label className="text-xs font-medium text-slate-300 block">ملاحظات إضافية للمتجر (اختياري):</label>
+                        <label className={`text-xs font-medium block ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>ملاحظات إضافية للمتجر (اختياري):</label>
                         <textarea
                           value={bookingNotes}
                           onChange={(e) => setBookingNotes(e.target.value)}
                           placeholder="مثال: يرجى تجهيز كرسي خاص، أو أي تفاصيل تخص طلبك..."
                           rows={2}
-                          className="w-full bg-white/[0.03] border border-white/[0.08] rounded-2xl px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                          className={`w-full rounded-2xl px-3 py-2 text-xs outline-none border ${
+                            isDarkTheme
+                              ? 'bg-white/[0.03] border-white/[0.08] text-white placeholder-slate-500'
+                              : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400'
+                          }`}
                         />
                       </div>
 
                       {/* 💳 طرق وسياسة سداد الحجز */}
-                      <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/[0.08] space-y-2.5">
-                        <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+                      <div className={`p-3.5 rounded-2xl border space-y-2.5 ${
+                        isDarkTheme ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-slate-50 border-slate-200'
+                      }`}>
+                        <div className={`flex items-center justify-between text-xs font-bold ${isDarkTheme ? 'text-slate-200' : 'text-slate-700'}`}>
                           <span className="flex items-center gap-1.5">
-                            <CreditCard className="w-4 h-4 text-purple-400" />
+                            <CreditCard className="w-4 h-4 text-purple-500" />
                             <span>طريقة سداد الموعد:</span>
                           </span>
                           {effectiveBookingsPolicy === 'online_only' && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/40 font-bold">
                               🔒 سداد مسبق إلزامي
                             </span>
                           )}
                           {effectiveBookingsPolicy === 'pay_at_store_only' && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold">
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-600 border border-blue-500/40 font-bold">
                               💵 عند الحضور بالمركز
                             </span>
                           )}
                           {effectiveBookingsPolicy === 'both' && (
-                            <span className="text-[10px] text-slate-400 font-mono">
+                            <span className={`text-[10px] font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                               اختر طريقتك المفضلة
                             </span>
                           )}
@@ -4293,15 +4456,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               onClick={() => setBookingPaymentMethod('online')}
                               className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
                                 bookingPaymentMethod === 'online'
-                                  ? 'bg-purple-500/20 border-purple-500/50 text-purple-200 shadow-sm'
-                                  : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-white'
+                                  ? 'bg-purple-500/20 border-purple-500/50 text-purple-700 shadow-sm'
+                                  : isDarkTheme
+                                  ? 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-white'
+                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                               }`}
                             >
                               <span className="text-xs font-black flex items-center gap-1">
                                 <span>💳 دفع إلكتروني فوري</span>
-                                {bookingPaymentMethod === 'online' && <Check className="w-3.5 h-3.5 mr-auto text-purple-400" />}
+                                {bookingPaymentMethod === 'online' && <Check className="w-3.5 h-3.5 mr-auto text-purple-500" />}
                               </span>
-                              <span className="text-[10px] text-slate-400">تأكيد الموعد والمقعد 100%</span>
+                              <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>تأكيد الموعد والمقعد 100%</span>
                             </button>
 
                             <button
@@ -4309,24 +4474,30 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               onClick={() => setBookingPaymentMethod('pay_at_store')}
                               className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
                                 bookingPaymentMethod === 'pay_at_store'
-                                  ? 'bg-blue-500/20 border-blue-500/50 text-blue-200 shadow-sm'
-                                  : 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-white'
+                                  ? 'bg-blue-500/20 border-blue-500/50 text-blue-700 shadow-sm'
+                                  : isDarkTheme
+                                  ? 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-white'
+                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                               }`}
                             >
                               <span className="text-xs font-black flex items-center gap-1">
                                 <span>💵 عند الحضور بالمركز</span>
-                                {bookingPaymentMethod === 'pay_at_store' && <Check className="w-3.5 h-3.5 mr-auto text-blue-400" />}
+                                {bookingPaymentMethod === 'pay_at_store' && <Check className="w-3.5 h-3.5 mr-auto text-blue-500" />}
                               </span>
-                              <span className="text-[10px] text-slate-400">نقداً أو شبكة بالاستقبال</span>
+                              <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>نقداً أو شبكة بالاستقبال</span>
                             </button>
                           </div>
                         ) : effectiveBookingsPolicy === 'online_only' ? (
-                          <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 text-[11px] flex items-center gap-2">
-                            <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />
+                          <div className={`p-2.5 rounded-xl border text-[11px] flex items-center gap-2 ${
+                            isDarkTheme ? 'bg-purple-950/40 border-purple-500/30 text-purple-200' : 'bg-purple-50 border-purple-200 text-purple-800'
+                          }`}>
+                            <ShieldCheck className="w-4 h-4 text-purple-500 shrink-0" />
                             <span>يشترط المركز السداد الإلكتروني المسبق لتأكيد الموعد وضمان عدم تضارب الجداول.</span>
                           </div>
                         ) : (
-                          <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-slate-300 text-[11px] flex items-center gap-2">
+                          <div className={`p-2.5 rounded-xl border text-[11px] flex items-center gap-2 ${
+                            isDarkTheme ? 'bg-white/[0.03] border-white/[0.08] text-slate-300' : 'bg-white border-slate-200 text-slate-700'
+                          }`}>
                             <span className="text-base">💵</span>
                             <span>يتم سداد قيمة الخدمة في صالة الاستقبال بالمركز عند موعد حضورك.</span>
                           </div>
@@ -4363,7 +4534,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         <button
                           type="button"
                           onClick={() => setBookingStep(4)}
-                          className="w-full py-2 text-slate-400 hover:text-white text-xs text-center"
+                          className={`w-full py-2 text-xs text-center ${isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}`}
                         >
                           الرجوع لتعديل الموعد أو الوقت
                         </button>
@@ -4375,15 +4546,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             )}
 
             {/* 📋 Active and Past Bookings (مواعيدي السابقة والقادمة) */}
-            <div className="mt-8 pt-6 border-t border-white/[0.08] space-y-4">
-              <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+            <div className={`mt-8 pt-6 border-t space-y-4 ${isDarkTheme ? 'border-white/[0.08]' : 'border-slate-200'}`}>
+              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
                 <Calendar className="w-4 h-4" style={{ color: brandSecondary }} />
                 <span>مواعيدي السابقة والقادمة (تحديث مباشر)</span>
               </h3>
               
               {customerServiceBookings.length === 0 ? (
-                <div className="py-8 text-center text-slate-400 space-y-2 bg-white/[0.02] rounded-3xl border border-white/[0.06]">
-                  <Calendar className="w-8 h-8 mx-auto text-slate-600" />
+                <div className={`py-8 text-center space-y-2 rounded-3xl border ${
+                  isDarkTheme ? 'text-slate-400 bg-white/[0.02] border-white/[0.06]' : 'text-slate-500 bg-white border-slate-200 shadow-sm'
+                }`}>
+                  <Calendar className="w-8 h-8 mx-auto text-slate-400" />
                   <p className="text-xs">لا توجد مواعيد مسجلة برقمك حتى الآن.</p>
                 </div>
               ) : (
@@ -4396,10 +4569,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     return (
                       <div
                         key={bk.id}
-                        className={`p-4 sm:p-5 rounded-3xl border transition-all duration-300 shadow-xl relative overflow-hidden backdrop-blur-xl ${
-                          isLive 
-                            ? 'bg-[#0B0F19]/95 border-white/[0.12] ring-1 ring-white/[0.05]' 
-                            : 'bg-[#0B0F19]/70 border-white/[0.06] opacity-90'
+                        className={`p-4 sm:p-5 rounded-3xl border transition-all duration-300 shadow-lg relative overflow-hidden ${
+                          isDarkTheme
+                            ? (isLive ? 'bg-[#0B0F19]/95 border-white/[0.12] ring-1 ring-white/[0.05]' : 'bg-[#0B0F19]/70 border-white/[0.06] opacity-90')
+                            : (isLive ? 'bg-white border-slate-200 shadow-md ring-1 ring-slate-100' : 'bg-slate-50 border-slate-200 opacity-90')
                         }`}
                       >
                         {isLive && (
@@ -4413,54 +4586,64 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           <div className="flex items-center gap-2 flex-wrap">
                             <span
                               dir="ltr"
-                              className="text-[11px] px-3 py-1 rounded-full font-mono font-black bg-white/[0.05] border"
-                              style={{ color: brandSecondary, borderColor: `${brandSecondary}40` }}
+                              className={`text-[11px] px-3 py-1 rounded-full font-mono font-black border ${
+                                isDarkTheme ? 'bg-white/[0.05]' : 'bg-slate-100'
+                              }`}
+                              style={{
+                                color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
+                                borderColor: `${brandSecondary}40`,
+                              }}
                             >
                               #{bk.booking_number}
                             </span>
                             {bk.service_category && (
-                              <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-white/[0.06] text-slate-300 border border-white/[0.08] font-bold">
+                              <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold border ${
+                                isDarkTheme ? 'bg-white/[0.06] text-slate-300 border-white/[0.08]' : 'bg-slate-100 text-slate-700 border-slate-200'
+                              }`}>
                                 {bk.service_category}
                               </span>
                             )}
                             {bk.payment_status === 'paid' ? (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 font-bold flex items-center gap-1 border border-emerald-500/40">
                                 💳 مسدد أونلاين ✅
                               </span>
                             ) : (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1">
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 font-bold flex items-center gap-1 border border-amber-500/30">
                                 💵 الدفع عند الحضور
                               </span>
                             )}
                           </div>
-                          <span className="text-[10px] font-mono text-slate-400">
+                          <span className={`text-[10px] font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                             {new Date(bk.created_at).toLocaleDateString('ar-SA')}
                           </span>
                         </div>
 
                         {/* Live Tracking Progress Bar for Bookings */}
                         {isLive && (
-                          <div className="mb-4 bg-white/[0.02] p-3.5 rounded-2xl border border-white/[0.06]">
+                          <div className={`mb-4 p-3.5 rounded-2xl border ${
+                            isDarkTheme ? 'bg-white/[0.02] border-white/[0.06]' : 'bg-slate-50 border-slate-200'
+                          }`}>
                             <div className="flex justify-between items-end mb-2.5">
                               <div className="text-right">
                                 <h4
-                                  className={`text-xs sm:text-sm font-black ${isConfirmed ? 'text-emerald-400' : ''}`}
-                                  style={!isConfirmed ? { color: brandSecondary } : undefined}
+                                  className={`text-xs sm:text-sm font-black ${
+                                    isConfirmed ? 'text-emerald-500' : isDarkTheme ? 'text-white' : 'text-slate-900'
+                                  }`}
                                 >
                                   {isConfirmed ? '✅ تم تأكيد الحجز رسمياً' : '⏳ قيد المراجعة في الاستقبال'}
                                 </h4>
-                                <p className="text-[10px] text-slate-400 mt-0.5">
+                                <p className={`text-[10px] mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                                   {isConfirmed ? 'المختص بانتظارك في الموعد المحدد' : 'ننتظر تأكيد الصالون أو توفر المختص'}
                                 </p>
                               </div>
                               {isConfirmed && (
-                                <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                                <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-500">
                                   <Calendar className="w-4 h-4" />
                                 </div>
                               )}
                             </div>
                             
-                            <div className="relative h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                            <div className={`relative h-1.5 rounded-full overflow-hidden ${isDarkTheme ? 'bg-white/[0.06]' : 'bg-slate-200'}`}>
                               <div
                                 className={`absolute top-0 right-0 bottom-0 transition-all duration-1000 ${isConfirmed ? 'w-full bg-emerald-500' : 'w-1/2'}`}
                                 style={!isConfirmed ? { backgroundColor: brandSecondary } : undefined}
@@ -4471,27 +4654,29 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         
                         {/* Cancelled State */}
                         {isCancelled && (
-                          <div className="mb-3.5 bg-rose-950/20 p-3 rounded-2xl border border-rose-500/30 text-center">
-                            <span className="text-rose-400 font-bold text-xs">❌ نعتذر، تعذر قبول الحجز أو أن المختص غير متاح</span>
+                          <div className="mb-3.5 bg-rose-500/10 p-3 rounded-2xl border border-rose-500/30 text-center">
+                            <span className="text-rose-600 font-bold text-xs">❌ نعتذر، تعذر قبول الحجز أو أن المختص غير متاح</span>
                           </div>
                         )}
 
-                        <div className="flex justify-between items-center bg-white/[0.02] p-3.5 rounded-2xl border border-white/[0.05]">
+                        <div className={`flex justify-between items-center p-3.5 rounded-2xl border ${
+                          isDarkTheme ? 'bg-white/[0.02] border-white/[0.05]' : 'bg-slate-50 border-slate-200'
+                        }`}>
                           <div className="space-y-1">
-                            <div className="text-sm font-black text-white">
+                            <div className={`text-sm font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                               {bk.service_name || 'خدمة غير محددة'}
                             </div>
-                            <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                            <div className={`text-xs flex items-center gap-1.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                               <Clock className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
-                              <span dir="ltr" className="font-mono text-slate-300">{bk.booking_date} | {bk.booking_time}</span>
+                              <span dir="ltr" className={`font-mono ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>{bk.booking_date} | {bk.booking_time}</span>
                             </div>
                           </div>
                           <div className="text-left">
-                            <div className="text-base font-black font-mono" style={{ color: brandSecondary }}>
-                              {bk.total_price} <span className="text-[10px] text-slate-400 font-bold">ر.س</span>
+                            <div className={`text-base font-black font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                              {bk.total_price} <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>ر.س</span>
                             </div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">
-                              المختص: <span className="text-slate-200 font-medium">{bk.specialist_name || 'أي مختص متاح'}</span>
+                            <div className={`text-[10px] mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                              المختص: <span className={`font-medium ${isDarkTheme ? 'text-slate-200' : 'text-slate-700'}`}>{bk.specialist_name || 'أي مختص متاح'}</span>
                             </div>
                           </div>
                         </div>
@@ -4500,8 +4685,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           <div className="mt-3 text-center">
                             <span className={`text-[10px] px-3 py-1 rounded-full font-bold inline-flex items-center gap-1 ${
                               bk.status === 'completed'
-                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                                : 'bg-white/[0.05] text-slate-400 border border-white/[0.08]'
+                                ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
+                                : isDarkTheme
+                                ? 'bg-white/[0.05] text-slate-400 border border-white/[0.08]'
+                                : 'bg-slate-100 text-slate-600 border border-slate-200'
                             }`}>
                               {bk.status === 'completed' ? '🏁 تمت الخدمة ومكتمل' : '🏖️ العميل لم يحضر'}
                             </span>
@@ -4520,39 +4707,47 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       {activeTab === 'perks' && activeModules.loyalty && (
         <div className="space-y-4 animate-fade-in">
           <div className="flex items-center justify-between">
-            <h3 className="text-base sm:text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
+            <h3 className={`text-base sm:text-lg font-black flex items-center space-x-2 rtl:space-x-reverse ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
               <Gift className="w-5 h-5" style={{ color: brandSecondary }} />
               <span>حصرياتك والقائمة السرية</span>
             </h3>
           </div>
 
           {!customer?.special_date && showSpecialDateForm && (
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] backdrop-blur-md relative overflow-hidden space-y-2.5 shadow-lg">
+            <div className={`p-3.5 sm:p-4 rounded-2xl relative overflow-hidden space-y-2.5 transition-colors ${
+              isDarkTheme
+                ? 'bg-white/[0.03] border border-white/[0.08] backdrop-blur-md shadow-lg text-white'
+                : 'bg-white border border-slate-200/90 shadow-sm text-slate-900'
+            }`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-base">🎁</span>
-                  <h4 className="text-white font-black text-xs sm:text-sm">وثّق يومك المفضل</h4>
+                  <h4 className={`font-black text-xs sm:text-sm ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>وثّق يومك المفضل</h4>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowSpecialDateForm(false)}
-                  className="text-slate-500 hover:text-slate-300 text-[10px] font-bold"
+                  className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-700'}`}
                 >
                   إخفاء
                 </button>
               </div>
 
-              <p className="text-[11px] text-slate-400 leading-relaxed">
+              <p className={`text-[11px] leading-relaxed ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                 سجل يومك المميز مرة واحدة (ميلادك أو زواجك) وخلي هديتك علينا! (لا يمكن تعديله لاحقاً).
               </p>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[9px] font-bold text-slate-400 block mb-0.5">الشهر</label>
+                  <label className={`text-[9px] font-bold block mb-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>الشهر</label>
                   <select
                     value={specialDateMonth}
                     onChange={(e) => setSpecialDateMonth(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                    className={`w-full rounded-xl px-2.5 py-1.5 text-xs outline-none ${
+                      isDarkTheme
+                        ? 'bg-slate-950 border border-slate-800 text-white'
+                        : 'bg-slate-50 border border-slate-200 text-slate-900 focus:bg-white'
+                    }`}
                   >
                     {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
                       <option key={m} value={m}>{m}</option>
@@ -4560,11 +4755,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </select>
                 </div>
                 <div>
-                  <label className="text-[9px] font-bold text-slate-400 block mb-0.5">اليوم</label>
+                  <label className={`text-[9px] font-bold block mb-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>اليوم</label>
                   <select
                     value={specialDateDay}
                     onChange={(e) => setSpecialDateDay(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                    className={`w-full rounded-xl px-2.5 py-1.5 text-xs outline-none ${
+                      isDarkTheme
+                        ? 'bg-slate-950 border border-slate-800 text-white'
+                        : 'bg-slate-50 border border-slate-200 text-slate-900 focus:bg-white'
+                    }`}
                   >
                     {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
                       <option key={d} value={d}>{d}</option>
@@ -4574,11 +4773,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
 
               <div>
-                <label className="text-[9px] font-bold text-slate-400 block mb-0.5">المناسبة</label>
+                <label className={`text-[9px] font-bold block mb-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>المناسبة</label>
                 <select
                   value={specialDateType}
                   onChange={(e) => setSpecialDateType(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                  className={`w-full rounded-xl px-2.5 py-1.5 text-xs outline-none ${
+                    isDarkTheme
+                      ? 'bg-slate-950 border border-slate-800 text-white'
+                      : 'bg-slate-50 border border-slate-200 text-slate-900 focus:bg-white'
+                  }`}
                 >
                   <option value="يوم ميلادي">يوم ميلادي 🎂</option>
                   <option value="يوم زواجي">يوم زواجي 💍</option>
@@ -4596,7 +4799,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     value={specialDateTypeOther}
                     onChange={(e) => setSpecialDateTypeOther(e.target.value)}
                     placeholder="مثال: ذكرى تأسيس مشروعي"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none"
+                    className={`w-full rounded-xl px-2.5 py-1.5 text-xs outline-none ${
+                      isDarkTheme
+                        ? 'bg-slate-950 border border-slate-800 text-white'
+                        : 'bg-slate-50 border border-slate-200 text-slate-900 focus:bg-white'
+                    }`}
                   />
                 </div>
               )}
@@ -4605,8 +4812,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 type="button"
                 onClick={handleSaveSpecialDate}
                 disabled={isSubmittingSpecialDate || (specialDateType === 'أخرى' && !specialDateTypeOther.trim())}
-                className="w-full py-2.5 rounded-xl font-black text-black text-xs transition shadow-md active:scale-95 disabled:opacity-50"
-                style={{ backgroundColor: brandSecondary }}
+                className={`w-full py-2.5 rounded-xl font-black text-xs transition shadow-md active:scale-95 disabled:opacity-50 ${
+                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                }`}
+                style={{
+                  backgroundColor: brandSecondary,
+                  color: brandColors.contrastOnSecondary,
+                }}
               >
                 {isSubmittingSpecialDate ? 'جاري الاعتماد...' : 'اعتماد وحفظ المناسبة'}
               </button>
@@ -4614,19 +4826,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           )}
 
           {privileges.filter((p) => p.is_active && !p.is_hidden).length === 0 ? (
-            <div className="rounded-3xl p-8 border border-slate-800/80 bg-slate-900/40 backdrop-blur-xl text-center space-y-3 shadow-xl">
+            <div className={`rounded-3xl p-8 border text-center space-y-3 shadow-xl ${
+              isDarkTheme
+                ? 'border-slate-800/80 bg-slate-900/40 backdrop-blur-xl'
+                : 'border-slate-200/90 bg-white'
+            }`}>
               <div
                 className="w-14 h-14 mx-auto rounded-2xl border flex items-center justify-center shadow-inner"
                 style={{
                   backgroundColor: `${brandSecondary}15`,
                   borderColor: `${brandSecondary}30`,
-                  color: brandSecondary,
+                  color: brandColors.textOnLightHex,
                 }}
               >
                 <Gift className="w-7 h-7" />
               </div>
-              <h4 className="text-base font-bold text-white">لا توجد عروض أو مكافآت معلنة حالياً</h4>
-              <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
+              <h4 className={`text-base font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>لا توجد عروض أو مكافآت معلنة حالياً</h4>
+              <p className={`text-xs max-w-xs mx-auto leading-relaxed ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                 ترقبوا قريباً أحدث الامتيازات والمكافآت الحصرية المخصصة لأعضاء برنامج ولاء {store.name} ✨
               </p>
             </div>
@@ -4666,16 +4882,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     key={priv.id}
                     className={`rounded-3xl p-5 border transition-all duration-300 flex flex-col justify-between relative overflow-hidden shadow-xl ${
                       isSoldOut
-                        ? 'bg-slate-950/60 border-slate-800/80 opacity-50'
+                        ? isDarkTheme ? 'bg-slate-950/60 border-slate-800/80 opacity-50' : 'bg-slate-100 border-slate-200 opacity-60'
                         : isUserLimitReached
-                        ? 'bg-slate-900/90 border-slate-700/60'
+                        ? isDarkTheme ? 'bg-slate-900/90 border-slate-700/60' : 'bg-white border-slate-200 shadow-sm'
                         : isTierUnlocked
-                        ? 'bg-slate-900/90 border-slate-800'
-                        : 'bg-slate-950/60 border-slate-800/80 backdrop-blur-sm'
+                        ? isDarkTheme ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200/90 shadow-md'
+                        : isDarkTheme ? 'bg-slate-950/60 border-slate-800/80 backdrop-blur-sm' : 'bg-slate-50 border-slate-200/80'
                     }`}
                   >
                     {priv.image_url && (
-                      <div className="w-full h-40 -mt-1 mb-3.5 rounded-2xl overflow-hidden bg-black/40 relative border border-slate-800/80 shadow-inner">
+                      <div className={`w-full h-40 -mt-1 mb-3.5 rounded-2xl overflow-hidden relative border shadow-inner ${
+                        isDarkTheme ? 'bg-black/40 border-slate-800/80' : 'bg-slate-100 border-slate-200/80'
+                      }`}>
                         <img
                           src={priv.image_url}
                           alt={priv.title}
@@ -4696,7 +4914,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             style={{
                               backgroundColor: `${requiredTier.badge_color || brandSecondary}15`,
                               borderColor: `${requiredTier.badge_color || brandSecondary}40`,
-                              color: requiredTier.badge_color || brandSecondary,
+                              color: requiredTier.badge_color || brandColors.textOnLightHex,
                             }}
                           >
                             <Award className="w-3 h-3" />
@@ -4709,7 +4927,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           style={{
                             backgroundColor: `${brandSecondary}15`,
                             borderColor: `${brandSecondary}30`,
-                            color: brandSecondary,
+                            color: brandColors.textOnLightHex,
                           }}
                         >
                           {priv.cost_points} نقطة
@@ -4717,21 +4935,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
 
                       <div>
-                        <h4 className="font-extrabold text-base text-white">{priv.title}</h4>
+                        <h4 className={`font-extrabold text-base ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{priv.title}</h4>
                         {priv.description && (
-                          <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                          <p className={`text-xs mt-1 leading-relaxed ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                             {priv.description}
                           </p>
                         )}
                       </div>
 
-                      <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1.5 text-[11px]">
-                        <div className="flex items-center justify-between text-slate-300">
-                          <span className="flex items-center gap-1 text-slate-400">
-                            <Clock className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
+                      <div className={`p-3 rounded-2xl border space-y-1.5 text-[11px] ${
+                        isDarkTheme
+                          ? 'bg-slate-950/80 border-slate-800/80'
+                          : 'bg-slate-50 border-slate-200/90'
+                      }`}>
+                        <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                          <span className={`flex items-center gap-1 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                            <Clock className="w-3.5 h-3.5" style={{ color: brandColors.textOnLightHex }} />
                             <span>ساعات الصرف:</span>
                           </span>
-                          <span className="font-mono text-white font-bold">
+                          <span className={`font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                             {priv.valid_start_time && priv.valid_end_time
                               ? `${priv.valid_start_time} - ${priv.valid_end_time}`
                               : 'متاح 24/7'}
@@ -4739,14 +4961,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         </div>
 
                         {priv.per_customer_limit && priv.per_customer_limit > 0 && (
-                          <div className="flex items-center justify-between text-slate-300">
-                            <span className="flex items-center gap-1 text-slate-400">
+                          <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                            <span className={`flex items-center gap-1 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                               <UserCheck className="w-3.5 h-3.5" />
                               <span>الحد لكل عضو:</span>
                             </span>
                             <span className="font-mono font-bold">
                               {customerPurchasedThisCount >= priv.per_customer_limit ? (
-                                <span className="font-bold" style={{ color: brandSecondary }}>استنفدت الحد ({customerPurchasedThisCount}/{priv.per_customer_limit})</span>
+                                <span className="font-bold" style={{ color: brandColors.textOnLightHex }}>استنفدت الحد ({customerPurchasedThisCount}/{priv.per_customer_limit})</span>
                               ) : (
                                 <span>{priv.per_customer_limit} رمز (حصلت على {customerPurchasedThisCount})</span>
                               )}
@@ -4755,12 +4977,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         )}
 
                         {remainingStock !== null && (
-                          <div className="flex items-center justify-between text-slate-400">
+                          <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                             <span>الكمية المتاحة:</span>
                             <span
                               className="font-mono font-bold"
                               style={{
-                                color: remainingStock <= 3 ? '#F43F5E' : brandSecondary,
+                                color: remainingStock <= 3 ? '#F43F5E' : brandColors.textOnLightHex,
                               }}
                             >
                               {remainingStock} فقط
@@ -4770,20 +4992,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-800">
+                    <div className={`mt-4 pt-3 border-t ${isDarkTheme ? 'border-slate-800' : 'border-slate-200'}`}>
                       {isSoldOut ? (
                         <button
                           disabled
-                          className="w-full py-3 rounded-2xl bg-slate-800 text-slate-500 font-bold text-xs cursor-not-allowed"
+                          className={`w-full py-3 rounded-2xl font-bold text-xs cursor-not-allowed ${
+                            isDarkTheme ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400 border border-slate-200'
+                          }`}
                         >
                           نفدت الكمية 🚫
                         </button>
                       ) : isUserLimitReached ? (
-                        <div className="p-2.5 rounded-2xl bg-slate-800/80 border border-slate-700 text-slate-300 text-center text-xs font-bold">
+                        <div className={`p-2.5 rounded-2xl text-center text-xs font-bold border ${
+                          isDarkTheme
+                            ? 'bg-slate-800/80 border-slate-700 text-slate-300'
+                            : 'bg-slate-100 border-slate-200 text-slate-700'
+                        }`}>
                           استنفدت الحد المسموح لك من هذا الامتياز ✓
                         </div>
                       ) : !isTierUnlocked ? (
-                        <div className="text-center text-[11px] py-1.5 font-bold" style={{ color: brandSecondary }}>
+                        <div className="text-center text-[11px] py-1.5 font-bold" style={{ color: brandColors.textOnLightHex }}>
                           ارتقِ إلى {requiredTier?.tier_name} لفتح هذا الامتياز
                         </div>
                       ) : (
@@ -4802,14 +5030,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             (!customer || hasEnoughPoints)
                               ? {
                                   backgroundColor: brandSecondary,
-                                  color: '#000000',
+                                  color: brandColors.contrastOnSecondary,
                                 }
                               : undefined
                           }
                           className={`w-full py-3 rounded-2xl font-black text-xs flex items-center justify-center space-x-1.5 rtl:space-x-reverse transition shadow-lg ${
+                            brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                          } ${
                             (!customer || hasEnoughPoints)
-                              ? 'hover:brightness-110'
-                              : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                              ? 'hover:brightness-110 active:scale-95'
+                              : isDarkTheme
+                              ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                              : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                           }`}
                         >
                           <ShoppingBag className="w-4 h-4" />
@@ -4836,11 +5068,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         <div className="space-y-5 animate-fade-in pb-28">
           {/* 👑 VIP Tier Progress & Rank Bar (مكانتي المدمجة) */}
           <div
-            className="p-4 rounded-3xl border shadow-xl relative overflow-hidden backdrop-blur-md"
-            style={{
-              borderColor: `${brandSecondary}40`,
-              background: `linear-gradient(135deg, ${brandSecondary}15 0%, #0F172A 60%, #020617 100%)`,
-            }}
+            className="p-4 rounded-3xl border shadow-xl relative overflow-hidden backdrop-blur-md transition-colors"
+            style={
+              isDarkTheme
+                ? {
+                    borderColor: `${brandSecondary}40`,
+                    background: `linear-gradient(135deg, ${brandSecondary}15 0%, #0F172A 60%, #020617 100%)`,
+                  }
+                : {
+                    borderColor: `${brandSecondary}35`,
+                    background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${brandSecondary}12 100%)`,
+                  }
+            }
           >
             <div className="flex items-center justify-between mb-2.5">
               <div className="flex items-center gap-2.5">
@@ -4848,19 +5087,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-lg shadow-inner"
                   style={{
                     backgroundColor: `${currentTierObj?.badge_color || brandSecondary}25`,
-                    color: currentTierObj?.badge_color || brandSecondary,
+                    color: currentTierObj?.badge_color || brandColors.textOnLightHex,
                     border: `1px solid ${currentTierObj?.badge_color || brandSecondary}40`,
                   }}
                 >
                   <Crown className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-[11px] text-slate-400 font-medium">مكانتك ومستواك الحالي:</div>
-                  <div className="text-base font-black text-white flex items-center gap-2">
+                  <div className={`text-[11px] font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                    مكانتك ومستواك الحالي:
+                  </div>
+                  <div className={`text-base font-black flex items-center gap-2 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                     <span>{currentTierObj?.tier_name || 'عضو مميز'}</span>
                     <span
-                      className="text-[10px] px-2 py-0.5 rounded-full font-bold font-mono"
-                      style={{ backgroundColor: brandSecondary, color: '#000000' }}
+                      className={`text-[10px] px-2 py-0.5 rounded-full font-bold font-mono ${
+                        brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                      }`}
+                      style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
                     >
                       {customer?.lifetime_xp || 0} XP
                     </span>
@@ -4870,8 +5113,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
               {nextTierObj && (
                 <div className="text-left">
-                  <span className="text-[10px] text-slate-400 block font-medium">المستوى القادم:</span>
-                  <span className="text-xs font-bold text-amber-300 font-mono">
+                  <span className={`text-[10px] block font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                    المستوى القادم:
+                  </span>
+                  <span className={`text-xs font-bold font-mono ${isDarkTheme ? 'text-amber-300' : 'text-amber-600'}`}>
                     {nextTierObj.tier_name}
                   </span>
                 </div>
@@ -4880,8 +5125,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
             {/* Smart Visual Progress Bar */}
             {nextTierObj ? (
-              <div className="space-y-1.5 mt-2 bg-slate-950/60 p-2.5 rounded-2xl border border-white/5">
-                <div className="w-full bg-slate-900 rounded-full h-2.5 overflow-hidden border border-slate-800 p-0.5">
+              <div className={`space-y-1.5 mt-2 p-2.5 rounded-2xl border ${
+                isDarkTheme ? 'bg-slate-950/60 border-white/5' : 'bg-slate-50 border-slate-200/90'
+              }`}>
+                <div className={`w-full rounded-full h-2.5 overflow-hidden border p-0.5 ${
+                  isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-slate-200 border-slate-300'
+                }`}>
                   <div
                     className="h-full rounded-full transition-all duration-700 shadow-sm"
                     style={{
@@ -4890,9 +5139,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     }}
                   />
                 </div>
-                <div className="flex items-center justify-between text-[10px] font-mono text-slate-300">
-                  <span>نسبة التقدم: <strong className="text-white">{progressPercent}%</strong></span>
-                  <span className="text-amber-300 font-bold">
+                <div className={`flex items-center justify-between text-[10px] font-mono ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                  <span>نسبة التقدم: <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{progressPercent}%</strong></span>
+                  <span className={`font-bold ${isDarkTheme ? 'text-amber-300' : 'text-amber-700'}`}>
                     باقي {xpNeeded} XP للوصول لـ {nextTierObj.tier_name} 🚀
                   </span>
                 </div>
@@ -4907,11 +5156,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
           <div className="flex items-center justify-between pt-1">
             <div>
-              <h3 className="text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
+              <h3 className={`text-lg font-black flex items-center space-x-2 rtl:space-x-reverse ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                 <Ticket className="w-5 h-5" style={{ color: brandSecondary }} />
                 <span>عروضي وكوبوناتي المحفوظة 🎟️</span>
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className={`text-xs mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                 العروض التي قمت بشرائها بنقاطك، جاهزة للصرف عند الكاشير
               </p>
             </div>
@@ -4921,19 +5170,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           </div>
 
           {customerCoupons.length === 0 ? (
-            <div className="py-14 text-center text-slate-400 border border-dashed border-slate-800 rounded-3xl bg-slate-950/40 space-y-3">
-              <Ticket className="w-12 h-12 mx-auto text-slate-600 mb-1" />
-              <h4 className="text-base font-bold text-white">لا توجد امتيازات محفوظة حالياً</h4>
-              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            <div className={`py-14 text-center border border-dashed rounded-3xl space-y-3 ${
+              isDarkTheme
+                ? 'border-slate-800 bg-slate-950/40 text-slate-400'
+                : 'border-slate-200 bg-white text-slate-500 shadow-sm'
+            }`}>
+              <Ticket className="w-12 h-12 mx-auto text-slate-400 mb-1" />
+              <h4 className={`text-base font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>لا توجد امتيازات محفوظة حالياً</h4>
+              <p className={`text-xs max-w-sm mx-auto ${isDarkTheme ? 'text-slate-500' : 'text-slate-600'}`}>
                 استبدل رصيد نقاطك من قائمة حصرياتك لتفتح هدايا وتذاكر فورية 🎁
               </p>
               <button
                 onClick={() => setActiveTab('perks')}
                 style={{
                   backgroundColor: brandSecondary,
-                  color: '#000000',
+                  color: brandColors.contrastOnSecondary,
                 }}
-                className="px-5 py-2.5 rounded-2xl font-bold text-xs shadow-lg transition hover:brightness-110"
+                className={`px-5 py-2.5 rounded-2xl font-bold text-xs shadow-lg transition hover:brightness-110 active:scale-95 ${
+                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                }`}
               >
                 استكشف حصرياتك 🚀
               </button>
@@ -4954,31 +5209,36 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     key={coupon.id}
                     className={`relative rounded-3xl p-5 border transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-xl ${
                       isUsed
-                        ? 'bg-slate-950/40 border-slate-800/80 opacity-50'
+                        ? isDarkTheme ? 'bg-slate-950/40 border-slate-800/80 opacity-50' : 'bg-slate-100 border-slate-200 opacity-60'
                         : isSelected
                         ? 'border-2'
                         : isFrozen
-                        ? 'bg-slate-900/90 border-slate-700/60'
-                        : 'bg-slate-900/90 border-slate-800'
+                        ? isDarkTheme ? 'bg-slate-900/90 border-slate-700/60' : 'bg-slate-50 border-slate-200'
+                        : isDarkTheme ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200/90 shadow-md'
                     }`}
                     style={
                       isSelected
-                        ? {
-                            borderColor: brandSecondary,
-                            background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0F172A 60%, #020617 100%)`,
-                          }
+                        ? isDarkTheme
+                          ? {
+                              borderColor: brandSecondary,
+                              background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0F172A 60%, #020617 100%)`,
+                            }
+                          : {
+                              borderColor: brandSecondary,
+                              background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${brandSecondary}15 100%)`,
+                            }
                         : undefined
                     }
                   >
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-xs text-slate-300 select-all">
+                          <span className={`font-mono font-bold text-xs select-all ${isDarkTheme ? 'text-slate-300' : 'text-slate-800'}`}>
                             {coupon.coupon_code}
                           </span>
                           <button
                             onClick={() => copyToClipboard(coupon.coupon_code, coupon.id)}
-                            className="text-slate-500 hover:text-white transition"
+                            className={`${isDarkTheme ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-800'} transition`}
                             title="نسخ الرمز"
                           >
                             {copiedCodeKey === coupon.id ? (
@@ -5005,7 +5265,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
 
                       {coupon.privilege_image_url && (
-                        <div className="w-full h-32 rounded-xl overflow-hidden bg-black/40 relative border border-slate-800/80 my-2">
+                        <div className={`w-full h-32 rounded-xl overflow-hidden relative border my-2 ${
+                          isDarkTheme ? 'bg-black/40 border-slate-800/80' : 'bg-slate-100 border-slate-200'
+                        }`}>
                           <img
                             src={coupon.privilege_image_url}
                             alt={coupon.privilege_title}
@@ -5015,41 +5277,43 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         </div>
                       )}
 
-                      <h4 className="font-black text-base text-white">{coupon.privilege_title}</h4>
+                      <h4 className={`font-black text-base ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{coupon.privilege_title}</h4>
 
-                      <div className="p-2.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-1 text-[11px]">
-                        <div className="flex items-center justify-between text-slate-400">
+                      <div className={`p-2.5 rounded-2xl border space-y-1 text-[11px] ${
+                        isDarkTheme ? 'bg-slate-950/80 border-slate-800/80' : 'bg-slate-50 border-slate-200/90'
+                      }`}>
+                        <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                           <span>ساعات الصرف:</span>
-                          <span className="font-mono font-bold" style={{ color: brandSecondary }}>
+                          <span className="font-mono font-bold" style={{ color: brandColors.textOnLightHex }}>
                             {coupon.valid_start_time && coupon.valid_end_time
                               ? `${coupon.valid_start_time} - ${coupon.valid_end_time}`
                               : 'متاح 24/7'}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-slate-400">
+                        <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                           <span>القيمة:</span>
-                          <span className="font-mono text-white font-bold">{coupon.cost_points} نقطة</span>
+                          <span className={`font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{coupon.cost_points} نقطة</span>
                         </div>
                       </div>
                     </div>
 
                     {!isUsed && (
-                      <div className="mt-4 pt-3 border-t border-slate-800">
+                      <div className={`mt-4 pt-3 border-t ${isDarkTheme ? 'border-slate-800' : 'border-slate-200'}`}>
                         <button
                           onClick={() => handleSelectCouponForRedeem(coupon)}
                           style={
                             isSelected
                               ? {
                                   backgroundColor: brandSecondary,
-                                  color: '#000000',
+                                  color: brandColors.contrastOnSecondary,
                                 }
                               : undefined
                           }
                           className={`w-full py-2.5 rounded-2xl font-black text-xs flex items-center justify-center space-x-1.5 rtl:space-x-reverse transition shadow-lg ${
                             isSelected
-                              ? 'shadow-lg'
+                              ? (brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white shadow-lg' : 'shadow-lg')
                               : isFrozen
-                              ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                              ? isDarkTheme ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
                               : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20'
                           }`}
                         >
@@ -5070,15 +5334,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         <div className="space-y-5 animate-fade-in">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-lg font-black text-white flex items-center space-x-2 rtl:space-x-reverse">
+              <h3 className={`text-lg font-black flex items-center space-x-2 rtl:space-x-reverse ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                 <Crown className="w-5 h-5" style={{ color: brandSecondary }} />
                 <span>مكانتك ومستويات الـ VIP 👑</span>
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className={`text-xs mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                 ارتقِ في مكانتك مع كل زيارة لتحصل على مكافآت وقوائم حصرية
               </p>
             </div>
-            <span className="text-xs bg-slate-900 px-3 py-1 rounded-full border border-slate-800 font-mono text-slate-300">
+            <span className={`text-xs px-3 py-1 rounded-full border font-mono ${
+              isDarkTheme ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-white border-slate-200 text-slate-600 shadow-sm'
+            }`}>
               {sortedTiers.length} مستويات
             </span>
           </div>
@@ -5095,23 +5361,30 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     isCurrent
                       ? 'border-2'
                       : isReached
-                      ? 'bg-slate-900/90 border-slate-800'
-                      : 'bg-slate-950/60 border-slate-800/80 opacity-60'
+                      ? isDarkTheme ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200/90 shadow-md'
+                      : isDarkTheme ? 'bg-slate-950/60 border-slate-800/80 opacity-60' : 'bg-slate-50/80 border-slate-200 opacity-60'
                   }`}
                   style={
                     isCurrent
-                      ? {
-                          borderColor: brandSecondary,
-                          background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0F172A 60%, #020617 100%)`,
-                        }
+                      ? isDarkTheme
+                        ? {
+                            borderColor: brandSecondary,
+                            background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0F172A 60%, #020617 100%)`,
+                          }
+                        : {
+                            borderColor: brandSecondary,
+                            background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${brandSecondary}15 100%)`,
+                          }
                       : undefined
                   }
                 >
                   {isCurrent && (
                     <div className="absolute top-3 left-3 rtl:right-3 rtl:left-auto">
                       <span
-                        className="px-2.5 py-0.5 rounded-full font-black text-[10px]"
-                        style={{ backgroundColor: brandSecondary, color: '#000000' }}
+                        className={`px-2.5 py-0.5 rounded-full font-black text-[10px] ${
+                          brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                        }`}
+                        style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
                       >
                         مكانتك الحالية ✨
                       </span>
@@ -5124,26 +5397,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       style={{
                         backgroundColor: `${t.badge_color || brandSecondary}20`,
                         borderColor: `${t.badge_color || brandSecondary}60`,
-                        color: t.badge_color || brandSecondary,
+                        color: t.badge_color || brandColors.textOnLightHex,
                       }}
                     >
                       {idx === 0 ? '🥉' : idx === 1 ? '🥈' : idx === 2 ? '🥇' : '👑'}
                     </div>
 
-                    <h4 className="font-extrabold text-base text-white">{t.tier_name}</h4>
-                    <p className="text-xs text-slate-400 font-mono">
-                      الشرط: <strong style={{ color: brandSecondary }}>{t.required_xp} XP</strong> تراكمي
+                    <h4 className={`font-extrabold text-base ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{t.tier_name}</h4>
+                    <p className={`text-xs font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                      الشرط: <strong style={{ color: brandColors.textOnLightHex }}>{t.required_xp} XP</strong> تراكمي
                     </p>
 
-                    <div className="pt-2 text-[11px] text-slate-300">
+                    <div className={`pt-2 text-[11px] ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
                       {isReached ? (
-                        <span className="text-emerald-400 font-bold flex items-center gap-1">
+                        <span className="text-emerald-500 font-bold flex items-center gap-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>مستوى مفتوح ومفعل ✓</span>
                         </span>
                       ) : (
-                        <span className="text-slate-400">
-                          باقي <strong className="font-mono" style={{ color: brandSecondary }}>{t.required_xp - (customer?.lifetime_xp || 0)} XP</strong> للوصول
+                        <span>
+                          باقي <strong className="font-mono" style={{ color: brandColors.textOnLightHex }}>{t.required_xp - (customer?.lifetime_xp || 0)} XP</strong> للوصول
                         </span>
                       )}
                     </div>
@@ -5227,8 +5500,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 }}
                 className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex flex-col items-center justify-center transition-all duration-300 transform active:scale-90 ${
                   activeTab === 'pass'
-                    ? 'scale-110 shadow-2xl ring-4 ring-slate-950'
-                    : 'hover:scale-105 shadow-xl ring-2 ring-slate-900/90'
+                    ? isDarkTheme ? 'scale-110 shadow-2xl ring-4 ring-slate-950' : 'scale-110 shadow-2xl ring-4 ring-white'
+                    : isDarkTheme ? 'hover:scale-105 shadow-xl ring-2 ring-slate-900/90' : 'hover:scale-105 shadow-xl ring-2 ring-slate-200/90'
                 }`}
                 style={{
                   background: brandColors.fabGradient,
@@ -5250,17 +5523,21 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           )}
 
-          <nav className="glass-dock rounded-3xl p-1.5 flex items-center justify-between shadow-[0_-8px_30px_rgba(0,0,0,0.5)] bg-slate-950/95 backdrop-blur-3xl border border-white/10 relative">
+          <nav className={`glass-dock rounded-3xl p-1.5 flex items-center justify-between relative transition-colors duration-300 ${
+            isDarkTheme
+              ? 'shadow-[0_-8px_30px_rgba(0,0,0,0.5)] bg-slate-950/95 backdrop-blur-3xl border border-white/10'
+              : 'shadow-[0_-4px_25px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-3xl border border-slate-200/90'
+          }`}>
             {/* Right Side Group: Menu & Bookings */}
             <div className="flex-1 flex items-center justify-around pl-8 rtl:pl-0 rtl:pr-1">
               {activeModules.orders && (
                 <button
                   onClick={() => setActiveTab('menu')}
-                  style={activeTab === 'menu' ? { color: brandSecondary } : undefined}
+                  style={activeTab === 'menu' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
                   className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'menu'
                       ? 'font-black scale-105'
-                      : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                      : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
                   }`}
                 >
                   <ShoppingBag
@@ -5271,13 +5548,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   {activeTab === 'menu' && (
                     <span
                       className="w-1 h-1 rounded-full animate-fade-in"
-                      style={{ backgroundColor: brandSecondary, boxShadow: `0 0 6px ${brandSecondary}` }}
+                      style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
                     />
                   )}
                   {cartItems.length > 0 && (
                     <span
-                      className="absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm"
-                      style={{ backgroundColor: brandSecondary }}
+                      className={`absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm ${
+                        brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                      }`}
+                      style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
                     >
                       {cartItems.reduce((sum, item) => sum + item.quantity, 0)}
                     </span>
@@ -5288,11 +5567,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               {activeModules.bookings && (
                 <button
                   onClick={() => setActiveTab('services')}
-                  style={activeTab === 'services' ? { color: brandSecondary } : undefined}
+                  style={activeTab === 'services' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
                   className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'services'
                       ? 'font-black scale-105'
-                      : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                      : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
                   }`}
                 >
                   <Calendar
@@ -5303,7 +5582,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   {activeTab === 'services' && (
                     <span
                       className="w-1 h-1 rounded-full animate-fade-in"
-                      style={{ backgroundColor: brandSecondary, boxShadow: `0 0 6px ${brandSecondary}` }}
+                      style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
                     />
                   )}
                 </button>
@@ -5320,11 +5599,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               {activeModules.loyalty && (
                 <button
                   onClick={() => setActiveTab('perks')}
-                  style={activeTab === 'perks' ? { color: brandSecondary } : undefined}
+                  style={activeTab === 'perks' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
                   className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'perks'
                       ? 'font-black scale-105'
-                      : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                      : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
                   }`}
                 >
                   <Gift
@@ -5335,7 +5614,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   {activeTab === 'perks' && (
                     <span
                       className="w-1 h-1 rounded-full animate-fade-in"
-                      style={{ backgroundColor: brandSecondary, boxShadow: `0 0 6px ${brandSecondary}` }}
+                      style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
                     />
                   )}
                 </button>
@@ -5344,11 +5623,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <button
                 type="button"
                 onClick={() => setActiveTab('tickets')}
-                style={activeTab === 'tickets' ? { color: brandSecondary } : undefined}
+                style={activeTab === 'tickets' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
                 className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
                   activeTab === 'tickets'
                     ? 'font-black scale-105'
-                    : 'font-bold text-slate-400 hover:text-white hover:scale-105'
+                    : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
                 }`}
               >
                 <Ticket
@@ -5359,13 +5638,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 {activeTab === 'tickets' && (
                   <span
                     className="w-1 h-1 rounded-full animate-fade-in"
-                    style={{ backgroundColor: brandSecondary, boxShadow: `0 0 6px ${brandSecondary}` }}
+                    style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
                   />
                 )}
                 {activeCouponsCount > 0 && (
                   <span
-                    className="absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-black text-[9px] font-black flex items-center justify-center shadow-sm animate-pulse"
-                    style={{ backgroundColor: brandSecondary }}
+                    className={`absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm animate-pulse ${
+                      brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                    }`}
+                    style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
                   >
                     {activeCouponsCount}
                   </span>
@@ -5707,65 +5988,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {cartItems.length > 0 && activeModules.orders && (
-        <div className="fixed bottom-20 left-3 right-3 max-w-md mx-auto z-40 animate-slide-up">
-          <div
-            onClick={() => setIsCartModalOpen(true)}
-            className="p-3.5 rounded-2xl shadow-2xl border flex items-center justify-between cursor-pointer transition transform hover:scale-[1.01] active:scale-[0.99]"
-            style={{
-              backgroundColor: brandPrimary || '#0F172A',
-              borderColor: `${brandSecondary}60`,
-              boxShadow: `0 10px 25px -5px ${brandSecondary}30`,
-            }}
-          >
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs shrink-0 shadow-inner"
-                style={{
-                  backgroundColor: brandSecondary,
-                  color: '#000000',
-                }}
-              >
-                <ShoppingCart className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-black text-white">
-                    سلة الطلبات ({cartItems.reduce((sum, i) => sum + i.quantity, 0)} أصناف)
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                    +{estimatedLoyaltyPoints} نقطة ✨
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-300 font-mono mt-0.5">
-                  الإجمالي: <strong className="text-white font-bold">{cartSubtotal} ر.س</strong>
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsCartModalOpen(true);
-              }}
-              style={{
-                backgroundColor: brandSecondary,
-                color: '#000000',
-              }}
-              className="px-4 py-2 rounded-xl font-black text-xs flex items-center gap-1 shadow-md hover:brightness-110 transition"
-            >
-              <span>متابعة الطلب</span>
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
-
       {isCustomizeModalOpen && itemToCustomize && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div
-            className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up"
+            className={`w-full max-w-md rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up border transition-colors ${
+              isDarkTheme ? 'bg-slate-900 border-slate-700/80 text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
             style={{ borderColor: `${brandSecondary}40` }}
           >
             <div className="relative h-44 sm:h-48 w-full bg-slate-950 shrink-0">
@@ -5792,18 +6020,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
               <div className="absolute bottom-3 right-4 left-4 text-right">
                 <span
-                  className="text-[10px] px-2.5 py-0.5 rounded-full font-bold inline-block mb-1"
+                  className="text-[10px] px-2.5 py-0.5 rounded-full font-bold inline-block mb-1 keep-white"
                   style={{
-                    backgroundColor: `${brandSecondary}20`,
-                    color: brandSecondary,
-                    border: `1px solid ${brandSecondary}40`,
+                    backgroundColor: `${brandSecondary}30`,
+                    color: '#FFFFFF',
+                    border: `1px solid ${brandSecondary}60`,
                   }}
                 >
                   {itemToCustomize.item_type === 'service'
                     ? `⏱️ مدة الجلسة: ${itemToCustomize.duration_minutes || 30} دقيقة`
                     : itemToCustomize.category || 'صنف'}
                 </span>
-                <h3 className="text-base sm:text-lg font-black text-white leading-tight">
+                <h3 className="text-base sm:text-lg font-black text-white leading-tight keep-white">
                   {itemToCustomize.name}
                 </h3>
               </div>
@@ -5811,7 +6039,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
             <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1 text-right">
               {itemToCustomize.description && (
-                <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/60 p-3 rounded-2xl border border-slate-800">
+                <p className={`text-xs leading-relaxed p-3 rounded-2xl border ${
+                  isDarkTheme ? 'text-slate-300 bg-slate-950/60 border-slate-800' : 'text-slate-700 bg-slate-50 border-slate-200'
+                }`}>
                   {itemToCustomize.description}
                 </p>
               )}
@@ -5824,10 +6054,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     return (
                       <div
                         key={group.id}
-                        className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2.5"
+                        className={`p-3.5 rounded-2xl border space-y-2.5 ${
+                          isDarkTheme ? 'bg-slate-950/70 border-slate-800' : 'bg-slate-50 border-slate-200/90'
+                        }`}
                       >
                         <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                          <h4 className={`text-xs font-black flex items-center gap-1.5 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                             <span>{group.name}</span>
                             {group.required && (
                               <span className="text-[10px] text-rose-400 font-bold bg-rose-500/15 px-1.5 py-0.5 rounded">
@@ -5835,7 +6067,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               </span>
                             )}
                           </h4>
-                          <span className="text-[10px] text-slate-400">
+                          <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                             {group.allow_multiple
                               ? group.max_selections
                                 ? `حد أقصى ${group.max_selections}`
@@ -5854,8 +6086,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 onClick={() => handleToggleModifierOption(group, option)}
                                 className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition ${
                                   isSelected
-                                    ? 'bg-slate-900 border-2 text-white'
-                                    : 'bg-slate-950 hover:bg-slate-900/60 border-slate-800/80 text-slate-300'
+                                    ? isDarkTheme ? 'bg-slate-900 border-2 text-white' : 'bg-slate-100 border-2 text-slate-900'
+                                    : isDarkTheme ? 'bg-slate-950 hover:bg-slate-900/60 border-slate-800/80 text-slate-300' : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-800'
                                 }`}
                                 style={isSelected ? { borderColor: brandSecondary } : undefined}
                               >
@@ -5864,13 +6096,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                     className={`w-4 h-4 rounded-${group.allow_multiple ? 'md' : 'full'} border flex items-center justify-center transition shrink-0 ${
                                       isSelected
                                         ? 'border-transparent'
-                                        : 'border-slate-600 bg-slate-900'
+                                        : isDarkTheme ? 'border-slate-600 bg-slate-900' : 'border-slate-300 bg-white'
                                     }`}
                                     style={
                                       isSelected
                                         ? {
                                             backgroundColor: brandSecondary,
-                                            color: '#000000',
+                                            color: brandColors.contrastOnSecondary,
                                           }
                                         : undefined
                                     }
@@ -5882,7 +6114,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                                 <span
                                   className="text-xs font-mono font-bold"
-                                  style={option.price_delta > 0 ? { color: brandSecondary } : { color: '#94A3B8' }}
+                                  style={
+                                    option.price_delta > 0
+                                      ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }
+                                      : { color: isDarkTheme ? '#94A3B8' : '#64748B' }
+                                  }
                                 >
                                   {option.price_delta > 0 ? `+${option.price_delta} ر.س` : 'مجاناً'}
                                 </span>
@@ -5897,7 +6133,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               )}
 
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
+                <label className={`text-xs font-bold flex items-center gap-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                   <span>ملاحظات أو طلبات خاصة (اختياري):</span>
                 </label>
                 <textarea
@@ -5905,29 +6141,39 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   onChange={(e) => setCustomizingNotes(e.target.value)}
                   placeholder="مثال: بدون بصل، زيادة صلصة، تحضير سريع..."
                   rows={2}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-slate-600 transition resize-none"
+                  className={`w-full rounded-2xl p-3 text-xs outline-none transition resize-none ${
+                    isDarkTheme
+                      ? 'bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:border-slate-600'
+                      : 'bg-white border border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
+                  }`}
                 />
               </div>
 
               {itemToCustomize.item_type === 'product' && (
-                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950 border border-slate-800">
-                  <span className="text-xs font-bold text-white">الكمية المطلوبة:</span>
+                <div className={`flex items-center justify-between p-3 rounded-2xl border ${
+                  isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+                }`}>
+                  <span className={`text-xs font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>الكمية المطلوبة:</span>
                   <div className="flex items-center space-x-3 rtl:space-x-reverse">
                     <button
                       type="button"
                       onClick={() => setCustomizingQuantity((prev) => Math.max(1, prev - 1))}
                       disabled={customizingQuantity <= 1}
-                      className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white flex items-center justify-center transition"
+                      className={`w-8 h-8 rounded-xl disabled:opacity-40 flex items-center justify-center transition ${
+                        isDarkTheme ? 'bg-slate-800 hover:bg-slate-700 text-white' : 'bg-white hover:bg-slate-100 text-slate-800 border border-slate-200'
+                      }`}
                     >
                       <Minus className="w-3 gross-3" />
                     </button>
-                    <span className="text-sm font-black font-mono text-white w-6 text-center">
+                    <span className={`text-sm font-black font-mono w-6 text-center ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                       {customizingQuantity}
                     </span>
                     <button
                       type="button"
                       onClick={() => setCustomizingQuantity((prev) => prev + 1)}
-                      className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center transition"
+                      className={`w-8 h-8 rounded-xl flex items-center justify-center transition ${
+                        isDarkTheme ? 'bg-slate-800 hover:bg-slate-700 text-white' : 'bg-white hover:bg-slate-100 text-slate-800 border border-slate-200'
+                      }`}
                     >
                       <Plus className="w-3 h-3" />
                     </button>
@@ -5936,17 +6182,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               )}
             </div>
 
-            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-3 shrink-0">
+            <div className={`p-4 border-t flex items-center justify-between gap-3 shrink-0 ${
+              isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}>
               <div>
-                <span className="text-[10px] text-slate-400 block">المجموع للصنف:</span>
+                <span className={`text-[10px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>المجموع للصنف:</span>
                 <div className="flex items-baseline gap-1">
-                  <span
-                    className="text-lg font-black font-mono"
-                    style={{ color: brandSecondary }}
-                  >
+                  <span className={`text-lg font-black font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                     {calculateCustomizedItemUnitPrice(itemToCustomize) * customizingQuantity}
                   </span>
-                  <span className="text-xs text-slate-400 font-bold">ر.س</span>
+                  <span className={`text-xs font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>ر.س</span>
                 </div>
               </div>
 
@@ -5955,9 +6200,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 onClick={handleAddCustomizedItemToCart}
                 style={{
                   backgroundColor: brandSecondary,
-                  color: '#000000',
+                  color: brandColors.contrastOnSecondary,
                 }}
-                className="flex-1 py-3 px-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-lg hover:brightness-110 transition active:scale-95"
+                className={`flex-1 py-3 px-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-lg hover:brightness-110 transition active:scale-95 ${
+                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                }`}
               >
                 <ShoppingBag className="w-4 h-4" />
                 <span>إضافة إلى السلة</span>
@@ -5970,25 +6217,29 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       {isCartModalOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div
-            className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up"
+            className={`w-full max-w-md rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up border transition-colors ${
+              isDarkTheme ? 'bg-slate-900 border-slate-700/80 text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
             style={{ borderColor: `${brandSecondary}40` }}
           >
-            <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
+            <div className={`p-4 border-b flex items-center justify-between shrink-0 ${
+              isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}>
               <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
                 <div
                   className="w-9 h-9 rounded-xl flex items-center justify-center font-bold"
                   style={{
                     backgroundColor: `${brandSecondary}20`,
-                    color: brandSecondary,
+                    color: brandColors.textOnLightHex,
                   }}
                 >
                   <ShoppingCart className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm sm:text-base font-black text-white">
+                  <h3 className={`text-sm sm:text-base font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                     سلة الطلبات والحجز المسبق
                   </h3>
-                  <p className="text-[11px] text-slate-400">
+                  <p className={`text-[11px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                     {cartItems.length} أصناف • متجر {store.name}
                   </p>
                 </div>
@@ -5997,7 +6248,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <button
                 type="button"
                 onClick={() => setIsCartModalOpen(false)}
-                className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition"
+                className={`p-2 rounded-xl transition ${
+                  isDarkTheme ? 'bg-slate-800 text-slate-400 hover:text-white' : 'bg-slate-200 text-slate-600 hover:text-slate-900'
+                }`}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -6005,56 +6258,64 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
             <div className="p-4 overflow-y-auto space-y-4 flex-1 text-right">
               <div className="space-y-2.5">
-                <h4 className="text-xs font-black text-slate-300">الأصناف والخدمات المختارة:</h4>
+                <h4 className={`text-xs font-black ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الأصناف والخدمات المختارة:</h4>
                 {cartItems.map((cartItem) => (
                   <div
                     key={cartItem.id}
-                    className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-3 shadow-inner"
+                    className={`p-3 rounded-2xl border flex items-center justify-between gap-3 shadow-sm ${
+                      isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200/90'
+                    }`}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-extrabold text-white truncate">
+                        <span className={`text-xs font-extrabold truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                           {cartItem.catalog_item.name}
                         </span>
                       </div>
 
                       {cartItem.selected_modifiers && cartItem.selected_modifiers.length > 0 && (
-                        <p className="text-[10px] text-slate-400 mt-0.5">
+                        <p className={`text-[10px] mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                           + {cartItem.selected_modifiers.map((m) => m.name).join(', ')}
                         </p>
                       )}
 
                       {cartItem.special_notes && (
-                        <p className="text-[10px] text-amber-300/80 italic mt-0.5">
+                        <p className="text-[10px] text-amber-500 italic mt-0.5">
                           "{cartItem.special_notes}"
                         </p>
                       )}
 
                       <div className="flex items-baseline gap-1 mt-1">
-                        <span className="text-xs font-black font-mono text-white">
+                        <span className={`text-xs font-black font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                           {cartItem.total_price}
                         </span>
-                        <span className="text-[10px] text-slate-400">ر.س</span>
+                        <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>ر.س</span>
                       </div>
                     </div>
 
                     <div className="flex items-center space-x-2 rtl:space-x-reverse shrink-0">
                       {cartItem.catalog_item.item_type === 'product' && (
-                        <div className="flex items-center bg-slate-900 rounded-xl border border-slate-800 p-1">
+                        <div className={`flex items-center rounded-xl border p-1 ${
+                          isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+                        }`}>
                           <button
                             type="button"
                             onClick={() => handleUpdateCartItemQty(cartItem.id, -1)}
-                            className="w-6 h-6 rounded-lg bg-slate-800 text-white flex items-center justify-center hover:bg-slate-700"
+                            className={`w-6 h-6 rounded-lg flex items-center justify-center ${
+                              isDarkTheme ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                            }`}
                           >
                             <Minus className="w-3 gross-3" />
                           </button>
-                          <span className="w-6 text-center text-xs font-mono font-bold text-white">
+                          <span className={`w-6 text-center text-xs font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                             {cartItem.quantity}
                           </span>
                           <button
                             type="button"
                             onClick={() => handleUpdateCartItemQty(cartItem.id, 1)}
-                            className="w-6 h-6 rounded-lg bg-slate-800 text-white flex items-center justify-center hover:bg-slate-700"
+                            className={`w-6 h-6 rounded-lg flex items-center justify-center ${
+                              isDarkTheme ? 'bg-slate-800 text-white hover:bg-slate-700' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                            }`}
                           >
                             <Plus className="w-3 h-3" />
                           </button>
@@ -6064,7 +6325,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       <button
                         type="button"
                         onClick={() => handleRemoveCartItem(cartItem.id)}
-                        className="p-2 rounded-xl bg-slate-900 hover:bg-rose-950/60 border border-slate-800 hover:border-rose-500/40 text-slate-400 hover:text-rose-400 transition"
+                        className={`p-2 rounded-xl border transition ${
+                          isDarkTheme
+                            ? 'bg-slate-900 hover:bg-rose-950/60 border-slate-800 hover:border-rose-500/40 text-slate-400 hover:text-rose-400'
+                            : 'bg-white hover:bg-rose-50 border-slate-200 hover:border-rose-300 text-slate-400 hover:text-rose-600'
+                        }`}
                         title="حذف الصنف"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -6082,10 +6347,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                 if (customer) {
                   return (
-                    <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2 shadow-inner">
+                    <div className={`p-3.5 rounded-2xl border space-y-2 shadow-inner ${
+                      isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+                    }`}>
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 text-emerald-400">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <div className="flex items-center gap-1.5 text-emerald-500">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                           <span className="text-xs font-black">جلسة موثقة ومحفوظة ⚡</span>
                         </div>
                         <button
@@ -6094,48 +6361,54 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             setPendingAuthAction({ type: 'SUBMIT_ORDER' });
                             setShowLoginModal(true);
                           }}
-                          className="text-[11px] text-slate-400 hover:text-white underline transition"
+                          className={`text-[11px] underline transition ${
+                            isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'
+                          }`}
                         >
                           تغيير الحساب
                         </button>
                       </div>
                       <div className="flex items-center justify-between text-xs pt-1">
-                        <span className="text-white font-bold">{customer.name || 'عميل المتجر'}</span>
-                        <span className="font-mono text-slate-400 font-semibold" dir="ltr">{customer.phone}</span>
+                        <span className={`font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{customer.name || 'عميل المتجر'}</span>
+                        <span className={`font-mono font-semibold ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`} dir="ltr">{customer.phone}</span>
                       </div>
                     </div>
                   );
                 }
 
                 return (
-                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1.5 shadow-inner text-right">
-                    <div className="flex items-center gap-1.5 text-amber-400">
+                  <div className={`p-3.5 rounded-2xl border space-y-1.5 text-right ${
+                    isDarkTheme
+                      ? 'bg-slate-950/80 border-slate-800'
+                      : 'bg-amber-50/70 border-amber-200'
+                  }`}>
+                    <div className="flex items-center gap-1.5 text-amber-500">
                       <Sparkles className="w-3.5 h-3.5" />
                       <h4 className="text-xs font-black">طلب مباشر وسريع كزائر 🛍️</h4>
                     </div>
-                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                    <p className={`text-[11px] leading-relaxed ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                       عند الضغط على «إتمام الطلب»، ستفتح لك نافذة سريعة لتأكيد رقمك بكود 4 أرقام لمرة واحدة، لحفظ نقاطك وتجهيز طلبك مباشرة للكاشير.
                     </p>
                   </div>
                 );
               })()}
 
-              <div className="space-y-2.5 pt-2 border-t border-slate-800">
-                <h4 className="text-xs font-black text-slate-300">طريقة الاستلام أو الحجز:</h4>
+              <div className={`space-y-2.5 pt-2 border-t ${isDarkTheme ? 'border-slate-800' : 'border-slate-200'}`}>
+                <h4 className={`text-xs font-black ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>طريقة الاستلام أو الحجز:</h4>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('dine_in')}
                     className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
                       fulfillmentType === 'dine_in'
-                        ? 'bg-slate-900 border-2'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        ? isDarkTheme ? 'bg-slate-900 border-2' : 'bg-slate-900 border-2 text-white keep-white'
+                        : isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
                     }`}
                     style={
                       fulfillmentType === 'dine_in'
                         ? {
                             borderColor: brandSecondary,
-                            color: brandSecondary,
+                            color: isDarkTheme ? brandSecondary : '#FFFFFF',
                           }
                         : undefined
                     }
@@ -6149,14 +6422,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     onClick={() => setFulfillmentType('takeaway')}
                     className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
                       fulfillmentType === 'takeaway'
-                        ? 'bg-slate-900 border-2'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        ? isDarkTheme ? 'bg-slate-900 border-2' : 'bg-slate-900 border-2 text-white keep-white'
+                        : isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
                     }`}
                     style={
                       fulfillmentType === 'takeaway'
                         ? {
                             borderColor: brandSecondary,
-                            color: brandSecondary,
+                            color: isDarkTheme ? brandSecondary : '#FFFFFF',
                           }
                         : undefined
                     }
@@ -6170,14 +6443,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     onClick={() => setFulfillmentType('delivery')}
                     className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
                       fulfillmentType === 'delivery'
-                        ? 'bg-slate-900 border-2'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        ? isDarkTheme ? 'bg-slate-900 border-2' : 'bg-slate-900 border-2 text-white keep-white'
+                        : isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
                     }`}
                     style={
                       fulfillmentType === 'delivery'
                         ? {
                             borderColor: brandSecondary,
-                            color: brandSecondary,
+                            color: isDarkTheme ? brandSecondary : '#FFFFFF',
                           }
                         : undefined
                     }
@@ -6191,14 +6464,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     onClick={() => setFulfillmentType('service_booking')}
                     className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
                       fulfillmentType === 'service_booking'
-                        ? 'bg-slate-900 border-2'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        ? isDarkTheme ? 'bg-slate-900 border-2' : 'bg-slate-900 border-2 text-white keep-white'
+                        : isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
                     }`}
                     style={
                       fulfillmentType === 'service_booking'
                         ? {
                             borderColor: brandSecondary,
-                            color: brandSecondary,
+                            color: isDarkTheme ? brandSecondary : '#FFFFFF',
                           }
                         : undefined
                     }
@@ -6209,11 +6482,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+              <div className={`p-3.5 rounded-2xl border space-y-3 ${
+                isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
                 {fulfillmentType === 'dine_in' && (
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-slate-300">
+                      <label className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                         رقم الطاولة في المحل (إن وجد):
                       </label>
                       <input
@@ -6221,11 +6496,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         value={tableNumber}
                         onChange={(e) => setTableNumber(e.target.value)}
                         placeholder="مثال: 7"
-                        className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white text-center font-mono focus:outline-none"
+                        className={`w-24 rounded-xl px-3 py-1.5 text-xs text-center font-mono focus:outline-none ${
+                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                        }`}
                       />
                     </div>
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
-                      <label className="text-xs font-bold text-slate-300">
+                    <div className={`flex items-center justify-between pt-2 border-t ${isDarkTheme ? 'border-slate-800/80' : 'border-slate-200'}`}>
+                      <label className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                         أو حجز طاولة مسبق (عدد الأفراد):
                       </label>
                       <div className="flex items-center gap-2">
@@ -6235,9 +6512,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           max={20}
                           value={partySize}
                           onChange={(e) => setPartySize(Number(e.target.value))}
-                          className="w-16 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1.5 text-xs text-white text-center font-mono focus:outline-none"
+                          className={`w-16 rounded-xl px-2 py-1.5 text-xs text-center font-mono focus:outline-none ${
+                            isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                          }`}
                         />
-                        <span className="text-[10px] text-slate-400">أشخاص</span>
+                        <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>أشخاص</span>
                       </div>
                     </div>
                   </div>
@@ -6246,18 +6525,20 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 {fulfillmentType === 'takeaway' && (
                   <div className="space-y-2.5">
                     <div>
-                      <label className="text-xs font-bold text-slate-300 block mb-1">
+                      <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                         وقت الاستلام المفضل:
                       </label>
                       <input
                         type="time"
                         value={arrivalTime}
                         onChange={(e) => setArrivalTime(e.target.value)}
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                        className={`w-full rounded-xl px-3 py-2 text-xs focus:outline-none ${
+                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                        }`}
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-slate-300 block mb-1">
+                      <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                         بيانات السيارة للاستلام السريع (النوع واللوحة - اختياري):
                       </label>
                       <input
@@ -6265,7 +6546,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         value={carPlate}
                         onChange={(e) => setCarPlate(e.target.value)}
                         placeholder="مثال: كامري أبيض - أ ب ج 1234"
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                        className={`w-full rounded-xl px-3 py-2 text-xs focus:outline-none ${
+                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                        }`}
                       />
                     </div>
                   </div>
@@ -6274,7 +6557,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 {fulfillmentType === 'delivery' && (
                   <div className="space-y-2.5">
                     <div>
-                      <label className="text-xs font-bold text-slate-300 block mb-1">
+                      <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                         عنوان التوصيل بالتفصيل:
                       </label>
                       <input
@@ -6282,11 +6565,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         value={deliveryAddress}
                         onChange={(e) => setDeliveryAddress(e.target.value)}
                         placeholder="الحي، الشارع، رقم العمارة / المنزل..."
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                        className={`w-full rounded-xl px-3 py-2 text-xs focus:outline-none ${
+                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                        }`}
                       />
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-slate-300 block mb-1">
+                      <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                         رابط خرائط جوجل (Google Maps GPS Link):
                       </label>
                       <input
@@ -6294,7 +6579,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         value={deliveryGpsLink}
                         onChange={(e) => setDeliveryGpsLink(e.target.value)}
                         placeholder="https://maps.app.goo.gl/..."
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none"
+                        className={`w-full rounded-xl px-3 py-2 text-xs font-mono focus:outline-none ${
+                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                        }`}
                       />
                     </div>
                   </div>
@@ -6304,30 +6591,34 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   <div className="space-y-2.5">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-xs font-bold text-slate-300 block mb-1">
+                        <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                           تاريخ الموعد:
                         </label>
                         <input
                           type="date"
                           value={arrivalDate}
                           onChange={(e) => setArrivalDate(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none"
+                          className={`w-full rounded-xl px-2.5 py-2 text-xs focus:outline-none ${
+                            isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                          }`}
                         />
                       </div>
                       <div>
-                        <label className="text-xs font-bold text-slate-300 block mb-1">
+                        <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                           الساعة المفضلة:
                         </label>
                         <input
                           type="time"
                           value={arrivalTime}
                           onChange={(e) => setArrivalTime(e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none"
+                          className={`w-full rounded-xl px-2.5 py-2 text-xs focus:outline-none ${
+                            isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                          }`}
                         />
                       </div>
                     </div>
                     <div>
-                      <label className="text-xs font-bold text-slate-300 block mb-1">
+                      <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                         الأخصائي أو الموظف المفضل (اختياري):
                       </label>
                       <input
@@ -6335,14 +6626,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         value={specialistName}
                         onChange={(e) => setSpecialistName(e.target.value)}
                         placeholder="اسم المختص..."
-                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                        className={`w-full rounded-xl px-3 py-2 text-xs focus:outline-none ${
+                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                        }`}
                       />
                     </div>
                   </div>
                 )}
 
                 <div>
-                  <label className="text-xs font-bold text-slate-300 block mb-1">
+                  <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                     ملاحظات عامة للطلب:
                   </label>
                   <input
@@ -6350,30 +6643,36 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     value={generalOrderNotes}
                     onChange={(e) => setGeneralOrderNotes(e.target.value)}
                     placeholder="أي تعليمات إضافية للمتجر..."
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                    className={`w-full rounded-xl px-3 py-2 text-xs focus:outline-none ${
+                      isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                    }`}
                   />
                 </div>
               </div>
 
-              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
-                <div className="flex items-center justify-between text-slate-400">
+              <div className={`p-3.5 rounded-2xl border space-y-2 text-xs ${
+                isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                   <span>المجموع الفرعي:</span>
-                  <span className="font-mono text-white font-bold">{cartSubtotal} ر.س</span>
+                  <span className={`font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{cartSubtotal} ر.س</span>
                 </div>
                 {deliveryFee > 0 && (
-                  <div className="flex items-center justify-between text-slate-400">
+                  <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                     <span>رسوم التوصيل:</span>
-                    <span className="font-mono text-white font-bold">+{deliveryFee} ر.س</span>
+                    <span className={`font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>+{deliveryFee} ر.س</span>
                   </div>
                 )}
-                <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-sm font-black">
-                  <span className="text-white">الإجمالي النهائي:</span>
-                  <span className="font-mono" style={{ color: brandSecondary }}>
+                <div className={`pt-2 border-t flex items-center justify-between text-sm font-black ${
+                  isDarkTheme ? 'border-slate-800' : 'border-slate-200'
+                }`}>
+                  <span className={isDarkTheme ? 'text-white' : 'text-slate-900'}>الإجمالي النهائي:</span>
+                  <span className={`font-mono text-base font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                     {cartGrandTotal} ر.س
                   </span>
                 </div>
                 {estimatedLoyaltyPoints > 0 && (
-                  <div className="pt-1.5 flex items-center justify-between text-emerald-400 text-[11px] font-bold">
+                  <div className="pt-1.5 flex items-center justify-between text-emerald-500 text-[11px] font-bold">
                     <span>نقاط الولاء المكتسبة عند الدفع:</span>
                     <span className="font-mono">+{estimatedLoyaltyPoints} نقطة ✨</span>
                   </div>
@@ -6381,24 +6680,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
 
               {/* 💳 طرق وسياسة السداد للطلب */}
-              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
-                <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+              <div className={`p-3.5 rounded-2xl border space-y-2.5 ${
+                isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <div className={`flex items-center justify-between text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                   <span className="flex items-center gap-1.5">
-                    <CreditCard className="w-4 h-4 text-emerald-400" />
+                    <CreditCard className="w-4 h-4 text-emerald-500" />
                     <span>طريقة الدفع:</span>
                   </span>
                   {effectiveOrdersPolicy === 'online_only' && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/40 font-bold">
                       🔒 إلزامي أونلاين
                     </span>
                   )}
                   {effectiveOrdersPolicy === 'pay_at_store_only' && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-600 border border-blue-500/40 font-bold">
                       💵 بالفرع فقط
                     </span>
                   )}
                   {effectiveOrdersPolicy === 'both' && (
-                    <span className="text-[10px] text-slate-400 font-mono">
+                    <span className={`text-[10px] font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                       اختر طريقتك المفضلة
                     </span>
                   )}
@@ -6411,13 +6712,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       onClick={() => setOrderPaymentMethod('online')}
                       className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
                         orderPaymentMethod === 'online'
-                          ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300 shadow-sm'
-                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-600 shadow-sm'
+                          : isDarkTheme ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                       }`}
                     >
                       <span className="text-xs font-black flex items-center gap-1">
                         <span>💳 دفع إلكتروني</span>
-                        {orderPaymentMethod === 'online' && <Check className="w-3.5 h-3.5 mr-auto text-emerald-400" />}
+                        {orderPaymentMethod === 'online' && <Check className="w-3.5 h-3.5 mr-auto text-emerald-500" />}
                       </span>
                       <span className="text-[10px] text-slate-500">مدى / فيزا / أبل باي</span>
                     </button>
@@ -6427,24 +6728,28 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       onClick={() => setOrderPaymentMethod('pay_at_store')}
                       className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
                         orderPaymentMethod === 'pay_at_store'
-                          ? 'bg-blue-500/15 border-blue-500/50 text-blue-300 shadow-sm'
-                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          ? 'bg-blue-500/15 border-blue-500/50 text-blue-600 shadow-sm'
+                          : isDarkTheme ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
                       }`}
                     >
                       <span className="text-xs font-black flex items-center gap-1">
                         <span>💵 دفع عند الاستلام</span>
-                        {orderPaymentMethod === 'pay_at_store' && <Check className="w-3.5 h-3.5 mr-auto text-blue-400" />}
+                        {orderPaymentMethod === 'pay_at_store' && <Check className="w-3.5 h-3.5 mr-auto text-blue-500" />}
                       </span>
                       <span className="text-[10px] text-slate-500">نقداً أو شبكة بالفرع</span>
                     </button>
                   </div>
                 ) : effectiveOrdersPolicy === 'online_only' ? (
-                  <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-[11px] flex items-center gap-2">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div className={`p-2.5 rounded-xl border text-[11px] flex items-center gap-2 ${
+                    isDarkTheme ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  }`}>
+                    <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
                     <span>يشترط المتجر السداد الإلكتروني المسبق بالبطاقة (مدى / فيزا) لتأكيد وتجهيز الطلب.</span>
                   </div>
                 ) : (
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-[11px] flex items-center gap-2">
+                  <div className={`p-2.5 rounded-xl border text-[11px] flex items-center gap-2 ${
+                    isDarkTheme ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-white border-slate-200 text-slate-700'
+                  }`}>
                     <span className="text-base">💵</span>
                     <span>يتم تحصيل قيمة الطلب بالكامل عند استلام طلبك من الفرع أو للسيارة.</span>
                   </div>
@@ -6452,17 +6757,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
             </div>
 
-            <div className="p-4 bg-slate-950 border-t border-slate-800 shrink-0 space-y-2.5">
+            <div className={`p-4 border-t shrink-0 space-y-2.5 ${
+              isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+            }`}>
               {selectedBranch && (
                 <div className="flex items-center justify-between text-xs pb-0.5">
-                  <span className="text-slate-400 flex items-center gap-1.5 font-bold">
-                    <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                  <span className={`flex items-center gap-1.5 font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                    <Building2 className="w-3.5 h-3.5 text-amber-500" />
                     <span>الفرع: {selectedBranch.name}</span>
                   </span>
                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-black border ${
                     branchStatus.isOpen
-                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                      : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                      ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30'
+                      : 'bg-rose-500/15 text-rose-500 border-rose-500/30'
                   }`}>
                     {branchStatus.isOpen ? '🟢 متاح للطلب' : '🔴 مغلق حالياً'}
                   </span>
@@ -6480,7 +6787,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 type="button"
                 onClick={handleSubmitOrder}
                 disabled={submittingOrder || (Boolean(selectedBranch) && !branchStatus.isOpen)}
-                className={`w-full py-3.5 rounded-2xl font-black text-sm text-white flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-50 ${
+                className={`w-full py-3.5 rounded-2xl font-black text-sm text-white flex items-center justify-center gap-2 transition active:scale-95 disabled:opacity-50 keep-white ${
                   selectedBranch && !branchStatus.isOpen
                     ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                     : (effectiveOrdersPolicy === 'online_only' || (effectiveOrdersPolicy === 'both' && orderPaymentMethod === 'online'))
