@@ -7677,53 +7677,120 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       style={{ backgroundColor: backgroundColor, borderColor: themeMode === 'dark' ? '#1E293B' : '#CBD5E1' }}
                     >
                       {/* Live Customer Membership Card */}
-                      <div
-                        className="w-full max-w-[290px] h-[170px] rounded-3xl p-4 shadow-xl flex flex-col justify-between relative overflow-hidden transition-all duration-300"
-                        style={{
-                          backgroundColor: primaryColor,
-                          color: '#FFFFFF',
-                          boxShadow: `0 14px 28px -6px ${primaryColor}40`,
-                        }}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            {storeLogoUrl ? (
-                              <img
-                                src={storeLogoUrl}
-                                alt="Logo"
-                                className="w-8 h-8 rounded-xl object-cover bg-white/10 border border-white/20"
-                              />
-                            ) : (
-                              <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center font-black text-xs text-white">
-                                {storeName.slice(0, 2) || 'RD'}
+                      {(() => {
+                        const simIsPrimaryLight = (() => {
+                          try {
+                            const hex = primaryColor.replace('#', '');
+                            const r = parseInt(hex.substring(0, 2), 16) || 0;
+                            const g = parseInt(hex.substring(2, 4), 16) || 0;
+                            const b = parseInt(hex.substring(4, 6), 16) || 0;
+                            return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6;
+                          } catch {
+                            return false;
+                          }
+                        })();
+                        const simCardTextColor = simIsPrimaryLight ? '#0F172A' : '#FFFFFF';
+                        const simCardSubtextColor = simIsPrimaryLight ? 'rgba(15, 23, 42, 0.7)' : 'rgba(255, 255, 255, 0.75)';
+                        const simCardBorderColor = simIsPrimaryLight ? 'rgba(0, 0, 0, 0.09)' : 'rgba(255, 255, 255, 0.15)';
+
+                        const simIsSecondaryLight = (() => {
+                          try {
+                            const hex = secondaryColor.replace('#', '');
+                            const r = parseInt(hex.substring(0, 2), 16) || 0;
+                            const g = parseInt(hex.substring(2, 4), 16) || 0;
+                            const b = parseInt(hex.substring(4, 6), 16) || 0;
+                            return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55;
+                          } catch {
+                            return false;
+                          }
+                        })();
+                        const simBadgeTextColor = simIsSecondaryLight ? '#000000' : '#FFFFFF';
+
+                        return (
+                          <div
+                            className="w-full max-w-[290px] h-[170px] rounded-3xl p-4 shadow-xl flex flex-col justify-between relative overflow-hidden transition-all duration-300"
+                            style={{
+                              backgroundColor: primaryColor,
+                              color: simCardTextColor,
+                              border: `1px solid ${simCardBorderColor}`,
+                              boxShadow: `0 14px 28px -6px ${primaryColor}40`,
+                            }}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                {storeLogoUrl ? (
+                                  <img
+                                    src={storeLogoUrl}
+                                    alt="Logo"
+                                    className="w-8 h-8 rounded-xl object-cover bg-white/10 border border-white/20"
+                                  />
+                                ) : (
+                                  <div
+                                    className="w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs"
+                                    style={{
+                                      backgroundColor: simIsPrimaryLight ? '#0F172A' : '#FFFFFF',
+                                      color: simIsPrimaryLight ? '#FFFFFF' : '#0F172A',
+                                    }}
+                                  >
+                                    {storeName.slice(0, 2) || 'RD'}
+                                  </div>
+                                )}
+                                <div>
+                                  <span
+                                    className="text-xs font-black block leading-tight"
+                                    style={{ color: simCardTextColor }}
+                                  >
+                                    {storeName || 'اسم المتجر'}
+                                  </span>
+                                  <span
+                                    className="text-[9px] block"
+                                    style={{ color: simCardSubtextColor }}
+                                  >
+                                    عضوية ولاء VIP
+                                  </span>
+                                </div>
                               </div>
-                            )}
-                            <div>
-                              <span className="text-xs font-black block leading-tight text-white">{storeName || 'اسم المتجر'}</span>
-                              <span className="text-[9px] opacity-80 block text-white/80">عضوية ولاء VIP</span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[9px] font-black shadow-sm ${
+                                  simBadgeTextColor === '#FFFFFF' ? 'keep-white' : ''
+                                }`}
+                                style={{ backgroundColor: secondaryColor, color: simBadgeTextColor }}
+                              >
+                                ذهبي ★
+                              </span>
+                            </div>
+
+                            <div className="space-y-0.5">
+                              <span
+                                className="text-[9px] block"
+                                style={{ color: simCardSubtextColor }}
+                              >
+                                رصيد النقاط المتاحة
+                              </span>
+                              <div className="flex items-baseline gap-1.5">
+                                <span
+                                  className="text-2xl font-black tracking-tight"
+                                  style={{ color: simCardTextColor }}
+                                >
+                                  750
+                                </span>
+                                <span className="text-[10px] font-bold" style={{ color: secondaryColor }}>نقطة</span>
+                              </div>
+                            </div>
+
+                            <div
+                              className="flex items-center justify-between pt-1 text-[9px]"
+                              style={{
+                                borderTop: `1px solid ${simCardBorderColor}`,
+                                color: simCardSubtextColor,
+                              }}
+                            >
+                              <span className="font-mono">#RD-9821</span>
+                              <span>مسح بالكاشير 📱</span>
                             </div>
                           </div>
-                          <span
-                            className="px-2 py-0.5 rounded-full text-[9px] font-black shadow-sm"
-                            style={{ backgroundColor: secondaryColor, color: '#000000' }}
-                          >
-                            ذهبي ★
-                          </span>
-                        </div>
-
-                        <div className="space-y-0.5">
-                          <span className="text-[9px] opacity-75 block text-white/75">رصيد النقاط المتاحة</span>
-                          <div className="flex items-baseline gap-1.5">
-                            <span className="text-2xl font-black tracking-tight text-white">750</span>
-                            <span className="text-[10px] font-bold" style={{ color: secondaryColor }}>نقطة</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between pt-1 border-t border-white/15 text-[9px] opacity-85">
-                          <span className="font-mono text-white/90">#RD-9821</span>
-                          <span className="text-white/90">مسح بالكاشير 📱</span>
-                        </div>
-                      </div>
+                        );
+                      })()}
 
                       {/* Live Menu Product Card */}
                       <div

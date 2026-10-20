@@ -186,40 +186,54 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     const priRgb = hexToRgb(safePrimary);
     const priHsl = rgbToHsl(priRgb.r, priRgb.g, priRgb.b);
 
-    // 1. Text & Icon on Dark (for "إظهار الـ QR" button)
-    // If merchant color is too dark (< 45% lightness), lift it so it shines legibly on dark background
-    let textL = secHsl.l;
-    if (textL < 45) textL = 68;
-    if (textL > 90) textL = 80;
-    const textS = Math.min(secHsl.s, 85);
-    const textOnDarkRgb = hslToRgb(secHsl.h, textS, textL);
-    const textOnDarkHex = rgbToHex(textOnDarkRgb.r, textOnDarkRgb.g, textOnDarkRgb.b);
+    // Helper to generate lighter/darker shades of an HSL color
+    const shiftLightness = (hsl: { h: number; s: number; l: number }, deltaPercent: number) => {
+      const newL = Math.max(0, Math.min(100, hsl.l + deltaPercent));
+      const rgb = hslToRgb(hsl.h, hsl.s, newL);
+      return rgbToHex(rgb.r, rgb.g, rgb.b);
+    };
 
-    // 2. Progress Bar Fill Color
-    // The bar sits on the gold VIP card. It must have rich contrast and saturation.
-    // If merchant color is chosen, tone lightness between 32% and 52% so it stands out proudly
-    let barL = secHsl.l;
-    if (barL > 55) barL = 48;
-    if (barL < 25) barL = 35;
-    const barS = Math.max(secHsl.s, 50);
-    const barRgb = hslToRgb(secHsl.h, barS, barL);
-    const barHex = rgbToHex(barRgb.r, barRgb.g, barRgb.b);
+    // Calculate primary & secondary luminance for contrast
+    const priContrast = (0.299 * priRgb.r + 0.587 * priRgb.g + 0.114 * priRgb.b) / 255;
+    const isPrimaryLight = priContrast > 0.60;
+    const contrastOnPrimary = isPrimaryLight ? '#0F172A' : '#FFFFFF';
 
-    // Progress bar gradient: deep tone to vibrant merchant accent
-    const progressGradient = `linear-gradient(90deg, #110e05 0%, ${barHex} 70%, ${textOnDarkHex} 100%)`;
-
-    // 3. "كيف أجمع نقاط؟" frosted button tint
-    const howButtonBg = `rgba(${priRgb.r}, ${priRgb.g}, ${priRgb.b}, 0.14)`;
-    const howButtonBorder = `rgba(${priRgb.r}, ${priRgb.g}, ${priRgb.b}, 0.22)`;
-
-    // 4. Floating FAB & Card gradients
-    const cardGradient = `linear-gradient(135deg, #7a5e1c 0%, #edd98b 24%, ${safeSecondary} 50%, #faeec7 76%, #89671d 100%)`;
-    const fabGradient = `linear-gradient(135deg, #ecd98a 0%, ${safeSecondary} 50%, #82631a 100%)`;
-
-    // 5. Contrast Text & Safe Accent for Light Theme
     const secContrast = (0.299 * secRgb.r + 0.587 * secRgb.g + 0.114 * secRgb.b) / 255;
     const contrastOnSecondary = secContrast > 0.55 ? '#000000' : '#FFFFFF';
 
+    // 1. VIP Card Monochromatic Luxury Gradient (Pure to brand primary, never mixing clashing colors)
+    let cardGradient = '';
+    let cardTextColor = '';
+    let cardSubtextColor = '';
+    let cardBorderColor = '';
+    let cardBoxShadow = '';
+
+    if (isPrimaryLight) {
+      // Light / Platinum / Cream / Clean Light VIP Card
+      const cLight = shiftLightness(priHsl, 10);
+      const cDeep = shiftLightness(priHsl, -8);
+      cardGradient = `linear-gradient(135deg, ${cLight} 0%, ${safePrimary} 50%, ${cDeep} 100%)`;
+      cardTextColor = '#0F172A';
+      cardSubtextColor = '#475569';
+      cardBorderColor = 'rgba(0, 0, 0, 0.09)';
+      cardBoxShadow = '0 18px 40px -10px rgba(0, 0, 0, 0.14), inset 0 1px 1px rgba(255, 255, 255, 0.9)';
+    } else {
+      // Dark / Charcoal / Obsidian Luxury VIP Card
+      const cLighter = shiftLightness(priHsl, 12);
+      const cDarker = shiftLightness(priHsl, -10);
+      cardGradient = `linear-gradient(135deg, ${cLighter} 0%, ${safePrimary} 60%, ${cDarker} 100%)`;
+      cardTextColor = '#FFFFFF';
+      cardSubtextColor = '#94A3B8';
+      cardBorderColor = 'rgba(255, 255, 255, 0.14)';
+      cardBoxShadow = '0 20px 45px -10px rgba(0, 0, 0, 0.65), inset 0 1px 1px rgba(255, 255, 255, 0.2)';
+    }
+
+    // 2. Floating FAB Gradient (Pure, radiant brand secondary gradient)
+    const fabTop = shiftLightness(secHsl, 10);
+    const fabBottom = shiftLightness(secHsl, -10);
+    const fabGradient = `linear-gradient(135deg, ${fabTop} 0%, ${safeSecondary} 50%, ${fabBottom} 100%)`;
+
+    // 3. Safe accent text for light surfaces
     let textLightL = secHsl.l;
     if (textLightL > 42) textLightL = 36;
     const textOnLightRgb = hslToRgb(secHsl.h, Math.max(secHsl.s, 65), textLightL);
@@ -228,19 +242,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     return {
       primary: safePrimary,
       secondary: safeSecondary,
+      isPrimaryLight,
+      contrastOnPrimary,
       contrastOnSecondary,
       textOnLightHex,
       cardGradient,
-      progressGradient,
-      progressBarColor: barHex,
-      progressGlow: `${textOnDarkHex}60`,
-      qrButtonBg: '#0e0e14',
-      qrButtonText: textOnDarkHex,
-      qrButtonBorder: `${textOnDarkHex}45`,
-      qrButtonGlow: `${textOnDarkHex}35`,
-      howButtonBg,
-      howButtonBorder,
-      howButtonText: '#1a1405',
+      cardTextColor,
+      cardSubtextColor,
+      cardBorderColor,
+      cardBoxShadow,
+      progressGradient: `linear-gradient(90deg, ${shiftLightness(secHsl, -5)} 0%, ${safeSecondary} 50%, ${shiftLightness(secHsl, 12)} 100%)`,
+      progressBarColor: safeSecondary,
+      progressGlow: `${safeSecondary}60`,
+      qrButtonBg: isPrimaryLight ? '#0F172A' : safeSecondary,
+      qrButtonText: isPrimaryLight ? '#FFFFFF' : contrastOnSecondary,
+      qrButtonBorder: isPrimaryLight ? '#1E293B' : `${safeSecondary}50`,
+      qrButtonGlow: `${safeSecondary}40`,
+      howButtonBg: isPrimaryLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.10)',
+      howButtonBorder: isPrimaryLight ? 'rgba(0, 0, 0, 0.10)' : 'rgba(255, 255, 255, 0.18)',
+      howButtonText: isPrimaryLight ? '#0F172A' : '#FFFFFF',
       fabGradient,
       glow: `${safeSecondary}60`,
       buttonBg: safeSecondary,
@@ -2741,37 +2761,51 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           )}
 
-          {/* 🌟 04 - VIP Gold Pass (Authentic Pass Silhouette & Proportions matching Approved Preview) */}
+          {/* 🌟 04 - VIP Pass Card (Adaptive Monochromatic Luxury matching Merchant Identity) */}
           <div className="relative group select-none -mt-10 sm:-mt-12 z-20">
-            {/* Ambient Gold Glow Behind Card */}
+            {/* Ambient Brand Glow Behind Card */}
             <div
               className="absolute -inset-1 rounded-[30px] blur-xl opacity-35 group-hover:opacity-60 transition duration-700 pointer-events-none"
               style={{
-                background: `radial-gradient(circle, ${brandSecondary}70 0%, transparent 70%)`,
+                background: `radial-gradient(circle, ${brandSecondary}40 0%, transparent 70%)`,
               }}
             ></div>
 
             <div
-              className="relative rounded-[28px] p-5 sm:p-6 text-slate-950 transition-all duration-300"
+              className="relative rounded-[28px] p-5 sm:p-6 transition-all duration-300"
               style={{
-                background: `linear-gradient(135deg, #6b5314 0%, #e9d27a 26%, ${brandSecondary} 50%, #f3e3a0 74%, #8a6a1f 100%)`,
-                boxShadow: `0 20px 45px -10px rgba(0, 0, 0, 0.75), inset 0 1px 1px rgba(255, 255, 255, 0.65), inset 0 -1px 2px rgba(0, 0, 0, 0.35)`,
-                border: '1px solid rgba(255, 255, 255, 0.3)',
+                background: brandColors.cardGradient,
+                boxShadow: brandColors.cardBoxShadow,
+                border: `1px solid ${brandColors.cardBorderColor}`,
+                color: brandColors.cardTextColor,
               }}
             >
-              {/* Card Top Row: Merchant Info (Right) & Circular Black Logo Badge (Left in RTL) */}
+              {/* Card Top Row: Merchant Info (Right) & Circular Logo Badge (Left in RTL) */}
               <div className="relative z-10 flex items-center justify-between gap-3">
                 <div className="text-right">
-                  <h3 className="font-serif font-black text-base sm:text-lg text-[#110e05] tracking-tight leading-tight">
+                  <h3
+                    className="font-serif font-black text-base sm:text-lg tracking-tight leading-tight"
+                    style={{ color: brandColors.cardTextColor }}
+                  >
                     {store.name}
                   </h3>
-                  <p className="text-[11px] font-bold text-[#110e05]/75 font-mono mt-0.5">
+                  <p
+                    className="text-[11px] font-bold font-mono mt-0.5"
+                    style={{ color: brandColors.cardSubtextColor }}
+                  >
                     {currentTierObj?.tier_name ? `VIP ${currentTierObj.tier_name}` : 'VIP GOLD'} · PASS ID {customer?.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-DEMO01'}
                   </p>
                 </div>
 
-                {/* Circular Black Merchant Logo Badge */}
-                <div className="w-11 h-11 rounded-full bg-[#110e05] border-2 border-white/20 flex items-center justify-center shrink-0 shadow-lg overflow-hidden text-[#E3B94A] font-black text-sm">
+                {/* Circular Merchant Logo Badge */}
+                <div
+                  className="w-11 h-11 rounded-full border-2 flex items-center justify-center shrink-0 shadow-lg overflow-hidden font-black text-sm"
+                  style={{
+                    backgroundColor: brandColors.isPrimaryLight ? '#0F172A' : '#FFFFFF',
+                    borderColor: brandColors.cardBorderColor,
+                    color: brandColors.isPrimaryLight ? '#FFFFFF' : '#0F172A',
+                  }}
+                >
                   {store.logo_url ? (
                     <img
                       src={store.logo_url}
@@ -2784,19 +2818,31 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              {/* Massive Points Display (Exact Match to Prototype & Reference Images) */}
+              {/* Massive Points Display */}
               <div className="relative z-10 my-3 text-center">
-                <div className="text-[44px] sm:text-[48px] font-black font-mono tracking-tight text-[#110e05] leading-none">
+                <div
+                  className="text-[44px] sm:text-[48px] font-black font-mono tracking-tight leading-none"
+                  style={{ color: brandColors.cardTextColor }}
+                >
                   {customer?.wallet_balance?.toLocaleString() ?? '0'}
                 </div>
-                <div className="text-xs font-black text-[#110e05]/80 mt-0.5">
+                <div
+                  className="text-xs font-black mt-0.5"
+                  style={{ color: brandColors.cardSubtextColor }}
+                >
                   نقطة
                 </div>
               </div>
 
-              {/* Progress Bar & XP Remaining (Compact & Sleek Track) */}
+              {/* Progress Bar & XP Remaining */}
               <div className="relative z-10 space-y-1.5 my-2">
-                <div className="w-full h-2 bg-[#110e05]/20 rounded-full overflow-hidden p-[1px] border border-[#110e05]/15 shadow-inner">
+                <div
+                  className="w-full h-2 rounded-full overflow-hidden p-[1px] shadow-inner"
+                  style={{
+                    backgroundColor: brandColors.isPrimaryLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(255, 255, 255, 0.15)',
+                    border: `1px solid ${brandColors.cardBorderColor}`,
+                  }}
+                >
                   <div
                     className="h-full rounded-full transition-all duration-700 shadow-sm"
                     style={{
@@ -2806,7 +2852,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     }}
                   ></div>
                 </div>
-                <div className="text-center text-[11px] font-bold text-[#110e05]/80">
+                <div
+                  className="text-center text-[11px] font-bold"
+                  style={{ color: brandColors.cardSubtextColor }}
+                >
                   {nextTierObj ? (
                     <span>
                       باقي <strong className="font-mono font-black">{xpNeeded} XP</strong> للوصول إلى {nextTierObj.tier_name}
@@ -2817,13 +2866,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              {/* Bottom Interactive Pill Buttons (Exact Match to Prototype & Images) */}
+              {/* Bottom Interactive Pill Buttons */}
               <div className="relative z-10 mt-4 pt-1 flex items-center justify-between gap-2.5">
                 {/* 1. Right Button (RTL): "كيف أجمع نقاط؟" */}
                 <button
                   type="button"
                   onClick={() => setShowHowToEarnPoints(true)}
-                  className="flex-1 py-2.5 px-3 rounded-full font-black text-xs transition active:scale-95 shadow-sm text-center border border-black/10 bg-[#110e05]/12 text-[#110e05] hover:bg-[#110e05]/20"
+                  className="flex-1 py-2.5 px-3 rounded-full font-black text-xs transition active:scale-95 shadow-sm text-center"
+                  style={{
+                    backgroundColor: brandColors.howButtonBg,
+                    border: `1px solid ${brandColors.howButtonBorder}`,
+                    color: brandColors.howButtonText,
+                  }}
                 >
                   كيف أجمع نقاط؟
                 </button>
@@ -2839,10 +2893,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       setShowEmbeddedQR(!showEmbeddedQR);
                     }
                   }}
-                  className="flex-1 py-2.5 px-3 rounded-full font-black text-xs transition active:scale-95 shadow-md flex items-center justify-center gap-1.5 text-center bg-[#110e05] border border-black/30 hover:bg-black"
+                  className={`flex-1 py-2.5 px-3 rounded-full font-black text-xs transition active:scale-95 shadow-md flex items-center justify-center gap-1.5 text-center ${
+                    brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                  }`}
                   style={{
-                    color: brandColors.qrButtonText,
-                    boxShadow: `0 4px 14px ${brandColors.qrButtonGlow}`,
+                    backgroundColor: brandSecondary,
+                    color: brandColors.contrastOnSecondary,
+                    border: `1px solid ${brandSecondary}80`,
+                    boxShadow: `0 4px 14px ${brandColors.glow}`,
                   }}
                 >
                   <QrCode className="w-3.5 h-3.5" />
@@ -5433,20 +5491,28 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         <div className="fixed bottom-24 left-4 right-4 max-w-md mx-auto z-40 animate-slide-up">
           <div
             onClick={() => setIsCartModalOpen(true)}
-            className="p-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 cursor-pointer hover:scale-[1.02] active:scale-95 transition-all duration-300 border border-white/20"
+            className={`p-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 cursor-pointer hover:scale-[1.02] active:scale-95 transition-all duration-300 border border-white/20 ${
+              brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
+            }`}
             style={{
-              background: `linear-gradient(135deg, #6b5314 0%, #ecd98a 26%, ${brandSecondary} 50%, #f7ecc0 74%, #82631a 100%)`,
-              color: '#000000',
-              boxShadow: `0 12px 30px -4px ${brandSecondary}90, 0 4px 12px rgba(0,0,0,0.6)`,
+              background: brandColors.fabGradient,
+              color: brandColors.contrastOnSecondary,
+              boxShadow: `0 12px 30px -4px ${brandColors.glow}, 0 4px 12px rgba(0,0,0,0.4)`,
             }}
           >
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-black/15 flex items-center justify-center font-mono font-black text-xs text-black">
+              <div
+                className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-black text-xs bg-black/20"
+                style={{ color: brandColors.contrastOnSecondary }}
+              >
                 {cartItems.reduce((sum, item) => sum + item.quantity, 0)}
               </div>
               <div>
                 <span className="text-xs font-black block leading-tight">سلة طلباتك جاهزة</span>
-                <span className="text-[10px] font-bold text-black/75">
+                <span
+                  className="text-[10px] font-bold opacity-80"
+                  style={{ color: brandColors.contrastOnSecondary }}
+                >
                   ستكسب +{estimatedLoyaltyPoints} نقطة ولاء 👑
                 </span>
               </div>
@@ -5462,7 +5528,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     localStorage.removeItem(`radar_cart_${store.id}`);
                   } catch {}
                 }}
-                className="w-7 h-7 rounded-xl bg-black/20 hover:bg-black/35 active:scale-90 text-black flex items-center justify-center transition shrink-0"
+                className="w-7 h-7 rounded-xl bg-black/20 hover:bg-black/35 active:scale-90 flex items-center justify-center transition shrink-0"
+                style={{ color: brandColors.contrastOnSecondary }}
                 title="إلغاء وإفراغ السلة ✕"
               >
                 <X className="w-4 h-4" />
@@ -5472,9 +5539,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <span className="text-sm font-black font-mono leading-none block">
                   {cartGrandTotal} ر.س
                 </span>
-                <span className="text-[9px] font-bold text-black/70">متابعة الطلب</span>
+                <span className="text-[9px] font-bold opacity-75">متابعة الطلب</span>
               </div>
-              <div className="w-7 h-7 rounded-xl bg-black text-white flex items-center justify-center">
+              <div
+                className="w-7 h-7 rounded-xl flex items-center justify-center"
+                style={{
+                  backgroundColor: brandColors.contrastOnSecondary === '#FFFFFF' ? '#FFFFFF' : '#0F172A',
+                  color: brandColors.contrastOnSecondary === '#FFFFFF' ? '#0F172A' : '#FFFFFF',
+                }}
+              >
                 <ChevronLeft className="w-4 h-4" />
               </div>
             </div>
@@ -5482,7 +5555,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      {/* 🌟 09 - Floating Bottom Dock with ABSOLUTE FIXED CENTER FAB */}
+      {/* 🌟 09 - Floating Bottom Dock with ABSOLUTE FIXED CENTER FAB & 5-Column Symmetrical Grid */}
       <div className="fixed bottom-3 left-3 right-3 max-w-md mx-auto z-40">
         <div className="relative">
           {/* 🌟 CENTER FLOATING ACTION BUTTON (FAB): Absolutely Centered regardless of tabs */}
@@ -5499,61 +5572,69 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
                 }}
                 className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex flex-col items-center justify-center transition-all duration-300 transform active:scale-90 ${
+                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
+                } ${
                   activeTab === 'pass'
-                    ? isDarkTheme ? 'scale-110 shadow-2xl ring-4 ring-slate-950' : 'scale-110 shadow-2xl ring-4 ring-white'
-                    : isDarkTheme ? 'hover:scale-105 shadow-xl ring-2 ring-slate-900/90' : 'hover:scale-105 shadow-xl ring-2 ring-slate-200/90'
+                    ? isDarkTheme ? 'scale-110 shadow-2xl ring-4 ring-slate-900' : 'scale-110 shadow-2xl ring-4 ring-white'
+                    : isDarkTheme ? 'hover:scale-105 shadow-xl ring-4 ring-slate-950' : 'hover:scale-105 shadow-xl ring-4 ring-white'
                 }`}
                 style={{
                   background: brandColors.fabGradient,
-                  boxShadow: `0 10px 28px -4px ${brandColors.glow}, 0 4px 12px rgba(0,0,0,0.6)`,
-                  color: '#000000',
+                  boxShadow: `0 10px 28px -4px ${brandColors.glow}, 0 4px 14px rgba(0,0,0,0.35)`,
+                  color: brandColors.contrastOnSecondary,
                 }}
                 title="بطاقة العضوية والولاء الرقمية"
               >
                 <div className="relative flex items-center justify-center">
-                  <QrCode className="w-6 h-6 sm:w-7 sm:h-7 stroke-[2.3] text-slate-950" />
+                  <QrCode className="w-6 h-6 sm:w-7 sm:h-7 stroke-[2.4]" style={{ color: brandColors.contrastOnSecondary }} />
                   {activeTab === 'pass' && (
-                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-slate-950 animate-ping"></span>
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-white animate-ping"></span>
                   )}
                 </div>
-                <span className="text-[9px] font-black tracking-tight text-slate-950 leading-none mt-0.5">
+                <span
+                  className="text-[10px] font-black tracking-tight leading-none mt-1"
+                  style={{ color: brandColors.contrastOnSecondary }}
+                >
                   بطاقتي
                 </span>
               </button>
             </div>
           )}
 
-          <nav className={`glass-dock rounded-3xl p-1.5 flex items-center justify-between relative transition-colors duration-300 ${
+          <nav className={`glass-dock rounded-3xl p-1.5 grid grid-cols-5 items-center relative transition-colors duration-300 ${
             isDarkTheme
               ? 'shadow-[0_-8px_30px_rgba(0,0,0,0.5)] bg-slate-950/95 backdrop-blur-3xl border border-white/10'
               : 'shadow-[0_-4px_25px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-3xl border border-slate-200/90'
           }`}>
-            {/* Right Side Group: Menu & Bookings */}
-            <div className="flex-1 flex items-center justify-around pl-8 rtl:pl-0 rtl:pr-1">
-              {activeModules.orders && (
+            {/* Slot 1: المنيو (Rightmost in RTL) */}
+            <div className="flex justify-center items-center">
+              {activeModules.orders ? (
                 <button
+                  type="button"
                   onClick={() => setActiveTab('menu')}
                   style={activeTab === 'menu' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
-                  className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'menu'
                       ? 'font-black scale-105'
                       : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
                   }`}
                 >
                   <ShoppingBag
-                    className="w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300"
+                    className="w-5 h-5 transition-transform duration-300"
                     style={activeTab === 'menu' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
                   />
-                  <span>المنيو</span>
-                  {activeTab === 'menu' && (
+                  <span className="text-[10px] sm:text-[11px] leading-tight">المنيو</span>
+                  {activeTab === 'menu' ? (
                     <span
-                      className="w-1 h-1 rounded-full animate-fade-in"
+                      className="w-4 h-1 rounded-full animate-fade-in"
                       style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
                     />
+                  ) : (
+                    <span className="w-4 h-1 opacity-0" />
                   )}
                   {cartItems.length > 0 && (
                     <span
-                      className={`absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm ${
+                      className={`absolute top-0.5 right-1 sm:right-2 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm ${
                         brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
                       }`}
                       style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
@@ -5562,88 +5643,102 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     </span>
                   )}
                 </button>
-              )}
+              ) : <div className="h-10" />}
+            </div>
 
-              {activeModules.bookings && (
+            {/* Slot 2: حجز موعد */}
+            <div className="flex justify-center items-center">
+              {activeModules.bookings ? (
                 <button
+                  type="button"
                   onClick={() => setActiveTab('services')}
                   style={activeTab === 'services' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
-                  className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'services'
                       ? 'font-black scale-105'
                       : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
                   }`}
                 >
                   <Calendar
-                    className="w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300"
+                    className="w-5 h-5 transition-transform duration-300"
                     style={activeTab === 'services' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
                   />
-                  <span>حجز موعد</span>
-                  {activeTab === 'services' && (
+                  <span className="text-[10px] sm:text-[11px] leading-tight">حجز موعد</span>
+                  {activeTab === 'services' ? (
                     <span
-                      className="w-1 h-1 rounded-full animate-fade-in"
+                      className="w-4 h-1 rounded-full animate-fade-in"
                       style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
                     />
+                  ) : (
+                    <span className="w-4 h-1 opacity-0" />
                   )}
                 </button>
-              )}
+              ) : <div className="h-10" />}
             </div>
 
-            {/* Spacer for Absolute Center FAB Button */}
-            {activeModules.loyalty && (
-              <div className="w-16 h-10 shrink-0 pointer-events-none" />
-            )}
+            {/* Slot 3: Center FAB Spacer Slot (Exactly 20% column width for absolute symmetry) */}
+            <div className="flex justify-center items-center pointer-events-none">
+              <div className="w-12 h-10" />
+            </div>
 
-            {/* Left Side Group: Tickets & Perks & Status */}
-            <div className="flex-1 flex items-center justify-around pr-8 rtl:pr-0 rtl:pl-1">
-              {activeModules.loyalty && (
+            {/* Slot 4: العروض */}
+            <div className="flex justify-center items-center">
+              {activeModules.loyalty ? (
                 <button
+                  type="button"
                   onClick={() => setActiveTab('perks')}
                   style={activeTab === 'perks' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
-                  className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'perks'
                       ? 'font-black scale-105'
                       : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
                   }`}
                 >
                   <Gift
-                    className="w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300"
+                    className="w-5 h-5 transition-transform duration-300"
                     style={activeTab === 'perks' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
                   />
-                  <span>العروض</span>
-                  {activeTab === 'perks' && (
+                  <span className="text-[10px] sm:text-[11px] leading-tight">العروض</span>
+                  {activeTab === 'perks' ? (
                     <span
-                      className="w-1 h-1 rounded-full animate-fade-in"
+                      className="w-4 h-1 rounded-full animate-fade-in"
                       style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
                     />
+                  ) : (
+                    <span className="w-4 h-1 opacity-0" />
                   )}
                 </button>
-              )}
+              ) : <div className="h-10" />}
+            </div>
 
+            {/* Slot 5: حصرياتي (Leftmost in RTL) */}
+            <div className="flex justify-center items-center">
               <button
                 type="button"
                 onClick={() => setActiveTab('tickets')}
                 style={activeTab === 'tickets' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
-                className={`flex-1 py-1.5 px-1 rounded-2xl text-[9px] sm:text-[10px] flex flex-col items-center gap-1 transition-all duration-300 relative ${
+                className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                   activeTab === 'tickets'
                     ? 'font-black scale-105'
                     : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
                 }`}
               >
                 <Ticket
-                  className="w-4 h-4 sm:w-5 sm:h-5 transition-transform duration-300"
+                  className="w-5 h-5 transition-transform duration-300"
                   style={activeTab === 'tickets' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
                 />
-                <span>حصرياتي</span>
-                {activeTab === 'tickets' && (
+                <span className="text-[10px] sm:text-[11px] leading-tight">حصرياتي</span>
+                {activeTab === 'tickets' ? (
                   <span
-                    className="w-1 h-1 rounded-full animate-fade-in"
+                    className="w-4 h-1 rounded-full animate-fade-in"
                     style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
                   />
+                ) : (
+                  <span className="w-4 h-1 opacity-0" />
                 )}
                 {activeCouponsCount > 0 && (
                   <span
-                    className={`absolute top-0 right-1 sm:right-2 w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm animate-pulse ${
+                    className={`absolute top-0.5 right-1 sm:right-2 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm animate-pulse ${
                       brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
                     }`}
                     style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
