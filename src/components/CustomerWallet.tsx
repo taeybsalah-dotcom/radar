@@ -547,13 +547,30 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     };
   }, [selectedBranch, branches]);
 
-  // فحص توفر السائقين في الفرع المختار
+  // فحص توفر السائقين في الفرع المختار ومزامنتهم مع السيرفر
+  const [driversRefreshTrigger, setDriversRefreshTrigger] = useState(0);
+
+  useEffect(() => {
+    if (store?.id) {
+      DriverService.syncWithSupabase(store.id).then(() => {
+        setDriversRefreshTrigger((v) => v + 1);
+      });
+    }
+
+    const unsub = LoyaltyEvents.listen((event) => {
+      if (event.type === 'DRIVERS_UPDATED' || event.type === 'ORDER_STATUS_UPDATED') {
+        setDriversRefreshTrigger((v) => v + 1);
+      }
+    });
+    return () => unsub();
+  }, [store?.id]);
+
   const availableDriversCount = useMemo(() => {
     if (!store?.id) return 1;
     const branchId = selectedBranch?.id || null;
     const list = DriverService.getAvailableBranchDrivers(store.id, branchId);
     return list.length;
-  }, [store?.id, selectedBranch?.id]);
+  }, [store?.id, selectedBranch?.id, driversRefreshTrigger]);
 
   // حساب المسافة ورسوم التوصيل وفحص النطاق تلقائياً
   const calculatedDelivery = useMemo(() => {

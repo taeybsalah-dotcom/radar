@@ -25,7 +25,8 @@ export type LoyaltyEventType =
   | 'BOOKINGS_UPDATED'
   | 'SHIFT_CLOSED'
   | 'REFUND_PROCESSED'
-  | 'CASH_MOVEMENT_RECORDED';
+  | 'CASH_MOVEMENT_RECORDED'
+  | 'DRIVERS_UPDATED';
 
 export interface LoyaltyEventPayload {
   type: LoyaltyEventType;
@@ -74,6 +75,7 @@ const CROSS_DEVICE_REALTIME_EVENTS = new Set<LoyaltyEventType>([
   'BOOKING_STATUS_UPDATED',
   'CATALOG_UPDATED',
   'BOOKINGS_UPDATED',
+  'DRIVERS_UPDATED',
 ]);
 
 const channelName = 'radar_loyalty_realtime_channel';

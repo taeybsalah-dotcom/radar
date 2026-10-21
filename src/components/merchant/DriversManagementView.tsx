@@ -7,6 +7,7 @@ import {
   DriverWorkStatus,
 } from '../../types';
 import { DriverService } from '../../lib/driverService';
+import { LoyaltyEvents } from '../../lib/events';
 import {
   Plus,
   Edit3,
@@ -59,7 +60,18 @@ export const DriversManagementView: React.FC<DriversManagementViewProps> = ({
   };
 
   useEffect(() => {
-    reloadDrivers();
+    if (store?.id) {
+      DriverService.syncWithSupabase(store.id).then(() => {
+        reloadDrivers();
+      });
+    }
+
+    const unsub = LoyaltyEvents.listen((event) => {
+      if (event.type === 'DRIVERS_UPDATED') {
+        reloadDrivers();
+      }
+    });
+    return () => unsub();
   }, [store.id, selectedBranchFilter]);
 
   const openAddModal = () => {

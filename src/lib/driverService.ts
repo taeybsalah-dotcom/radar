@@ -1,10 +1,44 @@
 import { StoreDriver, DriverShiftSettlement, DriverVehicleType, DriverWorkStatus, DeliveryOrderStatus, WhatsAppOrderPayload } from '../types';
 import { LoyaltyEvents } from './events';
+import { getSupabaseClient, isUUID } from './supabase';
 
 const DRIVERS_STORAGE_PREFIX = 'radar_store_drivers_';
 const DRIVER_SETTLEMENTS_PREFIX = 'radar_driver_settlements_';
 const PRIMARY_ORDERS_KEY = 'radar_local_whatsapp_orders';
 const FALLBACK_ORDERS_KEY = 'radar_local_store_orders';
+
+// In-flight sync debounce tracker
+const lastSyncTimestampMap = new Map<string, number>();
+
+async function resolveStoreUUID(storeId: string): Promise<string> {
+  if (!storeId || storeId === 'default') return storeId;
+  if (isUUID(storeId)) return storeId;
+  const supabase = getSupabaseClient();
+  if (!supabase) return storeId;
+  try {
+    const { data } = await (supabase as any)
+      .from('stores')
+      .select('id')
+      .or(`id.eq.${storeId},slug.eq.${storeId}`)
+      .limit(1)
+      .single();
+    if (data?.id) return data.id;
+  } catch {}
+  return storeId;
+}
+
+async function syncOrderToSupabase(orderId: string, updates: Record<string, any>): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (!supabase || !orderId) return;
+  try {
+    await (supabase as any)
+      .from('store_orders')
+      .update(updates)
+      .or(`id.eq.${orderId},order_number.eq.${orderId}`);
+  } catch (err) {
+    console.warn('Failed to sync order to Supabase:', err);
+  }
+}
 
 function getAllStoredOrders(): WhatsAppOrderPayload[] {
   try {
@@ -85,6 +119,74 @@ export const INITIAL_DEMO_DRIVERS: StoreDriver[] = [
 
 export class DriverService {
   /**
+   * جلب قائمة السائقين من قاعدة بيانات Supabase ومزامنتها محلياً
+   */
+  static async syncWithSupabase(storeId: string): Promise<StoreDriver[]> {
+    const cleanStoreId = storeId || 'default';
+    const now = Date.now();
+    const lastSync = lastSyncTimestampMap.get(cleanStoreId) || 0;
+    
+    // Don't sync more frequently than once every 2 seconds unless forced
+    if (now - lastSync < 2000) {
+      return this.getDrivers(cleanStoreId);
+    }
+    lastSyncTimestampMap.set(cleanStoreId, now);
+
+    try {
+      const resolvedStoreId = await resolveStoreUUID(cleanStoreId);
+      const supabase = getSupabaseClient();
+      if (supabase && isUUID(resolvedStoreId)) {
+        const { data, error } = await (supabase as any)
+          .from('store_drivers')
+          .select('*')
+          .eq('store_id', resolvedStoreId)
+          .order('created_at', { ascending: true });
+
+        if (!error && Array.isArray(data) && data.length > 0) {
+          const list: StoreDriver[] = data.map((d: any) => ({
+            id: String(d.id),
+            store_id: String(d.store_id),
+            branch_id: d.branch_id || 'b1',
+            branch_name: d.branch_name || 'الفرع الرئيسي',
+            name: d.name,
+            phone: d.phone,
+            vehicle_type: d.vehicle_type || 'motorcycle',
+            plate_number: d.plate_number || '',
+            pin_code: d.pin_code || '1234',
+            is_active: d.is_active !== false,
+            status: d.status || 'available',
+            auto_break_after_delivery: !!d.auto_break_after_delivery,
+            current_trip_orders_count: Number(d.current_trip_orders_count) || 0,
+            current_trip_order_ids: Array.isArray(d.current_trip_order_ids) ? d.current_trip_order_ids : [],
+            estimated_return_minutes: Number(d.estimated_return_minutes) || 0,
+            last_status_change_at: d.last_status_change_at,
+            commission_per_order: Number(d.commission_per_order) || 0,
+            notes: d.notes || '',
+            created_at: d.created_at || new Date().toISOString(),
+            updated_at: d.updated_at || new Date().toISOString(),
+          }));
+
+          localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+          if (resolvedStoreId !== cleanStoreId) {
+            localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${resolvedStoreId}`, JSON.stringify(list));
+          }
+
+          LoyaltyEvents.emit({
+            type: 'DRIVERS_UPDATED',
+            storeId: cleanStoreId,
+          });
+
+          return list;
+        }
+      }
+    } catch (err) {
+      console.warn('DriverService.syncWithSupabase warning:', err);
+    }
+
+    return this.getDrivers(cleanStoreId);
+  }
+
+  /**
    * جلب قائمة السائقين مع دعم الفلترة حسب الفرع التابع له السائق
    */
   static getDrivers(storeId: string, branchId?: string | null): StoreDriver[] {
@@ -108,14 +210,34 @@ export class DriverService {
       list = INITIAL_DEMO_DRIVERS;
     }
 
-    if (branchId && branchId !== 'ALL') {
-      return list.filter((d) => !d.branch_id || d.branch_id === branchId);
+    // Trigger background sync if not synced recently
+    const lastSync = lastSyncTimestampMap.get(cleanStoreId) || 0;
+    if (Date.now() - lastSync > 5000) {
+      this.syncWithSupabase(cleanStoreId).catch(() => {});
     }
+
+    if (branchId && branchId !== 'ALL') {
+      const filtered = list.filter((d) => {
+        if (!d.branch_id || d.branch_id === 'ALL') return true;
+        if (d.branch_id === branchId) return true;
+        return false;
+      });
+
+      // If matches found for this specific branch, return them
+      if (filtered.length > 0) {
+        return filtered;
+      }
+
+      // Smart Fallback: If no drivers explicitly matched branchId (e.g. branchId is UUID and drivers have demo 'b1' or vice versa),
+      // return all active drivers for this store so cashier and customers are never left with 0 drivers!
+      return list.filter((d) => d.is_active !== false);
+    }
+
     return list;
   }
 
   /**
-   * حفظ أو تعديل سائق
+   * حفظ أو تعديل سائق وحفظه في كل من التخزين المحلي وقاعدة بيانات Supabase
    */
   static saveDriver(storeId: string, driverData: Partial<StoreDriver>): StoreDriver {
     const cleanStoreId = storeId || 'default';
@@ -154,16 +276,72 @@ export class DriverService {
     }
 
     localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+
+    LoyaltyEvents.emit({
+      type: 'DRIVERS_UPDATED',
+      storeId: cleanStoreId,
+    });
+
+    // Asynchronously save to Supabase
+    (async () => {
+      try {
+        const resolvedStoreId = await resolveStoreUUID(cleanStoreId);
+        const supabase = getSupabaseClient();
+        if (supabase && isUUID(resolvedStoreId)) {
+          await (supabase as any)
+            .from('store_drivers')
+            .upsert({
+              id: target.id,
+              store_id: resolvedStoreId,
+              branch_id: target.branch_id,
+              branch_name: target.branch_name,
+              name: target.name,
+              phone: target.phone,
+              vehicle_type: target.vehicle_type,
+              plate_number: target.plate_number,
+              pin_code: target.pin_code,
+              is_active: target.is_active,
+              status: target.status,
+              commission_per_order: target.commission_per_order,
+              notes: target.notes,
+              updated_at: nowIso,
+            }, { onConflict: 'id' });
+        }
+      } catch (e) {
+        console.warn('DriverService.saveDriver Supabase sync error:', e);
+      }
+    })();
+
     return target;
   }
 
   /**
-   * حذف سائق
+   * حذف سائق من التخزين المحلي وقاعدة بيانات Supabase
    */
   static deleteDriver(storeId: string, driverId: string): void {
     const cleanStoreId = storeId || 'default';
     const list = this.getDrivers(cleanStoreId).filter((d) => d.id !== driverId);
     localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+
+    LoyaltyEvents.emit({
+      type: 'DRIVERS_UPDATED',
+      storeId: cleanStoreId,
+    });
+
+    // Asynchronously delete from Supabase
+    (async () => {
+      try {
+        const supabase = getSupabaseClient();
+        if (supabase) {
+          await (supabase as any)
+            .from('store_drivers')
+            .delete()
+            .eq('id', driverId);
+        }
+      } catch (e) {
+        console.warn('DriverService.deleteDriver Supabase sync error:', e);
+      }
+    })();
   }
 
   /**
@@ -178,14 +356,21 @@ export class DriverService {
     const cleanStoreId = storeId || 'default';
     const list = this.getDrivers(cleanStoreId);
     const target = list.find((d) => d.id === driverId);
+    const nowIso = new Date().toISOString();
+
     if (target) {
       target.status = status;
-      target.last_status_change_at = new Date().toISOString();
-      target.updated_at = new Date().toISOString();
+      target.last_status_change_at = nowIso;
+      target.updated_at = nowIso;
       if (extra) {
         Object.assign(target, extra);
       }
       localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+
+      LoyaltyEvents.emit({
+        type: 'DRIVERS_UPDATED',
+        storeId: cleanStoreId,
+      });
 
       LoyaltyEvents.emit({
         type: 'ORDER_STATUS_UPDATED',
@@ -193,6 +378,26 @@ export class DriverService {
         phone: target.phone,
         orderData: { driver_id: driverId, status, ...extra } as any,
       });
+
+      // Asynchronously update Supabase
+      (async () => {
+        try {
+          const supabase = getSupabaseClient();
+          if (supabase) {
+            await (supabase as any)
+              .from('store_drivers')
+              .update({
+                status,
+                last_status_change_at: nowIso,
+                updated_at: nowIso,
+                ...(extra || {}),
+              })
+              .eq('id', driverId);
+          }
+        } catch (e) {
+          console.warn('DriverService.setDriverStatus Supabase sync error:', e);
+        }
+      })();
     }
   }
 
@@ -207,6 +412,21 @@ export class DriverService {
       target.auto_break_after_delivery = autoBreak;
       target.updated_at = new Date().toISOString();
       localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+
+      (async () => {
+        try {
+          const supabase = getSupabaseClient();
+          if (supabase) {
+            await (supabase as any)
+              .from('store_drivers')
+              .update({
+                auto_break_after_delivery: autoBreak,
+                updated_at: target.updated_at,
+              })
+              .eq('id', driverId);
+          }
+        } catch {}
+      })();
     }
   }
 
@@ -249,11 +469,12 @@ export class DriverService {
           ? (orders.find((o) => o.order_id === driver.current_trip_order_ids![0])?.fulfillment_details as any)?.trip_batch_id || `batch_${Date.now()}`
           : `batch_${Date.now()}`;
 
+        const nowIso = new Date().toISOString();
         orders[orderIdx].driver_id = driver.id;
         orders[orderIdx].driver_name = driver.name;
         orders[orderIdx].driver_phone = driver.phone;
         orders[orderIdx].delivery_status = 'assigned';
-        orders[orderIdx].driver_assigned_at = new Date().toISOString();
+        orders[orderIdx].driver_assigned_at = nowIso;
         orders[orderIdx].fulfillment_details = {
           ...orders[orderIdx].fulfillment_details,
           trip_batch_id: batchId,
@@ -266,6 +487,16 @@ export class DriverService {
         this.setDriverStatus(cleanStoreId, driverId, 'loading', {
           current_trip_orders_count: newTripCount,
           current_trip_order_ids: [...currentOrders.filter((id) => id !== orderId), orderId],
+        });
+
+        // مزامنة حالة الطلب مع قاعدة بيانات Supabase
+        syncOrderToSupabase(orderId, {
+          driver_id: driver.id,
+          driver_name: driver.name,
+          driver_phone: driver.phone,
+          delivery_status: 'assigned',
+          driver_assigned_at: nowIso,
+          fulfillment_details: orders[orderIdx].fulfillment_details,
         });
 
         // إشعار فوري وتحديث الحالة
@@ -299,6 +530,9 @@ export class DriverService {
         if (o.status !== 'completed') {
           o.status = 'ready';
         }
+        syncOrderToSupabase(o.order_id || (o as any).id, {
+          delivery_status: 'picked_up',
+        });
       }
     });
 
@@ -324,13 +558,18 @@ export class DriverService {
       );
 
       if (orderIdx !== -1) {
+        const nowIso = new Date().toISOString();
         orders[orderIdx].delivery_status = 'picked_up';
-        orders[orderIdx].driver_picked_up_at = new Date().toISOString();
+        orders[orderIdx].driver_picked_up_at = nowIso;
         if (orders[orderIdx].status !== 'completed') {
           orders[orderIdx].status = 'ready'; // جاري التوصيل
         }
 
         saveAllStoredOrders(orders);
+
+        syncOrderToSupabase(orderId, {
+          delivery_status: 'picked_up',
+        });
 
         LoyaltyEvents.emit({
           type: 'ORDER_STATUS_UPDATED',
@@ -370,21 +609,30 @@ export class DriverService {
         orders[orderIdx].delivery_status = 'delivered';
         orders[orderIdx].status = 'completed';
         orders[orderIdx].delivered_at = nowIso;
-        orders[orderIdx].driver_payment_method = paymentMethod;
-        orders[orderIdx].driver_collected_amount = collectedAmount;
         orders[orderIdx].payment_status = 'paid';
+        orders[orderIdx].payment_method = (paymentMethod === 'card' ? 'mada' : paymentMethod) as any;
+
         if (notes) {
-          orders[orderIdx].fulfillment_details = {
-            ...orders[orderIdx].fulfillment_details,
-            general_notes: `${orders[orderIdx].fulfillment_details?.general_notes || ''} [ملاحظة السائق: ${notes}]`.trim(),
-          };
+          (orders[orderIdx] as any).notes = (orders[orderIdx] as any).notes
+            ? `${(orders[orderIdx] as any).notes} | ملاحظة التسليم: ${notes}`
+            : `ملاحظة التسليم: ${notes}`;
         }
 
         saveAllStoredOrders(orders);
 
-        // تسجيل العملية في عهدة السائق اليومية
-        this.recordSettlementTransaction(storeId, driverId, paymentMethod, collectedAmount, orders[orderIdx].delivery_fee || 0);
+        syncOrderToSupabase(orderId, {
+          delivery_status: 'delivered',
+          status: 'completed',
+          delivered_at: nowIso,
+          payment_status: 'paid',
+          payment_method: paymentMethod,
+        });
 
+        // تسجيل تسوية الكابتن النقدية
+        const deliveryFee = (orders[orderIdx].fulfillment_details as any)?.delivery_fee || 0;
+        this.recordSettlementTransaction(storeId, driverId, paymentMethod, collectedAmount, deliveryFee);
+
+        // إشعار اكتمال الطلب
         LoyaltyEvents.emit({
           type: 'ORDER_STATUS_UPDATED',
           storeId: orders[orderIdx].store_id,
@@ -392,17 +640,15 @@ export class DriverService {
           orderData: orders[orderIdx],
         });
 
-        // التحقق إن كان لدى السائق طلبات أخرى متبقية في نفس الرحلة
+        // فحص ما إذا كان لدى السائق طلبات أخرى متبقية في نفس الرحلة
+        const driver = this.getDrivers(storeId).find((d) => d.id === driverId);
         const remainingActive = orders.filter(
-          (o) => o.driver_id === driverId && (o.delivery_status === 'assigned' || o.delivery_status === 'picked_up')
+          (o) => o.driver_id === driverId && o.delivery_status === 'picked_up' && o.order_id !== orderId
         );
 
-        const currentDriver = this.getDrivers(storeId).find((d) => d.id === driverId);
-
         if (remainingActive.length === 0) {
-          // سلّم آخر طلب في الرحلة
-          if (currentDriver?.auto_break_after_delivery) {
-            // السائق طلب استراحة تلقائية بعد هذا المشوار
+          // انتهت كل توصيلات الرحلة!
+          if (driver?.auto_break_after_delivery) {
             this.setDriverStatus(storeId, driverId, 'break', {
               auto_break_after_delivery: false,
               current_trip_orders_count: 0,
@@ -410,7 +656,7 @@ export class DriverService {
               estimated_return_minutes: 0,
             });
           } else {
-            // السائق راجع للمطعم
+            // في طريق العودة للفرع
             this.setDriverStatus(storeId, driverId, 'returning', {
               current_trip_orders_count: 0,
               current_trip_order_ids: [],
@@ -488,15 +734,22 @@ export class DriverService {
         return isThisDriver && isDelivered && isToday;
       });
 
-      return { availableForPickup, activeDeliveries, completedToday };
-    } catch (e) {
-      console.warn('Error loading driver orders:', e);
-      return { availableForPickup: [], activeDeliveries: [], completedToday: [] };
+      return {
+        availableForPickup,
+        activeDeliveries,
+        completedToday,
+      };
+    } catch {
+      return {
+        availableForPickup: [],
+        activeDeliveries: [],
+        completedToday: [],
+      };
     }
   }
 
   /**
-   * حساب كشف حساب السائق والعهد النقدية اليومية
+   * حساب تقرير وردية السائق والعهد النقدية اليومية
    */
   static getDriverShiftSettlement(storeId: string, driverId: string): DriverShiftSettlement {
     const today = new Date().toISOString().split('T')[0];
@@ -601,8 +854,14 @@ export class DriverService {
     switch (status) {
       case 'available':
         return { label: 'متاح للطلب', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' };
+      case 'loading':
+        return { label: 'يجهز بالفرع 📦', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
       case 'delivering':
-        return { label: 'في مهمة توصيل 🛵', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
+        return { label: 'في مهمة توصيل 🛵', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' };
+      case 'returning':
+        return { label: 'راجع للفرع 💨', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' };
+      case 'break':
+        return { label: 'في استراحة ☕', color: 'bg-orange-500/20 text-orange-400 border-orange-500/30' };
       case 'off_duty':
         return { label: 'خارج الخدمة', color: 'bg-slate-700/50 text-slate-400 border-slate-600/30' };
       default:

@@ -543,6 +543,21 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   // 🛵 Branch Delivery Drivers
   const [driversRefreshTrigger, setDriversRefreshTrigger] = useState(0);
 
+  useEffect(() => {
+    if (store?.id) {
+      DriverService.syncWithSupabase(store.id).then(() => {
+        setDriversRefreshTrigger((v) => v + 1);
+      });
+    }
+
+    const unsub = LoyaltyEvents.listen((event) => {
+      if (event.type === 'DRIVERS_UPDATED' || event.type === 'ORDER_STATUS_UPDATED') {
+        setDriversRefreshTrigger((v) => v + 1);
+      }
+    });
+    return () => unsub();
+  }, [store?.id]);
+
   const branchDrivers = useMemo(() => {
     if (!store?.id) return [];
     return DriverService.getDrivers(store.id, activeBranchId);

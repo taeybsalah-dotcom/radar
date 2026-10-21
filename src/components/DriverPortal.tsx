@@ -52,6 +52,22 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   const brandPrimary = store?.primary_color || '#0F172A';
   const brandSecondary = store?.secondary_color || '#F59E0B';
 
+  // Fixed/Locked Identity from URL Query Params or Merchant Link
+  const queryDriverId = useMemo(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('driver') || '';
+    }
+    return '';
+  }, []);
+
+  const queryBranchId = useMemo(() => {
+    if (typeof window !== 'undefined') {
+      const b = new URLSearchParams(window.location.search).get('branch');
+      return b && b !== 'ALL' ? b : '';
+    }
+    return '';
+  }, []);
+
   // Branches
   const [branches, setBranches] = useState<StoreBranch[]>(store?.branches || []);
   const [selectedBranchId, setSelectedBranchId] = useState<string>(() => {
@@ -70,7 +86,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     return 'b1';
   });
 
-  // Drivers for the selected branch
+  // Drivers for the store
   const [drivers, setDrivers] = useState<StoreDriver[]>([]);
   const [activeDriverId, setActiveDriverId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -82,36 +98,55 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     return '';
   });
 
-  // Active Driver Object
+  // Active Driver Object strictly identified
   const currentDriver = useMemo(() => {
-    return drivers.find((d) => d.id === activeDriverId) || drivers[0] || null;
-  }, [drivers, activeDriverId]);
+    if (queryDriverId) {
+      const found = drivers.find((d) => d.id === queryDriverId);
+      if (found) return found;
+    }
+    if (activeDriverId) {
+      const found = drivers.find((d) => d.id === activeDriverId);
+      if (found) return found;
+    }
+    return drivers[0] || null;
+  }, [drivers, queryDriverId, activeDriverId]);
 
-  // Load and reload drivers
+  // Load and reload drivers with Supabase sync
   const reloadDrivers = () => {
     if (!store?.id) return;
-    let list = DriverService.getDrivers(store.id, selectedBranchId);
-    if (activeDriverId && !list.some((d) => d.id === activeDriverId)) {
-      const allDrivers = DriverService.getDrivers(store.id);
-      const match = allDrivers.find((d) => d.id === activeDriverId);
-      if (match) {
-        if (match.branch_id && match.branch_id !== selectedBranchId) {
-          setSelectedBranchId(match.branch_id);
-          list = DriverService.getDrivers(store.id, match.branch_id);
-        } else {
-          list = allDrivers;
-        }
+    const allDrivers = DriverService.getDrivers(store.id);
+    setDrivers(allDrivers);
+
+    let target = queryDriverId
+      ? allDrivers.find((d) => d.id === queryDriverId)
+      : activeDriverId
+      ? allDrivers.find((d) => d.id === activeDriverId)
+      : allDrivers[0];
+
+    if (target) {
+      setActiveDriverId(target.id);
+      localStorage.setItem(`radar_active_driver_${store?.id}`, target.id);
+      if (target.branch_id) {
+        setSelectedBranchId(target.branch_id);
+        localStorage.setItem(`radar_driver_branch_${store?.id}`, target.branch_id);
       }
-    }
-    setDrivers(list);
-    if (!activeDriverId && list.length > 0) {
-      setActiveDriverId(list[0].id);
     }
   };
 
   useEffect(() => {
-    reloadDrivers();
-  }, [store?.id, selectedBranchId]);
+    if (store?.id) {
+      DriverService.syncWithSupabase(store.id).then(() => {
+        reloadDrivers();
+      });
+    }
+
+    const unsub = LoyaltyEvents.listen((event) => {
+      if (event.type === 'DRIVERS_UPDATED') {
+        reloadDrivers();
+      }
+    });
+    return () => unsub();
+  }, [store?.id]);
 
   // Active Tab
   const [activeTab, setActiveTab] = useState<'delivering' | 'pickup' | 'completed' | 'settlement'>('delivering');
@@ -313,42 +348,35 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           </div>
         </div>
 
-        {/* Driver & Branch Quick Selectors Bar (if multiple exist) */}
-        <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-800/80">
-          <div>
-            <label className="text-[10px] text-slate-400 block mb-1 font-bold">الفرع المربوط به:</label>
-            <select
-              value={selectedBranchId}
-              onChange={(e) => {
-                setSelectedBranchId(e.target.value);
-                localStorage.setItem(`radar_driver_branch_${store?.id}`, e.target.value);
-              }}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
-            >
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  🏢 {b.name}
-                </option>
-              ))}
-            </select>
+        {/* 🔒 Locked Driver Identity & Branch Info Card (هوية الكابتن والفرع مقفلة ومعتمدة) */}
+        <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-slate-800/80 bg-slate-950/70 rounded-2xl px-3.5 py-2.5 border border-slate-800 shadow-inner">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center text-sm shrink-0 font-bold">
+              🔒
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-slate-400 font-bold">كابتن معتمد:</span>
+                <span className="text-xs text-amber-400 font-black truncate">{currentDriver?.name || 'كابتن التوصيل'}</span>
+                <span className="text-[10px] text-slate-400 font-medium">({DriverService.getVehicleLabel(currentDriver?.vehicle_type || 'motorcycle')})</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-300 font-bold mt-0.5">
+                <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>الفرع المعتمد:</span>
+                <span className="text-white font-extrabold">{activeBranchName}</span>
+              </div>
+            </div>
           </div>
 
-          <div>
-            <label className="text-[10px] text-slate-400 block mb-1 font-bold">حساب الكابتن الحالي:</label>
-            <select
-              value={activeDriverId}
-              onChange={(e) => {
-                setActiveDriverId(e.target.value);
-                localStorage.setItem(`radar_active_driver_${store?.id}`, e.target.value);
-              }}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-amber-400 font-bold focus:outline-none focus:border-amber-500"
-            >
-              {drivers.map((d) => (
-                <option key={d.id} value={d.id}>
-                  👤 {d.name} ({DriverService.getVehicleLabel(d.vehicle_type)})
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-700 text-amber-400 shadow-sm flex items-center gap-1">
+              <span>🔒 هوية مقفلة</span>
+            </span>
+            {currentDriver?.plate_number && (
+              <span className="text-[10px] text-slate-400 font-mono font-bold">
+                {currentDriver.plate_number}
+              </span>
+            )}
           </div>
         </div>
       </header>
