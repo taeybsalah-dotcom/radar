@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Store, StoreBranch, StoreStaff, BranchDaySchedule } from '../types';
+import { Store, StoreBranch, StoreStaff, BranchDaySchedule, DeliveryDistanceTier } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { checkBranchOpenStatus, DEFAULT_BRANCH_SCHEDULE } from '../lib/branchUtils';
+import { DEFAULT_DELIVERY_TIERS, DEFAULT_MAX_DELIVERY_RADIUS_KM, extractCoordsFromMapUrl } from '../lib/deliveryPricing';
 import {
   Building2,
   Clock,
@@ -23,6 +24,11 @@ import {
   Save,
   RotateCcw,
   Utensils,
+  Compass,
+  Bike,
+  LocateFixed,
+  DollarSign,
+  Navigation,
 } from 'lucide-react';
 import { TablesManagementView } from './merchant/TablesManagementView';
 import { DriversManagementView } from './merchant/DriversManagementView';
@@ -67,6 +73,19 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
   // Staff Assignment State
   const [assigningBranchId, setAssigningBranchId] = useState<string | null>(null);
   const [selectedStaffToAssign, setSelectedStaffToAssign] = useState<string>('');
+
+  // 🛵 Delivery Settings Modal State
+  const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false);
+  const [selectedDeliveryBranch, setSelectedDeliveryBranch] = useState<StoreBranch | null>(null);
+  const [deliveryRadiusKm, setDeliveryRadiusKm] = useState<number>(DEFAULT_MAX_DELIVERY_RADIUS_KM);
+  const [deliveryPricingType, setDeliveryPricingType] = useState<'fixed' | 'tiered'>('tiered');
+  const [fixedDeliveryFee, setFixedDeliveryFee] = useState<number>(15);
+  const [deliveryTiers, setDeliveryTiers] = useState<DeliveryDistanceTier[]>(DEFAULT_DELIVERY_TIERS);
+  const [branchLat, setBranchLat] = useState<string>('');
+  const [branchLng, setBranchLng] = useState<string>('');
+  const [mapUrlInput, setMapUrlInput] = useState<string>('');
+  const [isLocatingGPS, setIsLocatingGPS] = useState(false);
+  const [isSavingDeliverySettings, setIsSavingDeliverySettings] = useState(false);
 
   const loadBranches = async () => {
     if (!store?.id) return;
@@ -281,6 +300,152 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
       }
     } catch (e) {
       setActionError('تعذر إلغاء تعيين الموظف من الفرع.');
+    }
+  };
+
+  // 🛵 Open Delivery Settings Modal
+  const handleOpenDeliveryModal = (branch: StoreBranch) => {
+    setSelectedDeliveryBranch(branch);
+    setDeliveryRadiusKm(branch.delivery_radius_km ?? DEFAULT_MAX_DELIVERY_RADIUS_KM);
+    setDeliveryPricingType(branch.delivery_pricing_type ?? 'tiered');
+    const existingTiers = Array.isArray(branch.delivery_tiers) && branch.delivery_tiers.length > 0
+      ? branch.delivery_tiers
+      : DEFAULT_DELIVERY_TIERS;
+    setDeliveryTiers(existingTiers);
+    if (branch.delivery_pricing_type === 'fixed' && existingTiers[0]?.fee) {
+      setFixedDeliveryFee(existingTiers[0].fee);
+    }
+    setBranchLat(branch.lat !== undefined && branch.lat !== null ? String(branch.lat) : '');
+    setBranchLng(branch.lng !== undefined && branch.lng !== null ? String(branch.lng) : '');
+    setMapUrlInput(branch.lat && branch.lng ? `https://maps.google.com/?q=${branch.lat},${branch.lng}` : '');
+    setIsDeliveryModalOpen(true);
+  };
+
+  // 📍 Locate Branch via Browser GPS
+  const handleLocateBranchGPS = () => {
+    if (!navigator.geolocation) {
+      alert('المتصفح لا يدعم تحديد الموقع الجغرافي');
+      return;
+    }
+    setIsLocatingGPS(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        setBranchLat(String(lat));
+        setBranchLng(String(lng));
+        setMapUrlInput(`https://maps.google.com/?q=${lat},${lng}`);
+        setIsLocatingGPS(false);
+        notifySuccess('تم جلب إحداثيات موقع الفرع عبر الـ GPS بنجاح! 📍');
+      },
+      (err) => {
+        setIsLocatingGPS(false);
+        alert('تعذر تحديد الموقع الجغرافي. يرجى تفعيل إذن الموقع أو إدخال الإحداثيات يدوياً.');
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    );
+  };
+
+  // 🎯 Parse Map URL input
+  const handleMapUrlInput = (input: string) => {
+    setMapUrlInput(input);
+    const coords = extractCoordsFromMapUrl(input);
+    if (coords) {
+      setBranchLat(String(coords.lat));
+      setBranchLng(String(coords.lng));
+      notifySuccess('تم استخراج إحداثيات الفرع من الرابط بنجاح! 🎯');
+    }
+  };
+
+  // ➕ Add new tier
+  const handleAddTier = () => {
+    const lastTier = deliveryTiers[deliveryTiers.length - 1];
+    const nextMax = lastTier ? Number(lastTier.max_km) + 5 : 5;
+    const nextFee = lastTier ? Number(lastTier.fee) + 6 : 10;
+    const newTier: DeliveryDistanceTier = {
+      id: `tier_${Date.now()}`,
+      max_km: nextMax,
+      fee: nextFee,
+      label: `نطاق حتى ${nextMax} كم`,
+    };
+    setDeliveryTiers((prev) => [...prev, newTier]);
+  };
+
+  // 🗑️ Remove tier
+  const handleRemoveTier = (index: number) => {
+    if (deliveryTiers.length <= 1) {
+      alert('يجب أن تحتوي قائمة الشرائح على شريحة واحدة على الأقل');
+      return;
+    }
+    setDeliveryTiers((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // ✏️ Update tier field
+  const handleUpdateTier = (index: number, field: keyof DeliveryDistanceTier, val: any) => {
+    setDeliveryTiers((prev) =>
+      prev.map((tier, i) => (i === index ? { ...tier, [field]: val } : tier))
+    );
+  };
+
+  // ⚡ Apply default tiers
+  const handleApplyDefaultTiers = () => {
+    setDeliveryTiers(DEFAULT_DELIVERY_TIERS);
+    notifySuccess('تمت استعادة شرائح التوصيل القياسية المقترحة! ⚡');
+  };
+
+  // 💾 Save Delivery Settings
+  const handleSaveDeliverySettings = async () => {
+    if (!selectedDeliveryBranch) return;
+    setIsSavingDeliverySettings(true);
+    setActionError(null);
+
+    const latVal = branchLat.trim() ? parseFloat(branchLat) : null;
+    const lngVal = branchLng.trim() ? parseFloat(branchLng) : null;
+
+    // Sort tiers by max_km ascending
+    const sortedTiers = deliveryPricingType === 'tiered'
+      ? [...deliveryTiers].sort((a, b) => Number(a.max_km) - Number(b.max_km))
+      : [
+          {
+            id: 'fixed_tier',
+            max_km: Number(deliveryRadiusKm) || 15,
+            fee: Number(fixedDeliveryFee) || 15,
+            label: 'سعر توصيل موحد',
+          },
+        ];
+
+    try {
+      const updated = await LoyaltyService.updateStoreBranch(selectedDeliveryBranch.id, {
+        lat: latVal,
+        lng: lngVal,
+        delivery_radius_km: Number(deliveryRadiusKm) || 15,
+        delivery_pricing_type: deliveryPricingType,
+        delivery_tiers: sortedTiers,
+      });
+
+      if (updated) {
+        setBranches((prev) =>
+          prev.map((b) =>
+            b.id === updated.id
+              ? {
+                  ...b,
+                  ...updated,
+                  lat: latVal,
+                  lng: lngVal,
+                  delivery_radius_km: Number(deliveryRadiusKm) || 15,
+                  delivery_pricing_type: deliveryPricingType,
+                  delivery_tiers: sortedTiers,
+                }
+              : b
+          )
+        );
+        notifySuccess(`تم حفظ إعدادات نطاق وأسعار التوصيل لفرع (${selectedDeliveryBranch.name}) بنجاح! 🛵`);
+        setIsDeliveryModalOpen(false);
+      }
+    } catch (e: any) {
+      setActionError(e.message || 'حدث خطأ أثناء حفظ إعدادات التوصيل.');
+    } finally {
+      setIsSavingDeliverySettings(false);
     }
   };
 
@@ -570,6 +735,62 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
                       )}
                     </div>
                   </div>
+
+                  {/* 🛵 Delivery Settings Status & Quick Access */}
+                  <div className="mt-3 pt-3 border-t border-slate-800/80 p-3 rounded-2xl bg-slate-900/90 border border-slate-800/80 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 text-amber-400 font-bold">
+                        <Bike className="w-4 h-4" />
+                        <span>خدمة التوصيل والأسطول:</span>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono font-bold">
+                        أقصى نطاق: {branch.delivery_radius_km ?? 15} كم
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400 flex-wrap">
+                      <span>
+                        {branch.delivery_pricing_type === 'fixed'
+                          ? '💵 تسعير موحد ثابت'
+                          : `📏 تسعير شرائح مسافات (${branch.delivery_tiers?.length || 3} شرائح)`}
+                      </span>
+                      <span>
+                        {branch.lat && branch.lng ? (
+                          <span className="text-emerald-400 flex items-center gap-1 font-bold">
+                            <LocateFixed className="w-3 h-3" />
+                            <span>موقع الفرع محدد بالخريطة ✅</span>
+                          </span>
+                        ) : (
+                          <span className="text-amber-400/80 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            <span>موقع الفرع غير محدد</span>
+                          </span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenDeliveryModal(branch)}
+                        className="py-1.5 px-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                      >
+                        <Compass className="w-3.5 h-3.5" />
+                        <span>نطاق وأسعار التوصيل 🛵</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveSubTab('drivers');
+                        }}
+                        className="py-1.5 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                      >
+                        <Users className="w-3.5 h-3.5 text-sky-400" />
+                        <span>كباتن التوصيل 👥</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Bottom Actions */}
@@ -845,6 +1066,312 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* 🛵 MODAL: إعدادات نطاق وأسعار التوصيل وموقع الفرع الجغرافي */}
+      {/* ======================================================== */}
+      {isDeliveryModalOpen && selectedDeliveryBranch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
+                  <Compass className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-white">
+                    نطاق وأسعار التوصيل: {selectedDeliveryBranch.name}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    تحديد موقع الفرع الجغرافي، أقصى مسافة للتوصيل، وشرائح التسعير بالكيلومتر
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsDeliveryModalOpen(false)}
+                className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 1. Branch GPS Location Section */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-rose-500" />
+                  <span className="text-xs font-bold text-white">موقع الفرع على الخريطة (GPS)</span>
+                </div>
+                {branchLat && branchLng ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono font-bold flex items-center gap-1">
+                    <LocateFixed className="w-3 h-3" />
+                    <span>محدد ({Number(branchLat).toFixed(4)}, {Number(branchLng).toFixed(4)})</span>
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold">
+                    ⚠️ غير محدد
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                يستخدم النظام موقع الفرع لحساب المسافة بدقة بالكيلومتر بين الفرع والعميل عند طلب التوصيل.
+              </p>
+
+              {/* GPS Buttons & Input */}
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleLocateBranchGPS}
+                    disabled={isLocatingGPS}
+                    className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition flex items-center gap-1.5 shadow disabled:opacity-50"
+                  >
+                    <LocateFixed className="w-4 h-4" />
+                    <span>{isLocatingGPS ? 'جاري تحديد الموقع...' : '📍 حدد موقع الفرع الحالي عبر الـ GPS'}</span>
+                  </button>
+
+                  {branchLat && branchLng && (
+                    <a
+                      href={`https://maps.google.com/?q=${branchLat},${branchLng}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-xs font-bold transition flex items-center gap-1"
+                    >
+                      <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>معاينة في خرائط جوجل</span>
+                    </a>
+                  )}
+                </div>
+
+                {/* Paste Google Maps URL */}
+                <div className="space-y-1">
+                  <label className="text-[11px] text-slate-400 block font-bold">
+                    أو الصق رابط موقع الفرع من خرائط جوجل (Google Maps URL):
+                  </label>
+                  <input
+                    type="text"
+                    value={mapUrlInput}
+                    onChange={(e) => handleMapUrlInput(e.target.value)}
+                    placeholder="https://maps.google.com/?q=24.7136,46.6753 أو https://maps.app.goo.gl/..."
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 outline-none focus:border-amber-500 font-mono"
+                  />
+                </div>
+
+                {/* Manual Lat / Lng */}
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="text-[10px] text-slate-500 block mb-0.5 font-bold">خط العرض (Latitude)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={branchLat}
+                      onChange={(e) => setBranchLat(e.target.value)}
+                      placeholder="24.7136"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 block mb-0.5 font-bold">خط الطول (Longitude)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={branchLng}
+                      onChange={(e) => setBranchLng(e.target.value)}
+                      placeholder="46.6753"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Max Delivery Radius */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Compass className="w-4 h-4 text-amber-400" />
+                  <span>أقصى مسافة ونطاق توصيل للفرع (بالكيلومتر) *</span>
+                </label>
+                <span className="text-amber-400 font-mono font-black text-sm">{deliveryRadiusKm} كم</span>
+              </div>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={deliveryRadiusKm}
+                onChange={(e) => setDeliveryRadiusKm(Number(e.target.value) || 1)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white font-bold outline-none focus:border-amber-500"
+              />
+              <p className="text-[10px] text-slate-400">
+                أي عميل يطلب من موقع يبعد أكثر من {deliveryRadiusKm} كم سيتم إخطاره فوراً بأن موقعه خارج النطاق مع إتاحة التحويل لاستلام سفري من الفرع.
+              </p>
+            </div>
+
+            {/* 3. Pricing Model Selection */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+              <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                <DollarSign className="w-4 h-4 text-emerald-400" />
+                <span>طريقة تسعير رسوم التوصيل:</span>
+              </label>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeliveryPricingType('tiered')}
+                  className={`p-3 rounded-xl border text-right transition ${
+                    deliveryPricingType === 'tiered'
+                      ? 'bg-amber-500/10 border-amber-500/50 text-white shadow'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs text-amber-300">📏 شرائح متدرجة حسب المسافة</span>
+                    {deliveryPricingType === 'tiered' && <span className="text-xs">✅</span>}
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    تسعير عادل يزداد كلما بعد العميل (مثال: 0-5 كم = 10 ر.س، 5-10 كم = 16 ر.س).
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDeliveryPricingType('fixed')}
+                  className={`p-3 rounded-xl border text-right transition ${
+                    deliveryPricingType === 'fixed'
+                      ? 'bg-amber-500/10 border-amber-500/50 text-white shadow'
+                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs text-amber-300">💵 سعر موحد ثابت</span>
+                    {deliveryPricingType === 'fixed' && <span className="text-xs">✅</span>}
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    سعر توصيل ثابت لكافة الطلبات داخل النطاق مهما كانت المسافة.
+                  </p>
+                </button>
+              </div>
+
+              {/* If Fixed Rate */}
+              {deliveryPricingType === 'fixed' ? (
+                <div className="pt-2 space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 block">سعر التوصيل الثابت (ريال سعودي) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={fixedDeliveryFee}
+                    onChange={(e) => setFixedDeliveryFee(Number(e.target.value) || 0)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white font-bold outline-none focus:border-amber-500"
+                  />
+                </div>
+              ) : (
+                /* If Tiered Rates */
+                <div className="pt-2 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-300">جدول شرائح المسافات والأسعار:</span>
+                    <button
+                      type="button"
+                      onClick={handleApplyDefaultTiers}
+                      className="text-[11px] text-amber-400 hover:underline flex items-center gap-1 font-bold"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>استعادة الشرائح المقترحة</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {deliveryTiers.map((tier, idx) => (
+                      <div
+                        key={tier.id || idx}
+                        className="p-3 rounded-2xl bg-slate-900 border border-slate-800 grid grid-cols-12 gap-2 items-center text-xs"
+                      >
+                        <div className="col-span-3">
+                          <label className="text-[10px] text-slate-500 block">حتى مسافة (كم):</label>
+                          <input
+                            type="number"
+                            min="1"
+                            value={tier.max_km}
+                            onChange={(e) => handleUpdateTier(idx, 'max_km', Number(e.target.value) || 1)}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white font-bold font-mono outline-none"
+                          />
+                        </div>
+
+                        <div className="col-span-3">
+                          <label className="text-[10px] text-slate-500 block">رسوم التوصيل (ر.س):</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={tier.fee}
+                            onChange={(e) => handleUpdateTier(idx, 'fee', Number(e.target.value) || 0)}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-amber-400 font-bold font-mono outline-none"
+                          />
+                        </div>
+
+                        <div className="col-span-5">
+                          <label className="text-[10px] text-slate-500 block">وصف الشريحة (يظهر للعميل):</label>
+                          <input
+                            type="text"
+                            value={tier.label || ''}
+                            onChange={(e) => handleUpdateTier(idx, 'label', e.target.value)}
+                            placeholder="مثال: النطاق القريب (0-5 كم)"
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white outline-none"
+                          />
+                        </div>
+
+                        <div className="col-span-1 text-left pt-3">
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTier(idx)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                            title="حذف الشريحة"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddTier}
+                    className="w-full py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-dashed border-slate-700 text-amber-400 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>إضافة شريحة مسافة جديدة</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-4 border-t border-slate-800 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsDeliveryModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-bold transition"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={isSavingDeliverySettings}
+                onClick={handleSaveDeliverySettings}
+                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition flex items-center gap-1.5 shadow-lg shadow-amber-500/20 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{isSavingDeliverySettings ? 'جاري الحفظ...' : 'حفظ إعدادات التوصيل للفرع 💾'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
