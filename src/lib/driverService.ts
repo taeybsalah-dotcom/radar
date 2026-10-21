@@ -431,6 +431,131 @@ export class DriverService {
   }
 
   /**
+   * فحص ما إذا كان السائق يستطيع الخروج أوفلاين أو أخذ استراحة
+   * (يُمنع إذا كان لديه طلبات نشطة قيد التحضير أو الاستلام أو التوصيل)
+   */
+  static canDriverGoOffline(
+    storeId: string,
+    driverId: string
+  ): { canGoOffline: boolean; activeOrdersCount: number; activeOrderNumbers: string[] } {
+    try {
+      const orders = getAllStoredOrders();
+      const activeAssigned = orders.filter((o) => {
+        if (o.driver_id !== driverId) return false;
+        if (o.delivery_status === 'delivered' || o.status === 'completed' || o.status === 'cancelled') return false;
+        // Check if emergency was already handled
+        if ((o.fulfillment_details as any)?.emergency_reported) return false;
+        return true;
+      });
+
+      return {
+        canGoOffline: activeAssigned.length === 0,
+        activeOrdersCount: activeAssigned.length,
+        activeOrderNumbers: activeAssigned.map((o) => String((o as any).order_number || o.order_id || '')).filter(Boolean),
+      };
+    } catch {
+      return { canGoOffline: true, activeOrdersCount: 0, activeOrderNumbers: [] };
+    }
+  }
+
+  /**
+   * اقتراح أفضل كابتن متاح في الفرع لإسناد الطلب له تلقائياً
+   * الأولولية: 
+   * 1. كابتن متفرغ بالكامل بالفرع (available) ومعه 0 طلبات
+   * 2. كابتن في مرحلة التحميل بالفرع (loading) ومعه أقل من 3 طلبات لضم الطلب لنفس الرحلة
+   */
+  static getSuggestedBranchDriver(storeId: string, branchId?: string | null): StoreDriver | null {
+    const available = this.getAvailableBranchDrivers(storeId, branchId);
+    if (available.length === 0) return null;
+
+    // First preference: completely available in branch
+    const completelyFree = available.find((d) => d.status === 'available');
+    if (completelyFree) return completelyFree;
+
+    // Second preference: loading in branch with minimal trip orders count
+    const sorted = [...available].sort((a, b) => (a.current_trip_orders_count || 0) - (b.current_trip_orders_count || 0));
+    return sorted[0] || null;
+  }
+
+  /**
+   * طلب إعفاء طارئ من السائق لتعذر توصيل الطلب (عطل بالمركبة، حادث، ظرف قاهر)
+   * يقوم بإلغاء إسناد الطلب وإعادته للكاشير كطلب عاجل يحتاج كابتن بديل مع إشعار الكاشير فورياً
+   */
+  static requestDriverEmergencyRelease(
+    storeId: string,
+    driverId: string,
+    orderId: string,
+    reason: string
+  ): WhatsAppOrderPayload | null {
+    const cleanStoreId = storeId || 'default';
+    try {
+      const orders = getAllStoredOrders();
+      const orderIdx = orders.findIndex(
+        (o) => o.order_id === orderId || (o as any).id === orderId || (o as any).order_number === orderId
+      );
+
+      if (orderIdx !== -1) {
+        const targetOrder = orders[orderIdx];
+        const driverName = targetOrder.driver_name || 'الكابتن';
+        const displayNum = String((targetOrder as any).order_number || targetOrder.order_id || orderId);
+
+        // Reset order driver assignment
+        targetOrder.driver_id = undefined;
+        targetOrder.driver_name = undefined;
+        targetOrder.driver_phone = undefined;
+        targetOrder.delivery_status = 'unassigned';
+        targetOrder.fulfillment_details = {
+          ...(targetOrder.fulfillment_details as any),
+          emergency_reported: true,
+          emergency_reason: reason,
+          emergency_driver_name: driverName,
+          emergency_driver_id: driverId,
+          emergency_reported_at: new Date().toISOString(),
+        } as any;
+
+        saveAllStoredOrders(orders);
+
+        // Update in Supabase store_orders
+        syncOrderToSupabase(orderId, {
+          driver_id: null,
+          driver_name: null,
+          driver_phone: null,
+          delivery_status: 'unassigned',
+          fulfillment_details: targetOrder.fulfillment_details,
+        });
+
+        // Set driver to off_duty due to emergency
+        this.setDriverStatus(cleanStoreId, driverId, 'off_duty', {
+          current_trip_orders_count: 0,
+          current_trip_order_ids: [],
+          notes: `اعتذر عن توصيل الطلب #${displayNum}: ${reason}`,
+        });
+
+        // Emit high-priority emergency event to Cashier and Store
+        LoyaltyEvents.emit({
+          type: 'ORDER_STATUS_UPDATED',
+          storeId: targetOrder.store_id || cleanStoreId,
+          phone: targetOrder.customer_phone,
+          title: `🚨 إعفاء طارئ للكابتن ${driverName}`,
+          message: `اعتذر الكابتن ${driverName} عن الطلب #${displayNum} لسبب: ${reason}`,
+          soundType: 'notification',
+          orderData: targetOrder,
+        });
+
+        LoyaltyEvents.emit({
+          type: 'DRIVERS_UPDATED',
+          storeId: cleanStoreId,
+        });
+
+        return targetOrder;
+      }
+    } catch (err) {
+      console.warn('requestDriverEmergencyRelease error:', err);
+    }
+    return null;
+  }
+
+  /**
    * جلب السائقين المتاحين للإسناد في الفرع المحدد
    * (إما متفرغ تماماً بالفرع أو لا يزال بالفرع يجهز ومعه أقل من 3 طلبات)
    */
@@ -716,6 +841,7 @@ export class DriverService {
       // 1. طلبات جاهزة للاستلام (إما مسندة لهذا السائق ولم يستلمها بعد، أو بانتظار سائق بالفرع)
       const availableForPickup = branchOrders.filter((o) => {
         if (o.delivery_status === 'delivered' || o.status === 'cancelled') return false;
+        if ((o.fulfillment_details as any)?.emergency_reported && !o.driver_id) return false;
         return (
           o.driver_id === driverId && o.delivery_status === 'assigned'
         ) || (!o.driver_id && (o.status === 'ready' || o.status === 'preparing' || o.status === 'pending'));

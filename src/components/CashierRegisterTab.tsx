@@ -971,6 +971,16 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         }
       }
 
+      // 🛵 If delivery order has selected driver, link and assign immediately
+      if (orderType === 'delivery' && selectedDriverId) {
+        try {
+          const finalOrderId = String(savedOrder?.id || orderPayload.order_id || orderNumber);
+          DriverService.assignOrderToDriver(store.id, finalOrderId, selectedDriverId);
+        } catch (e) {
+          console.warn('Could not assign order to driver:', e);
+        }
+      }
+
       // 1b. If the invoice contains services and wasn't already converted from an existing booking,
       // register them as service bookings so they appear on the salon/service display (KDS Services)
       const serviceCartItems = cartItems.filter((c) => {

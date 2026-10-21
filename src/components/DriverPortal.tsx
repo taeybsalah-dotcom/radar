@@ -13,6 +13,7 @@ import { playBeepSound } from '../lib/sound';
 import { DriverDoorstepPaymentModal } from './driver/DriverDoorstepPaymentModal';
 import {
   Navigation,
+  Car,
   Phone,
   MessageSquare,
   CheckCircle2,
@@ -200,13 +201,79 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     return () => unsub();
   }, [store?.id, currentDriver?.id, selectedBranchId]);
 
-  // Handle Driver Status Switch
+  // 🔒 Offline Blocked Modal State (حماية السائق من التحول إلى أوفلاين مع وجود طلبات نشطة)
+  const [offlineBlockedModal, setOfflineBlockedModal] = useState<{
+    isOpen: boolean;
+    activeOrdersCount: number;
+    activeOrderNumbers: string[];
+  }>({ isOpen: false, activeOrdersCount: 0, activeOrderNumbers: [] });
+
+  // 🚨 Emergency Release Modal State (طلب إعفاء طارئ لتعذر التوصيل)
+  const [emergencyReleaseModal, setEmergencyReleaseModal] = useState<{
+    isOpen: boolean;
+    order: WhatsAppOrderPayload | null;
+    reason: string;
+    notes: string;
+    isSubmitting: boolean;
+  }>({
+    isOpen: false,
+    order: null,
+    reason: 'عطل مفاجئ في الدراجة أو المركبة',
+    notes: '',
+    isSubmitting: false,
+  });
+
+  // Handle Driver Status Switch with Active Orders State Guard
   const toggleDriverStatus = () => {
     if (!currentDriver || !store?.id) return;
+    if (currentDriver.status === 'available' || currentDriver.status === 'loading') {
+      const check = DriverService.canDriverGoOffline(store.id, currentDriver.id);
+      if (!check.canGoOffline) {
+        setOfflineBlockedModal({
+          isOpen: true,
+          activeOrdersCount: check.activeOrdersCount,
+          activeOrderNumbers: check.activeOrderNumbers,
+        });
+        playBeepSound('pos_order_alert');
+        return;
+      }
+    }
     const newStatus: DriverWorkStatus = currentDriver.status === 'available' ? 'off_duty' : 'available';
     DriverService.setDriverStatus(store.id, currentDriver.id, newStatus);
     reloadDrivers();
     playBeepSound('notification');
+  };
+
+  // Handle Emergency Release Submission
+  const handleEmergencyReleaseSubmit = async () => {
+    if (!store?.id || !currentDriver || !emergencyReleaseModal.order) return;
+    setEmergencyReleaseModal((prev) => ({ ...prev, isSubmitting: true }));
+    try {
+      const reasonText = emergencyReleaseModal.notes.trim()
+        ? `${emergencyReleaseModal.reason} - ${emergencyReleaseModal.notes.trim()}`
+        : emergencyReleaseModal.reason;
+
+      DriverService.requestDriverEmergencyRelease(
+        store.id,
+        currentDriver.id,
+        emergencyReleaseModal.order.order_id,
+        reasonText
+      );
+
+      playBeepSound('pos_order_alert');
+      setEmergencyReleaseModal({
+        isOpen: false,
+        order: null,
+        reason: 'عطل مفاجئ في الدراجة أو المركبة',
+        notes: '',
+        isSubmitting: false,
+      });
+
+      reloadOrders();
+      reloadDrivers();
+    } catch {
+      setEmergencyReleaseModal((prev) => ({ ...prev, isSubmitting: false }));
+    }
   };
 
   // Handle Pickup action
@@ -744,6 +811,25 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                       <CreditCard className="w-4 h-4" />
                       <span>{isPaid ? 'تأكيد التسليم للعميل ✅' : 'تحصيل المبلغ وتسليم الطلب 💳'}</span>
                     </button>
+
+                    {/* Emergency Release Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmergencyReleaseModal({
+                          isOpen: true,
+                          order,
+                          reason: 'عطل مفاجئ في الدراجة أو المركبة',
+                          notes: '',
+                          isSubmitting: false,
+                        });
+                        playBeepSound('pos_order_alert');
+                      }}
+                      className="w-full py-2 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-bold text-xs transition border border-rose-500/25 flex items-center justify-center gap-1.5"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      <span>تعذر إكمال التوصيل لظرف طارئ (إبلاغ الكاشير) ⚠️</span>
+                    </button>
                   </div>
                 );
               })
@@ -797,13 +883,23 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     className="p-4 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-3 relative"
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono font-black text-amber-400 text-sm">
                           #{order.order_id.slice(-6)}
                         </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold">
-                          جاهز بالفرع 📦
-                        </span>
+                        {order.status === 'preparing' ? (
+                          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold flex items-center gap-1 animate-pulse">
+                            <span>🍳 جاري التحضير بالمطبخ</span>
+                          </span>
+                        ) : order.status === 'ready' ? (
+                          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
+                            <span>✅ جاهز للاستلام الفوري</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold">
+                            بانتظار الاستلام 📦
+                          </span>
+                        )}
                       </div>
 
                       <div className="text-left font-mono">
@@ -829,12 +925,42 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                       </span>
                     </div>
 
-                    <button
-                      onClick={() => handlePickup(order)}
-                      className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2"
-                    >
-                      <span>🛵 استلام الطلب والانطلاق بالتوصيل</span>
-                    </button>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => handlePickup(order)}
+                        className={`flex-1 py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2 ${
+                          order.status === 'preparing'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500 hover:text-slate-950'
+                            : 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                        }`}
+                      >
+                        <Car className="w-4 h-4" />
+                        <span>
+                          {order.status === 'preparing'
+                            ? 'استلام مبكر والانطلاق 🛵 (قيد التجهيز)'
+                            : 'استلام الطلب والانطلاق 🛵'}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEmergencyReleaseModal({
+                            isOpen: true,
+                            order,
+                            reason: 'عطل مفاجئ في الدراجة أو المركبة',
+                            notes: '',
+                            isSubmitting: false,
+                          });
+                          playBeepSound('pos_order_alert');
+                        }}
+                        className="py-3 px-3 rounded-2xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-bold text-xs transition flex items-center justify-center shrink-0"
+                        title="اعتذار طارئ عن استلام هذا الطلب"
+                      >
+                        <AlertCircle className="w-4 h-4 text-rose-400" />
+                        <span className="text-[11px] font-bold mr-1">اعتذار طارئ</span>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -983,6 +1109,127 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
           order={selectedOrderForDelivery}
           onConfirmDelivery={handleConfirmDelivery}
         />
+      )}
+
+      {/* 🔒 Offline Blocked Warning Modal */}
+      {offlineBlockedModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border-2 border-amber-500/50 p-5 space-y-4 shadow-2xl text-center">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-2xl mx-auto shadow-inner">
+              🔒
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="text-base font-black text-white">
+                تعذر إيقاف الاتصال (أوفلاين)
+              </h3>
+              <p className="text-xs text-amber-300 font-bold">
+                لديك حالياً {offlineBlockedModal.activeOrdersCount} طلبات نشطة مرتبطة بحسابك
+              </p>
+              <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-amber-400 font-bold">
+                أرقام الطلبات: #{offlineBlockedModal.activeOrderNumbers.join(' • #')}
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                لحماية تجربة العميل وضمان سرعة التوصيل، يجب تسليم كافة الطلبات للعملاء أولاً قبل تسجيل الخروج. في حال وجود ظرف قاهر يمنعك من التوصيل، يرجى الضغط على زر <span className="text-rose-400 font-bold">"اعتذار طارئ"</span> على الطلب لإشعار الكاشير فوراً.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setOfflineBlockedModal({ isOpen: false, activeOrdersCount: 0, activeOrderNumbers: [] })}
+              className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-lg"
+            >
+              فهمت ذلك، سأتابع توصيل الطلبات 👍
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 🚨 Emergency Release Modal */}
+      {emergencyReleaseModal.isOpen && emergencyReleaseModal.order && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md rounded-3xl bg-slate-900 border-2 border-rose-500/60 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center text-xl shrink-0 font-black shadow-inner">
+                🚨
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">
+                  طلب إعفاء طارئ عن الطلب #{emergencyReleaseModal.order.order_id.slice(-6)}
+                </h3>
+                <span className="text-[11px] text-rose-300 font-bold">
+                  إلغاء الإسناد وإعادة الطلب لكاشير الفرع فوراً
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-rose-950/40 border border-rose-800/60 text-xs text-rose-200 space-y-1">
+              <span className="font-bold flex items-center gap-1 text-rose-300">
+                <AlertCircle className="w-3.5 h-3.5" />
+                تنبيه تشغيلي مهم:
+              </span>
+              <p className="text-[11px] leading-relaxed text-rose-200/90">
+                سيتم إرسال إشعار إنذار فوري لشاشة الكاشير لسحب الطلب وإسناده لكابتن آخر بالفرع لتفادي تأخير العميل، كما سيتم تحويل حالتك إلى (أوفلاين) مؤقتاً لحين معالجة الظرف.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-slate-300 font-bold block">
+                حدد سبب تعذر التوصيل:
+              </label>
+              <select
+                value={emergencyReleaseModal.reason}
+                onChange={(e) => setEmergencyReleaseModal((prev) => ({ ...prev, reason: e.target.value }))}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500 font-bold"
+              >
+                <option value="عطل مفاجئ في الدراجة أو المركبة">🛵 عطل مفاجئ في الدراجة أو المركبة (إطار، بنزين، محرك)</option>
+                <option value="حادث مروري أو تعطل الحركة المرورية">🚗 حادث مروري أو زحام شديد يمنع الوصول</option>
+                <option value="ظرف صحي طارئ للكابتن">🤒 ظرف صحي طارئ للكابتن</option>
+                <option value="تلف أو مشكلة في محتويات الطلب">📦 مشكلة أو تلف في محتويات الطلب</option>
+                <option value="العميل لا يجيب أو العنوان غير صحيح">📞 تعذر الوصول للعميل (لا يجيب نهائياً)</option>
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs text-slate-400 block font-bold">
+                ملاحظات إضافية للكاشير (اختياري):
+              </label>
+              <textarea
+                value={emergencyReleaseModal.notes}
+                onChange={(e) => setEmergencyReleaseModal((prev) => ({ ...prev, notes: e.target.value }))}
+                placeholder="اكتب توضيحاً سريعاً يساعد الكاشير..."
+                rows={2}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEmergencyReleaseModal({ isOpen: false, order: null, reason: 'عطل مفاجئ في الدراجة أو المركبة', notes: '', isSubmitting: false })}
+                className="py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+              >
+                تراجع وإلغاء
+              </button>
+
+              <button
+                type="button"
+                disabled={emergencyReleaseModal.isSubmitting}
+                onClick={handleEmergencyReleaseSubmit}
+                className="py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs transition shadow-lg flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {emergencyReleaseModal.isSubmitting ? (
+                  <span>جاري الإرسال...</span>
+                ) : (
+                  <>
+                    <AlertCircle className="w-4 h-4" />
+                    <span>تأكيد الإعفاء وإشعار الكاشير 🚨</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

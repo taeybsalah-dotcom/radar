@@ -540,8 +540,15 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const isGMModeRef = useRef<boolean>(isGeneralManager);
   isGMModeRef.current = isGeneralManager;
 
-  // 🛵 Branch Delivery Drivers
+  // 🛵 Branch Delivery Drivers & Emergency Fleet Alerts
   const [driversRefreshTrigger, setDriversRefreshTrigger] = useState(0);
+  const [emergencyAlert, setEmergencyAlert] = useState<{
+    orderId: string;
+    orderNumber: string;
+    driverName: string;
+    reason: string;
+    customerPhone?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (store?.id) {
@@ -550,9 +557,21 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       });
     }
 
-    const unsub = LoyaltyEvents.listen((event) => {
+    const unsub = LoyaltyEvents.listen((event: any) => {
       if (event.type === 'DRIVERS_UPDATED' || event.type === 'ORDER_STATUS_UPDATED') {
         setDriversRefreshTrigger((v) => v + 1);
+
+        // Catch driver emergency release event
+        if (event.orderData?.fulfillment_details?.emergency_reported) {
+          setEmergencyAlert({
+            orderId: String(event.orderData.order_id || event.orderData.id || ''),
+            orderNumber: String(event.orderData.order_number || event.orderData.order_id || event.orderData.id || '').slice(-6),
+            driverName: event.orderData.fulfillment_details.emergency_driver_name || 'الكابتن',
+            reason: event.orderData.fulfillment_details.emergency_reason || 'ظرف طارئ بالمركبة',
+            customerPhone: event.orderData.customer_phone,
+          });
+          playBeepSound('pos_order_alert');
+        }
       }
     });
     return () => unsub();
@@ -2443,6 +2462,59 @@ ${portalUrl}`;
         return (
           <div className="animate-fade-in max-w-4xl mx-auto space-y-5 pb-28">
 
+            {/* 🚨 Emergency Alert Banner for Cashier (اعتذار طارئ من السائق) */}
+            {emergencyAlert && (
+              <div className="p-4 rounded-3xl bg-rose-500/20 border-2 border-rose-500 text-rose-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-2xl animate-fade-in">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-black text-xl shrink-0 shadow-lg animate-bounce">
+                    🚨
+                  </div>
+                  <div>
+                    <h4 className="font-black text-sm text-white">
+                      تنبيه عاجل: اعتذر الكابتن {emergencyAlert.driverName} عن الطلب #{emergencyAlert.orderNumber}
+                    </h4>
+                    <p className="text-xs text-rose-200 mt-0.5">
+                      السبب: <span className="font-bold underline text-amber-300">{emergencyAlert.reason}</span> • الطلب بانتظار إسناد كابتن بديل فوراً!
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                  {(() => {
+                    const suggested = DriverService.getSuggestedBranchDriver(store.id, activeBranchId);
+                    if (suggested) {
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const targetOrder = liveOrders.find(
+                              (o) => String(o.id || o.order_id || o.order_number) === emergencyAlert.orderId
+                            );
+                            if (targetOrder) {
+                              handleAssignDriver(targetOrder, suggested.id);
+                              setEmergencyAlert(null);
+                            }
+                          }}
+                          className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition shadow-lg flex items-center gap-1.5"
+                        >
+                          <span>إسناد فوراً لـ {suggested.name} 🛵</span>
+                        </button>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                  <button
+                    type="button"
+                    onClick={() => setEmergencyAlert(null)}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-xs transition"
+                  >
+                    إغلاق التنبيه
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* 📍 Active Branch Context Indicator Banner */}
             <div className="flex items-center justify-between px-4 py-2.5 rounded-2xl bg-slate-950/90 border border-slate-800 text-xs shadow-sm">
               <div className="flex items-center gap-2">
@@ -2938,6 +3010,44 @@ ${portalUrl}`;
                               {/* Driver Select Dropdown & WhatsApp Dispatch */}
                               {!isDone && !isCancelled && (
                                 <div className="space-y-1.5 pt-1">
+
+                                  {/* Emergency Reported Alert Callout on Order Card */}
+                                  {order.fulfillment_details?.emergency_reported && !order.driver_id && (
+                                    <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-300 space-y-1 animate-pulse">
+                                      <div className="flex items-center gap-1.5 font-black text-rose-400">
+                                        <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                                        <span>🚨 اعتذر الكابتن السابق ({order.fulfillment_details.emergency_driver_name})</span>
+                                      </div>
+                                      <p className="text-[11px] text-rose-200">
+                                        السبب: {order.fulfillment_details.emergency_reason} • <span className="font-bold underline text-amber-300">يرجى اختيار كابتن بديل فوراً</span>
+                                      </p>
+                                    </div>
+                                  )}
+
+                                  {/* Smart Suggested Driver One-Click Button */}
+                                  {!order.driver_id && (() => {
+                                    const suggested = DriverService.getSuggestedBranchDriver(store.id, activeBranchId);
+                                    if (suggested) {
+                                      return (
+                                        <div className="flex items-center justify-between text-[11px] bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1.5 rounded-xl">
+                                          <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                            <span>💡 مقترح:</span>
+                                            <span className="text-white">{suggested.name}</span>
+                                            <span className="text-slate-400 font-normal">({suggested.status === 'available' ? 'متفرغ بالفرع' : 'يجهز بالفرع'})</span>
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleAssignDriver(order, suggested.id)}
+                                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] shadow transition flex items-center gap-1"
+                                          >
+                                            <span>إسناد سريع ⚡</span>
+                                          </button>
+                                        </div>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
+
                                   <div className="flex items-center gap-1.5">
                                     <select
                                       value={order.driver_id || ''}
