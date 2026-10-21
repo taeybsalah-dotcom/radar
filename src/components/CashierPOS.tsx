@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Store, Customer, Tier, Privilege, DynamicQRToken, StoreStaff, CustomerCoupon, StoreBranch, getStoreActiveModules } from '../types';
+import { Store, Customer, Tier, Privilege, DynamicQRToken, StoreStaff, CustomerCoupon, StoreBranch, getStoreActiveModules, StoreDriver, DriverWorkStatus } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
 import { QRScannerModal } from './QRScannerModal';
 import { StaffLoginGate } from './StaffLoginGate';
@@ -58,6 +58,10 @@ import {
   ExternalLink,
   Copy,
   MessageSquare,
+  Bike,
+  Coffee,
+  Navigation,
+  MapPin,
 } from 'lucide-react';
 import { DriverService } from '../lib/driverService';
 
@@ -537,10 +541,12 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   isGMModeRef.current = isGeneralManager;
 
   // 🛵 Branch Delivery Drivers
+  const [driversRefreshTrigger, setDriversRefreshTrigger] = useState(0);
+
   const branchDrivers = useMemo(() => {
     if (!store?.id) return [];
     return DriverService.getDrivers(store.id, activeBranchId);
-  }, [store?.id, activeBranchId, liveOrders]);
+  }, [store?.id, activeBranchId, liveOrders, driversRefreshTrigger]);
 
   const handleAssignDriver = (order: any, driverId: string) => {
     if (!store?.id) return;
@@ -554,8 +560,37 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
             : o
         )
       );
+      setDriversRefreshTrigger((v) => v + 1);
       playBeepSound('success');
     }
+  };
+
+  const handleDepartTrip = (driverId: string) => {
+    if (!store?.id) return;
+    DriverService.departTrip(store.id, driverId);
+    setLiveOrders((prev) =>
+      prev.map((o) =>
+        o.driver_id === driverId && (o.delivery_status === 'assigned' || !o.delivery_status)
+          ? { ...o, delivery_status: 'picked_up', status: o.status !== 'completed' ? 'ready' : o.status }
+          : o
+      )
+    );
+    setDriversRefreshTrigger((v) => v + 1);
+    playBeepSound('success');
+  };
+
+  const handleDriverReturned = (driverId: string) => {
+    if (!store?.id) return;
+    DriverService.reportDriverReturned(store.id, driverId);
+    setDriversRefreshTrigger((v) => v + 1);
+    playBeepSound('notification');
+  };
+
+  const handleSetDriverStatus = (driverId: string, status: DriverWorkStatus) => {
+    if (!store?.id) return;
+    DriverService.setDriverStatus(store.id, driverId, status);
+    setDriversRefreshTrigger((v) => v + 1);
+    playBeepSound('notification');
   };
 
   const handleNotifyDriverWhatsApp = (order: any) => {
@@ -1095,14 +1130,17 @@ ${portalUrl}`;
           return;
         }
 
-        if (event.type === 'ORDER_STATUS_UPDATED' && event.orderData) {
-          const updated = event.orderData;
-          setLiveOrders((prev) =>
-            prev.map((o) => (o.id === updated.id || o.order_number === updated.order_number ? { ...o, ...updated } : o))
-          );
-          if (updated.status !== 'pending') {
-            stopAlertRinger();
-            setIncomingAlert((prev) => (prev?.orderId === updated.id || !prev?.orderId) ? null : prev);
+        if (event.type === 'ORDER_STATUS_UPDATED') {
+          setDriversRefreshTrigger((v) => v + 1);
+          if (event.orderData) {
+            const updated = event.orderData;
+            setLiveOrders((prev) =>
+              prev.map((o) => (o.id === updated.id || o.order_number === updated.order_number ? { ...o, ...updated } : o))
+            );
+            if (updated.status !== 'pending') {
+              stopAlertRinger();
+              setIncomingAlert((prev) => (prev?.orderId === updated.id || !prev?.orderId) ? null : prev);
+            }
           }
           return;
         }
@@ -2462,6 +2500,179 @@ ${portalUrl}`;
             )}
 
             {/* ══════════════════════════════════════════════ */}
+            {/* 🛵 FLEET LIVE RADAR (رادار الأسطول وسائقي الفرع) */}
+            {/* ══════════════════════════════════════════════ */}
+            <div className="bg-slate-900/95 rounded-3xl border border-slate-800 p-4 shadow-xl space-y-3.5 backdrop-blur-md">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-sm">
+                    🛵
+                  </div>
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-black text-white flex items-center gap-2">
+                      <span>رادار أسطول التوصيل الميداني</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                    </h3>
+                    <p className="text-[10px] text-slate-400">
+                      متابعة حالات السائقين الفورية، تجميع الطلبات (Batching)، وإطلاق الرحلات
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status Counter Pills */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
+                    🟢 {branchDrivers.filter(d => d.is_active && d.status === 'available').length} متاح
+                  </span>
+                  <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-bold">
+                    🟡 {branchDrivers.filter(d => d.is_active && d.status === 'loading').length} يجهز
+                  </span>
+                  <span className="px-2 py-0.5 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-400 text-[10px] font-bold">
+                    🚗 {branchDrivers.filter(d => d.is_active && d.status === 'delivering').length} بالطريق
+                  </span>
+                  <span className="px-2 py-0.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-400 text-[10px] font-bold">
+                    🛵💨 {branchDrivers.filter(d => d.is_active && d.status === 'returning').length} راجع
+                  </span>
+                  <span className="px-2 py-0.5 rounded-lg bg-orange-500/15 border border-orange-500/30 text-orange-400 text-[10px] font-bold">
+                    ☕ {branchDrivers.filter(d => d.is_active && d.status === 'break').length} استراحة
+                  </span>
+                </div>
+              </div>
+
+              {/* Drivers Grid */}
+              {branchDrivers.length === 0 ? (
+                <div className="text-center py-4 text-xs text-slate-500">
+                  لا يوجد سائقين مسجلين في هذا الفرع بعد.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  {branchDrivers.map((driver) => {
+                    const statusConfig = {
+                      available: { label: 'متفرغ بالفرع', badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40', dot: 'bg-emerald-400' },
+                      loading: { label: `يجهز مشوار (${driver.current_trip_orders_count || 1}/3)`, badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse', dot: 'bg-amber-400' },
+                      delivering: { label: `في الطريق (${driver.current_trip_orders_count || 1} متبقية)`, badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/40', dot: 'bg-blue-400' },
+                      returning: { label: `راجع للفرع (~${driver.estimated_return_minutes || 10} د)`, badgeClass: 'bg-purple-500/20 text-purple-300 border-purple-500/40', dot: 'bg-purple-400' },
+                      break: { label: 'في استراحة (Break)', badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/40', dot: 'bg-orange-400' },
+                      off_duty: { label: 'خارج الدوام', badgeClass: 'bg-slate-800 text-slate-400 border-slate-700', dot: 'bg-slate-500' },
+                    }[driver.status || 'available'];
+
+                    const cleanPhone = driver.phone ? driver.phone.replace(/^0/, '966').replace(/\D/g, '') : '';
+
+                    return (
+                      <div
+                        key={driver.id}
+                        className={`p-3 rounded-2xl border transition relative space-y-2.5 ${
+                          driver.status === 'loading'
+                            ? 'bg-amber-950/20 border-amber-500/50 shadow-md'
+                            : driver.status === 'available'
+                            ? 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                            : 'bg-slate-950/50 border-slate-800/80'
+                        }`}
+                      >
+                        {/* Driver Top Info */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-base shrink-0">
+                              {DriverService.getVehicleIcon(driver.vehicle_type)}
+                            </span>
+                            <div className="min-w-0">
+                              <h4 className="font-black text-xs text-white truncate">
+                                {driver.name}
+                              </h4>
+                              <span className="text-[10px] text-slate-400 block truncate">
+                                {driver.plate_number ? `لوحة: ${driver.plate_number}` : DriverService.getVehicleLabel(driver.vehicle_type)}
+                              </span>
+                            </div>
+                          </div>
+
+                          <span className={`px-2 py-0.5 rounded-lg border text-[10px] font-bold shrink-0 flex items-center gap-1 ${statusConfig.badgeClass}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${statusConfig.dot}`} />
+                            <span>{statusConfig.label}</span>
+                          </span>
+                        </div>
+
+                        {/* Driver Quick Actions */}
+                        <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-800/60">
+                          {/* Left action: WhatsApp & Call */}
+                          <div className="flex items-center gap-1">
+                            {driver.phone && (
+                              <>
+                                <a
+                                  href={`https://wa.me/${cleanPhone}?text=${encodeURIComponent(`مرحباً كابتن ${driver.name}، من كاشير ${store.name}`)}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/30 transition"
+                                  title="مراسلة واتساب"
+                                >
+                                  <MessageSquare className="w-3 h-3" />
+                                </a>
+                                <a
+                                  href={`tel:${driver.phone}`}
+                                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                                  title="اتصال هاتفي"
+                                >
+                                  <Phone className="w-3 h-3" />
+                                </a>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Right action: Status specific action */}
+                          <div className="flex items-center gap-1">
+                            {driver.status === 'loading' && (
+                              <button
+                                type="button"
+                                onClick={() => handleDepartTrip(driver.id)}
+                                className="px-2.5 py-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] shadow transition flex items-center gap-1"
+                                title="إطلاق الرحلة ميدانياً وقفل المشوار"
+                              >
+                                <span>🚀 انطلاق الرحلة</span>
+                              </button>
+                            )}
+
+                            {driver.status === 'returning' && (
+                              <button
+                                type="button"
+                                onClick={() => handleDriverReturned(driver.id)}
+                                className="px-2.5 py-1 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] shadow transition flex items-center gap-1"
+                                title="تأكيد وصول السائق للفرع واستعداده لمشوار جديد"
+                              >
+                                <span>🏁 وصل الفرع</span>
+                              </button>
+                            )}
+
+                            {driver.status === 'available' && (
+                              <button
+                                type="button"
+                                onClick={() => handleSetDriverStatus(driver.id, 'break')}
+                                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-orange-300 text-[10px] font-bold transition flex items-center gap-1"
+                                title="إعطاء السائق استراحة مؤقتة"
+                              >
+                                <Coffee className="w-3 h-3" />
+                                <span>استراحة</span>
+                              </button>
+                            )}
+
+                            {driver.status === 'break' && (
+                              <button
+                                type="button"
+                                onClick={() => handleSetDriverStatus(driver.id, 'available')}
+                                className="px-2 py-1 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold transition flex items-center gap-1"
+                                title="إنهاء الاستراحة وتفعيل السائق للعمل"
+                              >
+                                <span>🟢 إنهاء الاستراحة</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ══════════════════════════════════════════════ */}
             {/* MENU ORDERS LIST (طلبات المنيو) */}
             {/* ══════════════════════════════════════════════ */}
             <div className="space-y-4">
@@ -2679,50 +2890,111 @@ ${portalUrl}`;
                                 )}
                               </div>
 
-                              {/* Customer Address & GPS */}
+                              {/* Customer Address & GPS & Distance */}
                               {(order.delivery_address || order.fulfillment_details?.delivery_address) && (
-                                <div className="text-[11px] text-slate-700 dark:text-slate-300 flex items-start gap-1">
-                                  <span className="text-slate-400 shrink-0">📍</span>
-                                  <span className="truncate">{order.delivery_address || order.fulfillment_details?.delivery_address}</span>
+                                <div className="space-y-1 text-[11px] text-slate-700 dark:text-slate-300">
+                                  <div className="flex items-start gap-1">
+                                    <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
+                                    <span className="truncate">{order.delivery_address || order.fulfillment_details?.delivery_address}</span>
+                                  </div>
+
+                                  {/* Distance, Tier, & Map Link */}
+                                  <div className="flex items-center gap-2 flex-wrap text-[10px]">
+                                    {order.delivery_distance_km !== undefined && (
+                                      <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold border border-blue-500/20">
+                                        📏 {Number(order.delivery_distance_km).toFixed(1)} كم {order.delivery_tier_label ? `• ${order.delivery_tier_label}` : ''}
+                                      </span>
+                                    )}
+                                    {(order.delivery_gps_link || order.fulfillment_details?.delivery_gps_link) && (
+                                      <a
+                                        href={order.delivery_gps_link || order.fulfillment_details?.delivery_gps_link}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-0.5 font-bold"
+                                      >
+                                        <Navigation className="w-3 h-3" />
+                                        <span>فتح الخريطة 🗺️</span>
+                                      </a>
+                                    )}
+                                  </div>
                                 </div>
                               )}
 
                               {/* Driver Select Dropdown & WhatsApp Dispatch */}
                               {!isDone && !isCancelled && (
-                                <div className="flex items-center gap-1.5 pt-1">
-                                  <select
-                                    value={order.driver_id || ''}
-                                    onChange={(e) => handleAssignDriver(order, e.target.value)}
-                                    className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
-                                  >
-                                    <option value="">-- اختر سائق من الفرع --</option>
-                                    {branchDrivers.map((d) => (
-                                      <option key={d.id} value={d.id}>
-                                        {d.name} ({DriverService.getVehicleLabel(d.vehicle_type)}) {d.status === 'available' ? '🟢' : '🟡'}
-                                      </option>
-                                    ))}
-                                  </select>
+                                <div className="space-y-1.5 pt-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <select
+                                      value={order.driver_id || ''}
+                                      onChange={(e) => handleAssignDriver(order, e.target.value)}
+                                      className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                                    >
+                                      <option value="">-- اختر سائق من الفرع --</option>
+                                      {branchDrivers.map((d) => {
+                                        const isFull = d.status === 'loading' && (d.current_trip_orders_count || 0) >= 3;
+                                        const isUnavailable = !d.is_active || d.status === 'delivering' || d.status === 'break' || d.status === 'off_duty' || isFull;
+                                        let label = `${d.name} (${DriverService.getVehicleLabel(d.vehicle_type)})`;
+                                        if (d.status === 'available') label += ' - 🟢 متفرغ بالفرع';
+                                        else if (d.status === 'loading') label += ` - 🟡 بالفرع (معه ${d.current_trip_orders_count || 1}/3 - ضم للرحلة)`;
+                                        else if (d.status === 'returning') label += ` - 🛵 راجع للفرع (~${d.estimated_return_minutes || 10} د)`;
+                                        else if (d.status === 'delivering') label += ' - 🚗 بالطريق (مشغول)';
+                                        else if (d.status === 'break') label += ' - ☕ استراحة';
+                                        else if (d.status === 'off_duty') label += ' - ⚪ غير متاح';
 
-                                  {order.driver_phone && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleNotifyDriverWhatsApp(order)}
-                                        className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-bold text-xs transition flex items-center gap-1 shadow"
-                                        title="إشعار السائق بتفاصيل الطلب عبر واتساب"
-                                      >
-                                        <MessageSquare className="w-3.5 h-3.5" />
-                                        <span className="hidden sm:inline">إشعار واتساب</span>
-                                      </button>
-                                      <a
-                                        href={`tel:${order.driver_phone}`}
-                                        className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 transition"
-                                        title="اتصال بالسائق"
-                                      >
-                                        <Phone className="w-3.5 h-3.5" />
-                                      </a>
-                                    </>
-                                  )}
+                                        return (
+                                          <option key={d.id} value={d.id} disabled={isUnavailable && order.driver_id !== d.id}>
+                                            {label}
+                                          </option>
+                                        );
+                                      })}
+                                    </select>
+
+                                    {order.driver_phone && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleNotifyDriverWhatsApp(order)}
+                                          className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-bold text-xs transition flex items-center gap-1 shadow"
+                                          title="إشعار السائق بتفاصيل الطلب عبر واتساب"
+                                        >
+                                          <MessageSquare className="w-3.5 h-3.5" />
+                                          <span className="hidden sm:inline">إشعار واتساب</span>
+                                        </button>
+                                        <a
+                                          href={`tel:${order.driver_phone}`}
+                                          className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 transition"
+                                          title="اتصال بالسائق"
+                                        >
+                                          <Phone className="w-3.5 h-3.5" />
+                                        </a>
+                                      </>
+                                    )}
+                                  </div>
+
+                                  {/* If assigned and driver is loading in store: Show Depart button directly */}
+                                  {order.driver_id && (() => {
+                                    const drv = branchDrivers.find((d) => d.id === order.driver_id);
+                                    if (drv && drv.status === 'loading') {
+                                      return (
+                                        <div className="flex items-center justify-between p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px]">
+                                          <span className="text-amber-400 font-bold flex items-center gap-1">
+                                            <span>🟡 مجهز مع {drv.name}</span>
+                                            {order.fulfillment_details?.trip_stop_index && (
+                                              <span className="text-slate-400">(محطة #{order.fulfillment_details.trip_stop_index})</span>
+                                            )}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDepartTrip(drv.id)}
+                                            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] shadow transition"
+                                          >
+                                            🚀 انطلاق الرحلة الآن
+                                          </button>
+                                        </div>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
                                 </div>
                               )}
                             </div>

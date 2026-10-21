@@ -312,6 +312,28 @@ export interface BranchDaySchedule {
   close_time: string; // "23:00"
 }
 
+export interface DeliveryDistanceTier {
+  id: string;
+  max_km: number; // أقصى مسافة بالكيلومتر (مثال: 5)
+  fee: number; // رسوم التوصيل بالريال لهذا النطاق
+  label?: string; // تسمية النطاق (مثال: "نطاق قريب (0 - 5 كم)")
+}
+
+export interface CustomerSavedAddress {
+  id: string;
+  label: string; // 'البيت' | 'العمل' | 'الاستراحة' | 'أخرى'
+  icon?: 'home' | 'building' | 'map-pin' | 'heart';
+  district: string; // الحي
+  street?: string; // الشارع
+  building_no?: string; // رقم المبنى / الشقة
+  notes?: string; // تفاصيل إضافية
+  map_url?: string; // رابط خرائط قوقل
+  lat?: number;
+  lng?: number;
+  is_default?: boolean;
+  created_at?: string;
+}
+
 export interface StoreBranch {
   id: string;
   store_id: string;
@@ -329,6 +351,13 @@ export interface StoreBranch {
   pickup_available?: boolean;
   delivery_available?: boolean;
   dine_in_available?: boolean;
+  // 🛵 إعدادات النطاق والتسعير الجغرافي للفرع
+  lat?: number | null;
+  lng?: number | null;
+  delivery_radius_km?: number; // أقصى مسافة توصيل للفرع بالكيلومتر (افتراضياً 15 كم)
+  delivery_pricing_type?: 'fixed' | 'tiered'; // نوع التسعير: ثابت أو حسب الشرائح
+  delivery_fee?: number; // السعر الثابت الافتراضي
+  delivery_tiers?: DeliveryDistanceTier[]; // شرائح التوصيل حسب الكيلومتر
   created_at?: string;
   updated_at?: string;
 }
@@ -622,6 +651,12 @@ export interface WhatsAppOrderPayload {
     car_model_and_plate?: string;
     delivery_address?: string;
     delivery_gps_link?: string;
+    delivery_lat?: number;
+    delivery_lng?: number;
+    delivery_distance_km?: number;
+    delivery_tier_label?: string;
+    trip_batch_id?: string;
+    trip_stop_index?: number;
     specialist_name?: string;
     general_notes?: string;
   };
@@ -1382,7 +1417,14 @@ export interface DiningTable {
 // 🛵 أسطول وسائقي التوصيل الميداني (Driver Fleet)
 // ==========================================
 export type DriverVehicleType = 'motorcycle' | 'car' | 'bicycle' | 'van';
-export type DriverWorkStatus = 'available' | 'delivering' | 'off_duty';
+export type DriverWorkStatus =
+  | 'available'       // 🟢 في الفرع متفرغ وجاهز
+  | 'loading'         // 🟡 في الفرع يستلم طلبات ويجهز للإنطلاق (ضم الرحلات)
+  | 'delivering'      // 🚗 في الطريق لتوصيل الطلبات
+  | 'returning'       // 🛵💨 أنهى التوصيل وفي طريق العودة للمطعم
+  | 'break'           // ☕ في استراحة
+  | 'off_duty';       // 🔴 خارج أوقات العمل / غير متصل
+
 export type DeliveryOrderStatus = 'unassigned' | 'assigned' | 'picked_up' | 'delivered' | 'failed';
 
 export interface StoreDriver {
@@ -1396,7 +1438,12 @@ export interface StoreDriver {
   plate_number?: string;
   pin_code?: string; // رمز دخول سريع 4 أرقام
   is_active: boolean;
-  status: DriverWorkStatus; // متاح، يوصل، غير متاح
+  status: DriverWorkStatus; // حالة السائق الحالية
+  auto_break_after_delivery?: boolean; // أخذ استراحة تلقائية بعد إنهاء المشوار الحالي
+  current_trip_orders_count?: number; // عدد الطلبات في الرحلة الحالية
+  current_trip_order_ids?: string[]; // قائمة معرفات الطلبات في المشوار
+  estimated_return_minutes?: number; // الدقائق التقديرية للعودة للمطعم
+  last_status_change_at?: string;
   commission_per_order?: number; // عمولة توصيل إضافية للسائق إن وجدت
   notes?: string;
   created_at: string;

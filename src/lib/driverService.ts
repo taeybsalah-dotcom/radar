@@ -167,27 +167,73 @@ export class DriverService {
   }
 
   /**
-   * تحديث حالة السائق (متاح / يوصل / غير متاح)
+   * تحديث حالة السائق (متاح / يجهز رحلة / يوصل / راجع / استراحة / غير متاح)
    */
-  static setDriverStatus(storeId: string, driverId: string, status: DriverWorkStatus): void {
-    const list = this.getDrivers(storeId);
+  static setDriverStatus(
+    storeId: string,
+    driverId: string,
+    status: DriverWorkStatus,
+    extra?: Partial<StoreDriver>
+  ): void {
+    const cleanStoreId = storeId || 'default';
+    const list = this.getDrivers(cleanStoreId);
     const target = list.find((d) => d.id === driverId);
     if (target) {
       target.status = status;
+      target.last_status_change_at = new Date().toISOString();
       target.updated_at = new Date().toISOString();
-      localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${storeId}`, JSON.stringify(list));
+      if (extra) {
+        Object.assign(target, extra);
+      }
+      localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+
+      LoyaltyEvents.emit({
+        type: 'ORDER_STATUS_UPDATED',
+        storeId: cleanStoreId,
+        phone: target.phone,
+        orderData: { driver_id: driverId, status, ...extra } as any,
+      });
     }
   }
 
   /**
-   * إسناد طلب توصيل لسائق محدد في الفرع
+   * تفعيل أو إلغاء خيار أخذ استراحة تلقائية بعد إنهاء مشاوير الرحلة الحالية
+   */
+  static setAutoBreakAfterDelivery(storeId: string, driverId: string, autoBreak: boolean): void {
+    const cleanStoreId = storeId || 'default';
+    const list = this.getDrivers(cleanStoreId);
+    const target = list.find((d) => d.id === driverId);
+    if (target) {
+      target.auto_break_after_delivery = autoBreak;
+      target.updated_at = new Date().toISOString();
+      localStorage.setItem(`${DRIVERS_STORAGE_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+    }
+  }
+
+  /**
+   * جلب السائقين المتاحين للإسناد في الفرع المحدد
+   * (إما متفرغ تماماً بالفرع أو لا يزال بالفرع يجهز ومعه أقل من 3 طلبات)
+   */
+  static getAvailableBranchDrivers(storeId: string, branchId?: string | null): StoreDriver[] {
+    const all = this.getDrivers(storeId, branchId);
+    return all.filter((d) => {
+      if (!d.is_active) return false;
+      if (d.status === 'available') return true;
+      if (d.status === 'loading' && (d.current_trip_orders_count || 0) < 3) return true;
+      return false;
+    });
+  }
+
+  /**
+   * إسناد طلب توصيل لسائق محدد في الفرع مع دعم ضم الطلبات في نفس الرحلة (Batching)
    */
   static assignOrderToDriver(
     storeId: string,
     orderId: string,
     driverId: string
   ): WhatsAppOrderPayload | null {
-    const driver = this.getDrivers(storeId).find((d) => d.id === driverId);
+    const cleanStoreId = storeId || 'default';
+    const driver = this.getDrivers(cleanStoreId).find((d) => d.id === driverId);
     if (!driver) return null;
 
     try {
@@ -197,13 +243,30 @@ export class DriverService {
       );
 
       if (orderIdx !== -1) {
+        const currentOrders = Array.isArray(driver.current_trip_order_ids) ? driver.current_trip_order_ids : [];
+        const newTripCount = (driver.current_trip_orders_count || 0) + 1;
+        const batchId = driver.current_trip_order_ids && driver.current_trip_order_ids.length > 0
+          ? (orders.find((o) => o.order_id === driver.current_trip_order_ids![0])?.fulfillment_details as any)?.trip_batch_id || `batch_${Date.now()}`
+          : `batch_${Date.now()}`;
+
         orders[orderIdx].driver_id = driver.id;
         orders[orderIdx].driver_name = driver.name;
         orders[orderIdx].driver_phone = driver.phone;
         orders[orderIdx].delivery_status = 'assigned';
         orders[orderIdx].driver_assigned_at = new Date().toISOString();
+        orders[orderIdx].fulfillment_details = {
+          ...orders[orderIdx].fulfillment_details,
+          trip_batch_id: batchId,
+          trip_stop_index: newTripCount,
+        };
 
         saveAllStoredOrders(orders);
+
+        // تحديث حالة السائق: في الفرع يجهز للإنطلاق
+        this.setDriverStatus(cleanStoreId, driverId, 'loading', {
+          current_trip_orders_count: newTripCount,
+          current_trip_order_ids: [...currentOrders.filter((id) => id !== orderId), orderId],
+        });
 
         // إشعار فوري وتحديث الحالة
         LoyaltyEvents.emit({
@@ -213,15 +276,37 @@ export class DriverService {
           orderData: orders[orderIdx],
         });
 
-        // تحديث حالة السائق
-        this.setDriverStatus(storeId, driverId, 'delivering');
-
         return orders[orderIdx];
       }
     } catch (e) {
       console.warn('Error assigning order to driver:', e);
     }
     return null;
+  }
+
+  /**
+   * انطلاق السائق في الطريق رسمياً مع كافة طلبات الرحلة (قفل الرحلة)
+   */
+  static departTrip(storeId: string, driverId: string): void {
+    const cleanStoreId = storeId || 'default';
+    const orders = getAllStoredOrders();
+    const nowIso = new Date().toISOString();
+
+    orders.forEach((o) => {
+      if (o.driver_id === driverId && o.delivery_status === 'assigned') {
+        o.delivery_status = 'picked_up';
+        o.driver_picked_up_at = nowIso;
+        if (o.status !== 'completed') {
+          o.status = 'ready';
+        }
+      }
+    });
+
+    saveAllStoredOrders(orders);
+
+    this.setDriverStatus(cleanStoreId, driverId, 'delivering', {
+      last_status_change_at: nowIso,
+    });
   }
 
   /**
@@ -242,7 +327,7 @@ export class DriverService {
         orders[orderIdx].delivery_status = 'picked_up';
         orders[orderIdx].driver_picked_up_at = new Date().toISOString();
         if (orders[orderIdx].status !== 'completed') {
-          orders[orderIdx].status = 'ready'; // أو جاري التوصيل
+          orders[orderIdx].status = 'ready'; // جاري التوصيل
         }
 
         saveAllStoredOrders(orders);
@@ -307,12 +392,37 @@ export class DriverService {
           orderData: orders[orderIdx],
         });
 
-        // التحقق إن كان لدى السائق طلبات أخرى جارية، إن لم يوجد يعود لحالة متاح
+        // التحقق إن كان لدى السائق طلبات أخرى متبقية في نفس الرحلة
         const remainingActive = orders.filter(
           (o) => o.driver_id === driverId && (o.delivery_status === 'assigned' || o.delivery_status === 'picked_up')
         );
+
+        const currentDriver = this.getDrivers(storeId).find((d) => d.id === driverId);
+
         if (remainingActive.length === 0) {
-          this.setDriverStatus(storeId, driverId, 'available');
+          // سلّم آخر طلب في الرحلة
+          if (currentDriver?.auto_break_after_delivery) {
+            // السائق طلب استراحة تلقائية بعد هذا المشوار
+            this.setDriverStatus(storeId, driverId, 'break', {
+              auto_break_after_delivery: false,
+              current_trip_orders_count: 0,
+              current_trip_order_ids: [],
+              estimated_return_minutes: 0,
+            });
+          } else {
+            // السائق راجع للمطعم
+            this.setDriverStatus(storeId, driverId, 'returning', {
+              current_trip_orders_count: 0,
+              current_trip_order_ids: [],
+              estimated_return_minutes: 10,
+            });
+          }
+        } else {
+          // لا يزال لديه طلبات تالية في نفس الرحلة
+          this.setDriverStatus(storeId, driverId, 'delivering', {
+            current_trip_orders_count: remainingActive.length,
+            current_trip_order_ids: remainingActive.map((o) => o.order_id || (o as any).id),
+          });
         }
 
         return orders[orderIdx];
@@ -321,6 +431,17 @@ export class DriverService {
       console.warn('Error completing order delivery:', e);
     }
     return null;
+  }
+
+  /**
+   * تأكيد عودة السائق للفرع واستعداده لرحلة جديدة
+   */
+  static reportDriverReturned(storeId: string, driverId: string): void {
+    this.setDriverStatus(storeId, driverId, 'available', {
+      current_trip_orders_count: 0,
+      current_trip_order_ids: [],
+      estimated_return_minutes: 0,
+    });
   }
 
   /**

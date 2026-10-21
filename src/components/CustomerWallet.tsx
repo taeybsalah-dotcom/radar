@@ -16,11 +16,14 @@ import {
   ServiceBooking,
   StoreWallet,
   StoreBranch,
+  CustomerSavedAddress,
   getStoreActiveModules,
 } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
 import { playBeepSound } from '../lib/sound';
+import { calculateDeliveryFee, extractCoordsFromMapUrl, estimateDeliveryTime } from '../lib/deliveryPricing';
+import { DriverService } from '../lib/driverService';
 import { CustomerLoginGate } from './CustomerLoginGate';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
@@ -76,6 +79,11 @@ import {
   History,
   Scissors,
   BookmarkCheck,
+  Home,
+  Briefcase,
+  Navigation,
+  Compass,
+  ExternalLink,
 } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
 import { saveInboxNotification, clearAllInboxNotifications } from '../lib/notifications';
@@ -487,6 +495,125 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [carPlate, setCarPlate] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryGpsLink, setDeliveryGpsLink] = useState('');
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [saveThisAddress, setSaveThisAddress] = useState(false);
+  const [saveAddressLabel, setSaveAddressLabel] = useState<string>('البيت');
+  const [isLocatingGps, setIsLocatingGps] = useState(false);
+  const [copiedGpsToast, setCopiedGpsToast] = useState(false);
+
+  // 🏠 دفتر العناوين المحفوظة للعميل
+  const savedAddressesStorageKey = `radar_saved_addresses_${customer?.phone || store?.id || 'guest'}`;
+  const [savedAddresses, setSavedAddresses] = useState<CustomerSavedAddress[]>(() => {
+    try {
+      const raw = localStorage.getItem(`radar_saved_addresses_${customer?.phone || store?.id || 'guest'}`);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return [
+      {
+        id: 'addr_home',
+        label: 'البيت',
+        icon: 'home',
+        district: 'حي الملقا',
+        street: 'شارع الأمير محمد بن سعد',
+        building_no: 'عمارة 14 - شقة 3',
+        map_url: 'https://maps.google.com/?q=24.8015,46.6111',
+        lat: 24.8015,
+        lng: 46.6111,
+        is_default: true,
+      },
+      {
+        id: 'addr_work',
+        label: 'العمل',
+        icon: 'building',
+        district: 'طريق الملك فهد',
+        street: 'برج المملكة',
+        building_no: 'الدور 12',
+        map_url: 'https://maps.google.com/?q=24.7114,46.6744',
+        lat: 24.7114,
+        lng: 46.6744,
+      },
+    ];
+  });
+
+  // الفرع الفعال وموقعه الجغرافي
+  const effectiveBranch = useMemo(() => {
+    const b = selectedBranch || (branches && branches.length > 0 ? branches[0] : null);
+    if (!b) return null;
+    return {
+      ...b,
+      lat: b.lat ?? 24.7136,
+      lng: b.lng ?? 46.6753,
+      delivery_radius_km: b.delivery_radius_km ?? 15,
+    };
+  }, [selectedBranch, branches]);
+
+  // فحص توفر السائقين في الفرع المختار
+  const availableDriversCount = useMemo(() => {
+    if (!store?.id) return 1;
+    const branchId = selectedBranch?.id || null;
+    const list = DriverService.getAvailableBranchDrivers(store.id, branchId);
+    return list.length;
+  }, [store?.id, selectedBranch?.id]);
+
+  // حساب المسافة ورسوم التوصيل وفحص النطاق تلقائياً
+  const calculatedDelivery = useMemo(() => {
+    if (fulfillmentType !== 'delivery') return null;
+    const coords = extractCoordsFromMapUrl(deliveryGpsLink);
+    return calculateDeliveryFee(
+      effectiveBranch,
+      coords?.lat,
+      coords?.lng,
+      store.fulfillment_settings?.delivery_fee || 0
+    );
+  }, [fulfillmentType, effectiveBranch, deliveryGpsLink, store.fulfillment_settings?.delivery_fee]);
+
+  const handleGetGpsLocation = () => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      alert('تحديد الموقع عبر GPS غير مدعوم في هذا المتصفح.');
+      return;
+    }
+    setIsLocatingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setIsLocatingGps(false);
+        const lat = Math.round(pos.coords.latitude * 10000) / 10000;
+        const lng = Math.round(pos.coords.longitude * 10000) / 10000;
+        const url = `https://maps.google.com/?q=${lat},${lng}`;
+        setDeliveryGpsLink(url);
+        if (!deliveryAddress) {
+          setDeliveryAddress(`موقعي الحالي عبر GPS (${lat}, ${lng})`);
+        }
+        playBeepSound('success');
+      },
+      (err) => {
+        setIsLocatingGps(false);
+        console.warn('Geolocation error:', err);
+        alert('تعذر تحديد موقعك بدقة. يرجى التأكد من تفعيل إذن الموقع في المتصفح أو إدخال الرابط يدوياً.');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const handleSelectSavedAddress = (addr: CustomerSavedAddress) => {
+    setSelectedAddressId(addr.id);
+    const fullText = [addr.district, addr.street, addr.building_no, addr.notes].filter(Boolean).join(' - ');
+    setDeliveryAddress(fullText);
+    if (addr.map_url) {
+      setDeliveryGpsLink(addr.map_url);
+    } else if (addr.lat && addr.lng) {
+      setDeliveryGpsLink(`https://maps.google.com/?q=${addr.lat},${addr.lng}`);
+    }
+    playBeepSound('notification');
+  };
+
+  const handleCopyGpsLink = () => {
+    if (!deliveryGpsLink) return;
+    navigator.clipboard.writeText(deliveryGpsLink);
+    setCopiedGpsToast(true);
+    setTimeout(() => setCopiedGpsToast(false), 2500);
+    playBeepSound('success');
+  };
+
   const [specialistName, setSpecialistName] = useState('');
   const [generalOrderNotes, setGeneralOrderNotes] = useState('');
   const [orderSuccessPayload, setOrderSuccessPayload] = useState<WhatsAppOrderPayload | null>(null);
@@ -2112,7 +2239,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const cartSubtotal = cartItems.reduce((acc, item) => acc + item.total_price, 0);
   const isDelivery = fulfillmentType === 'delivery';
-  const deliveryFee = isDelivery ? (store.fulfillment_settings?.delivery_fee || 0) : 0;
+  const deliveryFee = isDelivery
+    ? (calculatedDelivery ? calculatedDelivery.delivery_fee : (store.fulfillment_settings?.delivery_fee || 0))
+    : 0;
   const cartGrandTotal = cartSubtotal + deliveryFee;
   const estimatedLoyaltyPoints = Math.floor(cartGrandTotal * (store.points_per_riyal || 1));
   const hasServiceInCart = cartItems.some((i) => i.catalog_item.item_type === 'service');
@@ -2278,14 +2407,48 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       return;
     }
 
+    if (fulfillmentType === 'delivery') {
+      if (availableDriversCount === 0) {
+        alert('عذراً، كباتن التوصيل غير متاحين حالياً في هذا الفرع 🛵💨\nيمكنك اختيار الاستلام سفري من الفرع أو التواصل مع المتجر للتأكيد.');
+        return;
+      }
+      if (calculatedDelivery && !calculatedDelivery.is_deliverable) {
+        alert(calculatedDelivery.message || 'عذراً، موقعك يقع خارج نطاق التوصيل المتاح لهذا الفرع.');
+        return;
+      }
+    }
+
     setSubmittingOrder(true);
 
     try {
+      if (saveThisAddress && deliveryAddress.trim()) {
+        const coords = extractCoordsFromMapUrl(deliveryGpsLink);
+        const newAddr: CustomerSavedAddress = {
+          id: `addr_${Date.now()}`,
+          label: saveAddressLabel,
+          icon: saveAddressLabel === 'البيت' ? 'home' : saveAddressLabel === 'العمل' ? 'building' : 'map-pin',
+          district: deliveryAddress.split('-')[0]?.trim() || deliveryAddress.trim(),
+          street: deliveryAddress.split('-')[1]?.trim() || '',
+          building_no: deliveryAddress.split('-')[2]?.trim() || '',
+          map_url: deliveryGpsLink.trim() || undefined,
+          lat: coords?.lat,
+          lng: coords?.lng,
+          created_at: new Date().toISOString(),
+        };
+        const updated = [...savedAddresses.filter((a) => a.label !== saveAddressLabel), newAddr];
+        setSavedAddresses(updated);
+        try {
+          localStorage.setItem(savedAddressesStorageKey, JSON.stringify(updated));
+        } catch {}
+      }
+
       const orderId = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
       const activationCode = Math.floor(1000 + Math.random() * 9000).toString();
       const isPaid = Boolean(paidDetails);
       const resolvedPaymentMethod = isPaid ? (paidDetails?.paymentMethod || 'online') : 'pay_at_store';
       const resolvedPaymentStatus = isPaid ? 'paid' : 'pending';
+
+      const coords = extractCoordsFromMapUrl(deliveryGpsLink);
 
       const payload: any = {
         order_id: orderId,
@@ -2307,6 +2470,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           car_model_and_plate: carPlate.trim() || undefined,
           delivery_address: deliveryAddress.trim() || undefined,
           delivery_gps_link: deliveryGpsLink.trim() || undefined,
+          delivery_lat: coords?.lat,
+          delivery_lng: coords?.lng,
+          delivery_distance_km: calculatedDelivery?.distance_km,
+          delivery_tier_label: calculatedDelivery?.matched_tier?.label,
           specialist_name: specialistName.trim() || undefined,
           general_notes: generalOrderNotes.trim() || undefined,
         },
@@ -6696,7 +6863,96 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 )}
 
                 {fulfillmentType === 'delivery' && (
-                  <div className="space-y-2.5">
+                  <div className="space-y-3">
+                    {/* 1. حالة توفر السائقين في الفرع المختار */}
+                    {availableDriversCount === 0 ? (
+                      <div className={`p-3 rounded-2xl border text-xs flex flex-col gap-2 ${
+                        isDarkTheme ? 'bg-amber-950/40 border-amber-800 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800'
+                      }`}>
+                        <div className="flex items-center gap-2 font-bold">
+                          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
+                          <span>كباتن التوصيل غير متاحين حالياً في هذا الفرع 🛵💨</span>
+                        </div>
+                        <p className="text-[11px] opacity-90 leading-relaxed">
+                          جميع السائقين في مهمات توصيل جارية أو خارج الخدمة. يمكنك استلام الطلب بنفسك من الفرع، أو التواصل مع المتجر للتأكيد.
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <button
+                            type="button"
+                            onClick={() => setFulfillmentType('takeaway')}
+                            className="flex-1 py-1.5 px-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-[11px] flex items-center justify-center gap-1 transition"
+                          >
+                            <Car className="w-3.5 h-3.5" />
+                            <span>تحويل إلى استلام سفري 🚗</span>
+                          </button>
+                          {store.manager_contact && (
+                            <a
+                              href={`https://wa.me/${normalizePhone(store.manager_contact)}?text=${encodeURIComponent(`مرحباً ${store.name}، أود الاستفسار عن إمكانية توصيل طلب لفرع ${selectedBranch?.name || 'الرئيسي'}`)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={`py-1.5 px-2.5 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1 transition ${
+                                isDarkTheme ? 'bg-slate-900 border-amber-800 text-amber-300' : 'bg-white border-amber-300 text-amber-900'
+                              }`}
+                            >
+                              <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+                              <span>واتساب الفرع</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`py-1.5 px-3 rounded-xl border text-[11px] font-bold flex items-center justify-between ${
+                        isDarkTheme ? 'bg-emerald-950/30 border-emerald-900 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      }`}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>خدمة التوصيل نشطة • كباتن الفرع جاهزون 🛵</span>
+                        </div>
+                        <span className="text-[10px] font-medium opacity-80">
+                          فرع: {selectedBranch?.name || 'الرئيسي'}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* 2. شريط العناوين المحفوظة (Address Book) */}
+                    {savedAddresses.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className={`text-xs font-bold flex items-center gap-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                            <BookmarkCheck className="w-3.5 h-3.5 text-amber-500" />
+                            <span>عناويني المحفوظة:</span>
+                          </label>
+                          <span className="text-[10px] text-slate-400">اختر للتعبئة السريعة</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {savedAddresses.map((addr) => {
+                            const isSelected = selectedAddressId === addr.id;
+                            return (
+                              <button
+                                key={addr.id}
+                                type="button"
+                                onClick={() => handleSelectSavedAddress(addr)}
+                                className={`p-2.5 rounded-2xl border text-right transition flex items-start gap-2 ${
+                                  isSelected
+                                    ? isDarkTheme ? 'bg-slate-900 border-2 border-amber-500 text-white' : 'bg-amber-50/50 border-2 border-amber-500 text-slate-900'
+                                    : isDarkTheme ? 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700' : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300'
+                                }`}
+                              >
+                                <div className={`p-1.5 rounded-xl shrink-0 ${isSelected ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-300'}`}>
+                                  {addr.icon === 'building' ? <Briefcase className="w-3.5 h-3.5" /> : <Home className="w-3.5 h-3.5" />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs font-black truncate">{addr.label}</div>
+                                  <div className="text-[10px] text-slate-400 truncate">{addr.district}</div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3. عنوان التوصيل بالتفصيل */}
                     <div>
                       <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                         عنوان التوصيل بالتفصيل:
@@ -6704,26 +6960,156 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       <input
                         type="text"
                         value={deliveryAddress}
-                        onChange={(e) => setDeliveryAddress(e.target.value)}
-                        placeholder="الحي، الشارع، رقم العمارة / المنزل..."
-                        className={`w-full rounded-xl px-3 py-2 text-xs focus:outline-none ${
-                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
+                        onChange={(e) => {
+                          setDeliveryAddress(e.target.value);
+                          setSelectedAddressId(null);
+                        }}
+                        placeholder="مثال: حي الملقا - شارع أنس بن مالك - عمارة 12 شقة 4"
+                        className={`w-full rounded-xl px-3 py-2 text-xs focus:outline-none transition ${
+                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white focus:border-amber-500' : 'bg-white border border-slate-300 text-slate-900 focus:border-amber-500'
                         }`}
                       />
                     </div>
+
+                    {/* 4. رابط الخريطة وزر الـ GPS التلقائي الذكي */}
                     <div>
-                      <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
-                        رابط خرائط جوجل (Google Maps GPS Link):
+                      <div className="flex items-center justify-between mb-1">
+                        <label className={`text-xs font-bold flex items-center gap-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                          <MapPin className="w-3.5 h-3.5 text-rose-500" />
+                          <span>موقعك على الخريطة (GPS):</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleGetGpsLocation}
+                          disabled={isLocatingGps}
+                          className="text-[11px] font-bold text-amber-500 hover:text-amber-400 flex items-center gap-1 py-0.5 px-2 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 transition disabled:opacity-50"
+                        >
+                          {isLocatingGps ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Navigation className="w-3 h-3" />
+                          )}
+                          <span>{isLocatingGps ? 'جاري تحديد موقعك...' : '📍 حدد موقعي الحالي عبر GPS'}</span>
+                        </button>
+                      </div>
+
+                      <div className="relative">
+                        <input
+                          type="url"
+                          value={deliveryGpsLink}
+                          onChange={(e) => setDeliveryGpsLink(e.target.value)}
+                          placeholder="https://maps.google.com/?q=24.7136,46.6753"
+                          className={`w-full rounded-xl pl-20 pr-3 py-2 text-xs font-mono focus:outline-none transition ${
+                            isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white focus:border-amber-500' : 'bg-white border border-slate-300 text-slate-900 focus:border-amber-500'
+                          }`}
+                        />
+                        {deliveryGpsLink && (
+                          <div className="absolute left-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={handleCopyGpsLink}
+                              title="نسخ الرابط"
+                              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                            >
+                              {copiedGpsToast ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                            <a
+                              href={deliveryGpsLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="معاينة في الخريطة"
+                              className="p-1 rounded-lg text-slate-400 hover:text-sky-400 hover:bg-slate-800 transition"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                      {copiedGpsToast && (
+                        <div className="text-[10px] text-emerald-400 font-bold mt-1 text-left">
+                          ✓ تم نسخ رابط الموقع بنجاح
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 5. بطاقة النطاق الجغرافي والمسافة ورسوم التوصيل المحسوبة */}
+                    {calculatedDelivery && (
+                      <div className={`p-3 rounded-2xl border text-xs transition ${
+                        calculatedDelivery.is_deliverable
+                          ? isDarkTheme ? 'bg-slate-900/90 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-800'
+                          : isDarkTheme ? 'bg-rose-950/40 border-rose-800 text-rose-200' : 'bg-rose-50 border-rose-200 text-rose-800'
+                      }`}>
+                        {calculatedDelivery.is_deliverable ? (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold flex items-center gap-1.5 text-emerald-500">
+                                <CheckCircle2 className="w-4 h-4" />
+                                <span>موقعك داخل نطاق التوصيل</span>
+                              </span>
+                              <span className="font-black text-amber-500 text-sm">
+                                {calculatedDelivery.delivery_fee.toFixed(2)} ر.س
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-800/50">
+                              <span>المسافة التقديرية: {calculatedDelivery.distance_km != null ? `${calculatedDelivery.distance_km} كم` : 'محددة بالفرع'}</span>
+                              <span>وقت التوصيل: {estimateDeliveryTime(calculatedDelivery.distance_km).label}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-1.5 font-bold text-rose-400">
+                              <AlertCircle className="w-4 h-4 shrink-0" />
+                              <span>{calculatedDelivery.message}</span>
+                            </div>
+                            <p className="text-[11px] opacity-90">
+                              يرجى تقريب العنوان أو اختيار الاستلام سفري من الفرع.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setFulfillmentType('takeaway')}
+                              className="w-full py-1.5 px-3 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition"
+                            >
+                              <Car className="w-3.5 h-3.5" />
+                              <span>التحويل إلى استلام سفري 🚗</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 6. خيار حفظ العنوان في دفتر العناوين */}
+                    <div className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${
+                      isDarkTheme ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={saveThisAddress}
+                          onChange={(e) => setSaveThisAddress(e.target.checked)}
+                          className="rounded text-amber-500 focus:ring-amber-500"
+                        />
+                        <span className={`font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                          حفظ هذا العنوان للطلبات القادمة
+                        </span>
                       </label>
-                      <input
-                        type="url"
-                        value={deliveryGpsLink}
-                        onChange={(e) => setDeliveryGpsLink(e.target.value)}
-                        placeholder="https://maps.app.goo.gl/..."
-                        className={`w-full rounded-xl px-3 py-2 text-xs font-mono focus:outline-none ${
-                          isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white' : 'bg-white border border-slate-300 text-slate-900'
-                        }`}
-                      />
+                      {saveThisAddress && (
+                        <div className="flex items-center gap-1">
+                          {(['البيت', 'العمل', 'الاستراحة'] as const).map((lbl) => (
+                            <button
+                              key={lbl}
+                              type="button"
+                              onClick={() => setSaveAddressLabel(lbl)}
+                              className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition ${
+                                saveAddressLabel === lbl
+                                  ? 'bg-amber-500 text-slate-950'
+                                  : isDarkTheme ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {lbl}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

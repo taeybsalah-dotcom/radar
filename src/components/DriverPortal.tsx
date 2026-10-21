@@ -32,6 +32,9 @@ import {
   ShieldCheck,
   Calendar,
   Lock,
+  Coffee,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 interface DriverPortalProps {
@@ -128,6 +131,16 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
 
   // Doorstep Payment Modal
   const [selectedOrderForDelivery, setSelectedOrderForDelivery] = useState<WhatsAppOrderPayload | null>(null);
+  const [copiedAddressId, setCopiedAddressId] = useState<string | null>(null);
+
+  const handleCopyAddress = (orderId: string, text: string) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopiedAddressId(orderId);
+      setTimeout(() => setCopiedAddressId(null), 2000);
+      playBeepSound('notification');
+    } catch {}
+  };
 
   // Reload orders
   const reloadOrders = () => {
@@ -188,6 +201,42 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     reloadOrders();
     reloadDrivers();
     setSelectedOrderForDelivery(null);
+  };
+
+  // Handle Auto-Break Toggle
+  const toggleAutoBreak = (enabled: boolean) => {
+    if (!store?.id || !currentDriver) return;
+    DriverService.setAutoBreakAfterDelivery(store.id, currentDriver.id, enabled);
+    reloadDrivers();
+    playBeepSound('notification');
+  };
+
+  // Handle Depart all batched orders at once
+  const handleDepartAllTripOrders = () => {
+    if (!store?.id || !currentDriver) return;
+    DriverService.departTrip(store.id, currentDriver.id);
+    playBeepSound('success');
+    reloadOrders();
+    reloadDrivers();
+    setActiveTab('delivering');
+  };
+
+  // Handle Driver Returned to Branch
+  const handleReportReturned = () => {
+    if (!store?.id || !currentDriver) return;
+    DriverService.reportDriverReturned(store.id, currentDriver.id);
+    playBeepSound('success');
+    reloadDrivers();
+    reloadOrders();
+  };
+
+  // Handle End Break
+  const handleEndBreak = () => {
+    if (!store?.id || !currentDriver) return;
+    DriverService.setDriverStatus(store.id, currentDriver.id, 'available');
+    playBeepSound('success');
+    reloadDrivers();
+    reloadOrders();
   };
 
   // Shift Settlement Data
@@ -393,12 +442,107 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
 
       {/* 📦 Tab Content Body */}
       <main className="flex-1 p-3 sm:p-4 space-y-3 pb-24 overflow-y-auto">
+
+        {/* 🚨 DRIVER OPERATIONAL STATUS BANNERS */}
+        {currentDriver?.status === 'break' && (
+          <div className="p-4 rounded-3xl bg-gradient-to-r from-orange-950/70 to-slate-900 border-2 border-orange-500/50 text-orange-200 space-y-3 shadow-xl animate-fade-in">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-orange-500/20 text-orange-400 flex items-center justify-center shrink-0">
+                <Coffee className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="font-black text-sm text-white">أنت في فترة استراحة حالياً (Break) ☕</h4>
+                <p className="text-[11px] text-orange-300/80 mt-0.5">
+                  حالتك مغلقة أمام الكاشير ولن تُسند إليك أي طلبات جديدة حتى تنهي الاستراحة.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleEndBreak}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs shadow-lg transition flex items-center justify-center gap-1.5"
+            >
+              <span>🟢 إنهاء الاستراحة والعودة للعمل متاحاً</span>
+            </button>
+          </div>
+        )}
+
+        {currentDriver?.status === 'returning' && (
+          <div className="p-4 rounded-3xl bg-gradient-to-r from-purple-950/70 to-slate-900 border-2 border-purple-500/50 text-purple-200 space-y-3 shadow-xl animate-fade-in">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-purple-500/20 text-purple-300 flex items-center justify-center text-xl shrink-0">
+                🛵💨
+              </div>
+              <div className="min-w-0">
+                <h4 className="font-black text-sm text-white">في طريق العودة إلى الفرع</h4>
+                <p className="text-[11px] text-purple-300/80 mt-0.5">
+                  أنهيت مشاويرك بنجاح! الوقت المقدر للوصول: ~{currentDriver.estimated_return_minutes || 10} دقيقة
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleReportReturned}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white font-black text-xs shadow-lg transition flex items-center justify-center gap-1.5"
+            >
+              <span>🏁 وصلت الفرع (جاهز لرحلة جديدة) 🟢</span>
+            </button>
+          </div>
+        )}
+
+        {currentDriver?.status === 'loading' && driverOrders.availableForPickup.length > 0 && (
+          <div className="p-4 rounded-3xl bg-gradient-to-r from-amber-950/70 to-slate-900 border-2 border-amber-500/50 text-amber-200 space-y-3 shadow-xl animate-fade-in">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xl shrink-0">
+                📦
+              </div>
+              <div className="min-w-0">
+                <h4 className="font-black text-sm text-white">
+                  يتم تجهيز طلبات رحلتك بالفرع ({driverOrders.availableForPickup.length}/3)
+                </h4>
+                <p className="text-[11px] text-amber-300/80 mt-0.5">
+                  بإمكانك استلام كافة الطلبات والانطلاق بها دفعة واحدة لعملاء قريبين.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleDepartAllTripOrders}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-lg transition flex items-center justify-center gap-1.5"
+            >
+              <span>🚀 انطلقت بكافة طلبات الرحلة ({driverOrders.availableForPickup.length} طلبات)</span>
+            </button>
+          </div>
+        )}
         
         {/* ========================================= */}
         {/* TAB 1: ACTIVE DELIVERIES (ON THE ROAD)    */}
         {/* ========================================= */}
         {activeTab === 'delivering' && (
           <div className="space-y-3 animate-fade-in">
+
+            {/* Auto Break After Trip Toggle */}
+            {driverOrders.activeDeliveries.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-between gap-3 shadow-md">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-orange-500/20 text-orange-400 flex items-center justify-center shrink-0">
+                    <Coffee className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-black text-white block">أخذ استراحة بعد تسليم هذا المشوار ☕</span>
+                    <span className="text-[10px] text-slate-400 block truncate">
+                      التحول تلقائياً إلى وضع (استراحة) بعد تسليم آخر طلب
+                    </span>
+                  </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(currentDriver?.auto_break_after_delivery)}
+                    onChange={(e) => toggleAutoBreak(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                </label>
+              </div>
+            )}
             {driverOrders.activeDeliveries.length === 0 ? (
               <div className="text-center py-16 space-y-3">
                 <div className="w-16 h-16 rounded-3xl bg-slate-900 border border-slate-800 flex items-center justify-center text-3xl mx-auto text-slate-600">
@@ -433,17 +577,28 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                   >
                     {/* Top Order Badge & Amount */}
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full bg-amber-400 animate-ping" />
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
                         <span className="font-mono font-black text-amber-400 text-sm">
                           #{order.order_id.slice(-6)}
                         </span>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
-                          جاري التوصيل 🛵
-                        </span>
+                        {order.fulfillment_details?.trip_stop_index ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-black">
+                            🚩 محطة #{order.fulfillment_details.trip_stop_index}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+                            جاري التوصيل 🛵
+                          </span>
+                        )}
+                        {order.fulfillment_details?.delivery_distance_km !== undefined && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 font-mono font-bold">
+                            📏 {Number(order.fulfillment_details.delivery_distance_km).toFixed(1)} كم
+                          </span>
+                        )}
                       </div>
 
-                      <div className="text-left font-mono">
+                      <div className="text-left font-mono shrink-0">
                         <span className="text-lg font-black text-white">{Number(order.total_amount).toFixed(2)}</span>
                         <span className="text-[10px] text-slate-400 mr-1">ريال</span>
                       </div>
@@ -459,18 +614,34 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                         <span className="font-mono text-xs text-slate-300">{order.customer_phone}</span>
                       </div>
 
-                      <div className="flex items-start gap-2 pt-1 border-t border-slate-900">
-                        <MapPin className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                          <p className="text-xs text-slate-300 line-clamp-2">
-                            {order.fulfillment_details?.delivery_address || 'عنوان العميل محدد عبر الـ GPS'}
-                          </p>
-                          {order.fulfillment_details?.general_notes && (
-                            <p className="text-[11px] text-amber-300/80 mt-0.5 font-medium">
-                              📝 ملاحظة: {order.fulfillment_details.general_notes}
+                      <div className="flex items-start justify-between gap-2 pt-1 border-t border-slate-900">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <MapPin className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <p className="text-xs text-slate-300 line-clamp-2">
+                              {order.fulfillment_details?.delivery_address || 'عنوان العميل محدد عبر الـ GPS'}
                             </p>
-                          )}
+                            {order.fulfillment_details?.general_notes && (
+                              <p className="text-[11px] text-amber-300/80 mt-0.5 font-medium">
+                                📝 ملاحظة: {order.fulfillment_details.general_notes}
+                              </p>
+                            )}
+                          </div>
                         </div>
+                        {order.fulfillment_details?.delivery_address && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyAddress(order.order_id, order.fulfillment_details!.delivery_address!)}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition shrink-0"
+                            title="نسخ العنوان"
+                          >
+                            {copiedAddressId === order.order_id ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -568,7 +739,29 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                 </p>
               </div>
             ) : (
-              driverOrders.availableForPickup.map((order) => {
+              <>
+                {driverOrders.availableForPickup.length > 1 && (
+                  <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 shadow-md">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">🛵</span>
+                      <div>
+                        <span className="text-xs font-black text-amber-300 block">
+                          لديك {driverOrders.availableForPickup.length} طلبات جاهزة بالفرع
+                        </span>
+                        <span className="text-[10px] text-slate-400 block">
+                          تجميع في رحلة مشتركة واحدة
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleDepartAllTripOrders}
+                      className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow transition shrink-0"
+                    >
+                      🚀 انطلاق الكل
+                    </button>
+                  </div>
+                )}
+                {driverOrders.availableForPickup.map((order) => {
                 const isPaid = order.payment_status === 'paid';
                 return (
                   <div
@@ -616,7 +809,8 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     </button>
                   </div>
                 );
-              })
+              })}
+              </>
             )}
           </div>
         )}
