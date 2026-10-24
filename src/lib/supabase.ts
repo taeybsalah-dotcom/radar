@@ -172,6 +172,11 @@ const STAGING_SUPABASE_URL = 'https://jipqqhtgfpgrurkozccl.supabase.co';
 const STAGING_SUPABASE_ANON_KEY = 'sb_publishable_NiNUdhILZLkMNGqpUUrfoA_eI_0-pSU';
 
 export function getSupabaseCredentials() {
+  const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL;
+  const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+  if (envUrl && envKey) {
+    return { url: String(envUrl).trim(), anonKey: String(envKey).trim(), isConfigured: true };
+  }
   return {
     url: PROD_SUPABASE_URL,
     anonKey: PROD_SUPABASE_ANON_KEY,
