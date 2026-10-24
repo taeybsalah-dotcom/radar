@@ -1,9 +1,33 @@
 -- ==============================================================================
--- RADAR FULL RESELLER DATABASE SCHEMA (MASTER INITIAL SEED)
--- Use this single file to provision a brand-new Supabase instance for ANY reseller
+-- 🚀 RADAR WHITE-LABEL COMPLETE RESELLER DATABASE BUNDLE
+-- Generated At: 2026-10-24T18:53:44.067Z
+-- Total Migrations: 40
 -- ==============================================================================
 
+-- 0. Ensure pgcrypto extension exists for password hashing and tokens
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 0.1 Sovereign Master Auth Table for Remote Administration
+CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_token_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.reseller_master_auth ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.reseller_master_auth FROM anon, authenticated;
+
+-- Insert default sovereign master token hash
+INSERT INTO public.reseller_master_auth (master_token_hash)
+VALUES (crypt('radar_sovereign_master_2026_killswitch_key', gen_salt('bf')))
+ON CONFLICT DO NOTHING;
+
+
+
+-- ==============================================================================
 -- >>> FILE: 20260930_stage2_affiliate_foundation.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🚀 RADAR LOYALTY ENGINE - STAGE 2.5 PATCHED MIGRATION
 -- Migration: 20260930_stage2_affiliate_foundation.sql
@@ -793,7 +817,10 @@ USING (true)
 WITH CHECK (true);
 
 
+-- ==============================================================================
 -- >>> FILE: 20261001_stage12c_super_admin_summary.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — STAGE 12C-HOTFIX MIGRATION
 -- RPC SECURITY HARDENING: SUPER ADMIN SERVER-SIDE AUTHORIZATION GATE
@@ -905,7 +932,10 @@ REVOKE EXECUTE ON FUNCTION public.get_super_admin_stores_summary() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_super_admin_stores_summary() TO authenticated, service_role;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261001_stage6_partner_foundation.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- RADAR LOYALTY ENGINE
 -- STAGE 6 — PARTNER PROGRAM / SALES PARTNER SYSTEM FOUNDATION
@@ -1274,7 +1304,10 @@ $$;
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261001_stage7_billing_foundation.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- RADAR LOYALTY ENGINE
 -- STAGE 7 — BILLING & SUBSCRIPTIONS FOUNDATION
@@ -1468,7 +1501,10 @@ $$;
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261001_stage8_merchant_onboarding.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — STAGE 8 MIGRATION
 -- MERCHANT ONBOARDING & STORE ACTIVATION FOUNDATION
@@ -1557,7 +1593,10 @@ REVOKE ALL ON FUNCTION public.get_or_create_merchant_onboarding(UUID) FROM anon,
 GRANT EXECUTE ON FUNCTION public.get_or_create_merchant_onboarding(UUID) TO service_role;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261002_stage13_affiliate_financial_ledger.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🚀 RADAR LOYALTY ENGINE - STAGE 13
 -- Migration: 20261002_stage13_affiliate_financial_ledger.sql
@@ -1798,7 +1837,10 @@ GRANT EXECUTE ON FUNCTION public.admin_settle_partner_commissions TO service_rol
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261002_stage14_master_financial_ledger.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🏛️ RADAR LOYALTY ENGINE - STAGE 14
 -- Migration: 20261002_stage14_master_financial_ledger.sql
@@ -2138,7 +2180,10 @@ GRANT EXECUTE ON FUNCTION public.process_zatca_refund_credit_note TO service_rol
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261002_stage15_dual_commissions_grace_proration.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🚀 RADAR LOYALTY ENGINE - STAGE 15
 -- Migration: 20261002_stage15_dual_commissions_grace_proration.sql
@@ -2276,7 +2321,10 @@ GRANT EXECUTE ON FUNCTION public.admin_grant_complimentary_days TO service_role;
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261005_trial_14_days.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- Trial period: 7 days -> 14 days (NEW STORES ONLY)
 -- DRAFT - NOT EXECUTED. Review before running in Supabase SQL editor.
@@ -2450,7 +2498,10 @@ $$;
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261006_egress_store_assets_bucket.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 20261006_egress_store_assets_bucket.sql
 -- Public Storage bucket for all store images (served via Supabase CDN / Cloudflare).
@@ -2494,7 +2545,10 @@ create policy "store_assets_update"
   with check (bucket_id = 'store-assets');
 
 
+-- ==============================================================================
 -- >>> FILE: 20261008_fin01_financial_hardening.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🏛️ RADAR LOYALTY ENGINE — PHASE 3: FINANCIAL HARDENING [FIN-01, FIN-02, FIN-03]
 -- Migration: 20261008_fin01_financial_hardening.sql
@@ -3466,7 +3520,10 @@ GRANT EXECUTE ON FUNCTION public.get_all_store_invoices_batch TO authenticated;
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261008_fin02_grant_payment_rpc.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- RADAR PLATFORM - MIGRATION: 20261008_fin02_grant_payment_rpc.sql
 -- Fix: Grant Anon Execute on Payment RPC, Enable Invoice Read, Ensure Store Columns
@@ -3925,7 +3982,10 @@ GRANT EXECUTE ON FUNCTION public.get_all_store_invoices_batch() TO anon, authent
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261008_fin03_fix_leads_rls_and_linkage.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- RADAR PLATFORM - MIGRATION: 20261008_fin03_fix_leads_rls_and_linkage.sql
 -- Fix: Enable Anon Leads Insert & Select, Link Haf Million to Abdulsamee (slug: r8526)
@@ -4519,7 +4579,10 @@ END $$;
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261008_perf01_partner_financial_aggregate.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🚀 RADAR LOYALTY ENGINE — MIGRATION 20261008_PERF01 (V2 - BULLETPROOF)
 -- SINGLE-REQUEST PARTNER FINANCIAL AGGREGATE RPC (SOLVES N+1 QUERY BOTTLE NECK)
@@ -4699,7 +4762,10 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_all_partner_financial_summaries(UUID) TO anon, authenticated, service_role;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261008_sec01_super_admin_auth.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MIGRATION 20261008_SEC01
 -- SUPER ADMIN SERVER-SIDE AUTHENTICATION & RLS SECURITY HARDENING
@@ -4879,7 +4945,10 @@ BEGIN
 END $$;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261008_sec02_staff_pin_security.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MIGRATION 20261008_SEC02
 -- STAFF & MERCHANT PIN ENCRYPTION (BCRYPT) & BLIND VERIFICATION RPC
@@ -5236,7 +5305,10 @@ $$;
 GRANT EXECUTE ON FUNCTION public.update_staff_pin(UUID, TEXT, TEXT) TO anon, authenticated, service_role;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261009_fin04_fix_plan_id_type_casting.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🚀 [FIN-04] FIX PLAN ID TYPE CASTING IN ATOMIC RPC (COALESCE text and uuid)
 -- ==============================================================================
@@ -5690,7 +5762,10 @@ $$;
 GRANT EXECUTE ON FUNCTION public.process_store_payment_atomic TO anon, authenticated, service_role;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261009_fin05_payouts_and_commissions_rls.sql <<<
+-- ==============================================================================
+
 -- =========================================================================
 -- Atomic RPC to process Affiliate/Partner Payouts and bypass RLS
 -- =========================================================================
@@ -5839,7 +5914,10 @@ $$;
 GRANT EXECUTE ON FUNCTION public.process_affiliate_payout_atomic TO authenticated;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261009_fin06_allow_negative_clawback.sql <<<
+-- ==============================================================================
+
 -- السماح بالمبالغ السالبة في حالة المرتجعات (CLAWBACK_RECOVERY)
 ALTER TABLE public.partner_commissions DROP CONSTRAINT IF EXISTS partner_commissions_commission_amount_check;
 ALTER TABLE public.partner_commissions ADD CONSTRAINT partner_commissions_commission_amount_check CHECK (
@@ -5847,7 +5925,10 @@ ALTER TABLE public.partner_commissions ADD CONSTRAINT partner_commissions_commis
 );
 
 
+-- ==============================================================================
 -- >>> FILE: 20261009_sec02_grant_salah_admin.sql <<<
+-- ==============================================================================
+
 -- إعطاء صلاحيات المالك للحساب الخاص بك
 INSERT INTO public.super_admin_users (user_id, email, full_name, is_active)
 SELECT id, email, 'Platform Owner', true
@@ -5863,7 +5944,10 @@ WHERE email = 'admin@myradar.sarl'
 ON CONFLICT (email) DO NOTHING;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261009_stage16_orders_and_bookings.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- Migration: Stage 16 - Orders and Bookings Master Plan
 -- Description: Creates store_orders table and safe booking RPC
@@ -6008,8 +6092,10 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.store_orders;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.service_bookings;
 
 
-
+-- ==============================================================================
 -- >>> FILE: 20261009_stage17_catalog_items_columns.sql <<<
+-- ==============================================================================
+
 ��
  A L T E R   T A B L E   c a t a l o g _ i t e m s   A D D   C O L U M N   I F   N O T   E X I S T S   i t e m _ t y p e   t e x t   D E F A U L T   ' p r o d u c t ' ; 
  A L T E R   T A B L E   c a t a l o g _ i t e m s   A D D   C O L U M N   I F   N O T   E X I S T S   d u r a t i o n _ m i n u t e s   i n t e g e r ; 
@@ -6018,20 +6104,30 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.service_bookings;
   
  
 
+
+-- ==============================================================================
 -- >>> FILE: 20261009_stage18_order_updates.sql <<<
-﻿CREATE POLICY "Public can update orders"
+-- ==============================================================================
+
+CREATE POLICY "Public can update orders"
     ON public.store_orders
     FOR UPDATE
     USING (true);
 
 
+-- ==============================================================================
 -- >>> FILE: 20261009_stage19_bookings_rls.sql <<<
-﻿CREATE POLICY "Public can insert bookings" ON public.service_bookings FOR INSERT WITH CHECK (true);
+-- ==============================================================================
+
+CREATE POLICY "Public can insert bookings" ON public.service_bookings FOR INSERT WITH CHECK (true);
 CREATE POLICY "Public can update bookings" ON public.service_bookings FOR UPDATE USING (true);
 CREATE POLICY "Public can read bookings" ON public.service_bookings FOR SELECT USING (true);
 
 
+-- ==============================================================================
 -- >>> FILE: 20261012_sec03_fix_all_rls_advisor.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MIGRATION 20261012_SEC03 (ENTERPRISE HARDENING)
 -- RESOLVE ALL 18 SUPABASE SECURITY ADVISOR RLS ISSUES
@@ -6456,7 +6552,10 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_partner_commissions_secure(uuid) TO anon, authenticated, service_role;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261012_sec04_pin_limits_secure_writes.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- RADAR — MIGRATION 20261012_SEC04
 -- 1) PIN lockout (5 wrong attempts = 15 min lock) for staff/merchant/cashier + partner,
@@ -7633,7 +7732,10 @@ BEGIN
 END $$;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261016_fix_branches_cashier_multi_branch_and_bookings.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- Migration: 20261016_fix_branches_cashier_multi_branch_and_bookings.sql
 -- Description:
@@ -7964,8 +8066,10 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.book_service_safely TO anon, authenticated;
 
 
-
+-- ==============================================================================
 -- >>> FILE: 20261017_fix_booking_source_and_safe_rpc.sql <<<
+-- ==============================================================================
+
 -- Migration: Add booking_source column and update book_service_safely RPC
 ALTER TABLE public.service_bookings
 ADD COLUMN IF NOT EXISTS booking_source TEXT DEFAULT 'customer_app';
@@ -8122,14 +8226,20 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions;
 GRANT EXECUTE ON FUNCTION public.book_service_safely TO anon, authenticated, service_role;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261018_add_cashier_fields_to_store_orders.sql <<<
+-- ==============================================================================
+
 -- Migration: Add cashier_id, cashier_name, and order_source to store_orders table
 ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS cashier_id TEXT;
 ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS cashier_name TEXT;
 ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS order_source TEXT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261018_support_in_progress_booking_status.sql <<<
+-- ==============================================================================
+
 -- Migration: Support 'in_progress' status in service_bookings RPCs
 -- Date: 2026-10-18
 
@@ -8209,7 +8319,10 @@ END;
 $$;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261021_master_rls_hardening_zero_vulnerabilities.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MASTER RLS SECURITY HARDENING (ZERO VULNERABILITIES)
 -- Migration: 20261021_master_rls_hardening_zero_vulnerabilities.sql
@@ -8771,7 +8884,10 @@ BEGIN
 END $$;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261022_inventory_and_drivers_cloud_sync.sql <<<
+-- ==============================================================================
+
 -- =================================================================================
 -- 📦🛵 RADAR CLOUD DATABASE SYNC: INVENTORY, RECIPES, INVOICES & DELIVERY FLEET
 -- Date: 2026-10-22
@@ -9003,7 +9119,10 @@ NOTIFY pgrst, 'reload schema';
 COMMIT;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261023_security_hardening_pins_and_writes.sql <<<
+-- ==============================================================================
+
 -- =============================================================================
 -- Security hardening: PIN hashing, secret-column lockdown, staff-token RLS writes
 -- Apply with: node scripts/db-run.mjs dry|apply supabase/migrations/20261023_security_hardening_pins_and_writes.sql
@@ -9230,7 +9349,10 @@ BEGIN
 END $$;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261024_secure_coupon_purchase_and_staff_insert.sql <<<
+-- ==============================================================================
+
 -- Secure coupon purchase (server decides balance/stock) + lock store_staff INSERT behind admin token
 
 CREATE OR REPLACE FUNCTION public.purchase_coupon_secure(
@@ -9313,7 +9435,10 @@ BEGIN
 END $$;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261025_link_specialists_to_branches_and_booking_modes.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- Migration: 20261025_link_specialists_to_branches_and_booking_modes.sql
 -- Description:
@@ -9535,7 +9660,10 @@ BEGIN
 END $$;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261026_platform_integrations_hub.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- ⚙️ PLATFORM INTEGRATIONS & API HUB (TELEGRAM, GEMINI AI, WHATSAPP)
 -- Stores tenant/platform-owner proprietary API keys securely
@@ -9597,7 +9725,10 @@ VALUES (false, false, false)
 ON CONFLICT DO NOTHING;
 
 
+-- ==============================================================================
 -- >>> FILE: 20261028_reseller_instance_killswitch_receiver.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 20261028_reseller_instance_killswitch_receiver.sql
 -- Runs on EVERY Reseller Supabase Instance.
@@ -9665,9 +9796,10 @@ GRANT EXECUTE ON FUNCTION public.is_platform_active() TO anon, authenticated, se
 ALTER PUBLICATION supabase_realtime ADD TABLE public.platform_system_config;
 
 
-
-
+-- ==============================================================================
 -- >>> FILE: 20261029_tenant_branding_system.sql <<<
+-- ==============================================================================
+
 -- ==============================================================================
 -- 20261029_tenant_branding_system.sql
 -- Runs on EVERY Reseller Database (and Master Radar DB).
@@ -9815,3 +9947,91 @@ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.tenant_branding;
   END IF;
 END $$;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261030_reseller_master_sql_executor.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 20261030_reseller_master_sql_executor.sql
+-- Runs on EVERY Reseller Database.
+-- Allows Master Control to securely execute batch SQL updates on reseller instances
+-- remotely via PostgREST RPC, authenticated by the Sovereign Master Secret Token.
+-- ==============================================================================
+
+-- 1. Create or replace secure exec_master_sql RPC function
+CREATE OR REPLACE FUNCTION public.exec_master_sql(
+    p_sql TEXT,
+    p_master_token TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_authenticated BOOLEAN := FALSE;
+    v_start_time TIMESTAMPTZ := clock_timestamp();
+    v_execution_ms NUMERIC;
+BEGIN
+    -- 1. التحقق الصارم من التوكن السيادي للمالك الأم عبر الهاش المشفر
+    IF p_master_token IS NOT NULL AND EXISTS (
+        SELECT 1 FROM public.reseller_master_auth 
+        WHERE master_token_hash = crypt(p_master_token, master_token_hash)
+    ) THEN
+        v_authenticated := TRUE;
+    END IF;
+
+    -- 2. السماح للـ service_role المباشر
+    IF auth.role() = 'service_role' THEN
+        v_authenticated := TRUE;
+    END IF;
+
+    -- 3. رفض فوري إذا فشل التحقق
+    IF NOT v_authenticated THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Master Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    -- 4. التحقق من سلامة نص الاستعلام
+    IF TRIM(COALESCE(p_sql, '')) = '' THEN
+        RAISE EXCEPTION 'SQL statement cannot be empty';
+    END IF;
+
+    -- 5. تنفيذ كود الـ SQL مباشرة
+    EXECUTE p_sql;
+
+    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'message', 'SQL script executed successfully by Sovereign Master Engine',
+        'duration_ms', v_execution_ms,
+        'executed_at', now()
+    );
+
+EXCEPTION WHEN OTHERS THEN
+    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
+    RETURN jsonb_build_object(
+        'success', false,
+        'error', SQLERRM,
+        'code', SQLSTATE,
+        'duration_ms', v_execution_ms,
+        'executed_at', now()
+    );
+END;
+$$;
+
+-- 2. Grant execution permissions so Master Control can call it via anon REST with token
+GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authenticated, service_role;
+
+
+-- ==============================================================================
+-- >>> FILE: add_admins.sql <<<
+-- ==============================================================================
+
+INSERT INTO public.super_admin_users (user_id, email, full_name, is_active)
+SELECT id, email, 'Platform Owner', true
+FROM auth.users
+WHERE email ILIKE '%myradar.sarl'
+ON CONFLICT (email) DO NOTHING;

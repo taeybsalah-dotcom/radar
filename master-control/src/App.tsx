@@ -16,6 +16,11 @@ import {
   Phone,
   Upload,
   Image as ImageIcon,
+  Terminal,
+  Play,
+  CheckCheck,
+  Code2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   masterSupabase,
@@ -25,6 +30,8 @@ import {
   testResellerConnection,
   executeUpdateResellerBranding,
   uploadLogoToStorage,
+  executeBatchSqlOnResellers,
+  SqlExecutionResult,
 } from './lib/masterApi';
 
 export const App: React.FC = () => {
@@ -69,6 +76,15 @@ export const App: React.FC = () => {
   const [selectedInstance, setSelectedInstance] = useState<ResellerInstance | null>(null);
   const [newPassword, setNewPassword] = useState('');
 
+  // Modal: Batch SQL Rollout
+  const [showBatchSqlModal, setShowBatchSqlModal] = useState(false);
+  const [batchSqlScript, setBatchSqlScript] = useState('');
+  const [selectedResellerIds, setSelectedResellerIds] = useState<string[]>([]);
+  const [batchSqlResults, setBatchSqlResults] = useState<SqlExecutionResult[]>([]);
+  const [isExecutingSql, setIsExecutingSql] = useState(false);
+  const [sqlProgress, setSqlProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [showSetupSnippet, setShowSetupSnippet] = useState(false);
+
   useEffect(() => {
     fetchInstances();
   }, []);
@@ -83,7 +99,9 @@ export const App: React.FC = () => {
         .order('created_at', { ascending: false });
 
       if (fetchErr) throw fetchErr;
-      setInstances(data || []);
+      const list = data || [];
+      setInstances(list);
+      setSelectedResellerIds(list.map((i: ResellerInstance) => i.id));
     } catch (err: any) {
       console.error('Fetch error:', err);
       setError(err?.message || 'فشل جلب بيانات الوكلاء');
@@ -289,6 +307,68 @@ export const App: React.FC = () => {
     setTimeout(() => setSuccessMsg(null), 3000);
   }
 
+  function toggleResellerSelect(id: string) {
+    setSelectedResellerIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  function toggleResellerSelectAll() {
+    if (selectedResellerIds.length === instances.length) {
+      setSelectedResellerIds([]);
+    } else {
+      setSelectedResellerIds(instances.map((i) => i.id));
+    }
+  }
+
+  async function handleExecuteBatchSql(e: React.FormEvent) {
+    e.preventDefault();
+    if (!batchSqlScript.trim()) {
+      setError('يرجى كتابة أو لصق كود الـ SQL المراد تعميمه');
+      return;
+    }
+
+    const targets = instances.filter((i) => selectedResellerIds.includes(i.id));
+    if (targets.length === 0) {
+      setError('يرجى تحديد وكيل واحد على الأقل للتعميم');
+      return;
+    }
+
+    if (!window.confirm(`تنبيه سيادي ⚠️: هل أنت متأكد من رغبتك في تشغيل وتعميم كود الـ SQL على (${targets.length}) قاعدة بيانات للوكلاء؟`)) {
+      return;
+    }
+
+    setIsExecutingSql(true);
+    setError(null);
+    setSuccessMsg(null);
+    setBatchSqlResults([]);
+    setSqlProgress({ completed: 0, total: targets.length });
+
+    try {
+      const results = await executeBatchSqlOnResellers(
+        targets,
+        batchSqlScript,
+        (completed, total, res) => {
+          setSqlProgress({ completed, total });
+          setBatchSqlResults((prev) => [...prev, res]);
+        }
+      );
+
+      const successCount = results.filter((r) => r.success).length;
+      const failCount = results.length - successCount;
+
+      if (failCount === 0) {
+        setSuccessMsg(`✅ تم تعميم تحديث SQL بنجاح تام على جميع الوكلاء المحددين (${successCount})!`);
+      } else {
+        setError(`⚠️ اكتمل التعميم: نجح على (${successCount}) وفشل على (${failCount}). راجع تفاصيل الأخطاء في السجل أدناه.`);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'فشل تشغيل تعميم الـ SQL');
+    } finally {
+      setIsExecutingSql(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 p-6 md:p-10" dir="rtl">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -309,18 +389,32 @@ export const App: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-slate-400 text-xs md:text-sm mt-1">
-                  إدارة وتجهيز هويات وقواعد بيانات الوكلاء المستقلة (White-Label Branding & Kill-Switch) مباشرة عبر السيرفر.
+                  إدارة وتجهيز هويات وقواعد بيانات الوكلاء المستقلة (White-Label Branding & Kill-Switch & Remote SQL Rollout) مباشرة عبر السيرفر.
                 </p>
               </div>
             </div>
 
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-2xl shadow-lg shadow-indigo-600/30 transition hover:scale-[1.02]"
-            >
-              <PlusCircle className="w-5 h-5" />
-              <span>إنشاء وتجهيز وكيل جديد</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => {
+                  setBatchSqlResults([]);
+                  setSqlProgress(null);
+                  setShowBatchSqlModal(true);
+                }}
+                className="flex items-center justify-center gap-2 px-5 py-3.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 text-sm font-black rounded-2xl shadow-lg shadow-amber-500/20 transition hover:scale-[1.02]"
+              >
+                <Terminal className="w-5 h-5 text-slate-950" />
+                <span>تعميم تحديث SQL على الوكلاء</span>
+              </button>
+
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-2xl shadow-lg shadow-indigo-600/30 transition hover:scale-[1.02]"
+              >
+                <PlusCircle className="w-5 h-5" />
+                <span>إنشاء وتجهيز وكيل جديد</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -870,54 +964,305 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* Modal: Reset Password */}
-        {showResetModal && selectedInstance && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
-                <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
-                  <KeyRound className="w-5 h-5" />
-                  <span>تصفير كلمة مرور ({selectedInstance.name})</span>
+        {/* Modal: Batch SQL Rollout */}
+        {showBatchSqlModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
+            <div className="bg-slate-900 border border-amber-500/30 rounded-3xl max-w-4xl w-full p-6 md:p-8 shadow-2xl space-y-6 my-8 max-h-[92vh] overflow-y-auto">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <Terminal className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-white flex items-center gap-2">
+                      <span>تعميم تحديث SQL على قواعد بيانات الوكلاء</span>
+                      <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono">
+                        SOVEREIGN RPC
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      تنفيذ أوامر وتعديلات قواعد البيانات المعتمدة على جميع سيرفرات الوكلاء دفعة واحدة عن بعد.
+                    </p>
+                  </div>
                 </div>
-                <button onClick={() => setShowResetModal(false)} className="text-slate-500 hover:text-slate-300">
+                <button
+                  onClick={() => !isExecutingSql && setShowBatchSqlModal(false)}
+                  disabled={isExecutingSql}
+                  className="text-slate-500 hover:text-slate-300 text-lg p-2 disabled:opacity-40"
+                >
                   ✕
                 </button>
               </div>
 
-              <form onSubmit={handleResetPassword} className="space-y-4">
-                <p className="text-xs text-slate-400">
-                  سيتم تعديل كلمة المرور لحساب ({selectedInstance.admin_email}) مباشرة في سيرفر Supabase الخاص به دون أن تفتح لوحته.
-                </p>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">كلمة المرور الجديدة *</label>
-                  <input
-                    type="text"
-                    required
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="اكتب كلمة المرور الجديدة"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                  />
+              {/* Instructions Banner */}
+              <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl text-xs space-y-2">
+                <div className="flex items-center gap-2 text-amber-400 font-bold">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>آلية العمل السيادية المعتمدة:</span>
                 </div>
+                <p className="text-slate-300 leading-relaxed">
+                  1. جرب التعديل أو الميزة أولاً واعتمدها على <strong>قاعدة رادار الأساسية</strong>.<br />
+                  2. بعد التأكد من سلامتها 100%، الصق كود الـ SQL هنا واضغط <strong>«تعميم التحديث»</strong>.<br />
+                  3. سيتم إرسال الكود عبر دالة <code className="text-amber-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono">exec_master_sql</code> المشفرة بالتوكن السيادي لجميع قواعد الوكلاء المحددين في أجزاء من الثانية.
+                </p>
+              </div>
 
-                <div className="flex items-center justify-end gap-3 pt-2">
+              {/* Target Resellers Selection */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    <Database className="w-4 h-4 text-indigo-400" />
+                    <span>تحديد الوكلاء المستهدفين ({selectedResellerIds.length} من {instances.length})</span>
+                  </label>
                   <button
                     type="button"
-                    onClick={() => setShowResetModal(false)}
-                    className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
+                    onClick={toggleResellerSelectAll}
+                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold"
                   >
-                    إلغاء
+                    {selectedResellerIds.length === instances.length ? 'إلغاء تحديد الكل' : 'تحديد كل الوكلاء'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-36 overflow-y-auto p-1 bg-slate-950/60 rounded-2xl border border-slate-800/80">
+                  {instances.map((inst) => {
+                    const isSelected = selectedResellerIds.includes(inst.id);
+                    return (
+                      <div
+                        key={inst.id}
+                        onClick={() => !isExecutingSql && toggleResellerSelect(inst.id)}
+                        className={`p-3 rounded-xl border cursor-pointer transition flex items-center justify-between text-xs select-none ${
+                          isSelected
+                            ? 'bg-indigo-950/40 border-indigo-500/50 text-white'
+                            : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className={`w-4 h-4 rounded flex items-center justify-center text-[10px] ${
+                            isSelected ? 'bg-indigo-600 text-white' : 'border border-slate-700'
+                          }`}>
+                            {isSelected && '✓'}
+                          </span>
+                          <span className="font-bold truncate">{inst.name}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-mono">/{inst.slug}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* SQL Script Textarea */}
+              <form onSubmit={handleExecuteBatchSql} className="space-y-5">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                      <Code2 className="w-4 h-4 text-amber-400" />
+                      <span>كود الـ SQL المراد تشغيله وتعميمه *</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBatchSqlScript('SELECT now() AS server_time, version();')}
+                        className="text-[11px] text-amber-400 hover:text-amber-300 font-mono"
+                      >
+                        ⚡ كود فحص سريع
+                      </button>
+                      <span className="text-slate-600">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setBatchSqlScript('')}
+                        className="text-[11px] text-slate-400 hover:text-slate-300"
+                      >
+                        مسح
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <textarea
+                      required
+                      rows={9}
+                      value={batchSqlScript}
+                      onChange={(e) => setBatchSqlScript(e.target.value)}
+                      placeholder="-- الصق كود الـ SQL هنا (مثال: CREATE TABLE IF NOT EXISTS ... أو ALTER TABLE ...)"
+                      dir="ltr"
+                      disabled={isExecutingSql}
+                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500/80 rounded-2xl p-4 text-xs text-amber-100 font-mono placeholder-slate-600 outline-none leading-relaxed resize-y selection:bg-amber-500/30 disabled:opacity-50"
+                    />
+                    <div className="absolute bottom-3 left-4 text-[10px] text-slate-600 font-mono pointer-events-none">
+                      {batchSqlScript.split('\n').length} أسطر • {batchSqlScript.length} حرف
+                    </div>
+                  </div>
+                </div>
+
+                {/* Progress Bar (during execution) */}
+                {sqlProgress && (
+                  <div className="p-4 bg-slate-950 border border-indigo-500/30 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-300 font-bold flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                        جاري التنفيذ على قواعد الوكلاء...
+                      </span>
+                      <span className="text-indigo-400 font-mono font-bold">
+                        {sqlProgress.completed} / {sqlProgress.total} ({Math.round((sqlProgress.completed / sqlProgress.total) * 100)}%)
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                      <div
+                        className="bg-gradient-to-r from-indigo-500 to-amber-500 h-full transition-all duration-300"
+                        style={{ width: `${(sqlProgress.completed / sqlProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Live Execution Results Log */}
+                {batchSqlResults.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold text-slate-300 flex items-center gap-2">
+                      <CheckCheck className="w-4 h-4 text-emerald-400" />
+                      <span>سجل نتائج التنفيذ المباشر:</span>
+                    </h4>
+                    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                      {batchSqlResults.map((res) => (
+                        <div
+                          key={res.instanceId}
+                          className={`p-3.5 rounded-2xl border text-xs flex flex-col gap-1.5 ${
+                            res.success
+                              ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300'
+                              : 'bg-red-950/30 border-red-500/40 text-red-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold flex items-center gap-2">
+                              {res.success ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                              ) : (
+                                <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                              )}
+                              <span>{res.name}</span>
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-400">
+                              {res.durationMs ? `${res.durationMs}ms` : ''}
+                            </span>
+                          </div>
+
+                          {res.message && (
+                            <p className="text-[11px] text-slate-300 pr-6">{res.message}</p>
+                          )}
+
+                          {res.error && (
+                            <div className="pr-6 text-[11px] text-red-300 font-mono bg-red-950/60 p-2 rounded-xl border border-red-900/60 mt-1">
+                              {res.error}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Collapsible Accordion: Setup Snippet for exec_master_sql */}
+                <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/50">
+                  <button
+                    type="button"
+                    onClick={() => setShowSetupSnippet(!showSetupSnippet)}
+                    className="w-full p-3.5 text-right flex items-center justify-between text-xs text-slate-400 hover:text-slate-200 transition"
+                  >
+                    <span className="flex items-center gap-2 font-bold">
+                      <span>🔑</span>
+                      <span>كود تأسيس دالة تعميم SQL (للوكلاء القدامى غير المؤسسين)</span>
+                    </span>
+                    <span className="font-mono">{showSetupSnippet ? '▲ إخفاء' : '▼ عرض الكود'}</span>
+                  </button>
+
+                  {showSetupSnippet && (
+                    <div className="p-4 border-t border-slate-800 bg-slate-950 space-y-3">
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        إذا واجهت في السجل أعلاه خطأ يوضح أن دالة <code className="text-amber-300 font-mono">exec_master_sql</code> غير موجودة، انسخ هذا الكود والصقه <strong>مرة واحدة فقط</strong> في الـ SQL Editor داخل قاعدة ذلك الوكيل:
+                      </p>
+                      <div className="relative">
+                        <pre className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-[10px] font-mono text-slate-300 overflow-x-auto max-h-40 dir-ltr text-left">
+{`CREATE OR REPLACE FUNCTION public.exec_master_sql(p_sql TEXT, p_master_token TEXT)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
+DECLARE v_authenticated BOOLEAN := FALSE; v_start_time TIMESTAMPTZ := clock_timestamp(); v_execution_ms NUMERIC;
+BEGIN
+    IF p_master_token IS NOT NULL AND EXISTS (
+        SELECT 1 FROM public.reseller_master_auth WHERE master_token_hash = crypt(p_master_token, master_token_hash)
+    ) THEN v_authenticated := TRUE; END IF;
+    IF auth.role() = 'service_role' THEN v_authenticated := TRUE; END IF;
+    IF NOT v_authenticated THEN RAISE EXCEPTION 'Access Denied: Invalid Master Sovereign Token'; END IF;
+    IF TRIM(COALESCE(p_sql, '')) = '' THEN RAISE EXCEPTION 'SQL statement cannot be empty'; END IF;
+    EXECUTE p_sql;
+    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
+    RETURN jsonb_build_object('success', true, 'message', 'SQL executed successfully', 'duration_ms', v_execution_ms);
+EXCEPTION WHEN OTHERS THEN
+    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
+    RETURN jsonb_build_object('success', false, 'error', SQLERRM, 'duration_ms', v_execution_ms);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authenticated, service_role;`}
+                        </pre>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(`CREATE OR REPLACE FUNCTION public.exec_master_sql(p_sql TEXT, p_master_token TEXT)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
+DECLARE v_authenticated BOOLEAN := FALSE; v_start_time TIMESTAMPTZ := clock_timestamp(); v_execution_ms NUMERIC;
+BEGIN
+    IF p_master_token IS NOT NULL AND EXISTS (
+        SELECT 1 FROM public.reseller_master_auth WHERE master_token_hash = crypt(p_master_token, master_token_hash)
+    ) THEN v_authenticated := TRUE; END IF;
+    IF auth.role() = 'service_role' THEN v_authenticated := TRUE; END IF;
+    IF NOT v_authenticated THEN RAISE EXCEPTION 'Access Denied: Invalid Master Sovereign Token'; END IF;
+    IF TRIM(COALESCE(p_sql, '')) = '' THEN RAISE EXCEPTION 'SQL statement cannot be empty'; END IF;
+    EXECUTE p_sql;
+    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
+    RETURN jsonb_build_object('success', true, 'message', 'SQL executed successfully', 'duration_ms', v_execution_ms);
+EXCEPTION WHEN OTHERS THEN
+    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
+    RETURN jsonb_build_object('success', false, 'error', SQLERRM, 'duration_ms', v_execution_ms);
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authenticated, service_role;`);
+                            setSuccessMsg('تم نسخ كود التأسيس للحافظة بنجاح');
+                            setTimeout(() => setSuccessMsg(null), 3000);
+                          }}
+                          className="absolute top-2 right-2 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] rounded-lg border border-slate-700 font-bold"
+                        >
+                          نسخ الكود
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Modal Footer */}
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowBatchSqlModal(false)}
+                    disabled={isExecutingSql}
+                    className="px-5 py-2.5 rounded-xl text-xs text-slate-400 hover:text-white disabled:opacity-40"
+                  >
+                    إغلاق
                   </button>
                   <button
                     type="submit"
-                    disabled={actionLoading === 'reset_pwd'}
-                    className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-amber-600/30 flex items-center gap-2"
+                    disabled={isExecutingSql || selectedResellerIds.length === 0 || !batchSqlScript.trim()}
+                    className="px-7 py-3 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 text-xs font-black rounded-xl shadow-lg shadow-amber-600/30 flex items-center gap-2 disabled:opacity-40"
                   >
-                    {actionLoading === 'reset_pwd' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                    {isExecutingSql ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                        <span>جاري تعميم التحديث على قواعد الوكلاء...</span>
+                      </>
                     ) : (
-                      <span>تأكيد التصفير المباشر</span>
+                      <>
+                        <Play className="w-4 h-4 fill-slate-950 text-slate-950" />
+                        <span>تعميم التحديث على ({selectedResellerIds.length}) وكلاء</span>
+                      </>
                     )}
                   </button>
                 </div>
@@ -925,6 +1270,7 @@ export const App: React.FC = () => {
             </div>
           </div>
         )}
+
       </div>
     </div>
   );

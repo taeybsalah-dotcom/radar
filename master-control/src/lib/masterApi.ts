@@ -231,3 +231,98 @@ export async function testResellerConnection(instance: ResellerInstance) {
 
   return true;
 }
+
+export interface SqlExecutionResult {
+  instanceId: string;
+  name: string;
+  url: string;
+  success: boolean;
+  message?: string;
+  error?: string;
+  code?: string;
+  durationMs?: number;
+}
+
+/**
+ * ⚡ Execute SQL on Single Reseller DB via Sovereign Token RPC
+ */
+export async function executeSingleResellerSql(
+  instance: ResellerInstance,
+  sqlScript: string
+): Promise<SqlExecutionResult> {
+  const startTime = Date.now();
+  try {
+    const res = await fetch(`${instance.supabase_url}/rest/v1/rpc/exec_master_sql`, {
+      method: 'POST',
+      headers: {
+        'apikey': instance.supabase_anon_key,
+        'Authorization': `Bearer ${instance.supabase_anon_key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        p_sql: sqlScript,
+        p_master_token: SOVEREIGN_MASTER_TOKEN,
+      }),
+    });
+
+    const elapsed = Date.now() - startTime;
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return {
+        instanceId: instance.id,
+        name: instance.name,
+        url: instance.supabase_url,
+        success: false,
+        error: errText.includes('Could not find the function') || res.status === 404
+          ? 'دالة exec_master_sql غير مثبتة بعد في قاعدة هذا الوكيل (يجب تشغيل كود التأسيس مرة واحدة)'
+          : errText,
+        durationMs: elapsed,
+      };
+    }
+
+    const json = await res.json();
+    return {
+      instanceId: instance.id,
+      name: instance.name,
+      url: instance.supabase_url,
+      success: json.success !== false && !json.error,
+      message: json.message || 'تم التنفيذ بنجاح',
+      error: json.error,
+      code: json.code,
+      durationMs: json.duration_ms || elapsed,
+    };
+  } catch (err: any) {
+    return {
+      instanceId: instance.id,
+      name: instance.name,
+      url: instance.supabase_url,
+      success: false,
+      error: err.message || 'فشل الاتصال بقاعدة بيانات الوكيل',
+      durationMs: Date.now() - startTime,
+    };
+  }
+}
+
+/**
+ * 🌐 Batch SQL Executor across multiple Resellers
+ */
+export async function executeBatchSqlOnResellers(
+  instances: ResellerInstance[],
+  sqlScript: string,
+  onProgress?: (completed: number, total: number, result: SqlExecutionResult) => void
+): Promise<SqlExecutionResult[]> {
+  const results: SqlExecutionResult[] = [];
+  let completed = 0;
+
+  for (const instance of instances) {
+    const res = await executeSingleResellerSql(instance, sqlScript);
+    results.push(res);
+    completed++;
+    if (onProgress) {
+      onProgress(completed, instances.length, res);
+    }
+  }
+
+  return results;
+}
