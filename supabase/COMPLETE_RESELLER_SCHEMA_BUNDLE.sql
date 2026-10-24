@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- 🚀 RADAR WHITE-LABEL COMPLETE RESELLER DATABASE BUNDLE
--- Generated At: 2026-10-24T21:23:20.952Z
+-- Generated At: 2026-10-24T21:34:21.350Z
 -- Total Migrations: 42
 -- ==============================================================================
 
@@ -17,10 +17,9 @@ CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
 ALTER TABLE public.reseller_master_auth ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.reseller_master_auth FROM anon, authenticated;
 
--- Insert default sovereign master token hash
-INSERT INTO public.reseller_master_auth (master_token_hash)
-VALUES (crypt('radar_sovereign_master_2026_killswitch_key', gen_salt('bf')))
-ON CONFLICT DO NOTHING;
+-- NOTE: The sovereign token hash is NOT seeded here (secrets never live in the repo).
+-- After running this bundle on a new reseller DB, paste the "Sovereign Token Seed"
+-- SQL copied from Master Control (localhost) into that reseller's SQL Editor.
 
 
 
@@ -10580,10 +10579,7 @@ CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
 ALTER TABLE public.reseller_master_auth ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.reseller_master_auth FROM anon, authenticated;
 
--- Insert default sovereign master token hash (bcrypt salt 10)
-INSERT INTO public.reseller_master_auth (master_token_hash)
-VALUES (crypt('radar_sovereign_master_2026_killswitch_key', gen_salt('bf')))
-ON CONFLICT DO NOTHING;
+-- Sovereign token hash is seeded from Master Control at runtime (never stored in the repo).
 
 
 -- ==============================================================================

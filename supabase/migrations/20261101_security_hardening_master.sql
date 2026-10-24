@@ -28,10 +28,7 @@ CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
 ALTER TABLE public.reseller_master_auth ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.reseller_master_auth FROM anon, authenticated;
 
--- Insert default sovereign master token hash (bcrypt salt 10)
-INSERT INTO public.reseller_master_auth (master_token_hash)
-VALUES (crypt('radar_sovereign_master_2026_killswitch_key', gen_salt('bf')))
-ON CONFLICT DO NOTHING;
+-- Sovereign token hash is seeded from Master Control at runtime (never stored in the repo).
 
 
 -- ==============================================================================

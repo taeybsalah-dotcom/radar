@@ -32,7 +32,29 @@ export interface ResellerInstance {
 }
 
 // 🛡️ Sovereign Secret Master Handshake Token
-const SOVEREIGN_MASTER_TOKEN = 'radar_sovereign_master_2026_killswitch_key';
+// Loaded from master-control/.env.local (git-ignored). NEVER hardcode it in source.
+export const SOVEREIGN_MASTER_TOKEN: string = (import.meta as any).env?.VITE_SOVEREIGN_MASTER_TOKEN || '';
+if (!SOVEREIGN_MASTER_TOKEN) {
+  console.error('[Master Control] VITE_SOVEREIGN_MASTER_TOKEN is missing in master-control/.env.local');
+}
+
+/**
+ * SQL that (re)seeds the sovereign token hash on a reseller DB.
+ * Generated at runtime only — never committed to the repository.
+ */
+export function buildTokenSeedSql(token: string = SOVEREIGN_MASTER_TOKEN): string {
+  const safe = token.replace(/'/g, "''");
+  return `CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_token_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.reseller_master_auth ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.reseller_master_auth FROM anon, authenticated;
+DELETE FROM public.reseller_master_auth;
+INSERT INTO public.reseller_master_auth (master_token_hash) VALUES (crypt('${safe}', gen_salt('bf')));`;
+}
 
 /**
  * 📤 Upload Image directly to Master/Target Supabase Storage and return Public URL

@@ -32,6 +32,8 @@ import {
   uploadLogoToStorage,
   executeBatchSqlOnResellers,
   SqlExecutionResult,
+  SOVEREIGN_MASTER_TOKEN,
+  buildTokenSeedSql,
 } from './lib/masterApi';
 
 export const App: React.FC = () => {
@@ -1234,6 +1236,25 @@ GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authentica
                           نسخ الكود
                         </button>
                       </div>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        بعد تثبيت الحزمة على وكيل جديد، انسخ <strong>كود ربط التوكن السيادي</strong> والصقه في SQL Editor لذلك الوكيل (يُولَّد محلياً ولا يُحفظ في الكود):
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!SOVEREIGN_MASTER_TOKEN) {
+                            setSuccessMsg('التوكن السيادي غير موجود في master-control/.env.local');
+                            setTimeout(() => setSuccessMsg(null), 4000);
+                            return;
+                          }
+                          navigator.clipboard.writeText(buildTokenSeedSql());
+                          setSuccessMsg('تم نسخ كود ربط التوكن السيادي — لا تشاركه مع أحد');
+                          setTimeout(() => setSuccessMsg(null), 3000);
+                        }}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-black text-[11px] rounded-lg font-bold"
+                      >
+                        🔐 نسخ كود ربط التوكن السيادي
+                      </button>
                     </div>
                   )}
                 </div>

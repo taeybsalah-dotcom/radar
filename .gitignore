@@ -7,3 +7,5 @@ scripts/.migration-backup/
 .env
 .env.*
 *.local
+
+master-control/dist/

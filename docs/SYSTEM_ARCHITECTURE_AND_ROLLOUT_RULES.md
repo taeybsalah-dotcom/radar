@@ -37,7 +37,7 @@ This ecosystem is strictly divided into three distinct layers. NEVER mix them.
 ## 🛡️ 2. The Sovereign Security Token (التوكن السيادي)
 All administrative RPC calls from the Master Control panel (`set_platform_status`, `reset_admin_password`, `set_tenant_branding`, `exec_master_sql`) are authenticated inside PostgreSQL by verifying:
 ```
-p_master_token: 'radar_sovereign_master_2026_killswitch_key'
+p_master_token: <value of VITE_SOVEREIGN_MASTER_TOKEN in master-control/.env.local — git-ignored, never commit>
 ```
 Verified against bcrypt hash stored in `public.reseller_master_auth`.  
 Any call without this token is immediately rejected with `401 Unauthorized`.
