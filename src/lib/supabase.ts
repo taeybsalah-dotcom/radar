@@ -121,7 +121,24 @@ const STORAGE_KEYS = {
 if (typeof window !== 'undefined') {
   try {
     const DATA_VERSION_KEY = 'radar_schema_version';
-    const TARGET_VERSION = 'v3_zero_state_clean';
+    const { url: currentSupabaseUrl } = getSupabaseCredentials();
+    const LAST_URL_KEY = 'radar_last_connected_supabase_url';
+    const lastConnectedUrl = localStorage.getItem(LAST_URL_KEY);
+    if (lastConnectedUrl && lastConnectedUrl !== currentSupabaseUrl) {
+      console.warn('[Supabase Isolation] Different database detected. Purging all local cache...', { from: lastConnectedUrl, to: currentSupabaseUrl });
+      const crossKeys = [
+        'radar_local_stores', 'radar_stores', 'radar_local_customers', 'radar_customers',
+        'radar_financial_ledger', 'radar_local_partners', 'radar_partners', 'radar_local_merchant_leads',
+        'radar_local_leads', 'radar_local_catalog_items', 'radar_local_staff', 'radar_local_invoices',
+        'radar_local_store_wallets', 'radar_local_service_bookings', 'radar_local_tiers',
+        'radar_local_privileges', 'radar_local_customer_coupons', 'radar_local_specialists',
+        'radar_cached_tenant_branding',
+      ];
+      crossKeys.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+    }
+    localStorage.setItem(LAST_URL_KEY, currentSupabaseUrl);
+
+    const TARGET_VERSION = 'v4_isolated_tenants_clean';
     if (localStorage.getItem(DATA_VERSION_KEY) !== TARGET_VERSION) {
       const keysToPurge = [
         'radar_local_stores',
@@ -1257,7 +1274,19 @@ export const LoyaltyService = {
           return result;
         }
       } catch (fallbackErr) {
-        console.warn('Single consolidated stores query failed, using local fallback', fallbackErr);
+        console.warn('Single consolidated stores query failed, attempting safe store query fallback', fallbackErr);
+        try {
+          const safeRes = await supabase.from('stores').select(await storeCols(supabase)).order('created_at', { ascending: false });
+          if (!safeRes.error && Array.isArray(safeRes.data)) {
+            const validStores = (safeRes.data as any[]).filter(s => Boolean(s && s.id)).map(s => normalizeStore(mergeStoreAssets(s)));
+            saveLocalData(STORAGE_KEYS.LOCAL_STORES, validStores);
+            const result = { stores: validStores, analytics: {} };
+            adminStoresSummaryCache = { data: result, timestamp: Date.now() };
+            return result;
+          }
+        } catch (innerSafeErr) {
+          console.warn('Safe stores fallback failed:', innerSafeErr);
+        }
       }
     }
 

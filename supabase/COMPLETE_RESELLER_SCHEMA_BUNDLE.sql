@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- 🚀 RADAR WHITE-LABEL COMPLETE RESELLER DATABASE BUNDLE
--- Generated At: 2026-10-24T18:53:44.067Z
+-- Generated At: 2026-10-24T19:12:43.381Z
 -- Total Migrations: 40
 -- ==============================================================================
 
@@ -9865,7 +9865,7 @@ ON CONFLICT (key) DO NOTHING;
 
 -- 4. Secure RPC to update branding remotely from Master Control via p_master_token
 CREATE OR REPLACE FUNCTION public.set_tenant_branding(
-    p_brand_name TEXT,
+    p_brand_name TEXT DEFAULT NULL,
     p_brand_english_name TEXT DEFAULT NULL,
     p_tagline TEXT DEFAULT NULL,
     p_logo_url TEXT DEFAULT NULL,
@@ -9911,21 +9911,37 @@ BEGIN
     END IF;
 
     -- د) تحديث جدول الهوية
-    UPDATE public.tenant_branding
-    SET
-        brand_name = COALESCE(p_brand_name, brand_name),
-        brand_english_name = COALESCE(p_brand_english_name, brand_english_name),
-        tagline = COALESCE(p_tagline, tagline),
-        logo_url = COALESCE(p_logo_url, logo_url),
-        favicon_url = COALESCE(p_favicon_url, favicon_url),
-        support_phone = COALESCE(p_support_phone, support_phone),
-        support_whatsapp = COALESCE(p_support_whatsapp, support_whatsapp),
-        support_email = COALESCE(p_support_email, support_email),
-        primary_color_hex = COALESCE(p_primary_color_hex, primary_color_hex),
-        accent_color_hex = COALESCE(p_accent_color_hex, accent_color_hex),
-        copyright_holder = COALESCE(p_copyright_holder, copyright_holder),
-        updated_at = now()
-    WHERE key = 'default';
+    INSERT INTO public.tenant_branding (
+        key, brand_name, brand_english_name, tagline, logo_url, favicon_url, 
+        support_phone, support_whatsapp, support_email, primary_color_hex, accent_color_hex, copyright_holder
+    )
+    VALUES (
+        'default',
+        COALESCE(p_brand_name, 'سديم الأثر'),
+        COALESCE(p_brand_english_name, 'Sadeem Al-Athar'),
+        p_tagline,
+        COALESCE(p_logo_url, '/favicon.png'),
+        COALESCE(p_favicon_url, p_logo_url, '/favicon.png'),
+        p_support_phone,
+        p_support_whatsapp,
+        p_support_email,
+        COALESCE(p_primary_color_hex, '#4F46E5'),
+        COALESCE(p_accent_color_hex, '#10B981'),
+        COALESCE(p_copyright_holder, p_brand_name, 'جميع الحقوق محفوظة')
+    )
+    ON CONFLICT (key) DO UPDATE SET
+        brand_name = COALESCE(p_brand_name, public.tenant_branding.brand_name),
+        brand_english_name = COALESCE(p_brand_english_name, public.tenant_branding.brand_english_name),
+        tagline = COALESCE(p_tagline, public.tenant_branding.tagline),
+        logo_url = COALESCE(p_logo_url, public.tenant_branding.logo_url),
+        favicon_url = COALESCE(p_favicon_url, p_logo_url, public.tenant_branding.favicon_url),
+        support_phone = COALESCE(p_support_phone, public.tenant_branding.support_phone),
+        support_whatsapp = COALESCE(p_support_whatsapp, public.tenant_branding.support_whatsapp),
+        support_email = COALESCE(p_support_email, public.tenant_branding.support_email),
+        primary_color_hex = COALESCE(p_primary_color_hex, public.tenant_branding.primary_color_hex),
+        accent_color_hex = COALESCE(p_accent_color_hex, public.tenant_branding.accent_color_hex),
+        copyright_holder = COALESCE(p_copyright_holder, p_brand_name, public.tenant_branding.copyright_holder),
+        updated_at = now();
 
     RETURN jsonb_build_object('success', true, 'message', 'Tenant branding updated securely');
 END;
