@@ -58,6 +58,13 @@ import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
 import { SuperAdminPartnersConsole } from './SuperAdminPartnersConsole';
 import { SuperAdminBillingConsole } from './SuperAdminBillingConsole';
 import { SuperAdminIntegrationsHub } from './SuperAdminIntegrationsHub';
+import { SuperAdminTeamConsole } from './SuperAdminTeamConsole';
+import {
+  SuperAdminUser,
+  AdminRole,
+  AdminPermissions,
+  DEFAULT_SUPER_ADMIN_PERMISSIONS,
+} from '../types';
 import { SendNotificationModal } from './SendNotificationModal';
 import { NotificationBell } from './NotificationBell';
 import { clearAllInboxNotifications } from '../lib/notifications';
@@ -68,17 +75,25 @@ interface SuperAdminDashboardProps {
 }
 
 export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSelectStore }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'stores' | 'partners' | 'billing' | 'integrations'>(() => {
+  const [activeSubTab, setActiveSubTab] = useState<'stores' | 'partners' | 'billing' | 'integrations' | 'team'>(() => {
     if (typeof window === 'undefined') return 'stores';
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get('tab');
-    return tabParam === 'partners' || tabParam === 'billing' ? tabParam : 'stores';
+    return tabParam === 'partners' || tabParam === 'billing' || tabParam === 'team' ? tabParam : 'stores';
   });
 
-  const handleSubTabChange = (newTab: 'stores' | 'partners' | 'billing' | 'integrations') => {
+  const [currentAdminUser, setCurrentAdminUser] = useState<SuperAdminUser | null>(null);
+
+  const canPerform = (perm: keyof AdminPermissions): boolean => {
+    if (!currentAdminUser) return true;
+    if (currentAdminUser.role === 'super_admin') return true;
+    return Boolean(currentAdminUser.permissions?.[perm]);
+  };
+
+  const handleSubTabChange = (newTab: 'stores' | 'partners' | 'billing' | 'integrations' | 'team') => {
     setActiveSubTab(newTab);
     const url = new URL(window.location.href);
-    if (newTab === 'partners' || newTab === 'billing') {
+    if (newTab === 'partners' || newTab === 'billing' || newTab === 'team') {
       url.searchParams.set('tab', newTab);
     } else {
       url.searchParams.delete('tab');
@@ -364,6 +379,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       const check = await LoyaltyService.verifySuperAdminSession();
       if (isMounted) {
         setIsAuthenticated(Boolean(check.is_super_admin));
+        if (check.user) {
+          setCurrentAdminUser(check.user);
+        }
       }
     };
     verifyAuth();
@@ -383,10 +401,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     try {
       const res = await LoyaltyService.superAdminSignIn(adminEmail, adminPassword);
       if (res.success) {
+        const check = await LoyaltyService.verifySuperAdminSession();
+        if (check.user) {
+          setCurrentAdminUser(check.user);
+        }
         authLogin('super_admin', {
-          id: res.user?.id || 'super_admin_session',
-          name: 'مالك المنصة (Super Admin)',
-          phone: res.user?.email || adminEmail,
+          id: check.user?.id || res.user?.id || 'super_admin_session',
+          name: check.user?.full_name || 'مالك المنصة (Super Admin)',
+          phone: check.user?.email || res.user?.email || adminEmail,
         });
         setIsAuthenticated(true);
         setPinError(null);
@@ -402,6 +424,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
   const handleMasterLogout = async () => {
     setIsAuthenticated(false);
+    setCurrentAdminUser(null);
     setAdminEmail('');
     setAdminPassword('');
     clearAllInboxNotifications({ portal: 'super_admin' });
@@ -1063,6 +1086,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
                   Concierge SaaS
                 </span>
+                {currentAdminUser && (
+                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                    👤 {currentAdminUser.full_name} ({currentAdminUser.role === 'super_admin' ? 'المالك' : 'مدير'})
+                  </span>
+                )}
               </div>
               <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
                 منصة تأسيس وإدارة المتاجر بنظام White-label مع رفع وضغط الصور التلقائي وعزل RLS الكامل.
@@ -1084,6 +1112,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               className="px-3.5 py-2.5 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
             />
 
+            {canPerform('can_send_notifications') && (
             <button
               type="button"
               onClick={handleOpenBroadcastNotification}
@@ -1093,8 +1122,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               <Send className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">إرسال إشعار 📢</span>
             </button>
+          )}
 
-            {stores.length > 0 && (
+            {stores.length > 0 && canPerform('can_reset_platform') && currentAdminUser?.role === 'super_admin' && (
               <button
                 onClick={() => setIsResetPlatformModalOpen(true)}
                 className="px-3.5 py-2.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
@@ -1130,52 +1160,77 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
           <span>متاجر وطلبات المنصة ({stores.length + unconvertedLeads.length}) 🏪</span>
         </button>
 
-        <button
-          onClick={() => handleSubTabChange('partners')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeSubTab === 'partners'
-              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <Users className="w-4 h-4 text-amber-400" />
-          <span>شركاء المبيعات (Sales Partners) 🤝</span>
-        </button>
+        {canPerform('can_manage_partners') && (
+          <button
+            onClick={() => handleSubTabChange('partners')}
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+              activeSubTab === 'partners'
+                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <Users className="w-4 h-4 text-amber-400" />
+            <span>شركاء المبيعات (Sales Partners) 🤝</span>
+          </button>
+        )}
 
-        <button
-          onClick={() => handleSubTabChange('billing')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeSubTab === 'billing'
-              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <CreditCard className="w-4 h-4 text-amber-400" />
-          <span>الفوترة والاشتراكات (Billing) 💳</span>
-        </button>
-        <button
-          onClick={() => handleSubTabChange('integrations')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeSubTab === 'integrations'
-              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <KeyRound className="w-4 h-4 text-amber-400" />
-          <span>التكاملات ومفاتيح الربط (APIs & Bot) ⚙️</span>
-        </button>
+        {(canPerform('can_view_financials') || canPerform('can_manage_billing')) && (
+          <button
+            onClick={() => handleSubTabChange('billing')}
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+              activeSubTab === 'billing'
+                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <CreditCard className="w-4 h-4 text-amber-400" />
+            <span>الفوترة والاشتراكات (Billing) 💳</span>
+          </button>
+        )}
+
+        {(currentAdminUser?.role === 'super_admin' || canPerform('can_manage_admins')) && (
+          <button
+            onClick={() => handleSubTabChange('integrations')}
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+              activeSubTab === 'integrations'
+                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <KeyRound className="w-4 h-4 text-amber-400" />
+            <span>التكاملات ومفاتيح الربط (APIs & Bot) ⚙️</span>
+          </button>
+        )}
+
+        {(currentAdminUser?.role === 'super_admin' || canPerform('can_manage_admins')) && (
+          <button
+            onClick={() => handleSubTabChange('team')}
+            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+              activeSubTab === 'team'
+                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <Users className="w-4 h-4 text-amber-400" />
+            <span>فريق الإدارة والصلاحيات 👥</span>
+          </button>
+        )}
       </div>
 
       <div className={activeSubTab === 'partners' ? 'block' : 'hidden'}>
         <SuperAdminPartnersConsole />
       </div>
 
-            <div className={activeSubTab === 'integrations' ? 'block' : 'hidden'}>
+      <div className={activeSubTab === 'integrations' ? 'block' : 'hidden'}>
         <SuperAdminIntegrationsHub />
       </div>
 
       <div className={activeSubTab === 'billing' ? 'block' : 'hidden'}>
         <SuperAdminBillingConsole />
+      </div>
+
+      <div className={activeSubTab === 'team' ? 'block' : 'hidden'}>
+        <SuperAdminTeamConsole currentUser={currentAdminUser} />
       </div>
 
       <div className={activeSubTab === 'stores' ? 'block space-y-8' : 'hidden'}>
@@ -1205,24 +1260,26 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               <span>{isRefreshingData ? 'جاري التحديث...' : 'تحديث البيانات'}</span>
             </button>
 
-            <button
-              onClick={() => {
-                setActiveFoundingLead(null);
-                setName('');
-                setSlug('');
-                setCustomDomain('');
-                setLogoUrl('');
-                setLogoStats(null);
-                setManagerName('');
-                setManagerContact('');
-                setManagerPin('9999');
-                setIsOnboardingModalOpen(true);
-              }}
-              className="px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/20 transition flex items-center gap-2 transform active:scale-95"
-            >
-              <PlusCircle className="w-5 h-5" />
-              <span>➕ تأسيس متجر جديد (Concierge Onboarding)</span>
-            </button>
+            {canPerform('can_manage_stores') && (
+              <button
+                onClick={() => {
+                  setActiveFoundingLead(null);
+                  setName('');
+                  setSlug('');
+                  setCustomDomain('');
+                  setLogoUrl('');
+                  setLogoStats(null);
+                  setManagerName('');
+                  setManagerContact('');
+                  setManagerPin('9999');
+                  setIsOnboardingModalOpen(true);
+                }}
+                className="px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/20 transition flex items-center gap-2 transform active:scale-95"
+              >
+                <PlusCircle className="w-5 h-5" />
+                <span>➕ تأسيس متجر جديد (Concierge Onboarding)</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1733,13 +1790,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         </button>
 
                         {/* Delete Button */}
-                        <button
-                          onClick={() => setStoreToDelete(s)}
-                          className="p-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 transition text-xs font-bold"
-                          title="حذف المتجر نهائياً مع كافة بياناته"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {canPerform('can_delete_stores') && (
+                          <button
+                            onClick={() => setStoreToDelete(s)}
+                            className="p-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 transition text-xs font-bold"
+                            title="حذف المتجر نهائياً مع كافة بياناته"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </div>
 

@@ -47,6 +47,10 @@ import {
   POSCashMovement,
   POSCartDiscount,
   PlatformIntegrationsConfig,
+  SuperAdminUser,
+  AdminRole,
+  AdminPermissions,
+  DEFAULT_SUPER_ADMIN_PERMISSIONS,
 } from '../types';
 import { generateZatcaTLVQR } from './zatcaQR';
 import {
@@ -1048,7 +1052,18 @@ export const LoyaltyService = {
     }
   },
 
-  async verifySuperAdminSession(): Promise<{ authenticated: boolean; is_super_admin: boolean; email?: string; error?: string }> {
+  async verifySuperAdminSession(): Promise<{
+    authenticated: boolean;
+    is_super_admin: boolean;
+    email?: string;
+    role?: AdminRole;
+    admin_id?: string;
+    full_name?: string;
+    phone?: string;
+    permissions?: AdminPermissions;
+    user?: SuperAdminUser;
+    error?: string;
+  }> {
     const supabase = getSupabaseClient();
     if (!supabase) return { authenticated: false, is_super_admin: false };
     try {
@@ -1058,24 +1073,174 @@ export const LoyaltyService = {
       // التحقق عبر الدالة السحابية المحمية
       const { data, error } = await supabase.rpc('verify_super_admin_session');
       if (!error && data && data.is_super_admin) {
+        const adminUser: SuperAdminUser = {
+          id: data.admin_id || session.user.id,
+          user_id: data.user_id || session.user.id,
+          email: data.email || session.user.email || '',
+          full_name: data.full_name || 'مدير المنصة',
+          phone: data.phone || '',
+          role: (data.role as AdminRole) || 'super_admin',
+          permissions: data.permissions || DEFAULT_SUPER_ADMIN_PERMISSIONS,
+          is_active: true,
+        };
         return {
           authenticated: true,
           is_super_admin: true,
-          email: data.email || session.user.email,
+          email: adminUser.email,
+          role: adminUser.role,
+          admin_id: adminUser.id,
+          full_name: adminUser.full_name,
+          phone: adminUser.phone,
+          permissions: adminUser.permissions,
+          user: adminUser,
         };
       }
 
       // فحص احتياطي للـ Claims في الـ Token
       const role = session.user.app_metadata?.role || (session.user.user_metadata as any)?.role;
       const isSuper = role === 'super_admin' || role === 'admin' || (session.user.app_metadata as any)?.is_super_admin === true;
+      const fallbackUser: SuperAdminUser = {
+        id: session.user.id,
+        user_id: session.user.id,
+        email: session.user.email || '',
+        full_name: (session.user.user_metadata as any)?.full_name || 'مالك المنصة',
+        phone: (session.user.user_metadata as any)?.phone || '',
+        role: 'super_admin',
+        permissions: DEFAULT_SUPER_ADMIN_PERMISSIONS,
+        is_active: true,
+      };
       return {
         authenticated: Boolean(session),
         is_super_admin: Boolean(isSuper),
         email: session.user.email,
+        role: 'super_admin',
+        permissions: DEFAULT_SUPER_ADMIN_PERMISSIONS,
+        user: fallbackUser,
       };
     } catch (e: any) {
       console.warn('[LoyaltyService] verifySuperAdminSession error:', e);
       return { authenticated: false, is_super_admin: false, error: e.message };
+    }
+  },
+
+  async getSuperAdminTeam(): Promise<SuperAdminUser[]> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    try {
+      const { data, error } = await (supabase as any).rpc('get_super_admin_team');
+      if (error) {
+        // Fallback to direct select from super_admin_users
+        const { data: directData, error: directErr } = await supabase
+          .from('super_admin_users' as any)
+          .select('*')
+          .order('created_at', { ascending: true });
+        if (directErr) {
+          console.warn('[getSuperAdminTeam] direct query error:', directErr);
+          return [];
+        }
+        return (directData || []).map((row: any) => ({
+          id: row.id,
+          user_id: row.user_id,
+          email: row.email,
+          full_name: row.full_name || 'مدير المنصة',
+          phone: row.phone || '',
+          role: row.role || 'super_admin',
+          permissions: row.permissions || DEFAULT_SUPER_ADMIN_PERMISSIONS,
+          is_active: row.is_active ?? true,
+          created_at: row.created_at,
+          last_login_at: row.last_login_at,
+        }));
+      }
+
+      return ((data as any[]) || []).map((row: any) => ({
+        id: row.id,
+        user_id: row.user_id,
+        email: row.email,
+        full_name: row.full_name || 'مدير المنصة',
+        phone: row.phone || '',
+        role: row.role || 'super_admin',
+        permissions: row.permissions || DEFAULT_SUPER_ADMIN_PERMISSIONS,
+        is_active: row.is_active ?? true,
+        created_at: row.created_at,
+        last_login_at: row.last_login_at,
+      }));
+    } catch (err) {
+      console.error('[getSuperAdminTeam] error:', err);
+      return [];
+    }
+  },
+
+  async createSuperAdminManager(payload: {
+    email: string;
+    password: string;
+    full_name: string;
+    phone?: string;
+    role?: AdminRole;
+    permissions?: AdminPermissions;
+  }): Promise<{ success: boolean; error?: string; message?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: 'الاتصال بقاعدة البيانات غير متوفر' };
+    try {
+      const { data, error } = await (supabase as any).rpc('create_super_admin_manager', {
+        p_email: payload.email.trim(),
+        p_password: payload.password,
+        p_full_name: payload.full_name.trim(),
+        p_phone: payload.phone?.trim() || null,
+        p_role: payload.role || 'platform_manager',
+        p_permissions: payload.permissions || {},
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true, message: (data as any)?.message || 'تمت إضافة المدير بنجاح' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'حدث خطأ أثناء إضافة المدير' };
+    }
+  },
+
+  async updateSuperAdminManager(payload: {
+    admin_id: string;
+    full_name?: string;
+    phone?: string;
+    role?: AdminRole;
+    permissions?: AdminPermissions;
+    is_active?: boolean;
+    new_password?: string;
+  }): Promise<{ success: boolean; error?: string; message?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: 'الاتصال بقاعدة البيانات غير متوفر' };
+    try {
+      const { data, error } = await (supabase as any).rpc('update_super_admin_manager', {
+        p_admin_id: payload.admin_id,
+        p_full_name: payload.full_name?.trim() || null,
+        p_phone: payload.phone?.trim() || null,
+        p_role: payload.role || null,
+        p_permissions: payload.permissions || null,
+        p_is_active: payload.is_active ?? null,
+        p_new_password: payload.new_password?.trim() || null,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true, message: (data as any)?.message || 'تم تحديث بيانات المدير بنجاح' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'حدث خطأ أثناء تعديل بيانات المدير' };
+    }
+  },
+
+  async deleteSuperAdminManager(admin_id: string): Promise<{ success: boolean; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: 'الاتصال بقاعدة البيانات غير متوفر' };
+    try {
+      const { data, error } = await (supabase as any).rpc('delete_super_admin_manager', {
+        p_admin_id: admin_id,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'حدث خطأ أثناء حذف المدير' };
     }
   },
 

@@ -1504,3 +1504,88 @@ export interface DriverShiftSettlement {
   last_settled_orders_count?: number;
   notes?: string;
 }
+
+// ==========================================
+// 🛡️ Platform Sub-Admin & Permissions Types
+// ==========================================
+
+export interface AdminPermissions {
+  can_manage_stores: boolean;      // إضافة وتعديل بيانات المتاجر
+  can_delete_stores: boolean;      // حذف المتاجر نهائياً
+  can_manage_billing: boolean;     // إدارة الاشتراكات والفواتير والتجاوزات
+  can_view_financials: boolean;    // عرض الإحصائيات والأرباح وسجل التسويات
+  can_manage_partners: boolean;    // إدارة الشركاء والمسوقين والعمولات
+  can_send_notifications: boolean; // إرسال الإشعارات الجماعية
+  can_manage_admins: boolean;      // إضافة وتعديل صلاحيات مدراء المنصة
+  can_reset_platform: boolean;     // تصفير المنصة بالكامل (حصري للمالك)
+}
+
+export type AdminRole = 'super_admin' | 'platform_manager' | 'support_agent' | 'finance_officer';
+
+export interface SuperAdminUser {
+  id: string;
+  user_id: string;
+  email: string;
+  full_name: string;
+  phone?: string;
+  role: AdminRole;
+  permissions: AdminPermissions;
+  is_active: boolean;
+  created_at?: string;
+  last_login_at?: string;
+}
+
+export const DEFAULT_SUPER_ADMIN_PERMISSIONS: AdminPermissions = {
+  can_manage_stores: true,
+  can_delete_stores: true,
+  can_manage_billing: true,
+  can_view_financials: true,
+  can_manage_partners: true,
+  can_send_notifications: true,
+  can_manage_admins: true,
+  can_reset_platform: true,
+};
+
+export const ROLE_PRESET_PERMISSIONS: Record<AdminRole, AdminPermissions> = {
+  super_admin: {
+    can_manage_stores: true,
+    can_delete_stores: true,
+    can_manage_billing: true,
+    can_view_financials: true,
+    can_manage_partners: true,
+    can_send_notifications: true,
+    can_manage_admins: true,
+    can_reset_platform: true,
+  },
+  platform_manager: {
+    can_manage_stores: true,
+    can_delete_stores: false,
+    can_manage_billing: true,
+    can_view_financials: true,
+    can_manage_partners: true,
+    can_send_notifications: true,
+    can_manage_admins: false,
+    can_reset_platform: false,
+  },
+  support_agent: {
+    can_manage_stores: true,
+    can_delete_stores: false,
+    can_manage_billing: false,
+    can_view_financials: false,
+    can_manage_partners: false,
+    can_send_notifications: true,
+    can_manage_admins: false,
+    can_reset_platform: false,
+  },
+  finance_officer: {
+    can_manage_stores: false,
+    can_delete_stores: false,
+    can_manage_billing: true,
+    can_view_financials: true,
+    can_manage_partners: true,
+    can_send_notifications: false,
+    can_manage_admins: false,
+    can_reset_platform: false,
+  },
+};
+
