@@ -30,6 +30,7 @@ import {
   getStoreUnifiedStage,
 } from '../types';
 import { LoyaltyService, normalizeStore, getSupabaseClient } from '../lib/supabase';
+import { getActiveTenantConfig } from '../config/tenant';
 import { LoyaltyEvents } from '../lib/events';
 import { saveActiveStoreBranding, BRAND_PRESETS, BrandThemePreset } from '../lib/storeBranding';
 import { debounce } from '../lib/debounce';
@@ -8450,7 +8451,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border border-slate-800/80 space-y-3">
             <div className="flex items-center gap-2 text-amber-400 text-xs font-black">
               <Sparkles className="w-4 h-4" />
-              <span>دليلك السريع: كيف تعمل المدفوعات في منصة رادار؟</span>
+              <span>دليلك السريع: كيف تعمل المدفوعات في منصة {getActiveTenantConfig().brandName}؟</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs leading-relaxed">
               <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/70 space-y-1">

@@ -20,6 +20,7 @@ import {
   getStoreActiveModules,
 } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
+import { getActiveTenantConfig } from '../config/tenant';
 import { LoyaltyEvents } from '../lib/events';
 import { playBeepSound } from '../lib/sound';
 import { calculateDeliveryFee, extractCoordsFromMapUrl, estimateDeliveryTime } from '../lib/deliveryPricing';
@@ -803,7 +804,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     image_url:
       store?.logo_url ||
       'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=600&auto=format&fit=crop&q=80',
-    title: store?.name || 'متجر رادار',
+    title: store?.name || getActiveTenantConfig().brandName,
     quote: undefined,
     badge_text: undefined,
   };
@@ -2824,7 +2825,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             <div className="flex items-center gap-1.5">
               <span className={`text-[11px] font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>مرحباً بك،</span>
               <span className={`font-black text-sm sm:text-base truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
-                {customer?.name || savedProfile?.name || (guestName.trim() ? guestName : 'ضيف رادار')}
+                {customer?.name || savedProfile?.name || (guestName.trim() ? guestName : ('ضيف ' + getActiveTenantConfig().brandName))}
               </span>
               {(customer || savedProfile) && (
                 <button

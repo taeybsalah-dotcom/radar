@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, ArrowLeft, ShieldCheck, Store, Gift, Smartphone, Clock, CheckCircle2, AlertCircle } from 'lucide-react';
 import { LoyaltyService } from '../lib/supabase';
+import { getActiveTenantConfig } from '../config/tenant';
 
 interface PartnerPublicLandingProps {
   slug: string;
@@ -8,6 +9,7 @@ interface PartnerPublicLandingProps {
 
 export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug }) => {
   const [loading, setLoading] = useState(true);
+  const tenant = getActiveTenantConfig();
   const [partner, setPartner] = useState<{
     display_name: string;
     slug: string;
@@ -17,8 +19,8 @@ export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = partner?.display_name ? `${partner.display_name} | شريك رادار` : 'بوابة الشريك | RADAR';
-  }, [partner?.display_name]);
+    document.title = partner?.display_name ? `${partner.display_name} | شريك ${tenant.brandName}` : `بوابة الشريك | ${tenant.brandEnglishName || tenant.brandName}`;
+  }, [partner?.display_name, tenant.brandName, tenant.brandEnglishName]);
 
   useEffect(() => {
     const resolvePartner = async () => {
@@ -83,7 +85,7 @@ export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug
           <div className="space-y-2">
             <h2 className="text-xl font-black text-white">الصفحة غير موجودة أو انتهت صلاحيتها</h2>
             <p className="text-xs text-slate-400 leading-relaxed">
-              الرابط الذي قمت بفتحه غير مسجل كشريك نشط في منصة رادار.
+              الرابط الذي قمت بفتحه غير مسجل كشريك نشط في منصة {tenant.brandName}.
             </p>
           </div>
           <a
@@ -112,7 +114,7 @@ export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug
         </div>
 
         <h1 className="text-3xl sm:text-5xl font-black text-white leading-tight tracking-tight">
-          ضاعف مبيعات متجرك وزيارات عملائك مع <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-200">منظومة RADAR</span>
+          ضاعف مبيعات متجرك وزيارات عملائك مع <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-amber-200">منظومة {tenant.brandEnglishName || tenant.brandName}</span>
         </h1>
 
         <p className="text-sm sm:text-base text-slate-300 max-w-xl mx-auto leading-relaxed">
@@ -177,7 +179,7 @@ export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug
 
       {/* 3. Bottom Trust Guarantee & Direct CTA */}
       <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-xl">
-        <h3 className="text-lg font-bold text-white">انضم لأكثر من 50+ علامة تجارية تثق برادار</h3>
+        <h3 className="text-lg font-bold text-white">انضم لأكثر من 50+ علامة تجارية تثق بـ {tenant.brandName}</h3>
         <p className="text-xs text-slate-400 max-w-md mx-auto">
           التسجيل يستغرق دقيقة واحدة فقط. سيتواصل معك فريقنا المختص لتجهيز هويتك وتفعيل متجرك فوراً.
         </p>

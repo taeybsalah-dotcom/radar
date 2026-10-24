@@ -1020,7 +1020,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
           </form>
 
           <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-500 font-mono">
-            Radar Multi-Tenant Engine • Server-Verified Session
+            {getActiveTenantConfig().brandEnglishName || getActiveTenantConfig().brandName} Multi-Tenant Engine • Server-Verified Session
           </div>
         </div>
       </div>
@@ -1707,7 +1707,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
                             const cleanPhone = (s.manager_contact || '').replace(/\D/g, '');
                             const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
-                            const plainText = `مرحباً بك ${s.name} ⚡\nروابط نظام الولاء والمكافآت (Radar) لمتجركم:\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${cashierUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
+                            const plainText = `مرحباً بك ${s.name} ⚡\nروابط نظام الولاء والمكافآت (${getActiveTenantConfig().brandEnglishName || getActiveTenantConfig().brandName}) لمتجركم:\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${cashierUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
                             const encodedMsg = encodeURIComponent(plainText);
                             const waUrl = intlPhone ? `https://wa.me/${intlPhone}?text=${encodedMsg}` : `https://wa.me/?text=${encodedMsg}`;
                             window.open(waUrl, '_blank');
@@ -2742,7 +2742,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   const cleanPhone = (onboardedResult.store.manager_contact || '').replace(/\D/g, '');
                   const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
 
-                  const plainText = `مرحباً بك ${onboardedResult.store.name} ⚡\nتم بنجاح تفعيل وتشغيل نظام الولاء والمكافآت (Radar) لمتجركم!\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n🔑 رمز الدخول السري (PIN): ${onboardedResult.managerPin}\n(من هنا تدير العروض، النقاط، الرتب، والكاشيرات)\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${cashierUrl}\n(شاشة مسح باركود الزبائن وصرف الكوبونات)\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}\n(الرابط المخصص لنشره للزبائن أو وضعه في البايو للتسجيل)\n\nنتمنى لكم تجربة مميزة ومبيعات مضاعفة! 🚀`;
+                  const plainText = `مرحباً بك ${onboardedResult.store.name} ⚡\nتم بنجاح تفعيل وتشغيل نظام الولاء والمكافآت (${getActiveTenantConfig().brandEnglishName || getActiveTenantConfig().brandName}) لمتجركم!\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n🔑 رمز الدخول السري (PIN): ${onboardedResult.managerPin}\n(من هنا تدير العروض، النقاط، الرتب، والكاشيرات)\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${cashierUrl}\n(شاشة مسح باركود الزبائن وصرف الكوبونات)\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}\n(الرابط المخصص لنشره للزبائن أو وضعه في البايو للتسجيل)\n\nنتمنى لكم تجربة مميزة ومبيعات مضاعفة! 🚀`;
                   
                   const encodedMsg = encodeURIComponent(plainText);
                   const waUrl = intlPhone ? `https://wa.me/${intlPhone}?text=${encodedMsg}` : `https://wa.me/?text=${encodedMsg}`;

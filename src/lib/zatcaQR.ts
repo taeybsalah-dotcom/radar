@@ -1,3 +1,4 @@
+import { getActiveTenantConfig } from '../config/tenant';
 /**
  * ZATCA E-Invoicing Phase 1 & 2 Standard TLV (Tag-Length-Value) QR Code Generator
  * Conforms to the official Saudi Zakat, Tax and Customs Authority requirements.
@@ -20,7 +21,7 @@ export function generateZatcaTLVQR(
       return tlv;
     };
 
-    const cleanSeller = (sellerName || 'متجر رادار').trim();
+    const cleanSeller = (sellerName || getActiveTenantConfig().brandName).trim();
     const cleanVatNum = (vatRegistrationNumber || '300000000000003').trim();
     const cleanTime = (timestampIso || new Date().toISOString()).trim();
     const cleanTotal = Number(invoiceTotalWithVat || 0).toFixed(2);

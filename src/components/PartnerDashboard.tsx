@@ -90,6 +90,9 @@ const PARTNER_STATUS_FILTER_TABS = [
 ];
 
 const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): SalesKitMessage[] => {
+  const tenant = getActiveTenantConfig();
+  const brand = tenant.brandName;
+  const brandEn = tenant.brandEnglishName || tenant.brandName;
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://myradar.sarl';
   const joinLink = `${origin}/join?ref=${pRef}`;
   return [
@@ -112,14 +115,14 @@ const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): Sales
       title: 'رسالة قيمة الولاء والخصم 💎',
       tag: 'VALUE_VS_DISCOUNT',
       headline: 'مو كل عميل يحتاج خصم... بعضهم يحتاج سبب يرجع',
-      body: `مو كل عميل يحتاج خصم... بعضهم يحتاج سبب يرجع! ✨\n\nالخصومات تحرق هامش ربحك، لكن نظام النقاط والمستويات (Tiers) يخلي العميل يرتبط بمحلك ويتحمس يجمع نقاط ويكرر زيارته.\n\nسجّل متجرك وشوف كيف يفيد نشاطك:\n${joinLink}\n\n${pName} — رادار لخدمات التجار`,
+      body: `مو كل عميل يحتاج خصم... بعضهم يحتاج سبب يرجع! ✨\n\nالخصومات تحرق هامش ربحك، لكن نظام النقاط والمستويات (Tiers) يخلي العميل يرتبط بمحلك ويتحمس يجمع نقاط ويكرر زيارته.\n\nسجّل متجرك وشوف كيف يفيد نشاطك:\n${joinLink}\n\n${pName} — ${brand} لخدمات التجار`,
     },
     {
       id: 'msg-lost-customers',
       title: 'رسالة استعادة العملاء المنقطعين ⏰',
       tag: 'RETENTION',
       headline: 'عندك عملاء ما شفتهم من شهر؟',
-      body: `عندك عملاء كانوا يجونك دايماً وفجأة انقطعوا من شهر؟ 📉\n\nنظام رادار ينبهك عليهم ويساعدك ترسل لهم عروض حصرية وترجعهم لك بضغطة زر.\n\nسجل متجرك وابدأ التجربة:\n${joinLink}\n\nمستشارك: ${pName}`,
+      body: `عندك عملاء كانوا يجونك دايماً وفجأة انقطعوا من شهر؟ 📉\n\nنظام ${brand} ينبهك عليهم ويساعدك ترسل لهم عروض حصرية وترجعهم لك بضغطة زر.\n\nسجل متجرك وابدأ التجربة:\n${joinLink}\n\nمستشارك: ${pName}`,
     },
     {
       id: 'msg-positioning',
@@ -132,6 +135,9 @@ const buildDefaultSalesKit = (pName: string, pSlug: string, pRef: string): Sales
 };
 
 const buildDefaultStatusTemplates = (pName: string, pRef: string) => {
+  const tenant = getActiveTenantConfig();
+  const brand = tenant.brandName;
+  const brandEn = tenant.brandEnglishName || tenant.brandName;
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://myradar.sarl';
   const joinLink = `${origin}/join?ref=${pRef}`;
   return {
@@ -141,11 +147,11 @@ const buildDefaultStatusTemplates = (pName: string, pRef: string) => {
     },
     pending_payment: {
       title: 'تذكير التفعيل والاعتماد (Payment / Setup Reminder)',
-      body: `أهلاً بك عزيزي،\nطلب متجركم معتمد وجاهز للانطلاق على رادار. باقي فقط خطوة الاعتماد النهائي لنفعل لكم الربط الكامل وهوية المتجر الخاصة.\n\nيسعدني مساعدتك لإتمام التفعيل في أي وقت:\n${joinLink}\n\n${pName}`,
+      body: `أهلاً بك عزيزي،\nطلب متجركم معتمد وجاهز للانطلاق على ${brand}. باقي فقط خطوة الاعتماد النهائي لنفعل لكم الربط الكامل وهوية المتجر الخاصة.\n\nيسعدني مساعدتك لإتمام التفعيل في أي وقت:\n${joinLink}\n\n${pName}`,
     },
     no_response: {
       title: 'إعادة فتح التواصل (No Response Check-in)',
-      body: `السلام عليكم! عساك بخير.\nأعرف أن جدولك مشغول بإدارة المتجر. فقط أردت التذكير أن نظام رادار جاهز لتشغيل بطاقات ولاء زبائنك لزيادة مبيعات هذا الشهر.\n\nهل يناسبك ننسق اتصال سريع لمدة 3 دقائق؟\n\nأخوك: ${pName}`,
+      body: `السلام عليكم! عساك بخير.\nأعرف أن جدولك مشغول بإدارة المتجر. فقط أردت التذكير أن نظام ${brand} جاهز لتشغيل بطاقات ولاء زبائنك لزيادة مبيعات هذا الشهر.\n\nهل يناسبك ننسق اتصال سريع لمدة 3 دقائق؟\n\nأخوك: ${pName}`,
     },
     paid: {
       title: 'تهنئة التأسيس والانطلاق (Welcome Onboard)',
@@ -153,7 +159,7 @@ const buildDefaultStatusTemplates = (pName: string, pRef: string) => {
     },
     active: {
       title: 'متابعة الأداء الدوري (Active Relationship)',
-      body: `مرحباً بك! أتمنى أن تكون نتائج برنامج الولاء ممتازة هذا الأسبوع.\nإذا محتاج أي مساعدة في ضبط عروض جديدة أو حملات استعادة الزبائن، أنا في خدمتك دائماً.\n\n${pName} — رادار`,
+      body: `مرحباً بك! أتمنى أن تكون نتائج برنامج الولاء ممتازة هذا الأسبوع.\nإذا محتاج أي مساعدة في ضبط عروض جديدة أو حملات استعادة الزبائن، أنا في خدمتك دائماً.\n\n${pName} — ${brand}`,
     },
   };
 };
@@ -864,7 +870,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                 />
                 <KeyRound className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
-              <p className="text-[10px] text-slate-500">الرمز السري المحدد لك من قبل إدارة رادار (يمكنك تغييره من لوحة التحكم)</p>
+              <p className="text-[10px] text-slate-500">الرمز السري المحدد لك من قبل إدارة {getActiveTenantConfig().brandName} (يمكنك تغييره من لوحة التحكم)</p>
             </div>
 
             <button

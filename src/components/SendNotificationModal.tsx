@@ -1,3 +1,4 @@
+import { getActiveTenantConfig } from '../config/tenant';
 import React, { useState } from 'react';
 import {
   Bell,
@@ -57,7 +58,7 @@ export const SendNotificationModal: React.FC<SendNotificationModalProps> = ({
           { title: 'تأكيد حالة الاشتراك 💳', body: 'تم تأكيد وتجديد اشتراك متجرك بنجاح.' },
         ]
       : [
-          { title: 'تنبيه عام من رادار 📢', body: 'نرحب بكم في منصة رادار للولاء الذكي.' },
+          { title: `تنبيه عام من ${getActiveTenantConfig().brandName} 📢`, body: `نرحب بكم في منصة ${getActiveTenantConfig().brandName} للولاء الذكي.` },
           { title: 'تحديثات جديدة في المنصة ⚡', body: 'تم إطلاق تحديثات في سرعة وأداء النظام وكاشير الولاء.' },
         ];
 
@@ -192,7 +193,7 @@ export const SendNotificationModal: React.FC<SendNotificationModalProps> = ({
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="مثال: تنبيه هام من إدارة رادار 🔔"
+              placeholder={`مثال: تنبيه هام من إدارة ${getActiveTenantConfig().brandName} 🔔`}
               required
               className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 outline-none transition"
             />

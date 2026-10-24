@@ -114,7 +114,7 @@ export default async function handler(req: any, res: any) {
       return res.status(403).json({
         success: false,
         code: 'PARTNER_SUSPENDED',
-        error: 'حساب الشريك موقوف حالياً. يرجى التواصل مع إدارة رادار للمساعدة.',
+        error: 'حساب الشريك موقوف حالياً. يرجى التواصل مع إدارة المنصة للمساعدة.',
       });
     }
 

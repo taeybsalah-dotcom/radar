@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Store, Customer, Tier, Privilege, DynamicQRToken, StoreStaff, CustomerCoupon, StoreBranch, getStoreActiveModules, StoreDriver, DriverWorkStatus } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
+import { getActiveTenantConfig } from '../config/tenant';
 import { QRScannerModal } from './QRScannerModal';
 import { StaffLoginGate } from './StaffLoginGate';
 import { NotificationBell } from './NotificationBell';
@@ -332,7 +333,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       // 2. Set MediaSession so iOS/Android treats it as persistent foreground media
       if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
-          title: `رادار كاشير | في انتظار الطلبات 🟢`,
+          title: `${getActiveTenantConfig().brandName} كاشير | في انتظار الطلبات 🟢`,
           artist: store.name,
           album: 'نظام الاستقبال الفوري للطلبات',
           artwork: [{ src: store.logo_url || '/icon-192.png', sizes: '192x192', type: 'image/png' }],

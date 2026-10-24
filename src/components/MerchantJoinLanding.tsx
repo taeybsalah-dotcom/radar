@@ -264,7 +264,7 @@ export const MerchantJoinLanding: React.FC = () => {
         <div className="text-center space-y-3">
           <span className="text-xs font-black text-cyan-400 uppercase tracking-widest">WHY RADAR?</span>
           <h2 className="text-2xl sm:text-4xl font-black text-white">
-            لماذا تختار منظومة رادار لمتجرك؟
+            لماذا تختار منظومة {getActiveTenantConfig().brandName} لمتجرك؟
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 max-w-xl mx-auto">
             صُممت المنصة لتجمع لك بين سهولة الكاشير، سرعة العميل، وقوة التسويق الموجه لزيادة الأرباح.

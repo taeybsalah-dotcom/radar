@@ -1,3 +1,4 @@
+import { getActiveTenantConfig } from '../config/tenant';
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -309,7 +310,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
 
         {/* Footer */}
         <div className="p-3 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 text-center text-[11px] text-slate-500 dark:text-slate-400 shrink-0">
-          نظام رادار للولاء الذكي والتنبيهات المباشرة 🔔⚡
+          نظام {getActiveTenantConfig().brandName} للولاء الذكي والتنبيهات المباشرة 🔔⚡
         </div>
       </div>
     </div>

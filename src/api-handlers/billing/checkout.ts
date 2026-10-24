@@ -75,7 +75,7 @@ export default async function handler(req: any, res: any) {
       return res.status(503).json({
         success: false,
         code: 'PAYMENT_PROVIDER_NOT_CONFIGURED',
-        error: 'بوابة الدفع غير مهيأة حالياً. يرجى التواصل مع إدارة رادار للتفعيل.',
+        error: 'بوابة الدفع غير مهيأة حالياً. يرجى التواصل مع إدارة المنصة للتفعيل.',
         details: {
           requested_plan: cleanPlanCode,
           provider_status: 'UNCONFIGURED',

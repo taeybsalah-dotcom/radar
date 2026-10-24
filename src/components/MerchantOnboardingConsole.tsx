@@ -1,3 +1,4 @@
+import { getActiveTenantConfig } from '../config/tenant';
 import React, { useState, useEffect } from 'react';
 import { Store } from '../types';
 import {
@@ -523,7 +524,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
                   type="text"
                   value={storeName}
                   onChange={(e) => setStoreName(e.target.value)}
-                  placeholder="مثال: مقهى رادار الفاخر"
+                  placeholder="مثال: مقهى النخبة الفاخر"
                   className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:border-amber-500 focus:outline-none"
                 />
               </div>
@@ -819,7 +820,7 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
                 <div className="space-y-1">
                   <h4 className="text-sm font-bold text-white">فترة التجربة الرسمية المجانية (14 يوم)</h4>
                   <p className="text-xs text-slate-400">
-                    استكشف جميع مزايا رادار دون أي قيود مالية خلال فترة التجربة.
+                    استكشف جميع مزايا {getActiveTenantConfig().brandName} دون أي قيود مالية خلال فترة التجربة.
                   </p>
                 </div>
                 {billingState?.trial_ends_at ? (
