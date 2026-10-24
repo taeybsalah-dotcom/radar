@@ -633,7 +633,11 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       const nowIso = new Date().toISOString();
       const nextStatus = completeUponCollection ? 'completed' : order.status;
 
-      const wasPointsAwarded = Boolean(order.points_awarded || order.fulfillment_details?.points_awarded);
+      const wasPointsAwarded = Boolean(
+        order.points_awarded ||
+        order.fulfillment_details?.points_awarded ||
+        (order.payment_status === 'paid' && (order.order_source === 'customer_app' || order.order_source === 'online'))
+      );
       const wasInventoryDeducted = Boolean(order.inventory_deducted || order.fulfillment_details?.inventory_deducted);
 
       if (!wasInventoryDeducted && Array.isArray(order.items) && order.items.length > 0) {
@@ -656,6 +660,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         status: nextStatus,
         payment_status: 'paid',
         payment_method: method,
+        points_awarded: true,
         cashier_id: staffId,
         cashier_name: staffName,
         fulfillment_details: updatedFulfillmentDetails,

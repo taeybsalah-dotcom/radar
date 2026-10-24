@@ -189,6 +189,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
     originalOrderId: string;
     appOrderNumber: string;
     isAppPrepaid: boolean;
+    pointsAwarded?: boolean;
     appPaymentMethod?: string;
     fulfillmentDetails?: any;
     deliveryAddress?: string;
@@ -346,11 +347,18 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
     const deliveryAddr = transferredOrder.delivery_address || origFd.delivery_address || '';
     const deliveryGps = transferredOrder.delivery_gps_link || origFd.delivery_gps_link || '';
 
+    const isPointsAlreadyAwarded = Boolean(
+      transferredOrder.points_awarded ||
+      origFd.points_awarded ||
+      (isPaid && (transferredOrder.order_source === 'customer_app' || isBooking))
+    );
+
     setTransferredMetadata({
       orderSource: isBooking ? 'customer_app_booking' : 'customer_app',
       originalOrderId: transferredOrder.id,
       appOrderNumber: String(transferredOrder.order_number || transferredOrder.id?.slice(0, 6) || ''),
       isAppPrepaid: isPaid,
+      pointsAwarded: isPointsAlreadyAwarded,
       appPaymentMethod: transferredOrder.payment_method || (isPaid ? 'online' : 'pay_at_store'),
       fulfillmentDetails: origFd,
       deliveryAddress: deliveryAddr,
@@ -859,6 +867,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             status: 'accepted', // 👨‍🍳 معتمد من الكاشير - يرسل للمطبخ في بداية التحضير
             payment_status: 'paid', // 💰 مسدد
             payment_method: transferredMetadata?.isAppPrepaid ? 'online' : paymentMethod,
+            points_awarded: true,
             cashier_id: activeStaff.id,
             cashier_name: activeStaff.name,
             order_type: orderType,
@@ -981,7 +990,13 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
 
       // 2. If a customer was linked, award loyalty points (or estimate if offline)
       let pointsEarned = 0;
-      if (!isOfflineOrder && customer && customer.phone) {
+      const isAlreadyAwarded = Boolean(
+        transferredMetadata?.pointsAwarded ||
+        (isTransferredAppOrder && (transferredMetadata?.isAppPrepaid || transferredOrder?.points_awarded)) ||
+        (isTransferredBooking && (transferredMetadata?.isAppPrepaid || (transferredOrder as any)?.points_awarded))
+      );
+
+      if (!isOfflineOrder && customer && customer.phone && !isAlreadyAwarded) {
         try {
           const purchaseRes = await LoyaltyService.processPurchase(
             store.id,
@@ -1026,6 +1041,9 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         } catch (ptsErr) {
           console.warn('Could not award points to customer:', ptsErr);
         }
+      } else if (isAlreadyAwarded) {
+        // 🛡️ [ANTI-DOUBLE-REWARD] صُرفت النقاط مسبقاً عند الدفع الإلكتروني عبر التطبيق
+        pointsEarned = 0;
       } else if (isOfflineOrder && customer && customer.phone) {
         const multiplier = Number(store.points_per_riyal) > 0 ? Number(store.points_per_riyal) : 1.0;
         pointsEarned = Math.floor(cartGrandTotal * multiplier);
@@ -1058,7 +1076,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         ...orderPayload,
         id: savedOrder?.id || orderNumber,
         order_number: savedOrder?.order_number || transferredMetadata?.appOrderNumber || orderNumber,
-        pointsEarned,
+        pointsEarned: isAlreadyAwarded ? Number(transferredOrder?.loyalty_points_earned || 0) : pointsEarned,
+        is_already_rewarded: isAlreadyAwarded,
         is_offline: isOfflineOrder,
         cashTendered: paymentMethod === 'cash' ? Number(cashTendered) : undefined,
         changeDue: paymentMethod === 'cash' ? changeDue : undefined,

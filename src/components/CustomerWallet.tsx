@@ -2233,6 +2233,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         payment_method: resolvedPaymentMethod,
         points_to_earn: pointsToEarn,
         loyalty_points_earned: isPrepaid ? pointsToEarn : 0,
+        points_awarded: isPrepaid,
         notes: bookingNotes.trim() || undefined,
         booking_source: 'customer_app',
       } as any);
@@ -2618,6 +2619,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           delivery_location_photo: deliveryLocationPhoto.trim() || undefined,
           specialist_name: specialistName.trim() || undefined,
           general_notes: generalOrderNotes.trim() || undefined,
+          points_awarded: isPaid,
         },
         delivery_address: deliveryAddress.trim() || undefined,
         delivery_gps_link: deliveryGpsLink.trim() || undefined,

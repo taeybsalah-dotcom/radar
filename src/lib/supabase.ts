@@ -8290,7 +8290,25 @@ export const LoyaltyService = {
           syncTelegramStatus('order', orderId, status, cashierName);
 
           // 🌟 AUTOMATIC LOYALTY POINTS AWARDING UPON COMPLETION!
-          if (status === 'completed' && data.customer_phone && Number(data.loyalty_points_earned) > 0) {
+          // 🛡️ Prevent duplicate points awarding if already granted (online payment, cashier collection, or flagged)
+          const isAlreadyAwarded = Boolean(
+            data.points_awarded ||
+            data.fulfillment_details?.points_awarded ||
+            (data.payment_status === 'paid' && data.order_source === 'customer_app')
+          );
+
+          if (
+            status === 'completed' &&
+            data.customer_phone &&
+            Number(data.loyalty_points_earned) > 0 &&
+            !isAlreadyAwarded
+          ) {
+            // Atomically mark points_awarded: true in Supabase immediately to prevent duplicate runs
+            await (supabase as any)
+              .from('store_orders')
+              .update({ points_awarded: true, updated_at: new Date().toISOString() })
+              .eq('id', orderId);
+
             this.rewardPointsForCompletedTransaction(
               data.store_id,
               data.customer_phone,
@@ -8998,8 +9016,14 @@ export const LoyaltyService = {
     syncTelegramStatus('booking', bookingId, status, cashierName);
 
     // 🌟 AUTOMATIC LOYALTY POINTS AWARDING UPON BOOKING COMPLETION!
+    // 🛡️ Prevent duplicate awarding: if prepaid online, points were already granted upon booking creation!
+    const isBookingPrepaid =
+      updatedBooking.payment_status === 'paid' ||
+      updatedBooking.payment_method === 'online' ||
+      Boolean((updatedBooking as any).points_awarded);
+
     const bookingPoints = Number(updatedBooking.loyalty_points_earned || (updatedBooking as any).points_to_earn || 0);
-    if (status === 'completed' && updatedBooking.customer_phone && bookingPoints > 0) {
+    if (status === 'completed' && updatedBooking.customer_phone && bookingPoints > 0 && !isBookingPrepaid) {
       this.rewardPointsForCompletedTransaction(
         updatedBooking.store_id,
         updatedBooking.customer_phone,
