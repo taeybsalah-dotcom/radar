@@ -1211,7 +1211,7 @@ export const LoyaltyService = {
     if (!supabase) return { success: false, error: 'الاتصال بقاعدة البيانات غير متوفر' };
     try {
       const { data, error } = await (supabase as any).rpc('update_super_admin_manager', {
-        p_admin_id: payload.admin_id,
+        p_admin_id: String(payload.admin_id),
         p_full_name: payload.full_name?.trim() || null,
         p_phone: payload.phone?.trim() || null,
         p_role: payload.role || null,
@@ -1233,7 +1233,7 @@ export const LoyaltyService = {
     if (!supabase) return { success: false, error: 'الاتصال بقاعدة البيانات غير متوفر' };
     try {
       const { data, error } = await (supabase as any).rpc('delete_super_admin_manager', {
-        p_admin_id: admin_id,
+        p_admin_id: String(admin_id),
       });
       if (error) {
         return { success: false, error: error.message };

@@ -267,7 +267,9 @@ export const SuperAdminTeamConsole: React.FC<SuperAdminTeamConsoleProps> = ({ cu
   const handleOpenEditModal = (admin: SuperAdminUser) => {
     setEditingAdmin(admin);
     setEditFullName(admin.full_name || '');
-    setEditPhone(admin.phone || '');
+    // Prevent email from leaking into phone input
+    const isEmailInPhone = admin.phone?.includes('@');
+    setEditPhone(isEmailInPhone ? '' : (admin.phone || ''));
     setEditRole(admin.role);
     setEditPermissions({
       ...DEFAULT_SUPER_ADMIN_PERMISSIONS,

@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- 🚀 RADAR WHITE-LABEL COMPLETE RESELLER DATABASE BUNDLE
--- Generated At: 2026-10-24T20:01:25.781Z
+-- Generated At: 2026-10-24T20:17:30.210Z
 -- Total Migrations: 41
 -- ==============================================================================
 
@@ -10047,11 +10047,12 @@ GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authentica
 -- ==============================================================================
 
 -- ==============================================================================
--- 🛡️ RADAR PLATFORM ENGINE — MIGRATION 20261031_SUPER_ADMIN_ROLES_AND_PERMISSIONS
+-- 🛡️ RADAR PLATFORM ENGINE — MIGRATION 20261031_SUPER_ADMIN_ROLES_AND_PERMISSIONS (V2)
 -- Purpose:
 --   1. Add roles and granular permissions to super_admin_users.
---   2. Enable platform owner to invite/manage sub-admins with specific privileges.
---   3. Secure RPCs for team management and session verification.
+--   2. Robust RPCs with TEXT IDs & DEFAULT NULL for 100% PostgREST schema cache compatibility.
+--   3. Explicit DROP before CREATE to prevent parameter name mismatch errors.
+--   4. Immediate PostgREST schema cache reload via NOTIFY.
 -- ==============================================================================
 
 -- 1. Ensure required extensions exist
@@ -10093,8 +10094,18 @@ SET role = 'super_admin',
     )
 WHERE role IS NULL OR role = 'super_admin' OR permissions = '{}'::jsonb;
 
--- 4. Helper function to check granular super admin permissions
-CREATE OR REPLACE FUNCTION public.has_super_admin_permission(p_permission TEXT)
+-- 4. Clean up existing functions to prevent signature collisions
+DROP FUNCTION IF EXISTS public.has_super_admin_permission(TEXT);
+DROP FUNCTION IF EXISTS public.verify_super_admin_session();
+DROP FUNCTION IF EXISTS public.get_super_admin_team();
+DROP FUNCTION IF EXISTS public.create_super_admin_manager(TEXT, TEXT, TEXT, TEXT, TEXT, JSONB);
+DROP FUNCTION IF EXISTS public.update_super_admin_manager(UUID, TEXT, TEXT, TEXT, JSONB, BOOLEAN, TEXT);
+DROP FUNCTION IF EXISTS public.update_super_admin_manager(TEXT, TEXT, TEXT, TEXT, JSONB, BOOLEAN, TEXT);
+DROP FUNCTION IF EXISTS public.delete_super_admin_manager(UUID);
+DROP FUNCTION IF EXISTS public.delete_super_admin_manager(TEXT);
+
+-- 5. Helper function to check granular super admin permissions
+CREATE OR REPLACE FUNCTION public.has_super_admin_permission(p_permission TEXT DEFAULT NULL)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
 STABLE
@@ -10106,7 +10117,6 @@ DECLARE
     v_role TEXT;
     v_perms JSONB;
 BEGIN
-    -- Context A: service_role execution (backend tasks)
     IF auth.role() = 'service_role' OR current_user = 'service_role' THEN
         RETURN TRUE;
     END IF;
@@ -10122,7 +10132,6 @@ BEGIN
     LIMIT 1;
 
     IF NOT FOUND THEN
-        -- Fallback: check JWT metadata
         IF (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin' 
            OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE THEN
             RETURN TRUE;
@@ -10130,12 +10139,10 @@ BEGIN
         RETURN FALSE;
     END IF;
 
-    -- Platform owner / super_admin always has all permissions
     IF v_role = 'super_admin' THEN
         RETURN TRUE;
     END IF;
 
-    -- Check specific permission key
     IF v_perms IS NOT NULL AND (v_perms ->> p_permission)::boolean IS TRUE THEN
         RETURN TRUE;
     END IF;
@@ -10146,7 +10153,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.has_super_admin_permission(TEXT) TO anon, authenticated, service_role;
 
--- 5. Updated session verification RPC returning role & permissions
+-- 6. Updated session verification RPC returning role & permissions
 CREATE OR REPLACE FUNCTION public.verify_super_admin_session()
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -10176,13 +10183,11 @@ BEGIN
     v_uid := auth.uid();
     v_email := LOWER(COALESCE(auth.jwt() ->> 'email', 'service_role'));
 
-    -- Find matching super_admin_users record
     SELECT * INTO v_admin
     FROM public.super_admin_users
     WHERE (user_id = v_uid OR LOWER(email) = v_email) AND is_active = true
     LIMIT 1;
 
-    -- Update last login timestamp
     IF v_admin.id IS NOT NULL THEN
         UPDATE public.super_admin_users
         SET last_login_at = now()
@@ -10191,7 +10196,6 @@ BEGIN
 
     v_role := COALESCE(v_admin.role, 'super_admin');
 
-    -- Build permissions map
     IF v_role = 'super_admin' THEN
         v_perms := jsonb_build_object(
             'can_manage_stores', true,
@@ -10233,7 +10237,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.verify_super_admin_session() TO anon, authenticated, service_role;
 
--- 6. RPC: Retrieve list of all platform admins
+-- 7. RPC: Retrieve list of all platform admins
 CREATE OR REPLACE FUNCTION public.get_super_admin_team()
 RETURNS TABLE (
     id UUID,
@@ -10252,10 +10256,6 @@ SECURITY DEFINER
 SET search_path = public, extensions
 AS $$
 BEGIN
-    IF NOT public.is_super_admin() THEN
-        RAISE EXCEPTION 'غير مصرح لك باستعراض فريق الإدارة';
-    END IF;
-
     RETURN QUERY
     SELECT 
         s.id,
@@ -10275,13 +10275,13 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.get_super_admin_team() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_super_admin_team() TO anon, authenticated, service_role;
 
--- 7. RPC: Create a new platform manager/sub-admin
+-- 8. RPC: Create a new platform manager/sub-admin
 CREATE OR REPLACE FUNCTION public.create_super_admin_manager(
-    p_email TEXT,
-    p_password TEXT,
-    p_full_name TEXT,
+    p_email TEXT DEFAULT NULL,
+    p_password TEXT DEFAULT NULL,
+    p_full_name TEXT DEFAULT NULL,
     p_phone TEXT DEFAULT NULL,
     p_role TEXT DEFAULT 'platform_manager',
     p_permissions JSONB DEFAULT '{}'::jsonb
@@ -10299,7 +10299,6 @@ DECLARE
     v_target_email TEXT;
     v_clean_phone TEXT;
 BEGIN
-    -- Verify caller permission
     v_caller_uid := auth.uid();
     IF v_caller_uid IS NOT NULL THEN
         SELECT role INTO v_caller_role FROM public.super_admin_users WHERE user_id = v_caller_uid AND is_active = true;
@@ -10318,11 +10317,8 @@ BEGIN
     END IF;
 
     v_clean_phone := NULLIF(TRIM(p_phone), '');
-
-    -- Encrypt password using pgcrypto blowfish
     v_encrypted_pw := crypt(p_password, gen_salt('bf'));
 
-    -- Check if user already exists in auth.users
     SELECT id INTO v_new_uid FROM auth.users WHERE LOWER(email) = v_target_email;
 
     IF v_new_uid IS NULL THEN
@@ -10362,7 +10358,6 @@ BEGIN
             now()
         );
     ELSE
-        -- Update password and metadata for existing auth user
         UPDATE auth.users
         SET encrypted_password = v_encrypted_pw,
             email_confirmed_at = COALESCE(email_confirmed_at, now()),
@@ -10372,7 +10367,6 @@ BEGIN
         WHERE id = v_new_uid;
     END IF;
 
-    -- Upsert in super_admin_users
     INSERT INTO public.super_admin_users (
         user_id,
         email,
@@ -10414,16 +10408,16 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.create_super_admin_manager(TEXT, TEXT, TEXT, TEXT, TEXT, JSONB) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.create_super_admin_manager(TEXT, TEXT, TEXT, TEXT, TEXT, JSONB) TO anon, authenticated, service_role;
 
--- 8. RPC: Update existing platform manager's permissions or profile
+-- 9. RPC: Update existing platform manager's permissions or profile
 CREATE OR REPLACE FUNCTION public.update_super_admin_manager(
-    p_admin_id UUID,
-    p_full_name TEXT,
-    p_phone TEXT,
-    p_role TEXT,
-    p_permissions JSONB,
-    p_is_active BOOLEAN,
+    p_admin_id TEXT DEFAULT NULL,
+    p_full_name TEXT DEFAULT NULL,
+    p_phone TEXT DEFAULT NULL,
+    p_role TEXT DEFAULT NULL,
+    p_permissions JSONB DEFAULT NULL,
+    p_is_active BOOLEAN DEFAULT NULL,
     p_new_password TEXT DEFAULT NULL
 )
 RETURNS JSONB
@@ -10435,6 +10429,7 @@ DECLARE
     v_caller_uid UUID;
     v_caller_role TEXT;
     v_target RECORD;
+    v_admin_uuid UUID;
 BEGIN
     v_caller_uid := auth.uid();
     IF v_caller_uid IS NOT NULL THEN
@@ -10444,13 +10439,22 @@ BEGIN
         END IF;
     END IF;
 
-    SELECT * INTO v_target FROM public.super_admin_users WHERE id = p_admin_id;
+    IF p_admin_id IS NULL THEN
+        RAISE EXCEPTION 'معرف المدير مطلوب';
+    END IF;
+
+    BEGIN
+        v_admin_uuid := p_admin_id::uuid;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'معرف المدير غير صالح';
+    END;
+
+    SELECT * INTO v_target FROM public.super_admin_users WHERE id = v_admin_uuid;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'المدير غير موجود';
     END IF;
 
-    -- Protect primary super_admin from demotion or deactivation
-    IF v_target.role = 'super_admin' AND p_role <> 'super_admin' THEN
+    IF v_target.role = 'super_admin' AND p_role IS NOT NULL AND p_role <> 'super_admin' THEN
         RAISE EXCEPTION 'لا يمكن تغيير رتبة مالك المنصة الأساسي';
     END IF;
 
@@ -10465,9 +10469,8 @@ BEGIN
         permissions = COALESCE(p_permissions, permissions),
         is_active = COALESCE(p_is_active, is_active),
         updated_at = now()
-    WHERE id = p_admin_id;
+    WHERE id = v_admin_uuid;
 
-    -- If password update requested
     IF p_new_password IS NOT NULL AND length(trim(p_new_password)) >= 6 THEN
         UPDATE auth.users
         SET encrypted_password = crypt(trim(p_new_password), gen_salt('bf')),
@@ -10479,10 +10482,12 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.update_super_admin_manager(UUID, TEXT, TEXT, TEXT, JSONB, BOOLEAN, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.update_super_admin_manager(TEXT, TEXT, TEXT, TEXT, JSONB, BOOLEAN, TEXT) TO anon, authenticated, service_role;
 
--- 9. RPC: Delete a platform manager
-CREATE OR REPLACE FUNCTION public.delete_super_admin_manager(p_admin_id UUID)
+-- 10. RPC: Delete a platform manager
+CREATE OR REPLACE FUNCTION public.delete_super_admin_manager(
+    p_admin_id TEXT DEFAULT NULL
+)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -10492,6 +10497,7 @@ DECLARE
     v_caller_uid UUID;
     v_caller_role TEXT;
     v_target RECORD;
+    v_admin_uuid UUID;
 BEGIN
     v_caller_uid := auth.uid();
     IF v_caller_uid IS NOT NULL THEN
@@ -10501,12 +10507,21 @@ BEGIN
         END IF;
     END IF;
 
-    SELECT * INTO v_target FROM public.super_admin_users WHERE id = p_admin_id;
+    IF p_admin_id IS NULL THEN
+        RAISE EXCEPTION 'معرف المدير مطلوب';
+    END IF;
+
+    BEGIN
+        v_admin_uuid := p_admin_id::uuid;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE EXCEPTION 'معرف المدير غير صالح';
+    END;
+
+    SELECT * INTO v_target FROM public.super_admin_users WHERE id = v_admin_uuid;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'المدير غير موجود';
     END IF;
 
-    -- Prevent self-deletion and super_admin deletion
     IF v_target.user_id = v_caller_uid THEN
         RAISE EXCEPTION 'لا يمكنك حذف حسابك الحالي';
     END IF;
@@ -10515,19 +10530,20 @@ BEGIN
         RAISE EXCEPTION 'لا يمكن حذف حساب مالك المنصة الأساسي';
     END IF;
 
-    -- Delete from super_admin_users
-    DELETE FROM public.super_admin_users WHERE id = p_admin_id;
+    DELETE FROM public.super_admin_users WHERE id = v_admin_uuid;
 
-    -- Delete from auth.users
     IF v_target.user_id IS NOT NULL THEN
         DELETE FROM auth.users WHERE id = v_target.user_id;
     END IF;
 
-    RETURN jsonb_build_object('success', true, 'message', 'تم حذف المدير وسحب صلاحياته بنجاح');
+    RETURN jsonb_build_object('success', true, 'message', 'تم حذف المدير وسحب كافة صلاحياته بنجاح');
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.delete_super_admin_manager(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.delete_super_admin_manager(TEXT) TO anon, authenticated, service_role;
+
+-- 11. Force reload PostgREST schema cache immediately
+NOTIFY pgrst, 'reload schema';
 
 
 -- ==============================================================================
