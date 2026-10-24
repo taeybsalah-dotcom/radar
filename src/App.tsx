@@ -87,14 +87,9 @@ const DriverPortal = lazyWithRetry(
   () => import('./components/DriverPortal').then((m) => ({ default: m.DriverPortal })),
   'DriverPortal'
 );
-const MasterResellerControl = lazyWithRetry(
-  () => import('./components/MasterResellerControl').then((m) => ({ default: m.MasterResellerControl })),
-  'MasterResellerControl'
-);
 import { RadarQuickSwitcher } from './components/RadarQuickSwitcher';
 
 type PortalTab =
-  | 'master-resellers'
   | 'super-admin'
   | 'cashier'
   | 'customer'
@@ -157,32 +152,7 @@ function parseRouteParams() {
   const pathname = (window.location.pathname || '').toLowerCase();
   const rawHash = window.location.hash ? window.location.hash.replace(/^#\/?/, '').trim() : '';
 
-  // 1. Check Master Reseller Route (/master-resellers, /master-owner, portal=master-resellers)
-  // Strict Hostname Guard: Only accessible on master radar domain
-  const isMasterDomain =
-    typeof window !== 'undefined' &&
-    (window.location.hostname === 'myradar.sarl' ||
-      window.location.hostname === 'www.myradar.sarl' ||
-      window.location.hostname.endsWith('.pages.dev'));
-
-  const isMasterResellers =
-    isMasterDomain &&
-    (pathname === '/master-resellers' ||
-      pathname === '/master-resellers/' ||
-      pathname === '/master-owner' ||
-      portalParam === 'master-resellers' ||
-      rawHash === 'master-resellers');
-
-  if (isMasterResellers) {
-    return {
-      portal: 'master-resellers' as const,
-      isPreview: false,
-      storeSlug: null,
-      partnerSlug: null,
-    };
-  }
-
-  // 2. Check Partner Portal (/partner, /partner/, portal=partner, #partner)
+  // 1. Check Partner Portal (/partner, /partner/, portal=partner, #partner)
   const isPartnerPortal =
     pathname === '/partner' ||
     pathname === '/partner/' ||
@@ -1111,15 +1081,6 @@ export function App() {
                   window.location.href = url.toString();
                 }}
               />
-            </ProtectedRoute>
-          )}
-
-          {activeTab === 'master-resellers' && (
-            <ProtectedRoute
-              allowedRoles={['super_admin']}
-              portalName="بوابة إدارة الوكلاء السيادية (Master Resellers)"
-            >
-              <MasterResellerControl />
             </ProtectedRoute>
           )}
 

@@ -1,28 +1,35 @@
 import React from 'react';
-import { AlertTriangle, ShieldX } from 'lucide-react';
-import { getCurrentTenant } from '../config/dynamicTenant';
+import { ShieldX, AlertTriangle } from 'lucide-react';
+import { getActiveTenantConfig } from '../config/tenant';
 
-export const ResellerSuspendedScreen: React.FC = () => {
-  const tenant = getCurrentTenant();
+interface ResellerSuspendedScreenProps {
+  reason?: string | null;
+}
+
+export const ResellerSuspendedScreen: React.FC<ResellerSuspendedScreenProps> = ({ reason }) => {
+  const tenant = getActiveTenantConfig();
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center select-none" dir="rtl">
+    <div
+      className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center select-none"
+      dir="rtl"
+    >
       <div className="max-w-md w-full bg-slate-900 border border-red-500/30 rounded-3xl p-8 shadow-2xl relative overflow-hidden backdrop-blur-xl">
         <div className="absolute top-0 right-0 left-0 h-1.5 bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
-        
+
         <div className="w-20 h-20 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6 text-red-400">
           <ShieldX className="w-10 h-10" />
         </div>
 
-        <h1 className="text-2xl font-black text-white mb-3">
-          المنصة موقوفة مؤقتاً
-        </h1>
-        
+        <h1 className="text-2xl font-black text-white mb-3">المنصة موقوفة مؤقتاً</h1>
+
         <p className="text-slate-400 text-sm leading-relaxed mb-6">
-          تم تعليق خدمة الوصول لمنصة <span className="text-amber-400 font-bold">{tenant.name}</span> مؤقتاً لمراجعة الحساب أو تحديث الترخيص.
-          {tenant.suspensionReason && (
+          تم تعليق خدمة الوصول لمنصة{' '}
+          <span className="text-amber-400 font-bold">{tenant.brandName}</span> مؤقتاً لمراجعة
+          الحساب أو تجديد الترخيص.
+          {reason && (
             <span className="block mt-2 text-xs text-red-300 bg-red-950/40 p-2.5 rounded-xl border border-red-900/50">
-              السبب: {tenant.suspensionReason}
+              السبب: {reason}
             </span>
           )}
         </p>
@@ -33,7 +40,8 @@ export const ResellerSuspendedScreen: React.FC = () => {
             <span>ماذا يعني هذا؟</span>
           </div>
           <p className="text-slate-400 leading-normal">
-            تم إيقاف صلاحيات العمليات ونقاط البيع مؤقتاً. لحل هذا الإشعار واستعادة الخدمة فوراً، يرجى التواصل مع مالك المنصة المعتمد.
+            تم إيقاف صلاحيات العمليات ونقاط البيع مؤقتاً. لحل هذا الإشعار واستعادة الخدمة فوراً، يرجى
+            التواصل مع الإدارة.
           </p>
         </div>
 

@@ -3,10 +3,28 @@ import ReactDOM from 'react-dom/client';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { AuthProvider } from './context/AuthContext.tsx';
-import { initActiveTenant, getCurrentTenant } from './config/dynamicTenant.ts';
+import { getActiveTenantConfig } from './config/tenant.ts';
 import { ResellerSuspendedScreen } from './components/ResellerSuspendedScreen.tsx';
 import { getSupabaseClient } from './lib/supabase.ts';
 import './index.css';
+
+// 🎨 Apply Dynamic White-Label Brand Title, Meta & Favicon
+if (typeof document !== 'undefined') {
+  const tenant = getActiveTenantConfig();
+  if (tenant.brandName) {
+    document.title = tenant.brandName;
+  }
+  if (tenant.logoUrl) {
+    const faviconLink = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+    if (faviconLink) {
+      faviconLink.href = tenant.logoUrl;
+    }
+    const appleIcon = document.querySelector("link[rel*='apple-touch-icon']") as HTMLLinkElement;
+    if (appleIcon) {
+      appleIcon.href = tenant.logoUrl;
+    }
+  }
+}
 
 // 🛡️ Deployment Auto-Recovery: Handle stale chunk hashes smoothly
 if (typeof window !== 'undefined') {
@@ -23,72 +41,63 @@ if (typeof window !== 'undefined') {
 }
 
 const RootApp: React.FC = () => {
-  const [ready, setReady] = useState(false);
   const [isSuspended, setIsSuspended] = useState(false);
+  const [suspensionReason, setSuspensionReason] = useState<string | null>(null);
 
   useEffect(() => {
-    initActiveTenant().then((tenant) => {
-      // 1. Dynamic Favicon & Meta setup
-      if (typeof document !== 'undefined') {
-        document.title = tenant.name;
-        if (tenant.brandLogoUrl) {
-          const faviconLink = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
-          if (faviconLink) faviconLink.href = tenant.brandLogoUrl;
-          const appleIcon = document.querySelector("link[rel*='apple-touch-icon']") as HTMLLinkElement;
-          if (appleIcon) appleIcon.href = tenant.brandLogoUrl;
-        }
-      }
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
 
-      // 2. Kill Switch check
-      if (!tenant.isMasterRadar && tenant.platformStatus === 'suspended') {
-        setIsSuspended(true);
-      }
-
-      // 3. Realtime Kill Switch listener on Master database
-      if (!tenant.isMasterRadar) {
-        try {
-          const masterClient = getSupabaseClient();
-          if (masterClient) {
-            masterClient
-              .channel(`reseller_killswitch_${tenant.slug}`)
-              .on(
-                'postgres_changes',
-                {
-                  event: 'UPDATE',
-                  schema: 'public',
-                  table: 'resellers',
-                  filter: `slug=eq.${tenant.slug}`,
-                },
-                (payload: any) => {
-                  const updated = payload.new;
-                  if (updated?.platform_status === 'suspended') {
-                    setIsSuspended(true);
-                  } else if (updated?.platform_status === 'active') {
-                    setIsSuspended(false);
-                  }
-                }
-              )
-              .subscribe();
+    // 1. Initial Check on platform_system_config
+    (supabase as any)
+      .from('platform_system_config')
+      .select('platform_status, suspension_reason')
+      .eq('key', 'platform_status')
+      .maybeSingle()
+      .then(({ data, error }: any) => {
+        if (!error && data) {
+          if (data.platform_status === 'suspended') {
+            setIsSuspended(true);
+            setSuspensionReason(data.suspension_reason || null);
           }
-        } catch (e) {
-          console.warn('[RootApp] Realtime killswitch listener init warning:', e);
         }
-      }
+      });
 
-      setReady(true);
-    });
+    // 2. Realtime listener: triggers instantly when Master Control sends Kill Switch to this database
+    try {
+      const channel = supabase
+        .channel('instance_platform_killswitch')
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'platform_system_config',
+            filter: 'key=eq.platform_status',
+          },
+          (payload: any) => {
+            const updated = payload.new;
+            if (updated?.platform_status === 'suspended') {
+              setIsSuspended(true);
+              setSuspensionReason(updated.suspension_reason || null);
+            } else if (updated?.platform_status === 'active') {
+              setIsSuspended(false);
+              setSuspensionReason(null);
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    } catch (err) {
+      console.warn('[RootApp] Realtime killswitch receiver error:', err);
+    }
   }, []);
 
-  if (!ready) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
-      </div>
-    );
-  }
-
   if (isSuspended) {
-    return <ResellerSuspendedScreen />;
+    return <ResellerSuspendedScreen reason={suspensionReason} />;
   }
 
   return (
