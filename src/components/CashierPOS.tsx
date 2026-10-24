@@ -72,10 +72,13 @@ interface CashierPOSProps {
 }
 
 export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
-  // 🛡️ ZERO ADMIN FALLBACK: Check staff session for cashier or admin operating POS
+  // 🛡️ ZERO ADMIN FALLBACK: Check staff session & valid token for cashier or admin operating POS
   const [authenticatedCashier, setAuthenticatedCashier] = useState<StoreStaff | null>(() => {
     if (!store?.id) return null;
-    return LoyaltyService.getStaffSession(store.id, 'any', store.slug);
+    const session = LoyaltyService.getStaffSession(store.id, 'any', store.slug);
+    const token = LoyaltyService.getStaffToken(store.id, 'any');
+    if (!session || !token) return null;
+    return session;
   });
 
   useEffect(() => {
@@ -1644,6 +1647,9 @@ ${portalUrl}`;
       });
     } catch (err: any) {
       setErrorMessage(err.message || 'فشلت عملية إضافة النقاط');
+      if (err.message && (err.message.includes('جلسة الكاشير') || err.message.includes('UNAUTHORIZED_STAFF'))) {
+        setAuthenticatedCashier(null);
+      }
       playBeepSound('error');
     } finally {
       setLoading(false);
@@ -1743,6 +1749,9 @@ ${portalUrl}`;
       });
     } catch (err: any) {
       setManagerPinError(err.message || 'فشلت عملية اعتماد الفاتورة');
+      if (err.message && (err.message.includes('جلسة الكاشير') || err.message.includes('UNAUTHORIZED_STAFF'))) {
+        setAuthenticatedCashier(null);
+      }
       playBeepSound('error');
     } finally {
       setIsSubmittingApproval(false);

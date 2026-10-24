@@ -5476,6 +5476,17 @@ export const LoyaltyService = {
             visits_count: 1,
             created_at: new Date().toISOString(),
           } as Customer;
+        } else if (rpcRes && !rpcRes.success) {
+          console.error('[processPurchase] RPC rejected:', rpcRes);
+          if (rpcRes.error === 'UNAUTHORIZED_STAFF') {
+            this.revokeStaffToken(resolvedStoreId, 'cashier');
+            this.revokeStaffToken(resolvedStoreId, 'admin');
+            throw new Error(rpcRes.message || 'غير مصرح: جلسة الكاشير غير صالحة أو منتهية. يرجى تسجيل الدخول مجدداً برقم PIN.');
+          }
+          throw new Error(rpcRes.message || rpcRes.error || 'فشلت عملية إضافة النقاط من السيرفر.');
+        } else if (rpcErr) {
+          console.error('[processPurchase] RPC error:', rpcErr);
+          throw new Error(rpcErr.message || 'فشل الاتصال بقاعدة البيانات لإضافة النقاط.');
         } else {
           // Fallback if RPC not yet deployed
           if (matchedCust) {
@@ -8181,6 +8192,17 @@ export const LoyaltyService = {
             phone: rpcRes.phone || cleanPhone,
           });
           return true;
+        } else if (rpcRes && !rpcRes.success) {
+          console.error('[addCustomerPoints] RPC rejected:', rpcRes);
+          if (rpcRes.error === 'UNAUTHORIZED_STAFF') {
+            this.revokeStaffToken(resolvedStoreId, 'cashier');
+            this.revokeStaffToken(resolvedStoreId, 'admin');
+            throw new Error(rpcRes.message || 'غير مصرح: جلسة الكاشير غير صالحة أو منتهية. يرجى تسجيل الدخول مجدداً برقم PIN.');
+          }
+          throw new Error(rpcRes.message || rpcRes.error || 'فشلت عملية إضافة النقاط من السيرفر.');
+        } else if (rpcErr) {
+          console.error('[addCustomerPoints] RPC error:', rpcErr);
+          throw new Error(rpcErr.message || 'فشل الاتصال بقاعدة البيانات لإضافة النقاط.');
         }
 
         const { data: matchedCust } = await supabase
