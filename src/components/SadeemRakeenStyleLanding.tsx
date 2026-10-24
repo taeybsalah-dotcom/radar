@@ -95,7 +95,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
         store_name: storeName,
         manager_name: ownerName,
         phone: normalizedPhone,
-        notes: `طلب تجربة مجانية من الواجهة الرسمية لسديم (وكيل: ${agentPhone})`,
+        notes: `طلب تجربة مجانية من الواجهة الرسمية لسديم (فريق: ${agentPhone})`,
       });
 
       if (res.success) {
@@ -245,7 +245,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
             className="w-full sm:w-auto px-8 py-4 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-white font-black text-base transition flex items-center justify-center gap-2.5"
           >
             <MessageCircle className="w-5 h-5 text-emerald-400" />
-            <span>تواصل مع الوكيل المباشر ({agentPhone})</span>
+            <span>تواصل مع فريق سديم المباشر ({agentPhone})</span>
           </a>
         </div>
 
@@ -323,7 +323,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
               دعم فني حقيقي ومباشر
             </span>
             <h3 className="text-2xl sm:text-3xl font-black text-white">
-              وكيل معتمد ومستشارك التقني معك خطوة بخطوة
+              شريكك التقني المباشر معك خطوة بخطوة
             </h3>
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
               مع {tenant.brandName}، لست مجرد رقم تذكرة دعم فني. نحن نساعدك في إدخال منيو متجرك، وتدريب طاقمك، ومتابعة فروعك لضمان انطلاقك بدون أي عقبات.
@@ -346,7 +346,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
               className="w-full px-8 py-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/20 transition transform hover:scale-105"
             >
               <MessageCircle className="w-5 h-5" />
-              <span>تحدث مع الوكيل الآن: {agentPhone}</span>
+              <span>تحدث مع فريق سديم الآن: {agentPhone}</span>
             </a>
           </div>
         </div>
@@ -365,7 +365,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
               اطلب تجربتك المجانية لنشاطك 🚀
             </h2>
             <p className="text-xs sm:text-sm text-slate-300">
-              سجّل بيانات متجرك وسيتواصل معك وكيل {tenant.brandName} المعتمد لتجهيز نظامك وتفعيله فوراً.
+              سجّل بيانات متجرك وسيتواصل معك فريق {tenant.brandName} لتجهيز نظامك وتفعيله فوراً.
             </p>
           </div>
 
@@ -464,7 +464,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
               </div>
               <h3 className="text-2xl font-black text-white">تم استلام طلبك بنجاح! 🎉</h3>
               <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                شكراً لاهتمامك بنظام {tenant.brandName}. سيتواصل معك وكيلنا المعتمد على رقم جوالك فوراً لترتيب بدء التجربة المجانية وإعداد المتجر.
+                شكراً لاهتمامك بنظام {tenant.brandName}. سيتواصل معك فريقنا المختص على رقم جوالك فوراً لترتيب بدء التجربة المجانية وإعداد المتجر.
               </p>
               <a
                 href={whatsappUrl}
@@ -473,7 +473,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
                 className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition"
               >
                 <MessageCircle className="w-4 h-4" />
-                <span>متابعة فورية على واتساب الوكيل</span>
+                <span>متابعة فورية عبر الواتساب</span>
               </a>
             </div>
           )}
@@ -487,11 +487,11 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-300">{tenant.brandName} - لتطوير البرمجيات</span>
             <span>•</span>
-            <span>وكيل معتمد وموزع رسمي</span>
+            <span>نظام التشغيل السحابي المعتمد</span>
           </div>
 
           <div className="flex items-center gap-4 text-slate-400">
-            <span>جوال وواتساب الوكيل: <strong className="text-white font-mono">{agentPhone}</strong></span>
+            <span>خدمة العملاء والمبيعات: <strong className="text-white font-mono">{agentPhone}</strong></span>
           </div>
         </div>
         <p className="text-[11px] text-slate-600">© 2026 جميع الحقوق محفوظة • متوافق مع هيئة الزكاة والضريبة والجمارك</p>
