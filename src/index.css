@@ -288,17 +288,17 @@
 }
 
 /* 5. Typography in Cards & Content */
-[data-theme="light"] h1,
-[data-theme="light"] h2,
-[data-theme="light"] h3,
-[data-theme="light"] h4 {
+[data-theme="light"] h1:not(.keep-white):not(.keep-white *),
+[data-theme="light"] h2:not(.keep-white):not(.keep-white *),
+[data-theme="light"] h3:not(.keep-white):not(.keep-white *),
+[data-theme="light"] h4:not(.keep-white):not(.keep-white *) {
   color: #0F172A !important;
 }
 
-[data-theme="warm_cream"] h1,
-[data-theme="warm_cream"] h2,
-[data-theme="warm_cream"] h3,
-[data-theme="warm_cream"] h4 {
+[data-theme="warm_cream"] h1:not(.keep-white):not(.keep-white *),
+[data-theme="warm_cream"] h2:not(.keep-white):not(.keep-white *),
+[data-theme="warm_cream"] h3:not(.keep-white):not(.keep-white *),
+[data-theme="warm_cream"] h4:not(.keep-white):not(.keep-white *) {
   color: #2A1F17 !important;
 }
 
@@ -312,36 +312,40 @@
 }
 
 .keep-white,
-.keep-white * {
+.keep-white *,
+[data-theme="light"] .keep-white,
+[data-theme="light"] .keep-white *,
+[data-theme="warm_cream"] .keep-white,
+[data-theme="warm_cream"] .keep-white * {
   color: #FFFFFF !important;
 }
 
-/* Slate text levels on light & warm cream */
-[data-theme="light"] .text-slate-100,
-[data-theme="light"] .text-slate-200 {
+/* Slate text levels on light & warm cream (excluding .keep-white containers and dark/colored buttons) */
+[data-theme="light"] .text-slate-100:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *),
+[data-theme="light"] .text-slate-200:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *) {
   color: #1E293B !important;
 }
 
-[data-theme="warm_cream"] .text-slate-100,
-[data-theme="warm_cream"] .text-slate-200 {
+[data-theme="warm_cream"] .text-slate-100:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *),
+[data-theme="warm_cream"] .text-slate-200:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *) {
   color: #33271E !important;
 }
 
-[data-theme="light"] .text-slate-300 {
+[data-theme="light"] .text-slate-300:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *) {
   color: #334155 !important;
 }
 
-[data-theme="warm_cream"] .text-slate-300 {
+[data-theme="warm_cream"] .text-slate-300:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *) {
   color: #4A3E34 !important;
 }
 
-[data-theme="light"] .text-slate-400,
-[data-theme="light"] .text-slate-500 {
+[data-theme="light"] .text-slate-400:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *),
+[data-theme="light"] .text-slate-500:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *) {
   color: #475569 !important;
 }
 
-[data-theme="warm_cream"] .text-slate-400,
-[data-theme="warm_cream"] .text-slate-500 {
+[data-theme="warm_cream"] .text-slate-400:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *),
+[data-theme="warm_cream"] .text-slate-500:not(.keep-white *):not(.bg-black *):not([class*="bg-black"] *):not([class*="bg-neutral-900"] *):not(button[class*="bg-slate-800"] *):not(button[class*="bg-slate-900"] *):not(button[class*="bg-emerald"] *):not(button[class*="bg-rose"] *):not(button[class*="bg-blue"] *) {
   color: #635343 !important;
 }
 
@@ -355,11 +359,15 @@
   color: #B45309 !important;
 }
 [data-theme="light"] .text-emerald-300,
-[data-theme="warm_cream"] .text-emerald-300 {
+[data-theme="warm_cream"] .text-emerald-300,
+[data-theme="light"] .text-emerald-400:not(.keep-white *),
+[data-theme="warm_cream"] .text-emerald-400:not(.keep-white *) {
   color: #047857 !important;
 }
 [data-theme="light"] .text-rose-300,
-[data-theme="warm_cream"] .text-rose-300 {
+[data-theme="warm_cream"] .text-rose-300,
+[data-theme="light"] .text-rose-400:not(.keep-white *),
+[data-theme="warm_cream"] .text-rose-400:not(.keep-white *) {
   color: #BE123C !important;
 }
 [data-theme="light"] .text-purple-300,
@@ -401,4 +409,84 @@
 [data-theme="warm_cream"] button[class*="from-amber"] {
   color: #0F172A !important;
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/* 🔤 ARABIC TYPOGRAPHY & LIGATURE PROTECTION + SCROLLBAR & ANIMATIONS    */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/* Prevent monospace font & letter-spacing from disconnecting Arabic letters */
+.font-mono,
+.font-serif,
+.font-sans {
+  font-family: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0 !important;
+}
+
+.tracking-wider,
+.tracking-widest,
+.tracking-tight,
+.tracking-wide {
+  letter-spacing: 0 !important;
+}
+
+/* Hide ugly scrollbars on horizontal carousels & category strips */
+.scrollbar-none,
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.scrollbar-none::-webkit-scrollbar,
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* Subtle luxury micro-animations ("حركات بركات") */
+@keyframes cardShineSweep {
+  0% {
+    transform: translateX(120%) skewX(-20deg);
+  }
+  40%, 100% {
+    transform: translateX(-160%) skewX(-20deg);
+  }
+}
+
+.vip-card-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.vip-card-shine::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 45%;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: cardShineSweep 6.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 5;
+}
+
+@keyframes floatSubtle {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.animate-float-subtle {
+  animation: floatSubtle 3.5s ease-in-out infinite;
+}
+
 

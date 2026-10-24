@@ -81,10 +81,14 @@ import {
   BookmarkCheck,
   Home,
   Briefcase,
+  Trees,
+  Camera,
+  Image,
   Navigation,
   Compass,
   ExternalLink,
 } from 'lucide-react';
+import { compressImage } from '../lib/imageCompressor';
 import { NotificationBell } from './NotificationBell';
 import { saveInboxNotification, clearAllInboxNotifications } from '../lib/notifications';
 
@@ -241,19 +245,34 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     const fabBottom = shiftLightness(secHsl, -10);
     const fabGradient = `linear-gradient(135deg, ${fabTop} 0%, ${safeSecondary} 50%, ${fabBottom} 100%)`;
 
-    // 3. Safe accent text for light surfaces
+    // 3. Safe accent text for light surfaces (Ensure WCAG AAA 7:1+ contrast on white & cream)
     let textLightL = secHsl.l;
-    if (textLightL > 42) textLightL = 36;
-    const textOnLightRgb = hslToRgb(secHsl.h, Math.max(secHsl.s, 65), textLightL);
+    const isYellowOrGold = secHsl.h >= 24 && secHsl.h <= 65;
+    if (isYellowOrGold) {
+      if (textLightL > 22) textLightL = 20; // Deep royal burnt bronze/amber (#78350F / #713F12)
+    } else {
+      if (textLightL > 32) textLightL = 26;
+    }
+    const textOnLightRgb = hslToRgb(secHsl.h, Math.min(100, Math.max(secHsl.s, 85)), textLightL);
     const textOnLightHex = rgbToHex(textOnLightRgb.r, textOnLightRgb.g, textOnLightRgb.b);
+
+    // 4. Smart fill for active circles, stepper tracks & badges on light surfaces when secondary is pale cream/white
+    const isSecondaryVeryLight = secContrast > 0.72;
+    const solidFillOnLight = isSecondaryVeryLight
+      ? (!isPrimaryLight ? safePrimary : textOnLightHex)
+      : safeSecondary;
+    const solidFillOnLightContrast = isSecondaryVeryLight ? '#FFFFFF' : contrastOnSecondary;
 
     return {
       primary: safePrimary,
       secondary: safeSecondary,
       isPrimaryLight,
+      isSecondaryVeryLight,
       contrastOnPrimary,
       contrastOnSecondary,
       textOnLightHex,
+      solidFillOnLight,
+      solidFillOnLightContrast,
       cardGradient,
       cardTextColor,
       cardSubtextColor,
@@ -280,11 +299,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const isDarkTheme = store?.theme_mode === 'dark';
   const isWarmTheme = store?.theme_mode === 'warm_cream';
   const isLightOrWarm = !isDarkTheme;
+  const safeAccentText = isDarkTheme ? brandSecondary : brandColors.textOnLightHex;
+  const safeAccentFill = isDarkTheme ? brandSecondary : brandColors.solidFillOnLight;
+  const safeAccentFillContrast = isDarkTheme ? brandColors.contrastOnSecondary : brandColors.solidFillOnLightContrast;
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [privileges, setPrivileges] = useState<Privilege[]>([]);
   const [customerCoupons, setCustomerCoupons] = useState<CustomerCoupon[]>([]);
+  const [ticketsFilter, setTicketsFilter] = useState<'active' | 'used'>('active');
   const [selectedCouponForQR, setSelectedCouponForQR] = useState<CustomerCoupon | null>(null);
   const [selectedRewardPass, setSelectedRewardPass] = useState<Privilege | null>(null);
   const [loading, setLoading] = useState(true);
@@ -500,40 +523,71 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [saveAddressLabel, setSaveAddressLabel] = useState<string>('البيت');
   const [isLocatingGps, setIsLocatingGps] = useState(false);
   const [copiedGpsToast, setCopiedGpsToast] = useState(false);
+  const [deliveryLocationPhoto, setDeliveryLocationPhoto] = useState<string>('');
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [photoSavingsPercent, setPhotoSavingsPercent] = useState<number | null>(null);
 
-  // 🏠 دفتر العناوين المحفوظة للعميل
+  // 🏠 دفتر العناوين المحفوظة للعميل (بدون عناوين ديمو وهمية، ومفلترة من أي بيانات قديمة)
   const savedAddressesStorageKey = `radar_saved_addresses_${customer?.phone || store?.id || 'guest'}`;
   const [savedAddresses, setSavedAddresses] = useState<CustomerSavedAddress[]>(() => {
     try {
       const raw = localStorage.getItem(`radar_saved_addresses_${customer?.phone || store?.id || 'guest'}`);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          // استبعاد أي عناوين تجريبية سابقة (addr_home, addr_work أو عناوين الملقا التجريبية)
+          return parsed.filter((a: any) => a.id !== 'addr_home' && a.id !== 'addr_work');
+        }
+      }
     } catch {}
-    return [
-      {
-        id: 'addr_home',
-        label: 'البيت',
-        icon: 'home',
-        district: 'حي الملقا',
-        street: 'شارع الأمير محمد بن سعد',
-        building_no: 'عمارة 14 - شقة 3',
-        map_url: 'https://maps.google.com/?q=24.8015,46.6111',
-        lat: 24.8015,
-        lng: 46.6111,
-        is_default: true,
-      },
-      {
-        id: 'addr_work',
-        label: 'العمل',
-        icon: 'building',
-        district: 'طريق الملك فهد',
-        street: 'برج المملكة',
-        building_no: 'الدور 12',
-        map_url: 'https://maps.google.com/?q=24.7114,46.6744',
-        lat: 24.7114,
-        lng: 46.6744,
-      },
-    ];
+    return [];
   });
+
+  // مزامنة واسترجاع عناوين العميل المحفوظة من قاعدة البيانات عبر سجل الطلبات السابقة
+  useEffect(() => {
+    if (!pastOrders || pastOrders.length === 0) return;
+    const extracted: CustomerSavedAddress[] = [];
+    const seen = new Set<string>();
+
+    pastOrders.forEach((order: any, idx: number) => {
+      const fd = order.fulfillment_details;
+      const fType = order.order_type || order.fulfillment_type;
+      if (fType === 'delivery' && fd?.delivery_address?.trim()) {
+        const label = fd?.delivery_address_label?.trim() || 'البيت';
+        const key = `${label}_${fd.delivery_address.trim()}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          const coords = fd.delivery_gps_link ? extractCoordsFromMapUrl(fd.delivery_gps_link) : undefined;
+          extracted.push({
+            id: `past_addr_${label}_${idx}`,
+            label,
+            icon: label === 'البيت' ? 'home' : label === 'العمل' ? 'building' : 'map-pin',
+            district: fd.delivery_address.split('-')[0]?.trim() || fd.delivery_address.trim(),
+            street: fd.delivery_address.split('-')[1]?.trim() || '',
+            building_no: fd.delivery_address.split('-')[2]?.trim() || '',
+            map_url: fd.delivery_gps_link?.trim() || undefined,
+            lat: fd.delivery_lat ?? coords?.lat,
+            lng: fd.delivery_lng ?? coords?.lng,
+            photo_url: fd.delivery_location_photo || undefined,
+            created_at: order.created_at || new Date().toISOString(),
+          });
+        }
+      }
+    });
+
+    if (extracted.length > 0) {
+      setSavedAddresses((prev) => {
+        const existingKeys = new Set(prev.map((a) => `${a.label}_${[a.district, a.street, a.building_no].filter(Boolean).join(' - ')}`));
+        const toAdd = extracted.filter((e) => !existingKeys.has(`${e.label}_${[e.district, e.street, e.building_no].filter(Boolean).join(' - ')}`));
+        if (toAdd.length === 0) return prev;
+        const merged = [...prev, ...toAdd];
+        try {
+          localStorage.setItem(savedAddressesStorageKey, JSON.stringify(merged));
+        } catch {}
+        return merged;
+      });
+    }
+  }, [pastOrders, savedAddressesStorageKey]);
 
   // الفرع الفعال وموقعه الجغرافي
   const effectiveBranch = useMemo(() => {
@@ -615,12 +669,49 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setSelectedAddressId(addr.id);
     const fullText = [addr.district, addr.street, addr.building_no, addr.notes].filter(Boolean).join(' - ');
     setDeliveryAddress(fullText);
+    if (addr.label) setSaveAddressLabel(addr.label);
+    if (addr.photo_url) {
+      setDeliveryLocationPhoto(addr.photo_url);
+    }
     if (addr.map_url) {
       setDeliveryGpsLink(addr.map_url);
     } else if (addr.lat && addr.lng) {
       setDeliveryGpsLink(`https://maps.google.com/?q=${addr.lat},${addr.lng}`);
     }
     playBeepSound('notification');
+  };
+
+  const handleDeleteSavedAddress = (addrId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSavedAddresses((prev) => {
+      const updated = prev.filter((a) => a.id !== addrId);
+      try {
+        localStorage.setItem(savedAddressesStorageKey, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    if (selectedAddressId === addrId) {
+      setSelectedAddressId(null);
+    }
+  };
+
+  const handleLocationPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingPhoto(true);
+    setPhotoSavingsPercent(null);
+    try {
+      // ضغط الصورة تلقائياً بأبعاد وجودة محسوبة (WebP/JPEG) لتوفير الباندويث والمساحة
+      const result = await compressImage(file, 800, 800, 0.75, 'image/jpeg', 'delivery-locations');
+      setDeliveryLocationPhoto(result.dataUrl);
+      setPhotoSavingsPercent(result.reductionPercentage || result.savingsPercent || 0);
+      playBeepSound('success');
+    } catch (err: any) {
+      console.error('Failed to upload/compress location photo:', err);
+      alert('تعذر رفع صورة الموقع، يرجى المحاولة مرة أخرى.');
+    } finally {
+      setIsUploadingPhoto(false);
+    }
   };
 
   const handleCopyGpsLink = () => {
@@ -796,6 +887,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     document.title = store?.name || 'بطاقة الولاء';
     const mode = store?.theme_mode || 'light';
     document.documentElement.setAttribute('data-theme', mode);
+    if (mode === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    return () => {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      document.documentElement.classList.add('dark');
+      document.body.style.backgroundColor = '#080B11';
+    };
   }, [store?.name, store?.theme_mode]);
 
   useEffect(() => {
@@ -2101,9 +2202,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       const flatModifiers = getFlatSelectedServiceModifiers();
       const finalPrice = calculateServiceBookingPrice();
       const isPrepaid = Boolean(paidDetails);
+      const isAutoConfirm = store.fulfillment_settings?.booking_confirmation_mode === 'auto';
       const resolvedPaymentMethod = isPrepaid ? (paidDetails?.paymentMethod || 'online') : 'pay_at_store';
       const resolvedPaymentStatus = isPrepaid ? 'paid' : 'pending';
-      const resolvedBookingStatus = isPrepaid ? 'confirmed' : 'pending';
+      const resolvedBookingStatus = (isPrepaid || isAutoConfirm) ? 'confirmed' : 'pending';
       const pointsToEarn = Math.floor(finalPrice * (store.points_per_riyal || 1));
 
       const createdBooking = await LoyaltyService.createServiceBooking({
@@ -2425,6 +2527,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     }
 
     if (fulfillmentType === 'delivery') {
+      if (!deliveryAddress.trim()) {
+        alert('⚠️ يرجى كتابة عنوان التوصيل بالتفصيل للمتابعة وعدم تخطي الموقع.');
+        return;
+      }
+      if (!deliveryGpsLink.trim()) {
+        alert('⚠️ يرجى تحديد موقعك على الخريطة عبر زر الـ GPS لضمان وصول الكابتن لمكانك بدقة.');
+        return;
+      }
       if (availableDriversCount === 0) {
         alert('عذراً، كباتن التوصيل غير متاحين حالياً في هذا الفرع 🛵💨\nيمكنك اختيار الاستلام سفري من الفرع أو التواصل مع المتجر للتأكيد.');
         return;
@@ -2438,10 +2548,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     setSubmittingOrder(true);
 
     try {
-      if (saveThisAddress && deliveryAddress.trim()) {
+      if ((saveThisAddress || selectedAddressId) && deliveryAddress.trim()) {
         const coords = extractCoordsFromMapUrl(deliveryGpsLink);
         const newAddr: CustomerSavedAddress = {
-          id: `addr_${Date.now()}`,
+          id: selectedAddressId || `addr_${Date.now()}`,
           label: saveAddressLabel,
           icon: saveAddressLabel === 'البيت' ? 'home' : saveAddressLabel === 'العمل' ? 'building' : 'map-pin',
           district: deliveryAddress.split('-')[0]?.trim() || deliveryAddress.trim(),
@@ -2450,6 +2560,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           map_url: deliveryGpsLink.trim() || undefined,
           lat: coords?.lat,
           lng: coords?.lng,
+          photo_url: deliveryLocationPhoto.trim() || undefined,
           created_at: new Date().toISOString(),
         };
         const updated = [...savedAddresses.filter((a) => a.label !== saveAddressLabel), newAddr];
@@ -2477,7 +2588,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         customer_phone: targetCustomer.phone,
         customer_tier: currentTierObj?.tier_name,
         activation_code: activationCode,
-        items: cartItems,
+        items: cartItems.map((c) => ({
+          ...c,
+          id: c.catalog_item?.id || c.id,
+          name: c.catalog_item?.name || (c as any).name || 'صنف',
+          item_name: c.catalog_item?.name || (c as any).item_name || (c as any).name || 'صنف',
+          unit_price: c.unit_price,
+          total_price: c.total_price,
+          quantity: c.quantity,
+          notes: c.special_notes || (c as any).notes || null,
+          category: c.catalog_item?.category || (c as any).category || null,
+          item_type: c.catalog_item?.item_type || (c as any).item_type || 'product',
+        })),
         fulfillment_type: fulfillmentType,
         fulfillment_details: {
           table_number: tableNumber.trim() || undefined,
@@ -2491,9 +2613,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           delivery_lng: coords?.lng,
           delivery_distance_km: calculatedDelivery?.distance_km,
           delivery_tier_label: calculatedDelivery?.matched_tier?.label,
+          delivery_address_label: saveAddressLabel || 'البيت',
+          delivery_location_photo: deliveryLocationPhoto.trim() || undefined,
           specialist_name: specialistName.trim() || undefined,
           general_notes: generalOrderNotes.trim() || undefined,
         },
+        delivery_address: deliveryAddress.trim() || undefined,
+        delivery_gps_link: deliveryGpsLink.trim() || undefined,
         subtotal: cartSubtotal,
         delivery_fee: deliveryFee,
         total_amount: cartGrandTotal,
@@ -2856,7 +2982,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 loading="lazy"
               />
 
-              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/20 pointer-events-none"></div>
+              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/60 to-black/25 pointer-events-none"></div>
 
               <div
                 key={`content-${activeSlide.id || safeSlideIndex}`}
@@ -2877,12 +3003,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </div>
                 )}
 
-                <h2 className="font-serif font-black text-white text-lg sm:text-2xl leading-tight tracking-tight drop-shadow-lg">
+                <h2 className="keep-white font-black text-white text-lg sm:text-2xl leading-tight drop-shadow-lg" style={{ color: '#FFFFFF' }}>
                   {activeSlide.title || store.name}
                 </h2>
 
                 {activeSlide.quote && (
-                  <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-normal drop-shadow-md max-w-[95%] line-clamp-2">
+                  <p className="keep-white text-xs sm:text-sm text-slate-100 leading-relaxed font-medium drop-shadow-md max-w-[95%] line-clamp-2" style={{ color: '#F1F5F9' }}>
                     "{activeSlide.quote}"
                   </p>
                 )}
@@ -2891,7 +3017,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   <button
                     type="button"
                     onClick={() => setActiveTab('menu')}
-                    className="px-4 py-1.5 rounded-full font-black text-xs shadow-lg flex items-center gap-1.5 hover:scale-105 active:scale-95 transition"
+                    className={`px-4 py-1.5 rounded-full font-black text-xs shadow-lg flex items-center gap-1.5 hover:scale-105 active:scale-95 transition ${
+                      brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                    }`}
                     style={{
                       backgroundColor: brandSecondary,
                       color: brandColors.contrastOnSecondary,
@@ -2945,7 +3073,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-500 shrink-0">
+                  <span className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center text-emerald-500 shrink-0">
                     <MapPin className="w-4 h-4 animate-bounce" />
                   </span>
                   <div className="min-w-0">
@@ -2953,7 +3081,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       <span className={`text-[11px] font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
                         أقرب فرع لك ({proximityInfo.nearestBranchName}):
                       </span>
-                      <span className="text-xs font-black text-emerald-500 font-mono">
+                      <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 font-mono">
                         {proximityInfo.formattedDistance}
                       </span>
                     </div>
@@ -2963,8 +3091,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 text-[11px] font-bold text-amber-500 shrink-0 group-hover:translate-x-[-2px] transition-transform">
-                  <span>بطاقة المحفظة </span>
+                <div className="flex items-center gap-1.5 text-[11px] font-black text-amber-600 dark:text-amber-400 shrink-0 group-hover:translate-x-[-2px] transition-transform bg-amber-500/10 px-2.5 py-1 rounded-xl border border-amber-500/25">
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>بطاقة المحفظة</span>
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </div>
               </button>
@@ -2982,7 +3111,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             ></div>
 
             <div
-              className="relative rounded-[28px] p-5 sm:p-6 transition-all duration-300"
+              className="relative rounded-[28px] p-5 sm:p-6 transition-all duration-300 vip-card-shine"
               style={{
                 background: brandColors.cardGradient,
                 boxShadow: brandColors.cardBoxShadow,
@@ -2994,16 +3123,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <div className="relative z-10 flex items-center justify-between gap-3">
                 <div className="text-right">
                   <h3
-                    className="font-serif font-black text-base sm:text-lg tracking-tight leading-tight"
+                    className={`font-black text-base sm:text-lg leading-tight ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`}
                     style={{ color: brandColors.cardTextColor }}
                   >
                     {store.name}
                   </h3>
                   <p
-                    className="text-[11px] font-bold font-mono mt-0.5"
+                    className="text-[11px] font-bold font-mono mt-0.5 flex items-center gap-1.5 flex-wrap"
                     style={{ color: brandColors.cardSubtextColor }}
                   >
-                    {currentTierObj?.tier_name ? `VIP ${currentTierObj.tier_name}` : 'VIP GOLD'} · PASS ID {customer?.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-DEMO01'}
+                    <span>{currentTierObj?.tier_name ? `عضوية ${currentTierObj.tier_name}` : 'عضوية مميزة'}</span>
+                    <span>•</span>
+                    <span dir="ltr">#{customer?.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-DEMO01'}</span>
                   </p>
                 </div>
 
@@ -3029,25 +3160,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
 
               {/* Massive Points Display */}
-              <div className="relative z-10 my-3 text-center">
+              <div className="relative z-10 my-3.5 text-center">
                 <div
-                  className="text-[44px] sm:text-[48px] font-black font-mono tracking-tight leading-none"
+                  className={`text-[44px] sm:text-[50px] font-black font-mono leading-none ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`}
                   style={{ color: brandColors.cardTextColor }}
                 >
                   {customer?.wallet_balance?.toLocaleString() ?? '0'}
                 </div>
                 <div
-                  className="text-xs font-black mt-0.5"
+                  className="text-xs font-black mt-1"
                   style={{ color: brandColors.cardSubtextColor }}
                 >
-                  نقطة
+                  نقطة ولاء
                 </div>
               </div>
 
               {/* Progress Bar & XP Remaining */}
               <div className="relative z-10 space-y-1.5 my-2">
                 <div
-                  className="w-full h-2 rounded-full overflow-hidden p-[1px] shadow-inner"
+                  className="w-full h-2.5 rounded-full overflow-hidden p-[2px] shadow-inner"
                   style={{
                     backgroundColor: brandColors.isPrimaryLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(255, 255, 255, 0.15)',
                     border: `1px solid ${brandColors.cardBorderColor}`,
@@ -3068,7 +3199,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 >
                   {nextTierObj ? (
                     <span>
-                      باقي <strong className="font-mono font-black">{xpNeeded} XP</strong> للوصول إلى {nextTierObj.tier_name}
+                      باقي <strong className={`font-mono font-black ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`} style={{ color: brandColors.cardTextColor }}>{xpNeeded} XP</strong> للوصول إلى {nextTierObj.tier_name}
                     </span>
                   ) : (
                     <span>وصلت لأعلى مستوى ملكي 👑</span>
@@ -3082,7 +3213,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <button
                   type="button"
                   onClick={() => setShowHowToEarnPoints(true)}
-                  className="flex-1 py-2.5 px-3 rounded-full font-black text-xs transition active:scale-95 shadow-sm text-center"
+                  className={`flex-1 py-2.5 px-3 rounded-full font-black text-xs transition hover:scale-[1.02] active:scale-95 shadow-sm text-center ${
+                    !brandColors.isPrimaryLight ? 'keep-white' : ''
+                  }`}
                   style={{
                     backgroundColor: brandColors.howButtonBg,
                     border: `1px solid ${brandColors.howButtonBorder}`,
@@ -3092,7 +3225,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   كيف أجمع نقاط؟
                 </button>
 
-                {/* 2. Left Button (RTL): "إظهار الـ QR" / "إخفاء الرمز" */}
+                {/* 2. Left Button (RTL): "إظهار رمز الباركود" / "إخفاء الرمز" */}
                 <button
                   type="button"
                   onClick={() => {
@@ -3103,7 +3236,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       setShowEmbeddedQR(!showEmbeddedQR);
                     }
                   }}
-                  className={`flex-1 py-2.5 px-3 rounded-full font-black text-xs transition active:scale-95 shadow-md flex items-center justify-center gap-1.5 text-center ${
+                  className={`flex-1 py-2.5 px-3 rounded-full font-black text-xs transition hover:scale-[1.02] active:scale-95 shadow-md flex items-center justify-center gap-1.5 text-center ${
                     brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
                   }`}
                   style={{
@@ -3116,29 +3249,31 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   <QrCode className="w-3.5 h-3.5" />
                   <span>
                     {selectedCouponForQR
-                      ? 'العودة لـ QR الزيارة'
+                      ? 'العودة لباركود الزيارة'
                       : showEmbeddedQR
                       ? 'إخفاء الرمز'
-                      : 'إظهار الـ QR'}
+                      : 'إظهار رمز الباركود'}
                   </span>
                 </button>
               </div>
             </div>
           </div>
 
-          {/* 📱 1-Click Add to Apple Wallet & Google Wallet Strip */}
-          <div className="relative z-20 mt-3 grid grid-cols-2 gap-2.5">
+          {/* 📱 1-Click Add to Apple Wallet & Google Wallet Strip (Arabic + Vector SVGs) */}
+          <div className="relative z-10 my-4 grid grid-cols-2 gap-3">
             <button
               type="button"
               onClick={() => {
                 setWalletPassPlatform('apple');
                 setIsWalletPassModalOpen(true);
               }}
-              className="py-2.5 px-3 rounded-2xl bg-black hover:bg-neutral-900 border border-black text-white keep-white font-black text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-95 group"
+              className="py-3 px-3 rounded-2xl bg-black hover:bg-neutral-900 border border-black/80 text-white keep-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition hover:scale-[1.02] active:scale-95 group"
               style={{ backgroundColor: '#000000', color: '#FFFFFF' }}
             >
-              <span className="text-base group-hover:scale-110 transition-transform keep-white text-white" style={{ color: '#FFFFFF' }}></span>
-              <span className="truncate keep-white text-white" style={{ color: '#FFFFFF' }}>Add to Apple Wallet</span>
+              <svg className="w-4 h-4 fill-white shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 384 512">
+                <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+              </svg>
+              <span className="truncate keep-white text-white" style={{ color: '#FFFFFF' }}>إضافة لمحفظة آبل</span>
             </button>
 
             <button
@@ -3147,34 +3282,49 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 setWalletPassPlatform('google');
                 setIsWalletPassModalOpen(true);
               }}
-              className={`py-2.5 px-3 rounded-2xl border font-black text-xs flex items-center justify-center gap-2 shadow-sm transition active:scale-95 group ${
+              className={`py-3 px-3 rounded-2xl border font-black text-xs flex items-center justify-center gap-2 shadow-sm transition hover:scale-[1.02] active:scale-95 group ${
                 isDarkTheme
                   ? 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-white'
                   : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-900 shadow-sm'
               }`}
             >
-              <span className="text-sm font-bold text-blue-500 group-hover:scale-110 transition-transform">G</span>
-              <span className="truncate">Save to Google Wallet</span>
+              <svg className="w-4 h-4 shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
+                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24z" />
+                <path fill="#FBBC05" d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14z" />
+                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z" />
+              </svg>
+              <span className="truncate">حفظ في محفظة قوقل</span>
             </button>
           </div>
 
           {/* Active Privilege/Coupon Notice if selected */}
           {selectedCouponForQR && (
             <div
-              className="p-3.5 rounded-2xl border flex items-center justify-between gap-3 animate-fade-in shadow-lg"
+              className={`p-4 rounded-2xl border flex items-center justify-between gap-3 animate-fade-in shadow-md ${
+                isDarkTheme ? 'bg-slate-900/95 border-slate-800' : 'bg-white border-slate-200'
+              }`}
               style={{
-                backgroundColor: `${brandSecondary}18`,
-                borderColor: `${brandSecondary}45`,
+                borderInlineStartWidth: '4px',
+                borderInlineStartColor: safeAccentText,
               }}
             >
-              <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
-                <Ticket className="w-5 h-5 shrink-0" style={{ color: brandSecondary }} />
-                <div>
-                  <h4 className="text-xs font-black text-white">
-                    جاهز لصرف امتياز: <span style={{ color: brandSecondary }}>{selectedCouponForQR.privilege_title}</span>
+              <div className="flex items-center space-x-3 rtl:space-x-reverse min-w-0">
+                <div
+                  className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-inner"
+                  style={{
+                    backgroundColor: `${safeAccentFill}20`,
+                    color: safeAccentText,
+                  }}
+                >
+                  <Ticket className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h4 className={`text-xs sm:text-sm font-black truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                    جاهز لصرف امتياز: <span style={{ color: safeAccentText }}>{selectedCouponForQR.privilege_title}</span>
                   </h4>
-                  <p className="text-[10px] text-slate-300 font-mono">
-                    كود: {selectedCouponForQR.coupon_code} | الساعات:{' '}
+                  <p className={`text-[10px] sm:text-[11px] font-mono mt-0.5 truncate ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                    كود: <strong className={isDarkTheme ? 'text-slate-200' : 'text-slate-900'}>{selectedCouponForQR.coupon_code}</strong> | الساعات:{' '}
                     {selectedCouponForQR.valid_start_time
                       ? `${selectedCouponForQR.valid_start_time} - ${selectedCouponForQR.valid_end_time}`
                       : 'متاح 24/7'}
@@ -3183,11 +3333,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               </div>
 
               <button
+                type="button"
                 onClick={() => {
                   setSelectedCouponForQR(null);
                   if (customer) regenerateToken(customer, null);
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-900 text-slate-300 text-[11px] font-bold border border-slate-700 shrink-0 transition"
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold border shrink-0 transition active:scale-95 ${
+                  isDarkTheme
+                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300 shadow-sm'
+                }`}
               >
                 إلغاء
               </button>
@@ -3196,10 +3351,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
           {/* 🌟 Dedicated Coupon Redemption Card (يظهر الكوبون تحت الشريط جاهزاً للصرف فوراً) */}
           {selectedCouponForQR && (
-            <div className="p-6 rounded-3xl bg-slate-900/95 border border-slate-800 backdrop-blur-2xl text-center space-y-4 shadow-2xl animate-fade-in">
+            <div className={`p-6 rounded-3xl border text-center space-y-4 shadow-xl animate-fade-in ${
+              isDarkTheme
+                ? 'bg-slate-900/95 border-slate-800 backdrop-blur-2xl'
+                : 'bg-white border-slate-200 shadow-lg'
+            }`}>
               <div className="flex items-center justify-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                <p className="text-xs font-black text-emerald-400 font-mono">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <p className={`text-xs font-black ${isDarkTheme ? 'text-emerald-400' : 'text-emerald-700'}`}>
                   🎟️ أبرز هذا الرمز للكاشير لصرف الامتياز فوراً
                 </p>
               </div>
@@ -3207,87 +3366,127 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               {/* Large High-Contrast White QR Card */}
               <div
                 onClick={() => setIsFullscreenQR(true)}
-                className="w-56 h-56 mx-auto p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 transition-transform border-4 border-slate-800 relative group/qr"
+                className={`w-56 h-56 mx-auto p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 transition-transform border-4 relative group/qr overflow-hidden ${
+                  isDarkTheme ? 'border-slate-800' : 'border-slate-200'
+                }`}
                 title="انقر لتكبير الكود"
               >
+                <div className="laser-beam" />
                 <QRCodeSVG
                   value={isCouponFrozen ? 'FROZEN' : selectedCouponForQR.coupon_code}
                   size={190}
                   level="M"
                   includeMargin={false}
                 />
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/qr:opacity-100 transition-opacity rounded-3xl flex items-center justify-center text-white text-xs font-bold gap-1">
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/qr:opacity-100 transition-opacity rounded-3xl flex items-center justify-center text-white keep-white text-xs font-bold gap-1">
                   <Maximize2 className="w-4 h-4" />
                   <span>تكبير الرمز</span>
                 </div>
               </div>
 
               {/* Coupon Code Box with Copy */}
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black/60 border border-white/10 shadow-inner">
-                <span className="text-[11px] text-slate-400 font-medium">رمز الكوبون:</span>
-                <span className="text-sm font-black text-amber-400 font-mono tracking-wider">
+              <div className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-2xl border shadow-inner ${
+                isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <span className={`text-[11px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                  رمز الكوبون:
+                </span>
+                <span
+                  className="text-sm font-black font-mono tracking-wider select-all"
+                  style={{ color: safeAccentText }}
+                >
                   {selectedCouponForQR.coupon_code}
                 </span>
                 <button
                   type="button"
                   onClick={() => copyToClipboard(selectedCouponForQR.coupon_code, `cpn-${selectedCouponForQR.id}`)}
-                  className="text-[10px] bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg text-slate-200 transition font-sans font-bold"
+                  className={`text-[11px] px-3 py-1 rounded-xl transition font-black flex items-center gap-1 shadow-sm active:scale-95 ${
+                    isDarkTheme
+                      ? 'bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700'
+                      : 'bg-white hover:bg-slate-100 text-slate-800 border border-slate-300'
+                  }`}
                 >
-                  {copiedCodeKey === `cpn-${selectedCouponForQR.id}` ? '✓ تم النسخ' : 'نسخ'}
+                  {copiedCodeKey === `cpn-${selectedCouponForQR.id}` ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-500" />
+                      <span className="text-emerald-600">تم النسخ</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3 text-slate-400" />
+                      <span>نسخ</span>
+                    </>
+                  )}
                 </button>
               </div>
 
               {/* Time lock notice if frozen */}
               {isCouponFrozen && (
-                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs text-center font-bold">
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-300 text-xs text-center font-bold">
                   {timeLockCheck.message || 'عذراً، هذا الكوبون غير متاح للصرف في الوقت الحالي ⏰'}
                 </div>
               )}
 
               {/* Validity and Details */}
-              <div className="text-[11px] text-slate-400 space-y-1 pt-1 border-t border-slate-800/80">
+              <div className={`text-[11px] space-y-1 pt-1 border-t ${
+                isDarkTheme ? 'text-slate-400 border-slate-800/80' : 'text-slate-600 border-slate-200'
+              }`}>
                 <p>
-                  صالح للاستخدام لمرة واحدة لدى متجر <strong className="text-white">{store.name}</strong>
+                  صالح للاستخدام لمرة واحدة لدى متجر{' '}
+                  <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{store.name}</strong>
                 </p>
-                <p className="font-mono text-slate-500">
+                <p className={`font-mono ${isDarkTheme ? 'text-slate-500' : 'text-slate-500'}`}>
                   ساعات الصرف: {selectedCouponForQR.valid_start_time ? `${selectedCouponForQR.valid_start_time} - ${selectedCouponForQR.valid_end_time}` : 'متاح 24/7'}
                 </p>
               </div>
             </div>
           )}
 
-          {/* 🌟 Member Regular QR Code Card (Shows smoothly when clicking "إظهار الـ QR") */}
+          {/* 🌟 Member Regular QR Code Card (Shows smoothly when clicking "إظهار رمز الباركود") */}
           {!selectedCouponForQR && showEmbeddedQR && (
-            <div className="p-6 rounded-3xl bg-slate-900/95 border border-slate-800 backdrop-blur-2xl text-center space-y-4 shadow-2xl animate-fade-in">
-              <p className="text-xs font-bold text-slate-300">
+            <div className={`p-6 rounded-3xl border text-center space-y-4 shadow-2xl animate-fade-in ${
+              isDarkTheme
+                ? 'bg-slate-900/95 border-slate-800 backdrop-blur-2xl'
+                : 'bg-white border-slate-200 shadow-xl'
+            }`}>
+              <p className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                 أبرز الرمز للكاشير لتسجيل زيارتك وكسب النقاط
               </p>
 
               {/* Large High-Contrast White QR Card */}
               <div
                 onClick={() => setIsFullscreenQR(true)}
-                className="w-56 h-56 mx-auto p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 transition-transform border-4 border-slate-800 relative group/qr"
+                className={`w-56 h-56 mx-auto p-4 rounded-3xl bg-white shadow-2xl flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 transition-transform border-4 relative group/qr overflow-hidden ${
+                  isDarkTheme ? 'border-slate-800' : 'border-slate-200'
+                }`}
                 title="انقر لتكبير الكود"
               >
+                <div className="laser-beam" />
                 <QRCodeSVG
                   value={qrDataPayload}
                   size={190}
                   level="M"
                   includeMargin={false}
                 />
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/qr:opacity-100 transition-opacity rounded-3xl flex items-center justify-center text-white text-xs font-bold gap-1">
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/qr:opacity-100 transition-opacity rounded-3xl flex items-center justify-center text-white keep-white text-xs font-bold gap-1">
                   <Maximize2 className="w-4 h-4" />
                   <span>تكبير الرمز</span>
                 </div>
               </div>
 
               {/* Countdown Timer and Refresh */}
-              <div className="flex items-center justify-center gap-2 text-xs text-slate-400 font-mono">
+              <div className={`flex items-center justify-center gap-2 text-xs ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                 <span>يتجدد خلال</span>
-                <strong className="text-white font-black" style={{ color: brandSecondary }}>
+                <strong
+                  className="px-2 py-0.5 rounded-lg font-black font-mono"
+                  style={{
+                    backgroundColor: `${safeAccentFill}18`,
+                    color: safeAccentText,
+                  }}
+                >
                   {timeLeft} ثانية
                 </strong>
-                <span>·</span>
+                <span>•</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -3296,21 +3495,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       playBeepSound('success');
                     }
                   }}
-                  className="hover:text-white transition flex items-center gap-1 font-sans text-slate-400 hover:underline"
+                  className={`transition flex items-center gap-1 font-bold hover:underline ${
+                    isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
                 >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>اضغط لتحديثه</span>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>تحديث الرمز</span>
                 </button>
               </div>
 
-              <p className="text-[10px] text-slate-500 font-medium">
-                كود العضو: {customer?.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-DEMO01'}
+              <p className={`text-[11px] font-bold ${isDarkTheme ? 'text-slate-500' : 'text-slate-600'}`} dir="ltr">
+                VIP-{customer?.phone ? customer.phone.slice(-6) : 'DEMO01'}
               </p>
             </div>
           )}
 
           {!customer && (
-            <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 backdrop-blur-xl text-center space-y-3.5 shadow-xl">
+            <div className={`p-6 rounded-3xl border text-center space-y-4 shadow-xl ${
+              isDarkTheme ? 'bg-slate-900/90 border-slate-800 backdrop-blur-xl' : 'bg-white border-slate-200 shadow-lg'
+            }`}>
               <div
                 className="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-lg border"
                 style={{
@@ -3322,9 +3525,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 👑
               </div>
               <div className="space-y-1">
-                <h3 className="text-base font-black text-white">بطاقة العضوية والولاء الرقمية</h3>
-                <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">
-                  سجّل رقم جوالك لربط بطاقتك الخاصة بمتجر <strong className="text-white">{store.name}</strong>، لتكسب النقاط وتستبدل الجوائز مع كل زيارة!
+                <h3 className={`text-base font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>بطاقة العضوية والولاء الرقمية</h3>
+                <p className={`text-xs leading-relaxed max-w-xs mx-auto ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
+                  سجّل رقم جوالك لربط بطاقتك الخاصة بمتجر{' '}
+                  <strong className={isDarkTheme ? 'text-white font-bold' : 'text-slate-900 font-bold'}>{store.name}</strong>
+                  ، لتكسب النقاط وتستبدل الجوائز مع كل زيارة!
                 </p>
               </div>
 
@@ -3335,10 +3540,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   setShowLoginModal(true);
                 }}
                 style={{
-                  backgroundColor: brandSecondary,
-                  color: '#000000',
+                  backgroundColor: safeAccentFill,
+                  color: safeAccentFillContrast,
                 }}
-                className="w-full py-3 rounded-2xl font-black text-xs sm:text-sm shadow-xl flex items-center justify-center gap-2 transition hover:scale-[1.02] active:scale-95"
+                className={`w-full py-3.5 rounded-2xl font-black text-xs sm:text-sm shadow-xl flex items-center justify-center gap-2 transition hover:scale-[1.02] active:scale-95 ${
+                  safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                }`}
               >
                 <QrCode className="w-4 h-4" />
                 <span>تسجيل الدخول / فتح بطاقتي 🚀</span>
@@ -3402,6 +3609,70 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               )}
             </div>
 
+            {/* 🛵 Live Active Order Status Banner on Main Screen */}
+            {(() => {
+              const liveOrd: any = pastOrders.find(
+                (o: any) => o && o.status && !['completed', 'cancelled'].includes(o.status)
+              );
+              if (!liveOrd) return null;
+              const isDeliv = (liveOrd.order_type || liveOrd.fulfillment_type) === 'delivery';
+              const isPickedUp = liveOrd.delivery_status === 'picked_up';
+              const ordNum = String(liveOrd.order_number || liveOrd.order_id || liveOrd.id || '').replace(/^ORD-/i, '').slice(-5);
+
+              let statusLabel = '⏳ بانتظار تأكيد المطعم لطلبك...';
+              let stepDot = 1;
+              if (isPickedUp) {
+                statusLabel = `🛵 الكابتن (${liveOrd.driver_name || 'المندوب'}) في الطريق إليك الآن!`;
+                stepDot = 4;
+              } else if (liveOrd.status === 'ready') {
+                statusLabel = isDeliv
+                  ? `📦 طلبك جاهز بانتظار انطلاق الكابتن ${liveOrd.driver_name || ''}`
+                  : '✅ طلبك جاهز للاستلام من الفرع!';
+                stepDot = 3;
+              } else if (liveOrd.status === 'accepted' || liveOrd.status === 'preparing') {
+                statusLabel = `👨‍🍳 جاري تحضير طلبك بالمطبخ${liveOrd.driver_name ? ` • الكابتن: ${liveOrd.driver_name}` : ''}`;
+                stepDot = 2;
+              }
+
+              return (
+                <div
+                  onClick={() => setShowPastOrdersModal(true)}
+                  className={`p-3.5 rounded-2xl border-2 shadow-lg flex flex-col gap-2 cursor-pointer transition-all hover:scale-[1.01] animate-fade-in ${
+                    isDarkTheme
+                      ? 'bg-slate-900/95 border-amber-500/50 text-white'
+                      : 'bg-white border-amber-500/60 text-slate-900 shadow-md'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping shrink-0" />
+                      <span className="text-[11px] font-mono font-black px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0" dir="ltr">
+                        #ORD-{ordNum}
+                      </span>
+                      <span className={`text-xs font-black leading-snug ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                        {statusLabel}
+                      </span>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-xl bg-amber-500 text-slate-950 text-[10px] font-black shrink-0 shadow-sm flex items-center gap-1">
+                      <span>تتبع</span>
+                      <ChevronLeft className="w-3 h-3" />
+                    </span>
+                  </div>
+                  {/* Mini Progress Bar */}
+                  <div className="grid grid-cols-4 gap-1.5 pt-0.5">
+                    {[1, 2, 3, 4].map((d) => (
+                      <div
+                        key={d}
+                        className={`h-1 rounded-full transition-all duration-500 ${
+                          d <= stepDot ? 'bg-amber-500' : isDarkTheme ? 'bg-slate-800' : 'bg-slate-200'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Branch Selector if multiple branches */}
             {branches.length > 1 && (
               <div className={`space-y-1.5 p-2.5 rounded-2xl border ${
@@ -3409,16 +3680,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               }`}>
                 <div className="flex items-center justify-between text-xs font-bold">
                   <span className={`flex items-center gap-1.5 text-[11px] ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
-                    <Building2 className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
+                    <Building2 className="w-3.5 h-3.5" style={{ color: safeAccentText }} />
                     <span>فرع الطلب:</span>
                   </span>
                   {selectedBranch && (
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-black border flex items-center gap-1 ${
                       branchStatus.isOpen
-                        ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30'
-                        : 'bg-rose-500/15 text-rose-500 border-rose-500/30'
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                        : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30'
                     }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${branchStatus.isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full ${branchStatus.isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
                       <span>{branchStatus.isOpen ? 'مفتوح للطلبات' : 'مغلق حالياً'}</span>
                     </span>
                   )}
@@ -3435,12 +3706,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         onClick={() => setSelectedBranch(b)}
                         className={`px-3 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border ${
                           isSel
-                            ? 'bg-slate-900 text-white shadow-md'
+                            ? `shadow-md font-black ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
                             : isDarkTheme
                             ? 'bg-white/[0.04] text-slate-400 border-white/[0.06] hover:text-white'
                             : 'bg-slate-100 text-slate-700 border-slate-200 hover:text-slate-900'
                         }`}
-                        style={isSel ? { borderColor: brandSecondary, color: '#ffffff' } : undefined}
+                        style={isSel ? { backgroundColor: safeAccentFill, borderColor: safeAccentFill, color: safeAccentFillContrast } : undefined}
                       >
                         <span className={`w-1.5 h-1.5 rounded-full ${bStatus.isOpen ? 'bg-emerald-400' : 'bg-rose-500'}`} />
                         <span>{b.name}</span>
@@ -3459,15 +3730,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 style={
                   selectedCategory === 'ALL'
                     ? {
-                        background: brandColors.fabGradient,
-                        color: brandColors.contrastOnSecondary,
-                        boxShadow: `0 4px 15px -2px ${brandSecondary}70`,
+                        backgroundColor: safeAccentFill,
+                        color: safeAccentFillContrast,
+                        boxShadow: `0 4px 14px -2px ${safeAccentFill}50`,
                       }
                     : undefined
                 }
                 className={`px-4 py-2 rounded-full font-black transition whitespace-nowrap flex items-center gap-1.5 ${
                   selectedCategory === 'ALL'
-                    ? 'scale-105'
+                    ? `scale-105 ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
                     : isDarkTheme
                     ? 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
                     : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-sm'
@@ -3487,15 +3758,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     style={
                       isSelected
                         ? {
-                            background: brandColors.fabGradient,
-                            color: brandColors.contrastOnSecondary,
-                            boxShadow: `0 4px 15px -2px ${brandSecondary}70`,
+                            backgroundColor: safeAccentFill,
+                            color: safeAccentFillContrast,
+                            boxShadow: `0 4px 14px -2px ${safeAccentFill}50`,
                           }
                         : undefined
                     }
                     className={`px-4 py-2 rounded-full font-black transition whitespace-nowrap flex items-center gap-1.5 ${
                       isSelected
-                        ? 'scale-105'
+                        ? `scale-105 ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
                         : isDarkTheme
                         ? 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
                         : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-sm'
@@ -3532,14 +3803,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 return (
                   <div
                     key={item.id}
+                    onClick={() => {
+                      if (hasModifiers) handleOpenCustomizeModal(item);
+                      else handleQuickAddToCart(item);
+                    }}
                     className={`${
                       isDarkTheme
                         ? 'frosted-glass-capsule hover:border-white/20'
-                        : 'bg-white border border-slate-200/90 shadow-sm hover:shadow-md hover:border-slate-300'
-                    } rounded-[22px] overflow-hidden flex flex-col justify-between transition-all duration-300 shadow-xl group/card relative`}
+                        : 'bg-white border border-slate-200/90 shadow-sm hover:shadow-lg hover:border-slate-300'
+                    } rounded-[22px] overflow-hidden flex flex-col justify-between transition-all duration-300 hover:-translate-y-0.5 cursor-pointer group/card relative`}
                   >
                     {/* Item Image with Floating Points Badge */}
-                    <div className={`relative h-28 sm:h-32 w-full overflow-hidden ${isDarkTheme ? 'bg-black/40' : 'bg-slate-50'}`}>
+                    <div
+                      className="relative h-28 sm:h-32 w-full overflow-hidden"
+                      style={{
+                        background: isDarkTheme
+                          ? `radial-gradient(circle at center, ${safeAccentFill}22 0%, #090D16 100%)`
+                          : `radial-gradient(circle at center, ${brandSecondary}35 0%, #F1F5F9 100%)`,
+                      }}
+                    >
                       {item.image_url ? (
                         <img
                           src={item.image_url}
@@ -3548,18 +3830,22 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           loading="lazy"
                         />
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center text-3xl">
-                          🍔
+                        <div className="w-full h-full flex items-center justify-center">
+                          <div className="w-14 h-14 rounded-2xl bg-white/80 dark:bg-slate-900/70 backdrop-blur-md border border-black/5 dark:border-white/10 shadow-md flex items-center justify-center text-3xl group-hover/card:scale-110 transition-transform duration-300">
+                            🍔
+                          </div>
                         </div>
                       )}
 
                       {/* Earned Points Badge (Top Right) */}
                       {earnedPoints > 0 && (
                         <div
-                          className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-black shadow-lg"
+                          className={`absolute top-2 right-2 px-2.5 py-0.5 rounded-full text-[10px] font-black shadow-md ${
+                            safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                          }`}
                           style={{
-                            backgroundColor: brandSecondary,
-                            color: brandColors.contrastOnSecondary,
+                            backgroundColor: safeAccentFill,
+                            color: safeAccentFillContrast,
                           }}
                         >
                           +{earnedPoints} نقطة
@@ -3584,11 +3870,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           if (hasModifiers) handleOpenCustomizeModal(item);
                           else handleQuickAddToCart(item);
                         }}
-                        className="absolute bottom-2 left-2 w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition transform active:scale-90 hover:scale-110 z-10"
+                        className={`absolute bottom-2 left-2 w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition transform active:scale-90 hover:scale-110 z-10 ${
+                          safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                        }`}
                         style={{
-                          backgroundColor: brandSecondary,
-                          color: brandColors.contrastOnSecondary,
-                          boxShadow: `0 4px 14px ${brandSecondary}50`,
+                          backgroundColor: safeAccentFill,
+                          color: safeAccentFillContrast,
+                          boxShadow: `0 4px 14px ${safeAccentFill}50`,
                         }}
                         title={hasModifiers ? 'تخصيص الصنف' : 'إضافة سريعة'}
                       >
@@ -3609,10 +3897,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         )}
                       </div>
 
-                      <div className={`flex items-baseline justify-between pt-1 border-t ${isDarkTheme ? 'border-white/5' : 'border-slate-100'}`}>
+                      <div className={`flex items-baseline justify-between pt-1.5 border-t ${isDarkTheme ? 'border-white/5' : 'border-slate-100'}`}>
                         <div className="flex items-baseline gap-1">
                           <span
-                            className={`font-mono font-black text-sm sm:text-base tracking-tight ${
+                            className={`font-mono font-black text-sm sm:text-base ${
                               isDarkTheme ? 'text-white' : 'text-slate-900'
                             }`}
                           >
@@ -3621,7 +3909,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>ر.س</span>
                         </div>
 
-                        <span className={`text-[9px] font-mono ${isDarkTheme ? 'text-slate-500' : 'text-slate-400'}`}>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${isDarkTheme ? 'bg-white/5 text-slate-400' : 'bg-slate-100 text-slate-600'}`}>
                           {item.category || 'وجبة'}
                         </span>
                       </div>
@@ -3655,19 +3943,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         return (
           <div className="space-y-4 animate-fade-in pb-36">
             {/* Header Card */}
-            <div className="p-3.5 sm:p-4 rounded-3xl bg-slate-900/80 border border-white/[0.08] backdrop-blur-xl space-y-3 shadow-xl">
+            <div className={`p-4 sm:p-5 rounded-3xl border space-y-3.5 shadow-md ${
+              isDarkTheme ? 'bg-slate-900/80 border-white/[0.08] backdrop-blur-xl' : 'bg-white border-slate-200/90'
+            }`}>
               <div className="flex items-center justify-between">
-                <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
-                  <Calendar className="w-5 h-5" style={{ color: brandSecondary }} />
+                <h3 className={`text-base sm:text-lg font-black flex items-center gap-2 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                  <Calendar className="w-5 h-5" style={{ color: safeAccentText }} />
                   <span>حجز المواعيد والخدمات</span>
                 </h3>
               </div>
 
               {/* 🏢 Smart Branch Capsule (Only visible when multiple branches exist) */}
               {branches.length > 1 && (
-                <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.07] backdrop-blur-md">
-                  <div className="flex items-center gap-1.5 px-2 text-slate-400 text-xs font-bold shrink-0">
-                    <Building2 className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
+                <div className={`flex items-center gap-2 p-1.5 rounded-2xl border ${
+                  isDarkTheme ? 'bg-white/[0.03] border-white/[0.07]' : 'bg-slate-50 border-slate-200'
+                }`}>
+                  <div className={`flex items-center gap-1.5 px-2 text-xs font-bold shrink-0 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                    <Building2 className="w-3.5 h-3.5" style={{ color: safeAccentText }} />
                     <span>الفرع:</span>
                   </div>
                   <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5">
@@ -3680,10 +3972,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           onClick={() => setSelectedBranch(b)}
                           className={`px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 border ${
                             isSel
-                              ? 'text-black shadow-md font-black scale-[1.02]'
-                              : 'bg-white/[0.04] text-slate-400 hover:text-white border-white/[0.06] hover:bg-white/[0.08]'
+                              ? `shadow-md font-black scale-[1.02] ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
+                              : isDarkTheme
+                              ? 'bg-white/[0.04] text-slate-400 hover:text-white border-white/[0.06]'
+                              : 'bg-white text-slate-600 hover:text-slate-900 border-slate-200'
                           }`}
-                          style={isSel ? { backgroundColor: brandSecondary, borderColor: brandSecondary } : undefined}
+                          style={isSel ? { backgroundColor: safeAccentFill, borderColor: safeAccentFill, color: safeAccentFillContrast } : undefined}
                         >
                           <span>{b.name}</span>
                         </button>
@@ -3695,16 +3989,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
               {/* 🚀 Sleek Horizontal Stepper */}
               {!bookingSuccessData && (
-                <div className="pt-1 pb-1 px-1">
+                <div className="pt-1 pb-1 px-2">
                   <div className="relative flex items-center justify-between">
                     {/* Background track line */}
-                    <div className="absolute top-3.5 left-4 right-4 h-0.5 bg-white/[0.08] -translate-y-1/2 z-0" />
+                    <div className={`absolute top-4 left-5 right-5 h-0.5 -translate-y-1/2 z-0 ${
+                      isDarkTheme ? 'bg-white/10' : 'bg-slate-200'
+                    }`} />
                     {/* Active progress track line */}
                     <div
-                      className="absolute top-3.5 right-4 h-0.5 -translate-y-1/2 z-0 transition-all duration-500 ease-out"
+                      className="absolute top-4 right-5 h-0.5 -translate-y-1/2 z-0 transition-all duration-500 ease-out"
                       style={{
                         width: `calc(${progressPercent}% * 0.85)`,
-                        background: `linear-gradient(to left, ${brandSecondary}, ${brandSecondary}99)`,
+                        backgroundColor: safeAccentFill,
                       }}
                     />
 
@@ -3728,37 +4024,40 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             if (canClick) setBookingStep(s.step);
                           }}
                           className={`relative z-10 flex flex-col items-center gap-1.5 transition-all duration-300 ${
-                            !canClick ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:scale-105'
+                            !canClick ? 'cursor-not-allowed opacity-45' : 'cursor-pointer hover:scale-105'
                           }`}
                         >
                           <div
-                            className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-[10px] sm:text-xs font-black transition-all duration-300 ${
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-black transition-all duration-300 ${
                               isCurrent
-                                ? 'text-black shadow-lg scale-110'
+                                ? `shadow-lg scale-110 ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
                                 : isPast
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm'
-                                : 'bg-slate-900 text-slate-500 border border-white/10'
+                                ? 'bg-emerald-500 text-white keep-white border border-emerald-600 shadow-sm'
+                                : isDarkTheme
+                                ? 'bg-slate-900 text-slate-400 border border-white/15'
+                                : 'bg-slate-100 text-slate-600 border border-slate-300'
                             }`}
                             style={
                               isCurrent
                                 ? {
-                                    backgroundColor: brandSecondary,
-                                    boxShadow: `0 4px 14px ${brandSecondary}50`,
+                                    backgroundColor: safeAccentFill,
+                                    color: safeAccentFillContrast,
+                                    boxShadow: `0 4px 14px ${safeAccentFill}45`,
                                   }
                                 : undefined
                             }
                           >
-                            {isPast ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : idx + 1}
+                            {isPast ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
                           </div>
                           <span
-                            className={`text-[10px] sm:text-[11px] font-bold tracking-tight transition-colors duration-200 ${
+                            className={`text-[11px] transition-colors duration-200 ${
                               isCurrent
                                 ? 'font-black'
                                 : isPast
-                                ? 'text-slate-300'
-                                : 'text-slate-500'
+                                ? isDarkTheme ? 'font-bold text-emerald-400' : 'font-bold text-emerald-700'
+                                : isDarkTheme ? 'font-bold text-slate-400' : 'font-bold text-slate-500'
                             }`}
-                            style={isCurrent ? { color: brandSecondary } : undefined}
+                            style={isCurrent ? { color: safeAccentText } : undefined}
                           >
                             {s.label}
                           </span>
@@ -3771,25 +4070,27 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
 
             {bookingSuccessData ? (
-              <div className="p-6 rounded-3xl bg-white/[0.03] border border-emerald-500/40 text-center space-y-4 shadow-2xl backdrop-blur-xl animate-fade-in">
-                <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto text-3xl shadow-inner">
+              <div className={`p-6 rounded-3xl border border-emerald-500/40 text-center space-y-4 shadow-2xl animate-fade-in ${
+                isDarkTheme ? 'bg-white/[0.03] backdrop-blur-xl' : 'bg-white'
+              }`}>
+                <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-500 mx-auto text-3xl shadow-inner">
                   {bookingSuccessData.status === 'confirmed' ? '✅' : bookingSuccessData.status === 'cancelled' ? '❌' : '⏳'}
                 </div>
                 <div>
                   <span
-                    className={`px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    className={`px-3 py-0.5 rounded-full text-[10px] font-black ${
                       bookingSuccessData.status === 'confirmed'
-                        ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
+                        ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
                         : bookingSuccessData.status === 'cancelled'
-                        ? 'bg-rose-500/15 border border-rose-500/30 text-rose-400'
+                        ? 'bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-400'
                         : 'border animate-pulse'
                     }`}
                     style={
                       bookingSuccessData.status !== 'confirmed' && bookingSuccessData.status !== 'cancelled'
                         ? {
-                            backgroundColor: `${brandSecondary}20`,
-                            borderColor: `${brandSecondary}40`,
-                            color: brandSecondary,
+                            backgroundColor: `${safeAccentFill}15`,
+                            borderColor: `${safeAccentFill}40`,
+                            color: safeAccentText,
                           }
                         : undefined
                     }
@@ -3800,14 +4101,20 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       ? 'تم الاعتذار عن الموعد ❌'
                       : 'تم استلام الحجز وبانتظار التأكيد ⏳'}
                   </span>
-                  <h3 className={`text-lg font-black mt-1 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
-                    حجز موعد برقم <span dir="ltr" className="font-mono" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>#{bookingSuccessData.booking_number}</span>
+                  <h3 className={`text-lg font-black mt-1.5 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                    حجز موعد برقم <span dir="ltr" className="font-mono" style={{ color: safeAccentText }}>#BKG-{String(bookingSuccessData.booking_number || '').replace(/^BKG-/i, '').slice(-6).toUpperCase()}</span>
                   </h3>
                 </div>
 
                 <div className={`p-4 rounded-2xl border text-xs space-y-2 text-right ${
                   isDarkTheme ? 'bg-white/[0.02] border-white/[0.07]' : 'bg-slate-50 border-slate-200'
                 }`}>
+                  {bookingSuccessData.branch_name && (
+                    <div className="flex justify-between">
+                      <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>الفرع:</span>
+                      <span className="font-bold text-amber-500">📍 {bookingSuccessData.branch_name}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>الخدمة:</span>
                     <span className={`font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{bookingSuccessData.service_name}</span>
@@ -3815,7 +4122,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   {bookingSuccessData.selected_modifiers && bookingSuccessData.selected_modifiers.length > 0 && (
                     <div className="flex justify-between items-start gap-2">
                       <span className={`shrink-0 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>الإضافات والترقيات:</span>
-                      <span className="font-bold text-left" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>
+                      <span className="font-bold text-left" style={{ color: safeAccentText }}>
                         {bookingSuccessData.selected_modifiers.map((m: any) => m.name).join('، ')}
                       </span>
                     </div>
@@ -3830,11 +4137,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </div>
                   <div className="flex justify-between">
                     <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>مدة الخدمة:</span>
-                    <span className={`font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>{bookingSuccessData.duration_minutes} دقيقة</span>
+                    <span className={`font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>{bookingSuccessData.duration_minutes || 30} دقيقة</span>
                   </div>
                   <div className={`flex justify-between pt-2 border-t ${isDarkTheme ? 'border-white/[0.07]' : 'border-slate-200'}`}>
                     <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>المبلغ الإجمالي:</span>
-                    <span className={`font-mono font-black text-sm ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{bookingSuccessData.total_price} ر.س</span>
+                    <span className={`font-mono font-black text-sm ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{bookingSuccessData.total_price || bookingSuccessData.service_price || 0} ر.س</span>
                   </div>
                 </div>
 
@@ -3895,9 +4202,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               style={
                                 isSelected
                                   ? {
-                                      backgroundColor: `${brandSecondary}12`,
-                                      borderColor: brandSecondary,
-                                      boxShadow: `0 8px 24px ${brandSecondary}25`,
+                                      backgroundColor: `${safeAccentFill}10`,
+                                      borderColor: safeAccentFill,
+                                      boxShadow: `0 8px 24px ${safeAccentFill}20`,
                                     }
                                   : undefined
                               }
@@ -3910,7 +4217,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                       src={srv.image_url}
                                       alt={srv.name}
                                       className="w-13 h-13 sm:w-14 sm:h-14 rounded-full object-cover border shadow-md"
-                                      style={{ borderColor: `${brandSecondary}40` }}
+                                      style={{ borderColor: `${safeAccentFill}40` }}
                                     />
                                   ) : (
                                     <div
@@ -3918,8 +4225,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                       style={{
                                         background: isDarkTheme
                                           ? `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`
-                                          : `linear-gradient(135deg, ${brandSecondary}15 0%, #F8FAFC 100%)`,
-                                        borderColor: `${brandSecondary}40`,
+                                          : `linear-gradient(135deg, ${brandSecondary}25 0%, #F8FAFC 100%)`,
+                                        borderColor: `${safeAccentFill}35`,
                                       }}
                                     >
                                       💇‍♂️
@@ -3940,18 +4247,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                     <span className={`px-2 py-0.5 rounded-full font-medium flex items-center gap-1 border ${
                                       isDarkTheme ? 'bg-white/[0.04] text-slate-300 border-white/[0.06]' : 'bg-slate-100 text-slate-600 border-slate-200'
                                     }`}>
-                                      <Clock className="w-3 h-3" style={{ color: brandSecondary }} />
+                                      <Clock className="w-3 h-3" style={{ color: safeAccentText }} />
                                       <span>{srv.duration_minutes || 30} دقيقة</span>
                                     </span>
                                     {hasServiceModifiers && (
-                                      <span className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-600 font-bold border border-purple-500/30">
+                                      <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold border border-amber-500/30">
                                         ✨ إضافات ({srv.modifier_groups?.length})
                                       </span>
                                     )}
                                     {earnedPoints > 0 && (
                                       <span
                                         className="font-mono font-bold"
-                                        style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}
+                                        style={{ color: safeAccentText }}
                                       >
                                         +{earnedPoints} نقطة
                                       </span>
@@ -3970,7 +4277,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 <span
                                   className={`inline-block mt-1 text-[11px] font-bold px-2.5 py-1 rounded-full border transition ${
                                     isSelected
-                                      ? 'shadow-sm'
+                                      ? `shadow-sm ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
                                       : isDarkTheme
                                       ? 'text-slate-300 bg-white/[0.05] border-white/10 hover:text-white'
                                       : 'text-slate-700 bg-slate-100 border-slate-200 hover:bg-slate-200'
@@ -3978,9 +4285,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                   style={
                                     isSelected
                                       ? {
-                                          backgroundColor: brandSecondary,
-                                          borderColor: brandSecondary,
-                                          color: brandColors.contrastOnSecondary,
+                                          backgroundColor: safeAccentFill,
+                                          borderColor: safeAccentFill,
+                                          color: safeAccentFillContrast,
                                         }
                                       : undefined
                                   }
@@ -4017,7 +4324,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     </div>
 
                     <div className="flex items-center justify-between px-1">
-                      <span className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة 2: حدد الإضافات والترقيات لجلسة الخدمة:</span>
+                      <span className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة {currentStepIdx + 1}: حدد الإضافات والترقيات لجلسة الخدمة:</span>
                       <span className={`text-[10px] ${isDarkTheme ? 'text-slate-500' : 'text-slate-400'}`}>(اختياري أو حسب الرغبة)</span>
                     </div>
 
@@ -4069,8 +4376,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                       style={
                                         isSelected
                                           ? {
-                                              backgroundColor: `${brandSecondary}15`,
-                                              borderColor: brandSecondary,
+                                              backgroundColor: `${safeAccentFill}12`,
+                                              borderColor: safeAccentFill,
                                             }
                                           : undefined
                                       }
@@ -4079,7 +4386,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                         <div
                                           className={`w-4 h-4 rounded-${group.allow_multiple ? 'md' : 'full'} border flex items-center justify-center transition shrink-0 ${
                                             isSelected
-                                              ? 'border-transparent text-black'
+                                              ? `border-transparent ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
                                               : isDarkTheme
                                               ? 'border-slate-600 bg-slate-900'
                                               : 'border-slate-300 bg-white'
@@ -4087,9 +4394,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                           style={
                                             isSelected
                                               ? {
-                                                  backgroundColor: brandSecondary,
-                                                  borderColor: brandSecondary,
-                                                  color: brandColors.contrastOnSecondary,
+                                                  backgroundColor: safeAccentFill,
+                                                  borderColor: safeAccentFill,
+                                                  color: safeAccentFillContrast,
                                                 }
                                               : undefined
                                           }
@@ -4101,7 +4408,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                                       <span
                                         className="text-xs font-mono font-bold"
-                                        style={option.price_delta > 0 ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : { color: '#94a3b8' }}
+                                        style={option.price_delta > 0 ? { color: safeAccentText } : { color: '#94a3b8' }}
                                       >
                                         {option.price_delta > 0 ? `+${option.price_delta} ر.س` : 'مجاناً'}
                                       </span>
@@ -4134,11 +4441,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       <button
                         type="button"
                         onClick={() => setBookingStep(3)}
-                        className="py-2.5 px-5 rounded-xl font-black text-xs shadow-md transition flex items-center gap-1.5"
+                        className={`py-2.5 px-5 rounded-xl font-black text-xs shadow-md transition flex items-center gap-1.5 ${
+                          safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                        }`}
                         style={{
-                          backgroundColor: brandSecondary,
-                          color: brandColors.contrastOnSecondary,
-                          boxShadow: `0 6px 18px ${brandSecondary}40`,
+                          backgroundColor: safeAccentFill,
+                          color: safeAccentFillContrast,
+                          boxShadow: `0 6px 18px ${safeAccentFill}40`,
                         }}
                       >
                         <span>متابعة لاختيار المختص ➔</span>
@@ -4150,8 +4459,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 {/* 👤 Step 3: Select Specialist */}
                 {bookingStep === 3 && selectedBookingService && (() => {
                   const serviceCategory = selectedBookingService.category?.trim();
+                  const targetBranchId = selectedBranch?.id || null;
                   const qualifiedSpecialists = specialists.filter((s) => {
                     if (s.is_active === false) return false;
+                    // 🛡️ Strict Branch Isolation: only show specialists assigned to this branch or available in all branches
+                    if (targetBranchId && (s.branch_id || s.branch_name)) {
+                      const matches =
+                        s.branch_id === targetBranchId ||
+                        (selectedBranch?.name && (s.branch_name === selectedBranch.name || s.branch_id === selectedBranch.name));
+                      if (!matches) return false;
+                    }
                     if (!s.service_categories || s.service_categories.length === 0 || s.service_categories.includes('ALL')) {
                       return true;
                     }
@@ -4183,13 +4500,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
 
                       <div className="flex items-center justify-between px-1">
-                        <span className={`text-xs font-bold block ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة 3: حدد المختص المؤهل في قسم ({serviceCategory}):</span>
+                        <span className={`text-xs font-bold block ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة {currentStepIdx + 1}: حدد المختص المؤهل في قسم ({serviceCategory}):</span>
                         <span
-                          className="text-[10px] px-2 py-0.5 rounded-full border font-bold"
+                          className="text-[10px] px-2.5 py-0.5 rounded-full border font-bold"
                           style={{
-                            color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
-                            backgroundColor: `${brandSecondary}15`,
-                            borderColor: `${brandSecondary}30`,
+                            color: safeAccentText,
+                            backgroundColor: `${safeAccentFill}12`,
+                            borderColor: `${safeAccentFill}30`,
                           }}
                         >
                           {qualifiedSpecialists.length} مختص متاح
@@ -4213,9 +4530,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           style={
                             selectedBookingSpecialist === null
                               ? {
-                                  backgroundColor: `${brandSecondary}12`,
-                                  borderColor: brandSecondary,
-                                  boxShadow: `0 8px 24px ${brandSecondary}25`,
+                                  backgroundColor: `${safeAccentFill}08`,
+                                  borderColor: safeAccentFill,
+                                  boxShadow: `0 8px 24px ${safeAccentFill}18`,
                                 }
                               : undefined
                           }
@@ -4226,9 +4543,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               style={{
                                 background: isDarkTheme
                                   ? `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`
-                                  : `linear-gradient(135deg, ${brandSecondary}15 0%, #F8FAFC 100%)`,
-                                borderColor: `${brandSecondary}40`,
-                                color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
+                                  : `linear-gradient(135deg, ${brandSecondary}25 0%, #F8FAFC 100%)`,
+                                borderColor: `${safeAccentFill}35`,
+                                color: safeAccentText,
                               }}
                             >
                               ⚡
@@ -4239,12 +4556,22 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             </div>
                           </div>
                           <span
-                            className="text-xs font-black shrink-0 px-3 py-1.5 rounded-full border"
-                            style={{
-                              color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
-                              backgroundColor: `${brandSecondary}15`,
-                              borderColor: `${brandSecondary}30`,
-                            }}
+                            className={`text-xs font-black shrink-0 px-3 py-1.5 rounded-full border ${
+                              selectedBookingSpecialist === null && safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                            }`}
+                            style={
+                              selectedBookingSpecialist === null
+                                ? {
+                                    backgroundColor: safeAccentFill,
+                                    borderColor: safeAccentFill,
+                                    color: safeAccentFillContrast,
+                                  }
+                                : {
+                                    color: safeAccentText,
+                                    backgroundColor: `${safeAccentFill}12`,
+                                    borderColor: `${safeAccentFill}30`,
+                                  }
+                            }
                           >
                             اختيار ➔
                           </span>
@@ -4270,9 +4597,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               style={
                                 isSelected
                                   ? {
-                                      backgroundColor: `${brandSecondary}12`,
-                                      borderColor: brandSecondary,
-                                      boxShadow: `0 8px 24px ${brandSecondary}25`,
+                                      backgroundColor: `${safeAccentFill}08`,
+                                      borderColor: safeAccentFill,
+                                      boxShadow: `0 8px 24px ${safeAccentFill}18`,
                                     }
                                   : undefined
                               }
@@ -4283,17 +4610,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                     src={spec.avatar_url}
                                     alt={spec.name}
                                     className="w-12 h-12 rounded-full object-cover border shrink-0 shadow-md"
-                                    style={{ borderColor: `${brandSecondary}40` }}
+                                    style={{ borderColor: `${safeAccentFill}40` }}
                                   />
                                 ) : (
                                   <div
-                                    className="w-12 h-12 rounded-full border flex items-center justify-center font-serif font-black text-base shrink-0 shadow-inner"
+                                    className="w-12 h-12 rounded-full border flex items-center justify-center font-black text-base shrink-0 shadow-inner"
                                     style={{
                                       background: isDarkTheme
                                         ? `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`
-                                        : `linear-gradient(135deg, ${brandSecondary}15 0%, #F8FAFC 100%)`,
-                                      borderColor: `${brandSecondary}40`,
-                                      color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
+                                        : `linear-gradient(135deg, ${brandSecondary}25 0%, #F8FAFC 100%)`,
+                                      borderColor: `${safeAccentFill}35`,
+                                      color: safeAccentText,
                                     }}
                                   >
                                     {spec.name.slice(0, 1)}
@@ -4301,7 +4628,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 )}
                                 <div className="min-w-0 space-y-0.5">
                                   <h4 className={`text-xs sm:text-sm font-black truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{spec.name}</h4>
-                                  <p className="text-[10px]" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>{spec.specialty || 'أخصائي خدمة'}</p>
+                                  <p className="text-[10px] font-bold" style={{ color: safeAccentText }}>{spec.specialty || 'أخصائي خدمة'}</p>
                                   {spec.service_categories && spec.service_categories.length > 0 && (
                                     <div className="flex items-center gap-1 flex-wrap pt-0.5">
                                       {spec.service_categories.map((cat, idx) => (
@@ -4320,8 +4647,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               </div>
                               <span
                                 className={`text-xs font-bold px-3 py-1.5 rounded-full border shrink-0 transition ${
-                                  isDarkTheme ? 'text-slate-300 bg-white/[0.05] border-white/10' : 'text-slate-700 bg-slate-100 border-slate-200'
+                                  isSelected
+                                    ? `${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
+                                    : isDarkTheme ? 'text-slate-300 bg-white/[0.05] border-white/10' : 'text-slate-700 bg-slate-100 border-slate-200'
                                 }`}
+                                style={
+                                  isSelected
+                                    ? {
+                                        backgroundColor: safeAccentFill,
+                                        borderColor: safeAccentFill,
+                                        color: safeAccentFillContrast,
+                                      }
+                                    : undefined
+                                }
                               >
                                 اختيار ➔
                               </span>
@@ -4385,12 +4723,24 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       }
                       return { isBooked: false, label: 'متاح ✨', canBook: true };
                     } else {
-                      if (specialists.length === 0) {
+                      const targetBranchId = selectedBranch?.id || null;
+                      const branchFilteredSpecialists = specialists.filter((s) => {
+                        if (targetBranchId && (s.branch_id || s.branch_name)) {
+                          const matches =
+                            s.branch_id === targetBranchId ||
+                            (selectedBranch?.name && (s.branch_name === selectedBranch.name || s.branch_id === selectedBranch.name));
+                          if (!matches) return false;
+                        }
+                        return true;
+                      });
+
+                      if (branchFilteredSpecialists.length === 0) {
                         const bookedCount = storeBookings.filter(
                           (b) =>
                             b.status !== 'cancelled' &&
                             b.booking_date === selectedBookingDate &&
-                            b.booking_time === slot
+                            b.booking_time === slot &&
+                            (!targetBranchId || !b.branch_id || b.branch_id === targetBranchId)
                         ).length;
                         const maxConcurrent = 5;
                         const isBooked = bookedCount >= maxConcurrent;
@@ -4401,7 +4751,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         };
                       }
 
-                      const activeWorkingSpecs = specialists.filter(
+                      const activeWorkingSpecs = branchFilteredSpecialists.filter(
                         (s) =>
                           s.is_active !== false &&
                           (!s.working_days || s.working_days.includes(dayKey))
@@ -4442,7 +4792,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       }`}>
                         <div className="flex items-center gap-2">
                           <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>المختص:</span>
-                          <strong style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>
+                          <strong style={{ color: safeAccentText }}>
                             {selectedBookingSpecialist?.name || 'أي مختص متاح (الأسرع)'}
                           </strong>
                         </div>
@@ -4456,15 +4806,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
 
                       <div className="flex items-center justify-between">
-                        <span className={`text-xs font-bold block px-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة 4: اختر يوم ووقت الحضور:</span>
-                        <span className={`text-[10px] font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
-                          ساعات العمل: {rawStart} - {rawEnd}
+                        <span className={`text-xs font-bold block px-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>الخطوة {currentStepIdx + 1}: اختر يوم ووقت الحضور:</span>
+                        <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                          ساعات العمل: <span dir="ltr" className="font-mono">{rawStart} - {rawEnd}</span>
                         </span>
                       </div>
 
                       {/* Day Selector */}
                       <div className="space-y-1.5">
-                        <label className={`text-[11px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>اختر اليوم:</label>
+                        <label className={`text-[11px] font-bold block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>اختر اليوم:</label>
                         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
                           {Array.from({ length: 7 }).map((_, i) => {
                             const d = new Date();
@@ -4479,9 +4829,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 key={iso}
                                 type="button"
                                 onClick={() => setSelectedBookingDate(iso)}
-                                className={`p-2.5 rounded-2xl text-center shrink-0 min-w-[72px] border transition-all duration-200 ${
+                                className={`p-2.5 rounded-2xl text-center shrink-0 min-w-[74px] border transition-all duration-200 ${
                                   isSelected
-                                    ? 'shadow-lg font-black scale-105'
+                                    ? `shadow-lg font-black scale-105 ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
                                     : isDarkTheme
                                     ? 'bg-white/[0.03] border-white/[0.07] text-slate-300 hover:text-white hover:border-white/20'
                                     : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm'
@@ -4489,10 +4839,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 style={
                                   isSelected
                                     ? {
-                                        backgroundColor: brandSecondary,
-                                        borderColor: brandSecondary,
-                                        color: brandColors.contrastOnSecondary,
-                                        boxShadow: `0 4px 14px ${brandSecondary}40`,
+                                        backgroundColor: safeAccentFill,
+                                        borderColor: safeAccentFill,
+                                        color: safeAccentFillContrast,
+                                        boxShadow: `0 4px 14px ${safeAccentFill}35`,
                                       }
                                     : undefined
                                 }
@@ -4509,7 +4859,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         <div className={`p-3 rounded-2xl border text-xs flex items-center gap-2 ${
                           isDarkTheme ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
                         }`}>
-                          <AlertCircle className="w-4 h-4 shrink-0" style={{ color: brandSecondary }} />
+                          <AlertCircle className="w-4 h-4 shrink-0" style={{ color: safeAccentText }} />
                           <span>
                             المختص ({selectedBookingSpecialist.name}) في إجازة أسبوعية يوم ({dayArabicName}). يرجى اختيار يوم آخر أو اختيار &quot;أي مختص متاح&quot;.
                           </span>
@@ -4519,8 +4869,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       {/* Time Slots Grid */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                          <label className={`text-[11px] block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
-                            اختر الموعد المناسب ({selectedBookingDate}):
+                          <label className={`text-[11px] font-bold block ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                            اختر الموعد المناسب (<span dir="ltr" className="font-mono">{selectedBookingDate}</span>):
                           </label>
                           <span className={`text-[10px] ${isDarkTheme ? 'text-slate-500' : 'text-slate-400'}`}>
                             (المواعيد المحجوزة تُغلق تلقائياً 🔒)
@@ -4544,7 +4894,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                   title="هذا الموعد محجوز مسبقاً وغير متاح"
                                 >
                                   <span className="font-mono text-xs font-bold">{slot}</span>
-                                  <span className="text-[9px] text-rose-500 font-sans mt-0.5">{slotInfo.label}</span>
+                                  <span className="text-[9px] text-rose-500 mt-0.5">{slotInfo.label}</span>
                                 </button>
                               );
                             }
@@ -4556,7 +4906,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 onClick={() => setSelectedBookingTime(slot)}
                                 className={`py-2.5 px-1.5 rounded-xl border flex flex-col items-center justify-center transition-all duration-200 shadow-sm ${
                                   isSelected
-                                    ? 'shadow-md scale-[1.02] font-black'
+                                    ? `shadow-md scale-[1.03] font-black ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
                                     : isDarkTheme
                                     ? 'bg-white/[0.03] border-white/[0.07] text-slate-200 hover:text-white'
                                     : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
@@ -4564,16 +4914,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 style={
                                   isSelected
                                     ? {
-                                        backgroundColor: brandSecondary,
-                                        borderColor: brandSecondary,
-                                        color: brandColors.contrastOnSecondary,
-                                        boxShadow: `0 4px 14px ${brandSecondary}40`,
+                                        backgroundColor: safeAccentFill,
+                                        borderColor: safeAccentFill,
+                                        color: safeAccentFillContrast,
+                                        boxShadow: `0 4px 14px ${safeAccentFill}35`,
                                       }
                                     : undefined
                                 }
                               >
                                 <span className="font-mono text-xs font-bold">{slot}</span>
-                                <span className={`text-[9px] mt-0.5 font-sans ${isSelected ? 'font-black' : 'text-emerald-500'}`}>
+                                <span className={`text-[9px] mt-0.5 ${isSelected ? 'font-black' : 'text-emerald-600 dark:text-emerald-400 font-bold'}`}>
                                   {isSelected ? 'محدد ✓' : slotInfo.label}
                                 </span>
                               </button>
@@ -4586,11 +4936,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         type="button"
                         disabled={!canProceed}
                         onClick={() => setBookingStep(5)}
-                        className="w-full py-3.5 rounded-2xl font-black text-xs shadow-lg transition mt-2 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        className={`w-full py-3.5 rounded-2xl font-black text-xs shadow-lg transition mt-2 flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
+                          safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                        }`}
                         style={{
-                          backgroundColor: brandSecondary,
-                          color: brandColors.contrastOnSecondary,
-                          boxShadow: `0 8px 24px ${brandSecondary}35`,
+                          backgroundColor: safeAccentFill,
+                          color: safeAccentFillContrast,
+                          boxShadow: `0 8px 24px ${safeAccentFill}30`,
                         }}
                       >
                         <span>{canProceed ? `متابعة لتأكيد موعد الساعة (${selectedBookingTime}) ➔` : 'يرجى تحديد موعد متاح للمتابعة'}</span>
@@ -4610,10 +4962,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       <div className={`p-4 sm:p-5 rounded-3xl border space-y-3.5 text-xs shadow-sm ${
                         isDarkTheme ? 'bg-white/[0.03] border-white/[0.08] backdrop-blur-xl' : 'bg-white border-slate-200'
                       }`}>
-                        <h4 className={`font-bold text-sm pb-2 border-b flex items-center gap-2 ${
+                        <h4 className={`font-black text-sm pb-2.5 border-b flex items-center gap-2 ${
                           isDarkTheme ? 'text-white border-white/[0.07]' : 'text-slate-900 border-slate-100'
                         }`}>
-                          <BookmarkCheck className="w-4 h-4" style={{ color: brandSecondary }} />
+                          <BookmarkCheck className="w-4 h-4" style={{ color: safeAccentText }} />
                           <span>ملخص تفاصيل الموعد والخدمة:</span>
                         </h4>
 
@@ -4639,7 +4991,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                   }`}
                                 >
                                   <span>{mod.name}</span>
-                                  <span className="font-mono" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>
+                                  <span className="font-mono" style={{ color: safeAccentText }}>
                                     {mod.price_delta > 0 ? `(+${mod.price_delta} ر.س)` : '(مجاناً)'}
                                   </span>
                                 </span>
@@ -4650,14 +5002,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                         <div className={`flex justify-between pt-2 border-t ${isDarkTheme ? 'border-white/[0.07]' : 'border-slate-100'}`}>
                           <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>المختص المطلوب:</span>
-                          <strong style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>
+                          <strong style={{ color: safeAccentText }}>
                             {selectedBookingSpecialist?.name || 'أي مختص متاح'}
                           </strong>
                         </div>
 
-                        <div className="flex justify-between">
+                        <div className="flex justify-between items-center">
                           <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>اليوم والوقت:</span>
-                          <strong dir="ltr" className={`font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{selectedBookingDate} في تمام {selectedBookingTime}</strong>
+                          <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>
+                            <span dir="ltr" className="font-mono">{selectedBookingDate}</span> في تمام الساعة <span dir="ltr" className="font-mono">{selectedBookingTime}</span>
+                          </strong>
                         </div>
 
                         <div className="flex justify-between">
@@ -4672,18 +5026,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                         <div className="flex justify-between">
                           <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>النقاط المكتسبة بعد الحضور:</span>
-                          <span className="text-xs font-bold" style={{ color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex }}>+{pointsToEarn} نقطة ولاء ✨</span>
+                          <span className="text-xs font-bold" style={{ color: safeAccentText }}>+{pointsToEarn} نقطة ولاء ✨</span>
                         </div>
                       </div>
 
                       <div className="space-y-1.5">
-                        <label className={`text-xs font-medium block ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>ملاحظات إضافية للمتجر (اختياري):</label>
+                        <label className={`text-xs font-bold block ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>ملاحظات إضافية للمتجر (اختياري):</label>
                         <textarea
                           value={bookingNotes}
                           onChange={(e) => setBookingNotes(e.target.value)}
                           placeholder="مثال: يرجى تجهيز كرسي خاص، أو أي تفاصيل تخص طلبك..."
                           rows={2}
-                          className={`w-full rounded-2xl px-3 py-2 text-xs outline-none border ${
+                          className={`w-full rounded-2xl px-3.5 py-2.5 text-xs outline-none border ${
                             isDarkTheme
                               ? 'bg-white/[0.03] border-white/[0.08] text-white placeholder-slate-500'
                               : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400'
@@ -4693,11 +5047,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                       {/* 💳 طرق وسياسة سداد الحجز */}
                       <div className={`p-3.5 rounded-2xl border space-y-2.5 ${
-                        isDarkTheme ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-slate-50 border-slate-200'
+                        isDarkTheme ? 'bg-white/[0.04] border-white/[0.08]' : 'bg-white border-slate-200 shadow-sm'
                       }`}>
-                        <div className={`flex items-center justify-between text-xs font-bold ${isDarkTheme ? 'text-slate-200' : 'text-slate-700'}`}>
+                        <div className={`flex items-center justify-between text-xs font-bold ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
                           <span className="flex items-center gap-1.5">
-                            <CreditCard className="w-4 h-4 text-purple-500" />
+                            <CreditCard className="w-4 h-4" style={{ color: safeAccentText }} />
                             <span>طريقة سداد الموعد:</span>
                           </span>
                           {effectiveBookingsPolicy === 'online_only' && (
@@ -4706,12 +5060,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             </span>
                           )}
                           {effectiveBookingsPolicy === 'pay_at_store_only' && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-600 border border-blue-500/40 font-bold">
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700 border border-amber-500/40 font-bold">
                               💵 عند الحضور بالمركز
                             </span>
                           )}
                           {effectiveBookingsPolicy === 'both' && (
-                            <span className={`text-[10px] font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                            <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                               اختر طريقتك المفضلة
                             </span>
                           )}
@@ -4722,17 +5076,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             <button
                               type="button"
                               onClick={() => setBookingPaymentMethod('online')}
-                              className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
+                              className={`p-3 rounded-xl border text-right transition flex flex-col gap-0.5 ${
                                 bookingPaymentMethod === 'online'
-                                  ? 'bg-purple-500/20 border-purple-500/50 text-purple-700 shadow-sm'
+                                  ? 'bg-emerald-500/15 border-emerald-500 text-emerald-800 dark:text-emerald-300 shadow-sm ring-1 ring-emerald-500/30'
                                   : isDarkTheme
                                   ? 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-white'
-                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                  : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                               }`}
                             >
                               <span className="text-xs font-black flex items-center gap-1">
                                 <span>💳 دفع إلكتروني فوري</span>
-                                {bookingPaymentMethod === 'online' && <Check className="w-3.5 h-3.5 mr-auto text-purple-500" />}
+                                {bookingPaymentMethod === 'online' && <Check className="w-3.5 h-3.5 mr-auto text-emerald-600" />}
                               </span>
                               <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>تأكيد الموعد والمقعد 100%</span>
                             </button>
@@ -4740,26 +5094,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             <button
                               type="button"
                               onClick={() => setBookingPaymentMethod('pay_at_store')}
-                              className={`p-2.5 rounded-xl border text-right transition flex flex-col gap-0.5 ${
+                              className={`p-3 rounded-xl border text-right transition flex flex-col gap-0.5 ${
                                 bookingPaymentMethod === 'pay_at_store'
-                                  ? 'bg-blue-500/20 border-blue-500/50 text-blue-700 shadow-sm'
+                                  ? 'bg-amber-500/15 border-amber-500 text-amber-800 dark:text-amber-300 shadow-sm ring-1 ring-amber-500/30'
                                   : isDarkTheme
                                   ? 'bg-white/[0.03] border-white/[0.08] text-slate-400 hover:text-white'
-                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                  : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                               }`}
                             >
                               <span className="text-xs font-black flex items-center gap-1">
                                 <span>💵 عند الحضور بالمركز</span>
-                                {bookingPaymentMethod === 'pay_at_store' && <Check className="w-3.5 h-3.5 mr-auto text-blue-500" />}
+                                {bookingPaymentMethod === 'pay_at_store' && <Check className="w-3.5 h-3.5 mr-auto text-amber-600" />}
                               </span>
                               <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>نقداً أو شبكة بالاستقبال</span>
                             </button>
                           </div>
                         ) : effectiveBookingsPolicy === 'online_only' ? (
                           <div className={`p-2.5 rounded-xl border text-[11px] flex items-center gap-2 ${
-                            isDarkTheme ? 'bg-purple-950/40 border-purple-500/30 text-purple-200' : 'bg-purple-50 border-purple-200 text-purple-800'
+                            isDarkTheme ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
                           }`}>
-                            <ShieldCheck className="w-4 h-4 text-purple-500 shrink-0" />
+                            <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
                             <span>يشترط المركز السداد الإلكتروني المسبق لتأكيد الموعد وضمان عدم تضارب الجداول.</span>
                           </div>
                         ) : (
@@ -4777,18 +5131,21 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           type="button"
                           onClick={handleConfirmServiceBooking}
                           disabled={bookingSubmitting}
-                          className={`w-full py-3.5 rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-lg transition disabled:opacity-50 ${
-                            effectiveBookingsPolicy === 'online_only' || (effectiveBookingsPolicy === 'both' && bookingPaymentMethod === 'online')
-                              ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-500 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-600/30'
-                              : 'bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-emerald-600/20'
+                          className={`w-full py-3.5 rounded-2xl font-black text-xs flex items-center justify-center gap-2 shadow-lg transition hover:scale-[1.01] active:scale-95 disabled:opacity-50 ${
+                            safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
                           }`}
+                          style={{
+                            backgroundColor: safeAccentFill,
+                            color: safeAccentFillContrast,
+                            boxShadow: `0 10px 25px ${safeAccentFill}35`,
+                          }}
                         >
                           {bookingSubmitting ? (
-                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                           ) : (effectiveBookingsPolicy === 'online_only' || (effectiveBookingsPolicy === 'both' && bookingPaymentMethod === 'online')) ? (
                             <CreditCard className="w-4 h-4" />
                           ) : (
-                            <MessageCircle className="w-4 h-4" />
+                            <BookmarkCheck className="w-4 h-4" />
                           )}
                           <span>
                             {bookingSubmitting
@@ -4802,7 +5159,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         <button
                           type="button"
                           onClick={() => setBookingStep(4)}
-                          className={`w-full py-2 text-xs text-center ${isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}`}
+                          className={`w-full py-2 text-xs font-bold text-center ${isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}`}
                         >
                           الرجوع لتعديل الموعد أو الوقت
                         </button>
@@ -4815,8 +5172,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
             {/* 📋 Active and Past Bookings (مواعيدي السابقة والقادمة) */}
             <div className={`mt-8 pt-6 border-t space-y-4 ${isDarkTheme ? 'border-white/[0.08]' : 'border-slate-200'}`}>
-              <h3 className={`text-sm font-bold flex items-center gap-2 ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
-                <Calendar className="w-4 h-4" style={{ color: brandSecondary }} />
+              <h3 className={`text-sm font-black flex items-center gap-2 ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                <Calendar className="w-4 h-4" style={{ color: safeAccentText }} />
                 <span>مواعيدي السابقة والقادمة (تحديث مباشر)</span>
               </h3>
               
@@ -4833,20 +5190,22 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     const isLive = ['pending', 'confirmed'].includes(bk.status);
                     const isConfirmed = bk.status === 'confirmed';
                     const isCancelled = bk.status === 'cancelled';
+                    const shortBkNum = String(bk.booking_number || bk.id || '').replace(/^BKG-/i, '').slice(-6).toUpperCase();
+                    const displayBkPrice = bk.total_price ?? bk.service_price ?? 0;
                     
                     return (
                       <div
                         key={bk.id}
-                        className={`p-4 sm:p-5 rounded-3xl border transition-all duration-300 shadow-lg relative overflow-hidden ${
+                        className={`p-4 sm:p-5 rounded-3xl border transition-all duration-300 shadow-md relative overflow-hidden ${
                           isDarkTheme
                             ? (isLive ? 'bg-[#0B0F19]/95 border-white/[0.12] ring-1 ring-white/[0.05]' : 'bg-[#0B0F19]/70 border-white/[0.06] opacity-90')
-                            : (isLive ? 'bg-white border-slate-200 shadow-md ring-1 ring-slate-100' : 'bg-slate-50 border-slate-200 opacity-90')
+                            : (isLive ? 'bg-white border-slate-200/90 shadow-md ring-1 ring-slate-100' : 'bg-slate-50 border-slate-200 opacity-90')
                         }`}
                       >
                         {isLive && (
                           <div
                             className={`absolute top-0 right-0 left-0 h-1.5 ${isConfirmed ? 'bg-emerald-500 shadow-[0_0_12px_#10B981]' : 'animate-pulse'}`}
-                            style={!isConfirmed ? { backgroundColor: brandSecondary, boxShadow: `0 0 12px ${brandSecondary}` } : undefined}
+                            style={!isConfirmed ? { backgroundColor: safeAccentFill, boxShadow: `0 0 12px ${safeAccentFill}` } : undefined}
                           />
                         )}
                         
@@ -4854,15 +5213,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           <div className="flex items-center gap-2 flex-wrap">
                             <span
                               dir="ltr"
-                              className={`text-[11px] px-3 py-1 rounded-full font-mono font-black border ${
+                              className={`text-[11px] px-2.5 py-0.5 rounded-full font-mono font-black border ${
                                 isDarkTheme ? 'bg-white/[0.05]' : 'bg-slate-100'
                               }`}
                               style={{
-                                color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex,
-                                borderColor: `${brandSecondary}40`,
+                                color: safeAccentText,
+                                borderColor: `${safeAccentFill}35`,
                               }}
                             >
-                              #{bk.booking_number}
+                              #BKG-{shortBkNum}
                             </span>
                             {bk.service_category && (
                               <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold border ${
@@ -4872,11 +5231,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               </span>
                             )}
                             {bk.payment_status === 'paid' ? (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 font-bold flex items-center gap-1 border border-emerald-500/40">
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold flex items-center gap-1 border border-emerald-500/40">
                                 💳 مسدد أونلاين ✅
                               </span>
                             ) : (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 font-bold flex items-center gap-1 border border-amber-500/30">
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-800 dark:text-amber-300 font-bold flex items-center gap-1 border border-amber-500/30">
                                 💵 الدفع عند الحضور
                               </span>
                             )}
@@ -4895,7 +5254,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               <div className="text-right">
                                 <h4
                                   className={`text-xs sm:text-sm font-black ${
-                                    isConfirmed ? 'text-emerald-500' : isDarkTheme ? 'text-white' : 'text-slate-900'
+                                    isConfirmed ? 'text-emerald-600 dark:text-emerald-400' : isDarkTheme ? 'text-white' : 'text-slate-900'
                                   }`}
                                 >
                                   {isConfirmed ? '✅ تم تأكيد الحجز رسمياً' : '⏳ قيد المراجعة في الاستقبال'}
@@ -4911,10 +5270,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               )}
                             </div>
                             
-                            <div className={`relative h-1.5 rounded-full overflow-hidden ${isDarkTheme ? 'bg-white/[0.06]' : 'bg-slate-200'}`}>
+                            <div className={`relative h-1.5 rounded-full overflow-hidden ${isDarkTheme ? 'bg-white/[0.08]' : 'bg-slate-200'}`}>
                               <div
                                 className={`absolute top-0 right-0 bottom-0 transition-all duration-1000 ${isConfirmed ? 'w-full bg-emerald-500' : 'w-1/2'}`}
-                                style={!isConfirmed ? { backgroundColor: brandSecondary } : undefined}
+                                style={!isConfirmed ? { backgroundColor: safeAccentFill } : undefined}
                               />
                             </div>
                           </div>
@@ -4935,16 +5294,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               {bk.service_name || 'خدمة غير محددة'}
                             </div>
                             <div className={`text-xs flex items-center gap-1.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
-                              <Clock className="w-3.5 h-3.5" style={{ color: brandSecondary }} />
-                              <span dir="ltr" className={`font-mono ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>{bk.booking_date} | {bk.booking_time}</span>
+                              <Clock className="w-3.5 h-3.5" style={{ color: safeAccentText }} />
+                              <span dir="ltr" className={`font-mono font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>{bk.booking_date} | {bk.booking_time}</span>
                             </div>
                           </div>
                           <div className="text-left">
                             <div className={`text-base font-black font-mono ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
-                              {bk.total_price} <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>ر.س</span>
+                              {displayBkPrice} <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>ر.س</span>
                             </div>
                             <div className={`text-[10px] mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
-                              المختص: <span className={`font-medium ${isDarkTheme ? 'text-slate-200' : 'text-slate-700'}`}>{bk.specialist_name || 'أي مختص متاح'}</span>
+                              المختص: <span className={`font-bold ${isDarkTheme ? 'text-slate-200' : 'text-slate-700'}`}>{bk.specialist_name || 'أي مختص متاح'}</span>
                             </div>
                           </div>
                         </div>
@@ -4976,8 +5335,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         <div className="space-y-4 animate-fade-in">
           <div className="flex items-center justify-between">
             <h3 className={`text-base sm:text-lg font-black flex items-center space-x-2 rtl:space-x-reverse ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
-              <Gift className="w-5 h-5" style={{ color: brandSecondary }} />
-              <span>حصرياتك والقائمة السرية</span>
+              <Gift className="w-5 h-5" style={{ color: safeAccentText }} />
+              <span>العروض والامتيازات</span>
             </h3>
           </div>
 
@@ -5081,11 +5440,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 onClick={handleSaveSpecialDate}
                 disabled={isSubmittingSpecialDate || (specialDateType === 'أخرى' && !specialDateTypeOther.trim())}
                 className={`w-full py-2.5 rounded-xl font-black text-xs transition shadow-md active:scale-95 disabled:opacity-50 ${
-                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                  safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
                 }`}
                 style={{
-                  backgroundColor: brandSecondary,
-                  color: brandColors.contrastOnSecondary,
+                  backgroundColor: safeAccentFill,
+                  color: safeAccentFillContrast,
                 }}
               >
                 {isSubmittingSpecialDate ? 'جاري الاعتماد...' : 'اعتماد وحفظ المناسبة'}
@@ -5102,9 +5461,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <div
                 className="w-14 h-14 mx-auto rounded-2xl border flex items-center justify-center shadow-inner"
                 style={{
-                  backgroundColor: `${brandSecondary}15`,
-                  borderColor: `${brandSecondary}30`,
-                  color: brandColors.textOnLightHex,
+                  backgroundColor: `${safeAccentFill}15`,
+                  borderColor: `${safeAccentFill}30`,
+                  color: safeAccentText,
                 }}
               >
                 <Gift className="w-7 h-7" />
@@ -5148,7 +5507,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 return (
                   <div
                     key={priv.id}
-                    className={`rounded-3xl p-5 border transition-all duration-300 flex flex-col justify-between relative overflow-hidden shadow-xl ${
+                    className={`rounded-3xl p-5 border transition-all duration-300 flex flex-col justify-between relative overflow-hidden shadow-xl hover:-translate-y-0.5 ${
                       isSoldOut
                         ? isDarkTheme ? 'bg-slate-950/60 border-slate-800/80 opacity-50' : 'bg-slate-100 border-slate-200 opacity-60'
                         : isUserLimitReached
@@ -5180,9 +5539,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           <span
                             className="px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1"
                             style={{
-                              backgroundColor: `${requiredTier.badge_color || brandSecondary}15`,
-                              borderColor: `${requiredTier.badge_color || brandSecondary}40`,
-                              color: requiredTier.badge_color || brandColors.textOnLightHex,
+                              backgroundColor: `${requiredTier.badge_color || safeAccentFill}15`,
+                              borderColor: `${requiredTier.badge_color || safeAccentFill}40`,
+                              color: requiredTier.badge_color || safeAccentText,
                             }}
                           >
                             <Award className="w-3 h-3" />
@@ -5191,11 +5550,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         )}
 
                         <span
-                          className="px-3 py-1 rounded-full border font-mono font-black text-xs"
+                          className={`px-3 py-1 rounded-full font-mono font-black text-xs shadow-sm ${
+                            safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                          }`}
                           style={{
-                            backgroundColor: `${brandSecondary}15`,
-                            borderColor: `${brandSecondary}30`,
-                            color: brandColors.textOnLightHex,
+                            backgroundColor: safeAccentFill,
+                            color: safeAccentFillContrast,
                           }}
                         >
                           {priv.cost_points} نقطة
@@ -5218,7 +5578,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       }`}>
                         <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                           <span className={`flex items-center gap-1 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
-                            <Clock className="w-3.5 h-3.5" style={{ color: brandColors.textOnLightHex }} />
+                            <Clock className="w-3.5 h-3.5" style={{ color: safeAccentText }} />
                             <span>ساعات الصرف:</span>
                           </span>
                           <span className={`font-mono font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
@@ -5236,7 +5596,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             </span>
                             <span className="font-mono font-bold">
                               {customerPurchasedThisCount >= priv.per_customer_limit ? (
-                                <span className="font-bold" style={{ color: brandColors.textOnLightHex }}>استنفدت الحد ({customerPurchasedThisCount}/{priv.per_customer_limit})</span>
+                                <span className="font-bold" style={{ color: safeAccentText }}>استنفدت الحد ({customerPurchasedThisCount}/{priv.per_customer_limit})</span>
                               ) : (
                                 <span>{priv.per_customer_limit} رمز (حصلت على {customerPurchasedThisCount})</span>
                               )}
@@ -5250,7 +5610,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                             <span
                               className="font-mono font-bold"
                               style={{
-                                color: remainingStock <= 3 ? '#F43F5E' : brandColors.textOnLightHex,
+                                color: remainingStock <= 3 ? '#F43F5E' : safeAccentText,
                               }}
                             >
                               {remainingStock} فقط
@@ -5279,7 +5639,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           استنفدت الحد المسموح لك من هذا الامتياز ✓
                         </div>
                       ) : !isTierUnlocked ? (
-                        <div className="text-center text-[11px] py-1.5 font-bold" style={{ color: brandColors.textOnLightHex }}>
+                        <div className="text-center text-[11px] py-1.5 font-bold" style={{ color: safeAccentText }}>
                           ارتقِ إلى {requiredTier?.tier_name} لفتح هذا الامتياز
                         </div>
                       ) : (
@@ -5297,13 +5657,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           style={
                             (!customer || hasEnoughPoints)
                               ? {
-                                  backgroundColor: brandSecondary,
-                                  color: brandColors.contrastOnSecondary,
+                                  backgroundColor: safeAccentFill,
+                                  color: safeAccentFillContrast,
                                 }
                               : undefined
                           }
                           className={`w-full py-3 rounded-2xl font-black text-xs flex items-center justify-center space-x-1.5 rtl:space-x-reverse transition shadow-lg ${
-                            brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                            safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
                           } ${
                             (!customer || hasEnoughPoints)
                               ? 'hover:brightness-110 active:scale-95'
@@ -5315,9 +5675,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           <ShoppingBag className="w-4 h-4" />
                           <span>
                             {!customer
-                              ? `استبدال وشراء بالنقاط (${priv.cost_points} نقطة) ✨`
+                              ? `استبدال وشراء بالنقاط (${priv.cost_points} نقطة) 🛍️`
                               : hasEnoughPoints
-                              ? `فتح وتفعيل الامتياز (${priv.cost_points} نقطة) ✨`
+                              ? `شراء الامتياز (${priv.cost_points} نقطة) 🛍️`
                               : `تحتاج ${priv.cost_points} نقطة (رصيدك غير كافٍ)`}
                           </span>
                         </button>
@@ -5340,12 +5700,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             style={
               isDarkTheme
                 ? {
-                    borderColor: `${brandSecondary}40`,
-                    background: `linear-gradient(135deg, ${brandSecondary}15 0%, #0F172A 60%, #020617 100%)`,
+                    borderColor: `${safeAccentFill}40`,
+                    background: `linear-gradient(135deg, ${safeAccentFill}15 0%, #0F172A 60%, #020617 100%)`,
                   }
                 : {
-                    borderColor: `${brandSecondary}35`,
-                    background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${brandSecondary}12 100%)`,
+                    borderColor: `${safeAccentFill}35`,
+                    background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${safeAccentFill}12 100%)`,
                   }
             }
           >
@@ -5354,9 +5714,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <div
                   className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-lg shadow-inner"
                   style={{
-                    backgroundColor: `${currentTierObj?.badge_color || brandSecondary}25`,
-                    color: currentTierObj?.badge_color || brandColors.textOnLightHex,
-                    border: `1px solid ${currentTierObj?.badge_color || brandSecondary}40`,
+                    backgroundColor: `${currentTierObj?.badge_color || safeAccentFill}20`,
+                    color: currentTierObj?.badge_color || safeAccentText,
+                    border: `1px solid ${currentTierObj?.badge_color || safeAccentFill}40`,
                   }}
                 >
                   <Crown className="w-5 h-5" />
@@ -5368,10 +5728,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   <div className={`text-base font-black flex items-center gap-2 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                     <span>{currentTierObj?.tier_name || 'عضو مميز'}</span>
                     <span
-                      className={`text-[10px] px-2 py-0.5 rounded-full font-bold font-mono ${
-                        brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                      className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold font-mono shadow-2xs ${
+                        safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
                       }`}
-                      style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
+                      style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
                     >
                       {customer?.lifetime_xp || 0} XP
                     </span>
@@ -5384,7 +5744,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   <span className={`text-[10px] block font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                     المستوى القادم:
                   </span>
-                  <span className={`text-xs font-bold font-mono ${isDarkTheme ? 'text-amber-300' : 'text-amber-600'}`}>
+                  <span className={`text-xs font-bold font-mono ${isDarkTheme ? 'text-amber-300' : 'text-amber-700'}`}>
                     {nextTierObj.tier_name}
                   </span>
                 </div>
@@ -5403,7 +5763,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     className="h-full rounded-full transition-all duration-700 shadow-sm"
                     style={{
                       width: `${progressPercent}%`,
-                      backgroundColor: brandSecondary,
+                      backgroundColor: safeAccentFill,
                     }}
                   />
                 </div>
@@ -5415,55 +5775,122 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
             ) : (
-              <div className="text-[11px] text-emerald-400 font-bold mt-2 p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-1.5">
+              <div className="text-[11px] text-emerald-500 font-bold mt-2 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center gap-1.5">
                 <Sparkles className="w-4 h-4 shrink-0" />
                 <span>تهانينا! أنت حالياً في أعلى مستوى VIP متاح بالمتجر 👑</span>
               </div>
             )}
           </div>
 
-          <div className="flex items-center justify-between pt-1">
-            <div>
-              <h3 className={`text-lg font-black flex items-center space-x-2 rtl:space-x-reverse ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
-                <Ticket className="w-5 h-5" style={{ color: brandSecondary }} />
-                <span>عروضي وكوبوناتي المحفوظة 🎟️</span>
-              </h3>
-              <p className={`text-xs mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
-                العروض التي قمت بشرائها بنقاطك، جاهزة للصرف عند الكاشير
-              </p>
+          <div className="flex flex-col gap-3 pt-1">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className={`text-lg font-black flex items-center space-x-2 rtl:space-x-reverse ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                  <Ticket className="w-5 h-5" style={{ color: safeAccentText }} />
+                  <span>عروضي وكوبوناتي المحفوظة 🎟️</span>
+                </h3>
+                <p className={`text-xs mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                  العروض التي قمت بشرائها بنقاطك، جاهزة للصرف عند الكاشير
+                </p>
+              </div>
+              <span className="text-xs bg-emerald-500/15 text-emerald-500 px-3 py-1 rounded-full border border-emerald-500/30 font-bold shrink-0">
+                {activeCouponsCount} جاهز للصرف
+              </span>
             </div>
-            <span className="text-xs bg-emerald-500/15 text-emerald-400 px-3 py-1 rounded-full border border-emerald-500/30 font-mono font-bold">
-              {activeCouponsCount} جاهز للصرف
-            </span>
+
+            {customerCoupons.length > 0 && (
+              <div className={`grid grid-cols-2 gap-1.5 p-1 rounded-2xl border ${
+                isDarkTheme ? 'bg-slate-950/90 border-slate-800' : 'bg-slate-100 border-slate-200/90'
+              }`}>
+                <button
+                  type="button"
+                  onClick={() => setTicketsFilter('active')}
+                  style={
+                    ticketsFilter === 'active'
+                      ? { backgroundColor: safeAccentFill, color: safeAccentFillContrast }
+                      : undefined
+                  }
+                  className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                    ticketsFilter === 'active'
+                      ? `shadow-md ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
+                      : isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <span>المتاحة للصرف 🎫</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/15 font-mono">
+                    {customerCoupons.filter((c) => c.status !== 'USED' && c.status !== 'REDEEMED').length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTicketsFilter('used')}
+                  style={
+                    ticketsFilter === 'used'
+                      ? { backgroundColor: safeAccentFill, color: safeAccentFillContrast }
+                      : undefined
+                  }
+                  className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                    ticketsFilter === 'used'
+                      ? `shadow-md ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
+                      : isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <span>السجل المستخدم ✓</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/15 font-mono">
+                    {customerCoupons.filter((c) => c.status === 'USED' || c.status === 'REDEEMED').length}
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
 
-          {customerCoupons.length === 0 ? (
-            <div className={`py-14 text-center border border-dashed rounded-3xl space-y-3 ${
-              isDarkTheme
-                ? 'border-slate-800 bg-slate-950/40 text-slate-400'
-                : 'border-slate-200 bg-white text-slate-500 shadow-sm'
-            }`}>
-              <Ticket className="w-12 h-12 mx-auto text-slate-400 mb-1" />
-              <h4 className={`text-base font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>لا توجد امتيازات محفوظة حالياً</h4>
-              <p className={`text-xs max-w-sm mx-auto ${isDarkTheme ? 'text-slate-500' : 'text-slate-600'}`}>
-                استبدل رصيد نقاطك من قائمة حصرياتك لتفتح هدايا وتذاكر فورية 🎁
-              </p>
-              <button
-                onClick={() => setActiveTab('perks')}
-                style={{
-                  backgroundColor: brandSecondary,
-                  color: brandColors.contrastOnSecondary,
-                }}
-                className={`px-5 py-2.5 rounded-2xl font-bold text-xs shadow-lg transition hover:brightness-110 active:scale-95 ${
-                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
-                }`}
-              >
-                استكشف حصرياتك 🚀
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {customerCoupons.map((coupon) => {
+          {(() => {
+            const displayedCoupons = customerCoupons.filter((coupon) => {
+              const isUsed = coupon.status === 'USED' || coupon.status === 'REDEEMED';
+              return ticketsFilter === 'used' ? isUsed : !isUsed;
+            });
+
+            if (customerCoupons.length === 0 || displayedCoupons.length === 0) {
+              return (
+                <div className={`py-14 text-center border border-dashed rounded-3xl space-y-3 ${
+                  isDarkTheme
+                    ? 'border-slate-800 bg-slate-950/40 text-slate-400'
+                    : 'border-slate-200 bg-white text-slate-500 shadow-sm'
+                }`}>
+                  <Ticket className="w-12 h-12 mx-auto text-slate-400 mb-1" />
+                  <h4 className={`text-base font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                    {customerCoupons.length === 0
+                      ? 'لا توجد امتيازات محفوظة حالياً'
+                      : ticketsFilter === 'used'
+                      ? 'لا توجد كوبونات مستخدمة سابقة'
+                      : 'لا توجد امتيازات جاهزة للصرف حالياً'}
+                  </h4>
+                  <p className={`text-xs max-w-sm mx-auto ${isDarkTheme ? 'text-slate-500' : 'text-slate-600'}`}>
+                    {ticketsFilter === 'used' && customerCoupons.length > 0
+                      ? 'جميع الامتيازات المصروفة سابقاً ستظهر هنا في سجلك.'
+                      : 'استبدل رصيد نقاطك من قائمة العروض لتفتح هدايا وتذاكر فورية 🎁'}
+                  </p>
+                  {ticketsFilter === 'active' && (
+                    <button
+                      onClick={() => setActiveTab('perks')}
+                      style={{
+                        backgroundColor: safeAccentFill,
+                        color: safeAccentFillContrast,
+                      }}
+                      className={`px-5 py-2.5 rounded-2xl font-bold text-xs shadow-lg transition hover:brightness-110 active:scale-95 ${
+                        safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                      }`}
+                    >
+                      استكشف العروض 🚀
+                    </button>
+                  )}
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 gap-4">
+                {displayedCoupons.map((coupon) => {
                 const isSelected = selectedCouponForQR?.id === coupon.id;
                 const isUsed = coupon.status === 'USED' || coupon.status === 'REDEEMED';
                 const timeCheck = LoyaltyService.isWithinTimeRange(
@@ -5477,7 +5904,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     key={coupon.id}
                     className={`relative rounded-3xl p-5 border transition-all duration-300 flex flex-col justify-between overflow-hidden shadow-xl ${
                       isUsed
-                        ? isDarkTheme ? 'bg-slate-950/40 border-slate-800/80 opacity-50' : 'bg-slate-100 border-slate-200 opacity-60'
+                        ? isDarkTheme ? 'bg-slate-950/60 border-slate-800/80 opacity-70' : 'bg-slate-50 border-slate-200/90 opacity-80'
                         : isSelected
                         ? 'border-2'
                         : isFrozen
@@ -5488,29 +5915,31 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       isSelected
                         ? isDarkTheme
                           ? {
-                              borderColor: brandSecondary,
-                              background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0F172A 60%, #020617 100%)`,
+                              borderColor: safeAccentFill,
+                              background: `linear-gradient(135deg, ${safeAccentFill}20 0%, #0F172A 60%, #020617 100%)`,
                             }
                           : {
-                              borderColor: brandSecondary,
-                              background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${brandSecondary}15 100%)`,
+                              borderColor: safeAccentFill,
+                              background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${safeAccentFill}15 100%)`,
                             }
                         : undefined
                     }
                   >
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`font-mono font-bold text-xs select-all ${isDarkTheme ? 'text-slate-300' : 'text-slate-800'}`}>
+                        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border ${
+                          isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
+                        }`}>
+                          <span className={`font-mono font-black text-xs select-all ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
                             {coupon.coupon_code}
                           </span>
                           <button
                             onClick={() => copyToClipboard(coupon.coupon_code, coupon.id)}
-                            className={`${isDarkTheme ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-800'} transition`}
+                            className={`${isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'} transition`}
                             title="نسخ الرمز"
                           >
                             {copiedCodeKey === coupon.id ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <Check className="w-3.5 h-3.5 text-emerald-500" />
                             ) : (
                               <Copy className="w-3.5 h-3.5" />
                             )}
@@ -5518,15 +5947,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         </div>
 
                         {isUsed ? (
-                          <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[10px] font-bold">
+                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                            isDarkTheme ? 'bg-slate-800 text-slate-300 border-slate-700' : 'bg-slate-200 text-slate-700 border-slate-300'
+                          }`}>
                             تم الاستخدام ✓
                           </span>
                         ) : isFrozen ? (
-                          <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-bold">
+                          <span className="px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-600 border border-amber-500/30 text-[10px] font-bold">
                             ❄️ خارج ساعات الصرف
                           </span>
                         ) : (
-                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                          <span className="px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 text-[10px] font-bold">
                             🟢 جاهز للصرف
                           </span>
                         )}
@@ -5547,12 +5978,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                       <h4 className={`font-black text-base ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{coupon.privilege_title}</h4>
 
-                      <div className={`p-2.5 rounded-2xl border space-y-1 text-[11px] ${
-                        isDarkTheme ? 'bg-slate-950/80 border-slate-800/80' : 'bg-slate-50 border-slate-200/90'
+                      <div className={`p-3 rounded-2xl border border-dashed space-y-1.5 text-[11px] ${
+                        isDarkTheme ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'
                       }`}>
                         <div className={`flex items-center justify-between ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
                           <span>ساعات الصرف:</span>
-                          <span className="font-mono font-bold" style={{ color: brandColors.textOnLightHex }}>
+                          <span className="font-mono font-bold" style={{ color: safeAccentText }}>
                             {coupon.valid_start_time && coupon.valid_end_time
                               ? `${coupon.valid_start_time} - ${coupon.valid_end_time}`
                               : 'متاح 24/7'}
@@ -5566,23 +5997,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     </div>
 
                     {!isUsed && (
-                      <div className={`mt-4 pt-3 border-t ${isDarkTheme ? 'border-slate-800' : 'border-slate-200'}`}>
+                      <div className={`mt-4 pt-3 border-t border-dashed ${isDarkTheme ? 'border-slate-800' : 'border-slate-200'}`}>
                         <button
                           onClick={() => handleSelectCouponForRedeem(coupon)}
                           style={
                             isSelected
                               ? {
-                                  backgroundColor: brandSecondary,
-                                  color: brandColors.contrastOnSecondary,
+                                  backgroundColor: safeAccentFill,
+                                  color: safeAccentFillContrast,
                                 }
                               : undefined
                           }
                           className={`w-full py-2.5 rounded-2xl font-black text-xs flex items-center justify-center space-x-1.5 rtl:space-x-reverse transition shadow-lg ${
                             isSelected
-                              ? (brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white shadow-lg' : 'shadow-lg')
+                              ? (safeAccentFillContrast === '#FFFFFF' ? 'keep-white shadow-lg' : 'shadow-lg')
                               : isFrozen
                               ? isDarkTheme ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
-                              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20'
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white keep-white shadow-emerald-500/20'
                           }`}
                         >
                           <QrCode className="w-4 h-4" />
@@ -5594,7 +6025,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 );
               })}
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -5603,7 +6035,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           <div className="flex items-center justify-between">
             <div>
               <h3 className={`text-lg font-black flex items-center space-x-2 rtl:space-x-reverse ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
-                <Crown className="w-5 h-5" style={{ color: brandSecondary }} />
+                <Crown className="w-5 h-5" style={{ color: safeAccentText }} />
                 <span>مكانتك ومستويات الـ VIP 👑</span>
               </h3>
               <p className={`text-xs mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
@@ -5636,12 +6068,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     isCurrent
                       ? isDarkTheme
                         ? {
-                            borderColor: brandSecondary,
-                            background: `linear-gradient(135deg, ${brandSecondary}20 0%, #0F172A 60%, #020617 100%)`,
+                            borderColor: safeAccentFill,
+                            background: `linear-gradient(135deg, ${safeAccentFill}20 0%, #0F172A 60%, #020617 100%)`,
                           }
                         : {
-                            borderColor: brandSecondary,
-                            background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${brandSecondary}15 100%)`,
+                            borderColor: safeAccentFill,
+                            background: `linear-gradient(135deg, #FFFFFF 0%, #FAFBFD 50%, ${safeAccentFill}15 100%)`,
                           }
                       : undefined
                   }
@@ -5650,9 +6082,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     <div className="absolute top-3 left-3 rtl:right-3 rtl:left-auto">
                       <span
                         className={`px-2.5 py-0.5 rounded-full font-black text-[10px] ${
-                          brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                          safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
                         }`}
-                        style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
+                        style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
                       >
                         مكانتك الحالية ✨
                       </span>
@@ -5663,9 +6095,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     <div
                       className="w-10 h-10 rounded-2xl border flex items-center justify-center font-bold text-base"
                       style={{
-                        backgroundColor: `${t.badge_color || brandSecondary}20`,
-                        borderColor: `${t.badge_color || brandSecondary}60`,
-                        color: t.badge_color || brandColors.textOnLightHex,
+                        backgroundColor: `${t.badge_color || safeAccentFill}20`,
+                        borderColor: `${t.badge_color || safeAccentFill}60`,
+                        color: t.badge_color || safeAccentText,
                       }}
                     >
                       {idx === 0 ? '🥉' : idx === 1 ? '🥈' : idx === 2 ? '🥇' : '👑'}
@@ -5673,7 +6105,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                     <h4 className={`font-extrabold text-base ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{t.tier_name}</h4>
                     <p className={`text-xs font-mono ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
-                      الشرط: <strong style={{ color: brandColors.textOnLightHex }}>{t.required_xp} XP</strong> تراكمي
+                      الشرط: <strong style={{ color: safeAccentText }}>{t.required_xp} XP</strong> تراكمي
                     </p>
 
                     <div className={`pt-2 text-[11px] ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
@@ -5684,7 +6116,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         </span>
                       ) : (
                         <span>
-                          باقي <strong className="font-mono" style={{ color: brandColors.textOnLightHex }}>{t.required_xp - (customer?.lifetime_xp || 0)} XP</strong> للوصول
+                          باقي <strong className="font-mono" style={{ color: safeAccentText }}>{t.required_xp - (customer?.lifetime_xp || 0)} XP</strong> للوصول
                         </span>
                       )}
                     </div>
@@ -5702,26 +6134,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           <div
             onClick={() => setIsCartModalOpen(true)}
             className={`p-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 cursor-pointer hover:scale-[1.02] active:scale-95 transition-all duration-300 border border-white/20 ${
-              brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
+              safeAccentFillContrast === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
             }`}
             style={{
-              background: brandColors.fabGradient,
-              color: brandColors.contrastOnSecondary,
-              boxShadow: `0 12px 30px -4px ${brandColors.glow}, 0 4px 12px rgba(0,0,0,0.4)`,
+              backgroundColor: safeAccentFill,
+              color: safeAccentFillContrast,
+              boxShadow: `0 12px 30px -4px rgba(0,0,0,0.35), 0 4px 12px rgba(0,0,0,0.25)`,
             }}
           >
             <div className="flex items-center gap-2.5">
               <div
                 className="w-8 h-8 rounded-xl flex items-center justify-center font-mono font-black text-xs bg-black/20"
-                style={{ color: brandColors.contrastOnSecondary }}
+                style={{ color: safeAccentFillContrast }}
               >
                 {cartItems.reduce((sum, item) => sum + item.quantity, 0)}
               </div>
               <div>
                 <span className="text-xs font-black block leading-tight">سلة طلباتك جاهزة</span>
                 <span
-                  className="text-[10px] font-bold opacity-80"
-                  style={{ color: brandColors.contrastOnSecondary }}
+                  className="text-[10px] font-bold opacity-85"
+                  style={{ color: safeAccentFillContrast }}
                 >
                   ستكسب +{estimatedLoyaltyPoints} نقطة ولاء 👑
                 </span>
@@ -5739,7 +6171,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   } catch {}
                 }}
                 className="w-7 h-7 rounded-xl bg-black/20 hover:bg-black/35 active:scale-90 flex items-center justify-center transition shrink-0"
-                style={{ color: brandColors.contrastOnSecondary }}
+                style={{ color: safeAccentFillContrast }}
                 title="إلغاء وإفراغ السلة ✕"
               >
                 <X className="w-4 h-4" />
@@ -5749,13 +6181,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <span className="text-sm font-black font-mono leading-none block">
                   {cartGrandTotal} ر.س
                 </span>
-                <span className="text-[9px] font-bold opacity-75">متابعة الطلب</span>
+                <span className="text-[9px] font-bold opacity-80">متابعة الطلب</span>
               </div>
               <div
                 className="w-7 h-7 rounded-xl flex items-center justify-center"
                 style={{
-                  backgroundColor: brandColors.contrastOnSecondary === '#FFFFFF' ? '#FFFFFF' : '#0F172A',
-                  color: brandColors.contrastOnSecondary === '#FFFFFF' ? '#0F172A' : '#FFFFFF',
+                  backgroundColor: safeAccentFillContrast === '#FFFFFF' ? '#FFFFFF' : '#0F172A',
+                  color: safeAccentFillContrast === '#FFFFFF' ? '#0F172A' : '#FFFFFF',
                 }}
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -5782,28 +6214,28 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
                 }}
                 className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex flex-col items-center justify-center transition-all duration-300 transform active:scale-90 ${
-                  brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
+                  safeAccentFillContrast === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'
                 } ${
                   activeTab === 'pass'
                     ? isDarkTheme ? 'scale-110 shadow-2xl ring-4 ring-slate-900' : 'scale-110 shadow-2xl ring-4 ring-white'
                     : isDarkTheme ? 'hover:scale-105 shadow-xl ring-4 ring-slate-950' : 'hover:scale-105 shadow-xl ring-4 ring-white'
                 }`}
                 style={{
-                  background: brandColors.fabGradient,
-                  boxShadow: `0 10px 28px -4px ${brandColors.glow}, 0 4px 14px rgba(0,0,0,0.35)`,
-                  color: brandColors.contrastOnSecondary,
+                  backgroundColor: safeAccentFill,
+                  boxShadow: `0 10px 28px -4px rgba(0,0,0,0.35), 0 4px 14px rgba(0,0,0,0.25)`,
+                  color: safeAccentFillContrast,
                 }}
                 title="بطاقة العضوية والولاء الرقمية"
               >
                 <div className="relative flex items-center justify-center">
-                  <QrCode className="w-6 h-6 sm:w-7 sm:h-7 stroke-[2.4]" style={{ color: brandColors.contrastOnSecondary }} />
+                  <QrCode className="w-6 h-6 sm:w-7 sm:h-7 stroke-[2.4]" style={{ color: safeAccentFillContrast }} />
                   {activeTab === 'pass' && (
                     <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-white animate-ping"></span>
                   )}
                 </div>
                 <span
                   className="text-[10px] font-black tracking-tight leading-none mt-1"
-                  style={{ color: brandColors.contrastOnSecondary }}
+                  style={{ color: safeAccentFillContrast }}
                 >
                   بطاقتي
                 </span>
@@ -5822,7 +6254,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <button
                   type="button"
                   onClick={() => setActiveTab('menu')}
-                  style={activeTab === 'menu' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
+                  style={activeTab === 'menu' ? { color: safeAccentText } : undefined}
                   className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'menu'
                       ? 'font-black scale-105'
@@ -5831,13 +6263,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 >
                   <ShoppingBag
                     className="w-5 h-5 transition-transform duration-300"
-                    style={activeTab === 'menu' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
+                    style={activeTab === 'menu' ? { filter: `drop-shadow(0 0 6px ${safeAccentText}40)` } : undefined}
                   />
                   <span className="text-[10px] sm:text-[11px] leading-tight">المنيو</span>
                   {activeTab === 'menu' ? (
                     <span
                       className="w-4 h-1 rounded-full animate-fade-in"
-                      style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
+                      style={{ backgroundColor: safeAccentText }}
                     />
                   ) : (
                     <span className="w-4 h-1 opacity-0" />
@@ -5845,9 +6277,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   {cartItems.length > 0 && (
                     <span
                       className={`absolute top-0.5 right-1 sm:right-2 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm ${
-                        brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                        safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
                       }`}
-                      style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
+                      style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
                     >
                       {cartItems.reduce((sum, item) => sum + item.quantity, 0)}
                     </span>
@@ -5862,7 +6294,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <button
                   type="button"
                   onClick={() => setActiveTab('services')}
-                  style={activeTab === 'services' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
+                  style={activeTab === 'services' ? { color: safeAccentText } : undefined}
                   className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'services'
                       ? 'font-black scale-105'
@@ -5871,13 +6303,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 >
                   <Calendar
                     className="w-5 h-5 transition-transform duration-300"
-                    style={activeTab === 'services' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
+                    style={activeTab === 'services' ? { filter: `drop-shadow(0 0 6px ${safeAccentText}40)` } : undefined}
                   />
                   <span className="text-[10px] sm:text-[11px] leading-tight">حجز موعد</span>
                   {activeTab === 'services' ? (
                     <span
                       className="w-4 h-1 rounded-full animate-fade-in"
-                      style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
+                      style={{ backgroundColor: safeAccentText }}
                     />
                   ) : (
                     <span className="w-4 h-1 opacity-0" />
@@ -5897,7 +6329,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <button
                   type="button"
                   onClick={() => setActiveTab('perks')}
-                  style={activeTab === 'perks' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
+                  style={activeTab === 'perks' ? { color: safeAccentText } : undefined}
                   className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                     activeTab === 'perks'
                       ? 'font-black scale-105'
@@ -5906,13 +6338,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 >
                   <Gift
                     className="w-5 h-5 transition-transform duration-300"
-                    style={activeTab === 'perks' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
+                    style={activeTab === 'perks' ? { filter: `drop-shadow(0 0 6px ${safeAccentText}40)` } : undefined}
                   />
                   <span className="text-[10px] sm:text-[11px] leading-tight">العروض</span>
                   {activeTab === 'perks' ? (
                     <span
                       className="w-4 h-1 rounded-full animate-fade-in"
-                      style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
+                      style={{ backgroundColor: safeAccentText }}
                     />
                   ) : (
                     <span className="w-4 h-1 opacity-0" />
@@ -5926,7 +6358,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <button
                 type="button"
                 onClick={() => setActiveTab('tickets')}
-                style={activeTab === 'tickets' ? { color: isDarkTheme ? brandSecondary : brandColors.textOnLightHex } : undefined}
+                style={activeTab === 'tickets' ? { color: safeAccentText } : undefined}
                 className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
                   activeTab === 'tickets'
                     ? 'font-black scale-105'
@@ -5935,13 +6367,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               >
                 <Ticket
                   className="w-5 h-5 transition-transform duration-300"
-                  style={activeTab === 'tickets' ? { filter: `drop-shadow(0 0 6px ${brandSecondary}80)` } : undefined}
+                  style={activeTab === 'tickets' ? { filter: `drop-shadow(0 0 6px ${safeAccentText}40)` } : undefined}
                 />
                 <span className="text-[10px] sm:text-[11px] leading-tight">حصرياتي</span>
                 {activeTab === 'tickets' ? (
                   <span
                     className="w-4 h-1 rounded-full animate-fade-in"
-                    style={{ backgroundColor: isDarkTheme ? brandSecondary : brandColors.textOnLightHex, boxShadow: `0 0 6px ${brandSecondary}` }}
+                    style={{ backgroundColor: safeAccentText }}
                   />
                 ) : (
                   <span className="w-4 h-1 opacity-0" />
@@ -5949,9 +6381,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 {activeCouponsCount > 0 && (
                   <span
                     className={`absolute top-0.5 right-1 sm:right-2 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm animate-pulse ${
-                      brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
+                      safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
                     }`}
-                    style={{ backgroundColor: brandSecondary, color: brandColors.contrastOnSecondary }}
+                    style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
                   >
                     {activeCouponsCount}
                   </span>
@@ -5965,39 +6397,60 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       {/* 🌟 04 (Image 4) - "كيف أجمع نقاط؟" Interactive Modal Bottom Sheet */}
       {showHowToEarnPoints && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-          <div className="w-full max-w-sm rounded-t-[32px] sm:rounded-3xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-2xl relative text-center">
-            <h3 className="font-serif font-black text-xl text-white">
+          <div className={`w-full max-w-sm rounded-t-[32px] sm:rounded-3xl p-6 space-y-4 shadow-2xl relative text-center border ${
+            isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+          }`}>
+            <h3 className={`font-black text-xl ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
               كيف تجمع نقاط؟
             </h3>
 
-            <div className="space-y-3 text-right text-xs sm:text-sm text-slate-200 py-2">
-              <div className="flex items-start gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
-                <span className="font-bold text-amber-400 font-mono">1.</span>
-                <span>اطلب من المنيو أو زر المطعم وأبرز الباركود للكاشير عند المحاسبة.</span>
+            <div className="space-y-3 text-right text-xs sm:text-sm py-2">
+              <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <span className="font-bold text-amber-500 font-mono text-sm shrink-0">1.</span>
+                <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                  اطلب من المنيو أو زر المطعم وأبرز الباركود للكاشير عند المحاسبة.
+                </span>
               </div>
-              <div className="flex items-start gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
-                <span className="font-bold text-amber-400 font-mono">2.</span>
-                <span>كل ريال تدفعه = {store.points_per_riyal || 5} نقاط تضاف تلقائياً لمحفظتك.</span>
+              <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <span className="font-bold text-amber-500 font-mono text-sm shrink-0">2.</span>
+                <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                  كل ريال تدفعه = {store.points_per_riyal || 5} نقاط تضاف تلقائياً لمحفظتك.
+                </span>
               </div>
-              <div className="flex items-start gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
-                <span className="font-bold text-amber-400 font-mono">3.</span>
-                <span>استبدل نقاطك بمكافآت وهدايا حصرية من شاشة "العروض والامتيازات".</span>
+              <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <span className="font-bold text-amber-500 font-mono text-sm shrink-0">3.</span>
+                <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                  استبدل نقاطك بمكافآت وهدايا حصرية من شاشة "العروض والامتيازات".
+                </span>
               </div>
-              <div className="flex items-start gap-2.5 p-2 rounded-xl bg-white/5 border border-white/5">
-                <span className="font-bold text-amber-400 font-mono">4.</span>
-                <span>كل ما زادت نقاطك ارتقى مستواك وزادت مميزاتك الخاصة! 👑</span>
+              <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+              }`}>
+                <span className="font-bold text-amber-500 font-mono text-sm shrink-0">4.</span>
+                <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                  كل ما زادت نقاطك ارتقى مستواك وزادت مميزاتك الخاصة! 👑
+                </span>
               </div>
             </div>
 
             <button
               type="button"
               onClick={() => setShowHowToEarnPoints(false)}
-              className="w-full py-3.5 rounded-2xl font-black text-sm text-slate-950 transition active:scale-95 shadow-lg"
+              className={`w-full py-3.5 rounded-2xl font-black text-sm transition active:scale-95 shadow-lg ${
+                safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+              }`}
               style={{
-                backgroundColor: brandSecondary,
+                backgroundColor: safeAccentFill,
+                color: safeAccentFillContrast,
               }}
             >
-              فهمت
+              فهمت ✓
             </button>
           </div>
         </div>
@@ -6024,10 +6477,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             <div>
               <h3 className={`font-black text-lg ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{store.name}</h3>
               <p
-                className={`text-xs font-mono mt-0.5 ${isDarkTheme ? '' : 'font-bold'}`}
-                style={{ color: isDarkTheme ? brandSecondary : (brandColors.textOnLightHex || '#854d0e') }}
+                className="text-xs font-bold mt-0.5"
+                style={{ color: safeAccentText }}
               >
-                {selectedCouponForQR ? `امتياز: ${selectedCouponForQR.privilege_title}` : 'Dynamic VIP Pass'}
+                {selectedCouponForQR ? `امتياز: ${selectedCouponForQR.privilege_title}` : 'بطاقة الولاء الرقمية المباشرة'}
               </p>
             </div>
 
@@ -6042,9 +6495,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               />
             </div>
 
-            <div className={`text-xs font-mono ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
+            <div className={`text-xs ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
               <span>يتحدث الرمز خلال: </span>
-              <strong className="font-bold" style={{ color: isDarkTheme ? brandSecondary : (brandColors.textOnLightHex || '#b45309') }}>
+              <strong className="font-bold font-mono" style={{ color: safeAccentText }}>
                 {timeLeft} ثانية
               </strong>
             </div>
@@ -6087,17 +6540,17 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <div
                   className="w-14 h-14 rounded-2xl border flex items-center justify-center text-3xl mx-auto"
                   style={{
-                    backgroundColor: `${brandSecondary}15`,
-                    borderColor: `${brandSecondary}30`,
-                    color: brandSecondary,
+                    backgroundColor: `${safeAccentFill}15`,
+                    borderColor: `${safeAccentFill}30`,
+                    color: safeAccentText,
                   }}
                 >
                   🎁
                 </div>
               )}
-              <h3 className="text-lg font-black text-white">تأكيد فتح واستبدال الامتياز</h3>
+              <h3 className="text-lg font-black text-white">تأكيد شراء واستبدال الامتياز</h3>
               <p className="text-xs text-slate-300">
-                أنت على وشك فتح <strong style={{ color: brandSecondary }}>"{purchasingPrivilege.title}"</strong>
+                أنت على وشك شراء <strong style={{ color: safeAccentText }}>"{purchasingPrivilege.title}"</strong>
               </p>
             </div>
 
@@ -6112,12 +6565,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <span>رصيدك الحالي:</span>
                 <span className="font-mono text-white font-bold">{customer?.wallet_balance} نقطة</span>
               </div>
-              <div className="flex items-center justify-between font-bold" style={{ color: brandSecondary }}>
+              <div className="flex items-center justify-between font-bold" style={{ color: safeAccentText }}>
                 <span>النقاط المستحقة:</span>
                 <span className="font-mono">-{purchasingPrivilege.cost_points} نقطة</span>
               </div>
-              <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-emerald-400 font-bold">
-                <span>رصيدك بعد التفعيل:</span>
+              <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-emerald-500 font-bold">
+                <span>رصيدك بعد الشراء:</span>
                 <span className="font-mono">
                   {(customer?.wallet_balance || 0) - purchasingPrivilege.cost_points} نقطة
                 </span>
@@ -6130,12 +6583,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 onClick={handleConfirmPurchaseCoupon}
                 disabled={purchaseLoading}
                 style={{
-                  backgroundColor: brandSecondary,
-                  color: '#000000',
+                  backgroundColor: safeAccentFill,
+                  color: safeAccentFillContrast,
                 }}
-                className="flex-1 py-3.5 rounded-xl font-black text-sm transition shadow-lg hover:brightness-110 disabled:opacity-50"
+                className={`flex-1 py-3.5 rounded-xl font-black text-sm transition shadow-lg hover:brightness-110 disabled:opacity-50 ${
+                  safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                }`}
               >
-                {purchaseLoading ? 'جاري التفعيل...' : 'تأكيد الفتح الفوري 🚀'}
+                {purchaseLoading ? 'جاري الشراء...' : 'تأكيد الشراء الفوري 🛍️'}
               </button>
               <button
                 type="button"
@@ -6163,9 +6618,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <div
                 className="w-12 h-12 rounded-2xl border flex items-center justify-center text-2xl shrink-0"
                 style={{
-                  backgroundColor: `${brandSecondary}15`,
-                  borderColor: `${brandSecondary}30`,
-                  color: brandSecondary,
+                  backgroundColor: `${safeAccentFill}15`,
+                  borderColor: `${safeAccentFill}30`,
+                  color: safeAccentText,
                 }}
               >
                 📲
@@ -6178,18 +6633,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
             <div className="space-y-3.5">
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex items-center space-x-2 rtl:space-x-reverse font-bold text-xs" style={{ color: brandSecondary }}>
+                <div className="flex items-center space-x-2 rtl:space-x-reverse font-bold text-xs" style={{ color: safeAccentText }}>
                   <span>🍎 لمستخدمي الآيفون (Safari):</span>
                 </div>
                 <ol className="text-xs text-slate-300 space-y-1 list-decimal list-inside pr-1">
                   <li>اضغط على زر <strong className="text-white font-bold">المشاركة (Share ⎋)</strong> أسفل المتصفح.</li>
                   <li>اختر <strong className="text-white font-bold">"إضافة إلى الشاشة الرئيسية" (Add to Home Screen ➕)</strong>.</li>
-                  <li>اضغط <strong className="font-bold" style={{ color: brandSecondary }}>"إضافة" (Add)</strong> في الزاوية.</li>
+                  <li>اضغط <strong className="font-bold" style={{ color: safeAccentText }}>"إضافة" (Add)</strong> في الزاوية.</li>
                 </ol>
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                <div className="flex items-center space-x-2 rtl:space-x-reverse text-emerald-400 font-bold text-xs">
+                <div className="flex items-center space-x-2 rtl:space-x-reverse text-emerald-500 font-bold text-xs">
                   <span>🤖 لمستخدمي الأندرويد (Chrome):</span>
                 </div>
                 <ol className="text-xs text-slate-300 space-y-1 list-decimal list-inside pr-1">
@@ -6213,11 +6668,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div
             className="glass-card max-w-md w-full rounded-3xl p-6 sm:p-8 space-y-5 border text-center relative shadow-2xl bg-slate-900 overflow-hidden"
-            style={{ borderColor: `${brandSecondary}80` }}
+            style={{ borderColor: `${safeAccentFill}80` }}
           >
             <div
               className="absolute -top-10 -right-10 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-30"
-              style={{ backgroundColor: brandSecondary }}
+              style={{ backgroundColor: safeAccentFill }}
             ></div>
 
             <button
@@ -6233,11 +6688,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   🚫
                 </div>
                 <div className="space-y-1.5">
-                  <span className="px-3 py-1 rounded-full bg-rose-500/15 text-rose-400 border border-rose-500/30 text-xs font-bold font-mono inline-block">
+                  <span className="px-3 py-1 rounded-full bg-rose-500/15 text-rose-500 border border-rose-500/30 text-xs font-bold font-mono inline-block">
                     تم رفض العملية
                   </span>
                   <h3 className="text-lg font-black text-white">{celebrationModal.title}</h3>
-                  <p className="text-xs text-rose-300 max-w-xs mx-auto leading-relaxed pt-1">
+                  <p className="text-xs text-rose-400 max-w-xs mx-auto leading-relaxed pt-1">
                     {celebrationModal.subtitle}
                   </p>
                 </div>
@@ -6248,11 +6703,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   🎁
                 </div>
                 <div className="space-y-1.5">
-                  <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold font-mono inline-block">
+                  <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 text-xs font-bold font-mono inline-block">
                     تم الصرف والتسليم بنجاح ✓
                   </span>
                   <h3 className="text-xl font-black text-white">ألف مبروك!</h3>
-                  <h4 className="text-sm font-bold" style={{ color: brandSecondary }}>
+                  <h4 className="text-sm font-bold" style={{ color: safeAccentText }}>
                     "{celebrationModal.title}"
                   </h4>
                   <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed pt-1">
@@ -6265,8 +6720,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <div
                   className="w-16 h-16 rounded-3xl border flex items-center justify-center text-4xl mx-auto shadow-inner animate-bounce"
                   style={{
-                    backgroundColor: `${brandSecondary}20`,
-                    borderColor: `${brandSecondary}40`,
+                    backgroundColor: `${safeAccentFill}20`,
+                    borderColor: `${safeAccentFill}40`,
                   }}
                 >
                   💎
@@ -6275,9 +6730,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   <span
                     className="px-3 py-1 rounded-full border text-xs font-bold font-mono inline-block"
                     style={{
-                      backgroundColor: `${brandSecondary}15`,
-                      borderColor: `${brandSecondary}30`,
-                      color: brandSecondary,
+                      backgroundColor: `${safeAccentFill}15`,
+                      borderColor: `${safeAccentFill}30`,
+                      color: safeAccentText,
                     }}
                   >
                     +{celebrationModal.points} نقطة جديدة ✨
@@ -6288,7 +6743,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </p>
                   <div className="mt-3 p-3 rounded-2xl bg-slate-950 border border-slate-800 inline-flex items-center gap-2">
                     <span className="text-xs text-slate-400">رصيدك الحالي أصبح:</span>
-                    <strong className="text-base font-black font-mono" style={{ color: brandSecondary }}>
+                    <strong className="text-base font-black font-mono" style={{ color: safeAccentText }}>
                       {celebrationModal.newBalance?.toLocaleString()} نقطة
                     </strong>
                   </div>
@@ -6301,10 +6756,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 type="button"
                 onClick={() => setCelebrationModal(null)}
                 style={{
-                  backgroundColor: brandSecondary,
-                  color: '#000000',
+                  backgroundColor: safeAccentFill,
+                  color: safeAccentFillContrast,
                 }}
-                className="w-full py-3.5 rounded-2xl font-black text-sm transition shadow-xl hover:brightness-110"
+                className={`w-full py-3.5 rounded-2xl font-black text-sm transition shadow-xl hover:brightness-110 ${
+                  safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                }`}
               >
                 رائع! شكراً لكم 👏
               </button>
@@ -6720,89 +7177,101 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
               <div className={`space-y-2.5 pt-2 border-t ${isDarkTheme ? 'border-slate-800' : 'border-slate-200'}`}>
                 <h4 className={`text-xs font-black ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>طريقة الاستلام أو الحجز:</h4>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2.5">
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('dine_in')}
-                    className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
+                    className={`p-3 rounded-2xl border text-xs font-black flex flex-col items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 ${
                       fulfillmentType === 'dine_in'
-                        ? isDarkTheme ? 'bg-slate-900 border-2' : 'bg-slate-900 border-2 text-white keep-white'
-                        : isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
+                        ? 'border-2 shadow-md'
+                        : isDarkTheme
+                        ? 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white'
+                        : 'bg-white border-slate-200 text-slate-700 hover:text-slate-900 shadow-2xs'
                     }`}
                     style={
                       fulfillmentType === 'dine_in'
                         ? {
-                            borderColor: brandSecondary,
-                            color: isDarkTheme ? brandSecondary : '#FFFFFF',
+                            borderColor: safeAccentFill,
+                            backgroundColor: isDarkTheme ? `${safeAccentFill}22` : `${safeAccentFill}14`,
+                            color: isDarkTheme ? brandSecondary : safeAccentText,
                           }
                         : undefined
                     }
                   >
-                    <Utensils className="w-4 h-4" />
-                    <span>🍽️ تناول محلي</span>
+                    <Utensils className="w-5 h-5 shrink-0" style={fulfillmentType === 'dine_in' ? { color: safeAccentText } : undefined} />
+                    <span>تناول محلي</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('takeaway')}
-                    className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
+                    className={`p-3 rounded-2xl border text-xs font-black flex flex-col items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 ${
                       fulfillmentType === 'takeaway'
-                        ? isDarkTheme ? 'bg-slate-900 border-2' : 'bg-slate-900 border-2 text-white keep-white'
-                        : isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
+                        ? 'border-2 shadow-md'
+                        : isDarkTheme
+                        ? 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white'
+                        : 'bg-white border-slate-200 text-slate-700 hover:text-slate-900 shadow-2xs'
                     }`}
                     style={
                       fulfillmentType === 'takeaway'
                         ? {
-                            borderColor: brandSecondary,
-                            color: isDarkTheme ? brandSecondary : '#FFFFFF',
+                            borderColor: safeAccentFill,
+                            backgroundColor: isDarkTheme ? `${safeAccentFill}22` : `${safeAccentFill}14`,
+                            color: isDarkTheme ? brandSecondary : safeAccentText,
                           }
                         : undefined
                     }
                   >
-                    <Car className="w-4 h-4" />
-                    <span>🚗 استلام سفري</span>
+                    <Car className="w-5 h-5 shrink-0" style={fulfillmentType === 'takeaway' ? { color: safeAccentText } : undefined} />
+                    <span>استلام سفري</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('delivery')}
-                    className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
+                    className={`p-3 rounded-2xl border text-xs font-black flex flex-col items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 ${
                       fulfillmentType === 'delivery'
-                        ? isDarkTheme ? 'bg-slate-900 border-2' : 'bg-slate-900 border-2 text-white keep-white'
-                        : isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
+                        ? 'border-2 shadow-md'
+                        : isDarkTheme
+                        ? 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white'
+                        : 'bg-white border-slate-200 text-slate-700 hover:text-slate-900 shadow-2xs'
                     }`}
                     style={
                       fulfillmentType === 'delivery'
                         ? {
-                            borderColor: brandSecondary,
-                            color: isDarkTheme ? brandSecondary : '#FFFFFF',
+                            borderColor: safeAccentFill,
+                            backgroundColor: isDarkTheme ? `${safeAccentFill}22` : `${safeAccentFill}14`,
+                            color: isDarkTheme ? brandSecondary : safeAccentText,
                           }
                         : undefined
                     }
                   >
-                    <MapPin className="w-4 h-4" />
-                    <span>🛵 توصيل للعنوان</span>
+                    <MapPin className="w-5 h-5 shrink-0" style={fulfillmentType === 'delivery' ? { color: safeAccentText } : undefined} />
+                    <span>توصيل للعنوان</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setFulfillmentType('service_booking')}
-                    className={`p-2.5 rounded-2xl border text-xs font-bold flex flex-col items-center gap-1 transition ${
+                    className={`p-3 rounded-2xl border text-xs font-black flex flex-col items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 ${
                       fulfillmentType === 'service_booking'
-                        ? isDarkTheme ? 'bg-slate-900 border-2' : 'bg-slate-900 border-2 text-white keep-white'
-                        : isDarkTheme ? 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white' : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900'
+                        ? 'border-2 shadow-md'
+                        : isDarkTheme
+                        ? 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white'
+                        : 'bg-white border-slate-200 text-slate-700 hover:text-slate-900 shadow-2xs'
                     }`}
                     style={
                       fulfillmentType === 'service_booking'
                         ? {
-                            borderColor: brandSecondary,
-                            color: isDarkTheme ? brandSecondary : '#FFFFFF',
+                            borderColor: safeAccentFill,
+                            backgroundColor: isDarkTheme ? `${safeAccentFill}22` : `${safeAccentFill}14`,
+                            color: isDarkTheme ? brandSecondary : safeAccentText,
                           }
                         : undefined
                     }
                   >
-                    <Calendar className="w-4 h-4" />
-                    <span>💇‍♂️ موعد خدمة</span>
+                    <Calendar className="w-5 h-5 shrink-0" style={fulfillmentType === 'service_booking' ? { color: safeAccentText } : undefined} />
+                    <span>موعد خدمة</span>
                   </button>
                 </div>
               </div>
@@ -6941,38 +7410,55 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           </label>
                           <span className="text-[10px] text-slate-400">اختر للتعبئة السريعة</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                           {savedAddresses.map((addr) => {
                             const isSelected = selectedAddressId === addr.id;
+                            const isWork = addr.label === 'العمل';
+                            const isRest = addr.label === 'الاستراحة';
                             return (
-                              <button
+                              <div
                                 key={addr.id}
-                                type="button"
                                 onClick={() => handleSelectSavedAddress(addr)}
-                                className={`p-2.5 rounded-2xl border text-right transition flex items-start gap-2 ${
+                                className={`p-2.5 rounded-2xl border text-right transition flex items-start justify-between gap-2 cursor-pointer relative group ${
                                   isSelected
-                                    ? isDarkTheme ? 'bg-slate-900 border-2 border-amber-500 text-white' : 'bg-amber-50/50 border-2 border-amber-500 text-slate-900'
+                                    ? isDarkTheme ? 'bg-slate-900 border-2 border-amber-500 text-white shadow-lg' : 'bg-amber-50/50 border-2 border-amber-500 text-slate-900 shadow-sm'
                                     : isDarkTheme ? 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700' : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300'
                                 }`}
                               >
-                                <div className={`p-1.5 rounded-xl shrink-0 ${isSelected ? 'bg-amber-500 text-slate-950' : 'bg-slate-800 text-slate-300'}`}>
-                                  {addr.icon === 'building' ? <Briefcase className="w-3.5 h-3.5" /> : <Home className="w-3.5 h-3.5" />}
+                                <div className="flex items-start gap-2 min-w-0 flex-1">
+                                  <div className={`p-1.5 rounded-xl shrink-0 ${isSelected ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-800 text-slate-300'}`}>
+                                    {isWork ? (
+                                      <Briefcase className="w-3.5 h-3.5" />
+                                    ) : isRest ? (
+                                      <Trees className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <Home className="w-3.5 h-3.5" />
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-xs font-black truncate">{addr.label}</div>
+                                    <div className="text-[10px] text-slate-400 truncate">{addr.district || 'موقع محفوظ'}</div>
+                                  </div>
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-xs font-black truncate">{addr.label}</div>
-                                  <div className="text-[10px] text-slate-400 truncate">{addr.district}</div>
-                                </div>
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteSavedAddress(addr.id, e)}
+                                  title="حذف هذا العنوان"
+                                  className="opacity-60 hover:opacity-100 p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition shrink-0"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
                             );
                           })}
                         </div>
                       </div>
                     )}
 
-                    {/* 3. عنوان التوصيل بالتفصيل */}
+                    {/* 3. عنوان التوصيل بالتفصيل (إجباري) */}
                     <div>
                       <label className={`text-xs font-bold block mb-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
-                        عنوان التوصيل بالتفصيل:
+                        عنوان التوصيل بالتفصيل <span className="text-rose-500 font-black">*</span>:
                       </label>
                       <input
                         type="text"
@@ -6981,19 +7467,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           setDeliveryAddress(e.target.value);
                           setSelectedAddressId(null);
                         }}
-                        placeholder="مثال: حي الملقا - شارع أنس بن مالك - عمارة 12 شقة 4"
+                        placeholder="مثال: حي النرجس - شارع التخصصي - عمارة الهدى شقة 3"
                         className={`w-full rounded-xl px-3 py-2 text-xs focus:outline-none transition ${
                           isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white focus:border-amber-500' : 'bg-white border border-slate-300 text-slate-900 focus:border-amber-500'
-                        }`}
+                        } ${!deliveryAddress.trim() ? 'border-amber-500/40' : ''}`}
                       />
                     </div>
 
-                    {/* 4. رابط الخريطة وزر الـ GPS التلقائي الذكي */}
+                    {/* 4. رابط الخريطة وزر الـ GPS التلقائي الذكي (إجباري) */}
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className={`text-xs font-bold flex items-center gap-1 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
                           <MapPin className="w-3.5 h-3.5 text-rose-500" />
-                          <span>موقعك على الخريطة (GPS):</span>
+                          <span>موقعك على الخريطة (GPS) <span className="text-rose-500 font-black">*</span>:</span>
                         </label>
                         <button
                           type="button"
@@ -7018,7 +7504,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           placeholder="https://maps.google.com/?q=24.7136,46.6753"
                           className={`w-full rounded-xl pl-20 pr-3 py-2 text-xs font-mono focus:outline-none transition ${
                             isDarkTheme ? 'bg-slate-900 border border-slate-700 text-white focus:border-amber-500' : 'bg-white border border-slate-300 text-slate-900 focus:border-amber-500'
-                          }`}
+                          } ${!deliveryGpsLink.trim() ? 'border-amber-500/40' : ''}`}
                         />
                         {deliveryGpsLink && (
                           <div className="absolute left-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -7049,7 +7535,94 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       )}
                     </div>
 
-                    {/* 5. بطاقة النطاق الجغرافي والمسافة ورسوم التوصيل المحسوبة */}
+                    {/* 5. صورة واجهة المبنى أو الباب مع الضغط التلقائي */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className={`text-xs font-bold flex items-center gap-1.5 ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                          <Camera className="w-3.5 h-3.5 text-amber-500" />
+                          <span>صورة الموقع / واجهة المبنى (اختياري):</span>
+                        </label>
+                        <span className="text-[10px] text-slate-400">ضغط فوري لحفظ المساحة ⚡</span>
+                      </div>
+
+                      {deliveryLocationPhoto ? (
+                        <div className={`p-2.5 rounded-2xl border flex items-center justify-between gap-3 ${
+                          isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'
+                        }`}>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <img
+                              src={deliveryLocationPhoto}
+                              alt="واجهة الموقع"
+                              className="w-12 h-12 rounded-xl object-cover border border-amber-500/40 shadow-sm shrink-0"
+                            />
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-emerald-500 flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>تم ضغط ورفع الصورة</span>
+                              </div>
+                              {photoSavingsPercent != null && (
+                                <div className="text-[10px] text-slate-400 font-mono">
+                                  توفير {photoSavingsPercent}% من حجم الملف
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <a
+                              href={deliveryLocationPhoto}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-1.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs transition"
+                              title="معاينة الصورة"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeliveryLocationPhoto('');
+                                setPhotoSavingsPercent(null);
+                              }}
+                              className="p-1.5 rounded-xl bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 text-xs transition"
+                              title="حذف الصورة"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <label className={`w-full p-2.5 rounded-2xl border-2 border-dashed flex items-center justify-center gap-2 cursor-pointer transition ${
+                            isUploadingPhoto
+                              ? 'opacity-70 cursor-not-allowed bg-amber-500/5 border-amber-500/30'
+                              : isDarkTheme
+                              ? 'border-slate-800 hover:border-amber-500/50 bg-slate-900/40 hover:bg-slate-900 text-slate-400 hover:text-amber-300'
+                              : 'border-slate-300 hover:border-amber-500/50 bg-slate-50 hover:bg-amber-50/30 text-slate-600 hover:text-amber-800'
+                          }`}>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              disabled={isUploadingPhoto}
+                              onChange={handleLocationPhotoUpload}
+                              className="hidden"
+                            />
+                            {isUploadingPhoto ? (
+                              <div className="flex items-center gap-2 text-xs font-bold text-amber-500">
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                <span>جاري ضغط ورفع صورة الموقع...</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 text-xs font-medium">
+                                <Camera className="w-4 h-4 text-amber-500" />
+                                <span>إرفاق صورة للواجهة أو الباب (لتسهيل وصول السائق)</span>
+                              </div>
+                            )}
+                          </label>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 6. بطاقة النطاق الجغرافي والمسافة ورسوم التوصيل المحسوبة */}
                     {calculatedDelivery && (
                       <div className={`p-3 rounded-2xl border text-xs transition ${
                         calculatedDelivery.is_deliverable
@@ -7094,8 +7667,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       </div>
                     )}
 
-                    {/* 6. خيار حفظ العنوان في دفتر العناوين */}
-                    <div className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${
+                    {/* 7. خيار حفظ وتصنيف العنوان في دفتر العناوين */}
+                    <div className={`p-2.5 rounded-xl border text-xs flex items-center justify-between flex-wrap gap-2 ${
                       isDarkTheme ? 'bg-slate-900/50 border-slate-800' : 'bg-slate-50 border-slate-200'
                     }`}>
                       <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -7110,19 +7683,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         </span>
                       </label>
                       {saveThisAddress && (
-                        <div className="flex items-center gap-1">
-                          {(['البيت', 'العمل', 'الاستراحة'] as const).map((lbl) => (
+                        <div className="flex items-center gap-1.5">
+                          {[
+                            { id: 'البيت', label: 'البيت 🏠' },
+                            { id: 'العمل', label: 'العمل 💼' },
+                            { id: 'الاستراحة', label: 'الاستراحة 🌴' },
+                          ].map((cat) => (
                             <button
-                              key={lbl}
+                              key={cat.id}
                               type="button"
-                              onClick={() => setSaveAddressLabel(lbl)}
-                              className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition ${
-                                saveAddressLabel === lbl
-                                  ? 'bg-amber-500 text-slate-950'
-                                  : isDarkTheme ? 'bg-slate-800 text-slate-400' : 'bg-slate-200 text-slate-600'
+                              onClick={() => setSaveAddressLabel(cat.id)}
+                              className={`px-2.5 py-1 rounded-xl text-[11px] font-black transition ${
+                                saveAddressLabel === cat.id
+                                  ? 'bg-amber-500 text-slate-950 shadow'
+                                  : isDarkTheme ? 'bg-slate-800 text-slate-400 hover:text-white' : 'bg-slate-200 text-slate-600 hover:text-slate-900'
                               }`}
                             >
-                              {lbl}
+                              {cat.label}
                             </button>
                           ))}
                         </div>
@@ -7367,7 +7944,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div
             className="glass-card max-w-md w-full rounded-3xl p-6 sm:p-8 space-y-5 border text-center relative shadow-2xl bg-slate-900"
-            style={{ borderColor: `${brandSecondary}80` }}
+            style={{ borderColor: `${safeAccentFill}80` }}
           >
             <button
               onClick={() => setOrderSuccessPayload(null)}
@@ -7385,10 +7962,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       👨‍🍳
                     </div>
                     <div className="space-y-2">
-                      <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold font-mono inline-block">
+                      <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/40 text-xs font-bold font-mono inline-block">
                         طلبك رقم #{orderSuccessPayload.order_id}
                       </span>
-                      <h3 className="text-xl font-black text-amber-400">تم قبول الطلب وجاري التحضير!</h3>
+                      <h3 className="text-xl font-black text-amber-500">تم قبول الطلب وجاري التحضير!</h3>
                       <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
                         الكاشير قبل طلبك وبدأ المطبخ في تجهيز أصنافك الآن بكل حب وعناية 🍳🔥
                       </p>
@@ -7403,10 +7980,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       🛍️
                     </div>
                     <div className="space-y-2">
-                      <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-xs font-bold font-mono inline-block">
+                      <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-500 border border-emerald-500/40 text-xs font-bold font-mono inline-block">
                         طلبك رقم #{orderSuccessPayload.order_id}
                       </span>
-                      <h3 className="text-xl font-black text-emerald-400">طلبك جاهز تماماً!</h3>
+                      <h3 className="text-xl font-black text-emerald-500">طلبك جاهز تماماً!</h3>
                       <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
                         تم الانتهاء من تجهيز طلبك وهو جاهز للاستلام أو التوصيل، بالهناء والعافية ✨
                       </p>
@@ -7421,10 +7998,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       ❌
                     </div>
                     <div className="space-y-2">
-                      <span className="px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-xs font-bold font-mono inline-block">
+                      <span className="px-3 py-1 rounded-full bg-rose-500/20 text-rose-500 border border-rose-500/40 text-xs font-bold font-mono inline-block">
                         طلبك رقم #{orderSuccessPayload.order_id}
                       </span>
-                      <h3 className="text-xl font-black text-rose-400">تم إلغاء الطلب</h3>
+                      <h3 className="text-xl font-black text-rose-500">تم إلغاء الطلب</h3>
                       <p className="text-xs text-slate-300 max-w-xs mx-auto leading-relaxed">
                         نعتذر منك، تم إلغاء هذا الطلب من إدارة المتجر.
                       </p>
@@ -7438,7 +8015,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     ✅
                   </div>
                   <div className="space-y-2">
-                    <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-bold font-mono inline-block">
+                    <span className="px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 text-xs font-bold font-mono inline-block">
                       طلبك رقم #{orderSuccessPayload.order_id}
                     </span>
                     <h3 className="text-xl font-black text-white">تم استلام طلبك وبانتظار الموافقة!</h3>
@@ -7463,7 +8040,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     : '💵 الدفع عند الاستلام بالفرع'}
                 </span>
               </div>
-              <div className="flex items-center justify-between text-emerald-400 font-bold">
+              <div className="flex items-center justify-between text-emerald-500 font-bold">
                 <span>النقاط المستحقة:</span>
                 <span className="font-mono">+{orderSuccessPayload.loyalty_points_earned} نقطة ولاء</span>
               </div>
@@ -7476,7 +8053,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   setOrderSuccessPayload(null);
                   setShowPastOrdersModal(true);
                 }}
-                className="w-full py-3.5 rounded-2xl font-black text-xs sm:text-sm text-white bg-blue-600 hover:bg-blue-500 shadow-xl flex items-center justify-center gap-2 transition"
+                className="w-full py-3.5 rounded-2xl font-black text-xs sm:text-sm text-white keep-white bg-blue-600 hover:bg-blue-500 shadow-xl flex items-center justify-center gap-2 transition"
               >
                 <MessageCircle className="w-4 h-4 fill-current" />
                 <span>تتبع حالة الطلب 📋</span>
@@ -7503,25 +8080,31 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         return (
           <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in">
             <div
-              className="w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up"
-              style={{ borderColor: `${brandSecondary}40` }}
+              className={`w-full max-w-md border rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-slide-up ${
+                isDarkTheme ? 'bg-slate-900 border-slate-700/80 text-white' : 'bg-white border-slate-200 text-slate-900'
+              }`}
+              style={{ borderColor: `${safeAccentFill}40` }}
             >
-              <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
+              <div className={`p-4 border-b flex items-center justify-between shrink-0 ${
+                isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+              }`}>
                 <div className="flex items-center space-x-2.5 rtl:space-x-reverse">
                   <div
-                    className="w-9 h-9 rounded-xl flex items-center justify-center font-bold"
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold shadow-sm ${
+                      safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                    }`}
                     style={{
-                      backgroundColor: `${brandSecondary}20`,
-                      color: brandSecondary,
+                      backgroundColor: safeAccentFill,
+                      color: safeAccentFillContrast,
                     }}
                   >
                     <History className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-sm sm:text-base font-black text-white">
-                      سجل طلباتي السابقة
+                    <h3 className={`text-sm sm:text-base font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                      سجل طلباتي ومواعيدي
                     </h3>
-                    <p className="text-[11px] text-slate-400">
+                    <p className={`text-[11px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
                       تتبع الطلب الحالي أو إعادة الطلب بضغطة زر
                     </p>
                   </div>
@@ -7530,25 +8113,81 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <button
                   type="button"
                   onClick={() => setShowPastOrdersModal(false)}
-                  className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition"
+                  className={`p-2 rounded-xl transition ${
+                    isDarkTheme ? 'bg-slate-800 text-slate-400 hover:text-white' : 'bg-slate-200/80 text-slate-600 hover:text-slate-900'
+                  }`}
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
+
+              {(activeModules.orders && (activeModules.bookings || customerServiceBookings.length > 0)) && (
+                <div className={`px-4 pt-3 pb-1 shrink-0 ${isDarkTheme ? 'bg-slate-900' : 'bg-white'}`}>
+                  <div className={`grid grid-cols-2 gap-1.5 p-1 rounded-2xl border ${
+                    isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
+                  }`}>
+                    <button
+                      type="button"
+                      onClick={() => setPastModalTab('orders')}
+                      style={
+                        pastModalTab === 'orders'
+                          ? { backgroundColor: safeAccentFill, color: safeAccentFillContrast }
+                          : undefined
+                      }
+                      className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                        pastModalTab === 'orders'
+                          ? `shadow-sm ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
+                          : isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>طلباتي 🛍️</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/15 font-mono">
+                        {pastOrders.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPastModalTab('bookings')}
+                      style={
+                        pastModalTab === 'bookings'
+                          ? { backgroundColor: safeAccentFill, color: safeAccentFillContrast }
+                          : undefined
+                      }
+                      className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                        pastModalTab === 'bookings'
+                          ? `shadow-sm ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
+                          : isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>مواعيدي 📅</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/15 font-mono">
+                        {customerServiceBookings.length}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="p-4 overflow-y-auto space-y-3.5 flex-1 text-right">
                 {pastModalTab === 'orders' && (
                   <>
                     {pastOrders.length === 0 ? (
                       <div className="py-12 text-center text-slate-400 space-y-2">
-                        <History className="w-10 h-10 mx-auto text-slate-600" />
+                        <History className="w-10 h-10 mx-auto text-slate-500" />
                         <p className="text-xs">لا توجد طلبات سابقة مسجلة حتى الآن.</p>
                       </div>
                     ) : (
                       pastOrders.map((order: any) => {
   const fulfillmentType = order.order_type || order.fulfillment_type || 'takeaway';
   const orderNumber = order.order_number || order.order_id || String(order.id).substring(0, 5);
-  const totalPrice = order.total_price || order.total_amount || 0;
+  const itemsCalculatedSum = Array.isArray(order.items)
+    ? order.items.reduce(
+        (sum: number, item: any) =>
+          sum + (Number(item.total_price) || Number(item.quantity || 1) * Number(item.catalog_item?.price || item.price || 0)),
+        0
+      )
+    : 0;
+  const totalPrice = Number(order.total_price) || Number(order.total_amount) || itemsCalculatedSum || 0;
   const status = order.status || 'pending';
   const isLive = !['completed', 'cancelled'].includes(status);
   
@@ -7560,6 +8199,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   };
 
   const getStatusStep = (st: string) => {
+    if (fulfillmentType === 'delivery') {
+      if (order.delivery_status === 'picked_up') return 3;
+      if (st === 'ready') return 2;
+      if (st === 'accepted' || st === 'preparing') return 1;
+      return 0;
+    }
     if (st === 'pending') return 0;
     if (st === 'accepted') return 1;
     if (st === 'preparing') return 2;
@@ -7572,39 +8217,48 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   return (
     <div
       key={order.id || order.order_id || Math.random()}
-      className={`p-4 rounded-3xl bg-slate-950 border space-y-4 shadow-xl ${isLive ? 'border-amber-500/40 shadow-amber-900/20' : 'border-slate-800'}`}
+      className={`p-4 rounded-3xl border space-y-4 shadow-lg ${
+        isLive
+          ? isDarkTheme
+            ? 'bg-slate-950 border-amber-500/40 shadow-amber-900/20'
+            : 'bg-white border-amber-400/70 shadow-amber-500/10'
+          : isDarkTheme
+          ? 'bg-slate-950 border-slate-800'
+          : 'bg-slate-50/80 border-slate-200/90'
+      }`}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 flex-wrap">
           <span
-            className="text-[10px] px-2.5 py-0.5 rounded-full font-mono font-bold"
+            className={`text-[10px] px-2.5 py-0.5 rounded-full font-mono font-black shadow-2xs ${
+              safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+            }`}
             style={{
-              backgroundColor: `${brandSecondary}20`,
-              color: brandSecondary,
-              border: `1px solid ${brandSecondary}40`,
+              backgroundColor: safeAccentFill,
+              color: safeAccentFillContrast,
             }}
           >
             #{orderNumber}
           </span>
-          <span className="text-[10px] text-slate-400 font-bold">
+          <span className={`text-[10px] font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
             {fulfillmentTitles[fulfillmentType] || fulfillmentType}
           </span>
           {order.payment_status === 'paid' ? (
-            <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
+            <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 font-bold flex items-center gap-1">
               💳 مسدد أونلاين ✅
             </span>
           ) : (
-            <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1">
-              💵 الدفع بالفرع
+            <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 border border-amber-500/30 font-bold flex items-center gap-1">
+              {fulfillmentType === 'delivery' ? '💵 الدفع عند الاستلام' : '💵 الدفع بالفرع'}
             </span>
           )}
           {!isLive && status === 'completed' && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+            <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 font-bold">
               ✓ مكتمل
             </span>
           )}
           {!isLive && status === 'cancelled' && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
+            <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-600 border border-rose-500/30 font-bold">
               ❌ ملغي
             </span>
           )}
@@ -7617,28 +8271,36 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
       {isLive && (
         <div className="py-4 px-2 relative mt-2 mb-4" dir="rtl">
-          <div className="absolute top-6 left-6 right-6 h-1.5 bg-slate-800 rounded-full z-0"></div>
+          <div className={`absolute top-6 left-6 right-6 h-1.5 rounded-full z-0 ${isDarkTheme ? 'bg-slate-800' : 'bg-slate-200'}`}></div>
           <div className={`absolute top-6 right-6 h-1.5 bg-amber-500 rounded-full z-0 transition-all duration-700 ease-in-out ${step === 0 ? 'w-0' : step === 1 ? 'w-1/3' : step === 2 ? 'w-[66%]' : 'w-[calc(100%-3rem)]'}`}></div>
           
           <div className="flex justify-between items-start relative z-10">
-            <div className={`flex flex-col items-center gap-2 w-16 transition-colors duration-500 ${step >= 0 ? 'text-amber-400' : 'text-slate-500'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-xl transition-all duration-500 ${step >= 0 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : 'bg-slate-800 border-2 border-slate-700'}`}>⏳</div>
-              <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">في الانتظار</span>
+            <div className={`flex flex-col items-center gap-2 w-16 transition-colors duration-500 ${step >= 0 ? 'text-amber-600 font-black' : 'text-slate-400'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-md transition-all duration-500 ${step >= 0 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : isDarkTheme ? 'bg-slate-800 border-2 border-slate-700' : 'bg-white border-2 border-slate-200'}`}>⏳</div>
+              <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">بانتظار التأكيد</span>
             </div>
             
-            <div className={`flex flex-col items-center gap-2 w-16 transition-colors duration-500 ${step >= 1 ? 'text-amber-400' : 'text-slate-500'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-xl transition-all duration-500 ${step >= 1 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : 'bg-slate-800 border-2 border-slate-700'}`}>👨‍🍳</div>
-              <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">تم القبول</span>
+            <div className={`flex flex-col items-center gap-2 w-16 transition-colors duration-500 ${step >= 1 ? 'text-amber-600 font-black' : 'text-slate-400'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-md transition-all duration-500 ${step >= 1 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : isDarkTheme ? 'bg-slate-800 border-2 border-slate-700' : 'bg-white border-2 border-slate-200'}`}>👨‍🍳</div>
+              <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">
+                {fulfillmentType === 'delivery' ? 'يجهز بالمطبخ' : 'تم القبول'}
+              </span>
             </div>
 
-            <div className={`flex flex-col items-center gap-2 w-16 transition-colors duration-500 ${step >= 2 ? 'text-amber-400' : 'text-slate-500'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-xl transition-all duration-500 ${step >= 2 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : 'bg-slate-800 border-2 border-slate-700'}`}>🔥</div>
-              <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">جاري التحضير</span>
+            <div className={`flex flex-col items-center gap-2 w-16 transition-colors duration-500 ${step >= 2 ? 'text-amber-600 font-black' : 'text-slate-400'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-md transition-all duration-500 ${step >= 2 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : isDarkTheme ? 'bg-slate-800 border-2 border-slate-700' : 'bg-white border-2 border-slate-200'}`}>
+                {fulfillmentType === 'delivery' ? '📦' : '🔥'}
+              </div>
+              <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">
+                {fulfillmentType === 'delivery' ? 'جاهز للاستلام' : 'جاري التحضير'}
+              </span>
             </div>
 
-            <div className={`flex flex-col items-center gap-2 w-16 transition-colors duration-500 ${step >= 3 ? 'text-amber-400' : 'text-slate-500'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-xl transition-all duration-500 ${step >= 3 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : 'bg-slate-800 border-2 border-slate-700'}`}>✅</div>
-              <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">{fulfillmentType === 'delivery' ? 'في الطريق' : 'جاهز للاستلام'}</span>
+            <div className={`flex flex-col items-center gap-2 w-16 transition-colors duration-500 ${step >= 3 ? 'text-amber-600 font-black' : 'text-slate-400'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shadow-md transition-all duration-500 ${step >= 3 ? 'bg-amber-500 border-2 border-amber-200 text-amber-950 scale-110' : isDarkTheme ? 'bg-slate-800 border-2 border-slate-700' : 'bg-white border-2 border-slate-200'}`}>
+                {fulfillmentType === 'delivery' ? '🛵' : '✅'}
+              </div>
+              <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">{fulfillmentType === 'delivery' ? 'في الطريق إليك' : 'جاهز للاستلام'}</span>
             </div>
           </div>
         </div>
@@ -7646,19 +8308,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
       {/* 🛵 Assigned Driver Live Tracking Card */}
       {order.driver_name && isLive && (
-        <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-orange-500/15 to-amber-600/20 border border-amber-500/40 text-amber-200 shadow-lg flex items-center justify-between gap-3 animate-fade-in my-2">
+        <div className={`p-3 rounded-2xl border shadow-md flex items-center justify-between gap-3 animate-fade-in my-2 ${
+          isDarkTheme
+            ? 'bg-amber-950/40 border-amber-500/40 text-amber-100'
+            : 'bg-amber-50/90 border-amber-300 text-slate-900'
+        }`}>
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl shrink-0">
+            <div className={`w-10 h-10 rounded-2xl border flex items-center justify-center text-xl shrink-0 ${
+              isDarkTheme ? 'bg-amber-500/20 border-amber-500/40' : 'bg-amber-500/15 border-amber-400/50'
+            }`}>
               🛵
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs font-black text-white">{order.driver_name}</span>
+                <span className={`text-xs font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{order.driver_name}</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black">
                   {order.delivery_status === 'picked_up' ? 'في الطريق إليك 🛵' : 'كابتن التوصيل'}
                 </span>
               </div>
-              <p className="text-[11px] text-amber-300/80 font-mono mt-0.5 truncate">
+              <p className={`text-[11px] font-mono font-bold mt-0.5 truncate ${isDarkTheme ? 'text-amber-300' : 'text-amber-900'}`} dir="ltr">
                 {order.driver_phone}
               </p>
             </div>
@@ -7668,7 +8336,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             {order.driver_phone && (
               <a
                 href={`tel:${order.driver_phone}`}
-                className="w-8 h-8 rounded-xl bg-slate-900 border border-amber-500/40 text-amber-400 flex items-center justify-center hover:bg-amber-500 hover:text-slate-950 transition shadow"
+                className={`w-8 h-8 rounded-xl border flex items-center justify-center transition shadow-2xs ${
+                  isDarkTheme
+                    ? 'bg-slate-900 border-amber-500/40 text-amber-400 hover:bg-amber-500 hover:text-slate-950'
+                    : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-500 hover:text-slate-950'
+                }`}
                 title="اتصال بالسائق"
               >
                 <Phone className="w-4 h-4" />
@@ -7681,7 +8353,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 )}`}
                 target="_blank"
                 rel="noreferrer"
-                className="w-8 h-8 rounded-xl bg-slate-900 border border-emerald-500/40 text-emerald-400 flex items-center justify-center hover:bg-emerald-500 hover:text-slate-950 transition shadow"
+                className={`w-8 h-8 rounded-xl border flex items-center justify-center transition shadow-2xs ${
+                  isDarkTheme
+                    ? 'bg-slate-900 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500 hover:text-slate-950'
+                    : 'bg-white border-emerald-300 text-emerald-600 hover:bg-emerald-500 hover:text-white'
+                }`}
                 title="محادثة واتساب"
               >
                 <MessageSquare className="w-4 h-4" />
@@ -7691,42 +8367,52 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         </div>
       )}
 
-      <div className="space-y-2 text-xs text-slate-300 bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/80">
+      <div className={`space-y-2 text-xs p-3.5 rounded-xl border ${
+        isDarkTheme ? 'text-slate-200 bg-slate-900/60 border-slate-800/80' : 'text-slate-800 bg-slate-50 border-slate-200/80'
+      }`}>
         {order.items && order.items.map((item: any, idx: number) => (
           <div key={idx} className="flex justify-between items-center">
             <span className="flex items-center gap-1.5">
-              <span className="font-mono font-bold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded text-[10px]">{item.quantity}x</span>
-              <span>{item.catalog_item?.name || item.name || 'عنصر غير معروف'}</span>
+              <span className="font-mono font-bold text-emerald-600 bg-emerald-500/15 px-1.5 py-0.5 rounded text-[10px]">{item.quantity}x</span>
+              <span className="font-bold">{item.catalog_item?.name || item.name || 'عنصر غير معروف'}</span>
               {item.selected_modifiers && item.selected_modifiers.length > 0 && (
                 <span className="text-[10px] text-slate-500">
                   ({item.selected_modifiers.map((m: any) => m.name).join(", ")})
                 </span>
               )}
             </span>
-            <span className="font-mono text-slate-400">
+            <span className={`font-mono font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
               {item.total_price || (item.quantity * (item.catalog_item?.price || item.price || 0))} ر.س
             </span>
           </div>
         ))}
       </div>
 
-      <div className="pt-3 flex items-center justify-between text-xs">
+      <div className="pt-2 flex items-center justify-between text-xs">
         <div>
-          <span className="text-slate-400">الإجمالي: </span>
-          <strong className="text-white font-mono text-base">{totalPrice} ر.س</strong>
+          <span className={isDarkTheme ? 'text-slate-400' : 'text-slate-500'}>الإجمالي: </span>
+          <strong className={`font-mono text-base font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{totalPrice} ر.س</strong>
         </div>
 
         <button
           type="button"
           onClick={() => !isLive && handleReOrder(order)}
           disabled={isLive}
-          style={{
-            backgroundColor: isLive ? '#334155' : brandSecondary,
-            color: isLive ? '#94a3b8' : '#000000',
-            cursor: isLive ? 'not-allowed' : 'pointer',
-            opacity: isLive ? 0.7 : 1
-          }}
-          className={`px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-lg transition ${isLive ? '' : 'hover:brightness-110 active:scale-95'}`}
+          style={
+            isLive
+              ? undefined
+              : {
+                  backgroundColor: safeAccentFill,
+                  color: safeAccentFillContrast,
+                }
+          }
+          className={`px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-1.5 shadow-md transition ${
+            isLive
+              ? isDarkTheme
+                ? 'bg-slate-800 text-slate-400 cursor-not-allowed'
+                : 'bg-slate-200 text-slate-600 cursor-not-allowed'
+              : `hover:brightness-110 active:scale-95 ${safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''}`
+          }`}
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>{isLive ? 'قيد التنفيذ ⏳' : 'إعادة الطلب 🔁'}</span>
@@ -7743,37 +8429,46 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   <>
                     {customerServiceBookings.length === 0 ? (
                       <div className="py-12 text-center text-slate-400 space-y-2">
-                        <Calendar className="w-10 h-10 mx-auto text-slate-600" />
+                        <Calendar className="w-10 h-10 mx-auto text-slate-500" />
                         <p className="text-xs">لا توجد حجوزات مواعيد سابقة مسجلة برقمك.</p>
                       </div>
                     ) : (
                       customerServiceBookings.map((bk) => (
                         <div
                           key={bk.id}
-                          className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3 shadow-md"
+                          className={`p-4 rounded-2xl border space-y-3 shadow-md ${
+                            isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'
+                          }`}
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[10px] px-2.5 py-0.5 rounded-full font-mono font-bold bg-blue-950 text-blue-300 border border-blue-800">
-                                #{bk.booking_number}
+                              <span
+                                className={`text-[10px] px-2.5 py-0.5 rounded-full font-mono font-bold ${
+                                  safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                                }`}
+                                style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
+                              >
+                                #{bk.booking_number ? String(bk.booking_number).slice(-6) : String(bk.id).slice(-6)}
                               </span>
                               {bk.service_category && (
-                                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold">
+                                <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                                  isDarkTheme ? 'bg-slate-800 text-slate-300' : 'bg-slate-200 text-slate-700'
+                                }`}>
                                   {bk.service_category}
                                 </span>
                               )}
                               {bk.status === 'completed' && (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 border border-emerald-500/30 font-bold">
                                   ✓ تم الحضور
                                 </span>
                               )}
                               {bk.status === 'confirmed' && (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30 font-bold">
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-600 border border-sky-500/30 font-bold">
                                   📅 مؤكد
                                 </span>
                               )}
                               {bk.status === 'cancelled' && (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-rose-500/20 text-rose-600 border border-rose-500/30 font-bold">
                                   ✕ ملغي
                                 </span>
                               )}
@@ -7786,8 +8481,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
                           <div className="space-y-1.5 text-xs">
                             <div className="flex justify-between items-center">
-                              <strong className="text-white text-sm">{bk.service_name}</strong>
-                              <span className="font-mono text-amber-400 font-bold">{bk.total_price || bk.service_price} ر.س</span>
+                              <strong className={`text-sm font-black ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{bk.service_name}</strong>
+                              <span className="font-mono font-black" style={{ color: safeAccentText }}>{bk.total_price ?? bk.service_price ?? 0} ر.س</span>
                             </div>
 
                             {bk.selected_modifiers && bk.selected_modifiers.length > 0 && (
@@ -7795,7 +8490,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 {bk.selected_modifiers.map((mod, i) => (
                                   <span
                                     key={i}
-                                    className="text-[10px] px-2 py-0.5 rounded bg-blue-950/60 border border-blue-800/40 text-blue-200"
+                                    className="text-[10px] px-2 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-600 font-bold"
                                   >
                                     +{mod.name}
                                   </span>
@@ -7803,21 +8498,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                               </div>
                             )}
 
-                            <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                              <span>المختص: <strong className="text-blue-300">{bk.specialist_name || 'أي مختص متاح'}</strong></span>
+                            <div className={`flex items-center justify-between text-[11px] pt-1 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                              <span>المختص: <strong style={{ color: safeAccentText }}>{bk.specialist_name || 'أي مختص متاح'}</strong></span>
                               <span>المدة: {bk.duration_minutes || bk.service_duration_minutes || 30} دقيقة</span>
                             </div>
                           </div>
 
-                          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                            <div className="text-emerald-400 text-[11px] font-bold">
+                          <div className={`pt-2 border-t flex items-center justify-between text-xs ${
+                            isDarkTheme ? 'border-slate-800/80' : 'border-slate-200'
+                          }`}>
+                            <div className="text-emerald-600 text-[11px] font-bold">
                               +{bk.points_to_earn || bk.loyalty_points_earned || 0} نقطة ولاء
                             </div>
 
                             <button
                               type="button"
                               onClick={() => handleReBookService(bk)}
-                              className="px-3.5 py-1.5 rounded-xl font-black text-xs bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 shadow transition active:scale-95"
+                              style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
+                              className={`px-3.5 py-1.5 rounded-xl font-black text-xs flex items-center gap-1.5 shadow transition active:scale-95 ${
+                                safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                              }`}
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
                               <span>إعادة حجز الموعد 🔁</span>

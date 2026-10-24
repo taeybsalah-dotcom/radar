@@ -79,9 +79,14 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
   isGeneralManager = false,
   onClose,
 }) => {
-  // Brand color scheme
-  const brandPrimary = store.primary_color || '#0F172A';
-  const brandSecondary = store.secondary_color || '#F59E0B';
+  // 🛡️ Radar Pro Operational Theme Colors
+  const brandPrimary = '#0F172A';
+  const brandSecondary = '#F59E0B';
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.body.style.backgroundColor = '#080B11';
+  }, []);
 
   // Standalone Branch Selection (supports query param ?branch= or localStorage persistence or first branch)
   const [branches, setBranches] = useState<StoreBranch[]>(store.branches || []);
@@ -1292,7 +1297,14 @@ export const KitchenDisplaySystem: React.FC<KitchenDisplaySystemProps> = ({
             {(Array.isArray(printingOrder.items) ? printingOrder.items : []).map((it: any, i: number) => (
               <div key={i} className="flex justify-between items-start text-sm">
                 <div>
-                  <strong className="text-base font-black">{it.quantity}x {it.name}</strong>
+                  <strong className="text-base font-black">
+                    {it.quantity}x {it.catalog_item?.name || it.name || it.item_name || it.title || it.item?.name || 'صنف'}
+                  </strong>
+                  {it.selected_modifiers && it.selected_modifiers.length > 0 && (
+                    <div className="text-xs text-slate-800">
+                      {it.selected_modifiers.map((m: any) => `+ ${m.name || m.title}`).join(' ، ')}
+                    </div>
+                  )}
                   {it.notes && <p className="text-xs text-slate-700 italic">ملاحظة: {it.notes}</p>}
                 </div>
               </div>
@@ -1480,12 +1492,22 @@ const OrderChitCard: React.FC<OrderChitCardProps> = ({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-xs sm:text-sm font-bold text-slate-100 truncate">
-                    {item.name || 'منتج'}
+                    {item.catalog_item?.name || item.name || item.item_name || item.title || item.item?.name || 'منتج'}
                   </span>
                   <span className="text-xs font-mono font-black text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md shrink-0">
                     {item.quantity}x
                   </span>
                 </div>
+
+                {item.selected_modifiers && item.selected_modifiers.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {item.selected_modifiers.map((mod: any, mIdx: number) => (
+                      <span key={mIdx} className="text-[10px] bg-slate-900 border border-slate-700/60 text-slate-300 px-1.5 py-0.5 rounded">
+                        + {mod.name || mod.title}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 {item.notes && (
                   <p className="text-[10px] text-amber-300 font-semibold mt-0.5 bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-500/20 italic">

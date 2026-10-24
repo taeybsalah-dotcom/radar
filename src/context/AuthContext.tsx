@@ -15,6 +15,22 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const UNIFIED_AUTH_KEY = 'radar_unified_auth_user';
 const SUPER_ADMIN_AUTH_KEY = 'RADAR_SUPER_ADMIN_AUTH';
 
+// 🛡️ Validates the staff session ticket server-side. Fails closed when the ticket is missing or
+// rejected; fails open only on network errors so offline use is not bricked.
+async function verifyStaffSessionOnServer(role: 'admin' | 'cashier'): Promise<boolean> {
+  try {
+    const token = LoyaltyService.getStaffToken(undefined, role);
+    if (!token) return false;
+    const supabase = getSupabaseClient();
+    if (!supabase) return true;
+    const { data, error } = await (supabase as any).rpc('verify_staff_session_token', { p_token: token });
+    if (error) return true;
+    return !!(data && (data as any).valid && (data as any).role === role);
+  } catch {
+    return true;
+  }
+}
+
 function isSuperAdminPortalRoute(): boolean {
   if (typeof window === 'undefined') return false;
   return (
@@ -107,6 +123,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Otherwise resolve non-super_admin session
       const fresh = getInitialAuthSync();
       if (fresh.role === 'super_admin') {
+        setUser(null);
+        setRole(null);
+        setIsAuthenticated(false);
+      } else if (fresh.user && (fresh.role === 'merchant' || fresh.role === 'cashier') && !(await verifyStaffSessionOnServer(fresh.role === 'merchant' ? 'admin' : 'cashier'))) {
+        // 🛡️ Forged / expired merchant or cashier session in localStorage → force logout
+        try { localStorage.removeItem(UNIFIED_AUTH_KEY); } catch {}
         setUser(null);
         setRole(null);
         setIsAuthenticated(false);

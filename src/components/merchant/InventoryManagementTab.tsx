@@ -38,19 +38,23 @@ import {
   ScannedSupplierInvoiceItem,
 } from '../../types';
 import { InventoryService } from '../../lib/inventoryService';
+import { LoyaltyEvents } from '../../lib/events';
+import { getSupabaseClient, isUUID } from '../../lib/supabase';
+import { SubTabsHubGrid } from './SubTabsHubGrid';
+import { SubSectionFocusedHeader } from './SubSectionFocusedHeader';
 
 interface InventoryManagementTabProps {
   store: Store;
   catalogItems: CatalogItem[];
 }
 
-type InventorySubTab = 'materials' | 'recipes' | 'invoices';
+type InventorySubTab = 'hub' | 'materials' | 'recipes' | 'invoices';
 
 export const InventoryManagementTab: React.FC<InventoryManagementTabProps> = ({
   store,
   catalogItems,
 }) => {
-  const [subTab, setSubTab] = useState<InventorySubTab>('materials');
+  const [subTab, setSubTab] = useState<InventorySubTab>('hub');
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [recipes, setRecipes] = useState<Record<string, CatalogItemRecipe>>({});
   const [invoices, setInvoices] = useState<ScannedSupplierInvoice[]>([]);
@@ -88,21 +92,50 @@ export const InventoryManagementTab: React.FC<InventoryManagementTabProps> = ({
   const reloadData = () => {
     const inv = InventoryService.getInventory(store.id);
     const recs = InventoryService.getRecipes(store.id);
+    const invHistory = InventoryService.getInvoices(store.id);
     setInventory(inv);
     setRecipes(recs);
-
-    try {
-      const invKey = `radar_supplier_invoices_${store.id}`;
-      const savedInvoices: ScannedSupplierInvoice[] = JSON.parse(localStorage.getItem(invKey) || '[]');
-      setInvoices(savedInvoices);
-    } catch {
-      setInvoices([]);
-    }
+    setInvoices(invHistory);
   };
 
   useEffect(() => {
     reloadData();
-  }, [store.id]);
+    InventoryService.syncWithSupabase(store.id, true).then((synced) => {
+      setInventory(synced.inventory);
+      setRecipes(synced.recipes);
+      setInvoices(synced.invoices);
+    });
+
+    const unsubEvents = LoyaltyEvents.listen((event) => {
+      if (event.type === 'INVENTORY_UPDATED' && (!event.storeId || event.storeId === store.id || event.storeId === store.slug)) {
+        reloadData();
+      }
+    });
+
+    let channel: any = null;
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(store.id)) {
+      channel = supabase
+        .channel(`inventory_cloud_sync_${store.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'stores', filter: `id=eq.${store.id}` },
+          () => {
+            InventoryService.syncWithSupabase(store.id, true).then(() => reloadData());
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      unsubEvents();
+      if (channel && supabase) {
+        try {
+          supabase.removeChannel(channel);
+        } catch {}
+      }
+    };
+  }, [store.id, store.slug]);
 
   // Select first catalog item by default for recipe builder
   useEffect(() => {
@@ -457,49 +490,110 @@ export const InventoryManagementTab: React.FC<InventoryManagementTabProps> = ({
           </div>
         </div>
 
-        {/* 🧭 Subtabs Navigation */}
-        <div className="flex items-center gap-2 mt-6 pt-5 border-t border-slate-800/80 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setSubTab('materials')}
-            className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 ${
-              subTab === 'materials'
-                ? 'bg-orange-500 text-slate-950 shadow-lg shadow-orange-500/20'
-                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-800 hover:text-white'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>المواد الأولية والمخزون الحي ({inventory.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSubTab('recipes')}
-            className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 ${
-              subTab === 'recipes'
-                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-800 hover:text-white'
-            }`}
-          >
-            <Calculator className="w-4 h-4" />
-            <span>الوصفات وحساب تكلفة الأطباق (Food Cost %)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setSubTab('invoices')}
-            className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 relative ${
-              subTab === 'invoices'
-                ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-800 hover:text-white'
-            }`}
-          >
-            <ScanLine className="w-4 h-4" />
-            <span>قارئ فواتير الموردين الذكي بالتصوير (AI Scanner)</span>
-            <span className="px-1.5 py-0.5 rounded-md bg-emerald-400/20 text-emerald-300 text-[10px] font-black border border-emerald-400/40">
-              OCR
-            </span>
-          </button>
+        {/* 🧭 Executive Subtabs Grid Navigation */}
+        <div className="mt-6 pt-5 border-t border-slate-800/80">
+          {subTab === 'hub' ? (
+            <SubTabsHubGrid<InventorySubTab>
+              activeTab={'materials'}
+              onSelectTab={(tab) => {
+                setSubTab(tab);
+                window.scrollTo({ top: 150, behavior: 'smooth' });
+              }}
+              columns="3"
+              tabs={[
+                {
+                  id: 'materials',
+                  label: 'المواد الأولية والمخزون الحي',
+                  description: 'أرصدة المكونات الخام، حد إعادة الطلب، تكلفة الشراء، والخصم المباشر مع المبيعات',
+                  icon: Layers,
+                  badge: `${inventory.length} مادة خام`,
+                  glowColor: 'bg-orange-500/20',
+                  iconBg: 'bg-orange-500/15',
+                  iconBorder: 'border-orange-500/30',
+                  iconColor: 'text-orange-400',
+                  statHighlight: `${inventory.length} صنف مسجل بالمخزن`,
+                },
+                {
+                  id: 'recipes',
+                  label: 'الوصفات وتكلفة الأطباق (Food Cost)',
+                  description: 'هندسة معايير الوجبات، حساب تكلفة الطبق بدقة، وحساب نسبة تكلفة الطعام Food Cost %',
+                  icon: Calculator,
+                  badge: `${configuredRecipesCount} وصفة مكتملة`,
+                  glowColor: 'bg-amber-500/20',
+                  iconBg: 'bg-amber-500/15',
+                  iconBorder: 'border-amber-500/30',
+                  iconColor: 'text-amber-400',
+                  statHighlight: `${configuredRecipesCount} من أصل ${catalogItems.length} صنف`,
+                },
+                {
+                  id: 'invoices',
+                  label: 'قارئ فواتير الموردين بالذكاء الاصطناعي',
+                  description: 'تصوير فواتير المشتريات الورقية أو رفع صورها، استخراج البنود والأسعار تلقائياً بتقنية OCR',
+                  icon: ScanLine,
+                  badge: 'قارئ OCR ذكي 📸',
+                  glowColor: 'bg-emerald-500/20',
+                  iconBg: 'bg-emerald-500/15',
+                  iconBorder: 'border-emerald-500/30',
+                  iconColor: 'text-emerald-400',
+                  statHighlight: `${invoices.length} فاتورة مورد مؤرشفة`,
+                },
+              ]}
+            />
+          ) : (
+            <SubSectionFocusedHeader
+              title={
+                subTab === 'materials'
+                  ? 'المواد الأولية والمخزون الحي'
+                  : subTab === 'recipes'
+                  ? 'الوصفات وحساب تكلفة الأطباق (Food Cost)'
+                  : 'قارئ فواتير الموردين بالذكاء الاصطناعي (AI Scanner)'
+              }
+              badge={
+                subTab === 'materials'
+                  ? `${inventory.length} صنف`
+                  : subTab === 'recipes'
+                  ? `${configuredRecipesCount} وصفة`
+                  : `${invoices.length} فاتورة`
+              }
+              icon={
+                subTab === 'materials'
+                  ? Layers
+                  : subTab === 'recipes'
+                  ? Calculator
+                  : ScanLine
+              }
+              iconBg={
+                subTab === 'materials'
+                  ? 'bg-orange-500/15'
+                  : subTab === 'recipes'
+                  ? 'bg-amber-500/15'
+                  : 'bg-emerald-500/15'
+              }
+              iconBorder={
+                subTab === 'materials'
+                  ? 'border-orange-500/30'
+                  : subTab === 'recipes'
+                  ? 'border-amber-500/30'
+                  : 'border-emerald-500/30'
+              }
+              iconColor={
+                subTab === 'materials'
+                  ? 'text-orange-400'
+                  : subTab === 'recipes'
+                  ? 'text-amber-400'
+                  : 'text-emerald-400'
+              }
+              backLabel="العودة لأقسام المخزون وتكلفة الأطباق"
+              onBack={() => setSubTab('hub')}
+              activeId={subTab}
+              onSelectQuickJump={(id) => setSubTab(id as any)}
+              quickJumpOptions={[
+                { id: 'materials', label: 'المواد الأولية والمخزون الحي' },
+                { id: 'recipes', label: 'الوصفات وحساب التكلفة' },
+                { id: 'invoices', label: 'قارئ فواتير الموردين OCR' },
+              ]}
+            />
+          )}
         </div>
       </div>
 

@@ -1,8 +1,78 @@
 import { InventoryItem, CatalogItemRecipe, ScannedSupplierInvoice, ScannedSupplierInvoiceItem, StockUnit, CatalogItem } from '../types';
+import { getSupabaseClient, isUUID } from './supabase';
+import { LoyaltyEvents } from './events';
 
 const INVENTORY_STORAGE_KEY_PREFIX = 'radar_inventory_items_';
 const RECIPES_STORAGE_KEY_PREFIX = 'radar_recipes_';
 const INVOICES_STORAGE_KEY_PREFIX = 'radar_supplier_invoices_';
+
+// Debounce tracker for background Supabase sync
+const lastInventorySyncMap = new Map<string, number>();
+
+async function resolveStoreUUID(storeId: string): Promise<string> {
+  if (!storeId || storeId === 'default') return storeId;
+  if (isUUID(storeId)) return storeId;
+  const supabase = getSupabaseClient();
+  if (!supabase) return storeId;
+  try {
+    const { data } = await (supabase as any)
+      .from('stores')
+      .select('id')
+      .or(`id.eq.${storeId},slug.eq.${storeId}`)
+      .limit(1)
+      .single();
+    if (data?.id) return data.id;
+  } catch {}
+  return storeId;
+}
+
+/**
+ * دالة مساعدة لحفظ بيانات المستودع (المخزون، الوصفات، الفواتير) مباشرة في عمود
+ * fulfillment_settings (JSONB) داخل جدول stores الحي في قاعدة بيانات Supabase
+ */
+async function persistWarehouseToStoreCloud(
+  storeId: string,
+  updates: {
+    warehouse_inventory?: InventoryItem[];
+    warehouse_recipes?: Record<string, CatalogItemRecipe>;
+    warehouse_invoices?: ScannedSupplierInvoice[];
+  }
+): Promise<void> {
+  try {
+    const resolvedStoreId = await resolveStoreUUID(storeId);
+    const supabase = getSupabaseClient();
+    if (!supabase || !isUUID(resolvedStoreId)) return;
+
+    const { data: storeRow, error: fetchErr } = await (supabase as any)
+      .from('stores')
+      .select('fulfillment_settings')
+      .eq('id', resolvedStoreId)
+      .maybeSingle();
+
+    if (fetchErr) return;
+
+    const currentSettings =
+      storeRow?.fulfillment_settings && typeof storeRow.fulfillment_settings === 'object'
+        ? storeRow.fulfillment_settings
+        : {};
+
+    const nextSettings = {
+      ...currentSettings,
+      ...updates,
+      warehouse_updated_at: new Date().toISOString(),
+    };
+
+    await (supabase as any)
+      .from('stores')
+      .update({
+        fulfillment_settings: nextSettings,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', resolvedStoreId);
+  } catch (err) {
+    console.warn('persistWarehouseToStoreCloud warning:', err);
+  }
+}
 
 // 🌾 المخزون التجريبي الابتدائي للمتاجر
 export const INITIAL_DEMO_INVENTORY: InventoryItem[] = [
@@ -122,22 +192,119 @@ export const INITIAL_DEMO_INVENTORY: InventoryItem[] = [
 
 export class InventoryService {
   /**
-   * جلب كافة عناصر المخزون للمتجر
+   * ☁️ مزامنة شاملة للمستودع (المواد الخام، الوصفات، وفواتير الموردين)
+   * مباشرة مع جدول stores الحي في قاعدة بيانات Supabase
+   */
+  static async syncWithSupabase(storeId: string, force = false): Promise<{
+    inventory: InventoryItem[];
+    recipes: Record<string, CatalogItemRecipe>;
+    invoices: ScannedSupplierInvoice[];
+  }> {
+    const cleanStoreId = storeId || 'default';
+    const now = Date.now();
+    const lastSync = lastInventorySyncMap.get(cleanStoreId) || 0;
+
+    if (!force && now - lastSync < 2500) {
+      return {
+        inventory: this.getInventory(cleanStoreId),
+        recipes: this.getRecipes(cleanStoreId),
+        invoices: this.getInvoices(cleanStoreId),
+      };
+    }
+    lastInventorySyncMap.set(cleanStoreId, now);
+
+    try {
+      const resolvedStoreId = await resolveStoreUUID(cleanStoreId);
+      const supabase = getSupabaseClient();
+
+      if (supabase && isUUID(resolvedStoreId)) {
+        const { data: storeRow, error } = await (supabase as any)
+          .from('stores')
+          .select('id, fulfillment_settings')
+          .eq('id', resolvedStoreId)
+          .maybeSingle();
+
+        if (!error && storeRow) {
+          const fs =
+            storeRow.fulfillment_settings && typeof storeRow.fulfillment_settings === 'object'
+              ? storeRow.fulfillment_settings
+              : {};
+
+          // 1. Sync Raw Materials (warehouse_inventory)
+          if (Array.isArray(fs.warehouse_inventory) && fs.warehouse_inventory.length > 0) {
+            localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(fs.warehouse_inventory));
+            if (resolvedStoreId !== cleanStoreId) {
+              localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${resolvedStoreId}`, JSON.stringify(fs.warehouse_inventory));
+            }
+          } else {
+            // Seed current inventory into Supabase stores.fulfillment_settings so cloud DB has it immediately
+            const currentLocal = this.getInventory(cleanStoreId);
+            await persistWarehouseToStoreCloud(resolvedStoreId, {
+              warehouse_inventory: currentLocal,
+              warehouse_recipes: this.getRecipes(cleanStoreId),
+              warehouse_invoices: this.getInvoices(cleanStoreId),
+            });
+          }
+
+          // 2. Sync Product Recipes (warehouse_recipes)
+          if (fs.warehouse_recipes && typeof fs.warehouse_recipes === 'object') {
+            localStorage.setItem(`${RECIPES_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(fs.warehouse_recipes));
+            if (resolvedStoreId !== cleanStoreId) {
+              localStorage.setItem(`${RECIPES_STORAGE_KEY_PREFIX}${resolvedStoreId}`, JSON.stringify(fs.warehouse_recipes));
+            }
+          }
+
+          // 3. Sync Supplier Invoices (warehouse_invoices)
+          if (Array.isArray(fs.warehouse_invoices)) {
+            localStorage.setItem(`${INVOICES_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(fs.warehouse_invoices));
+            if (resolvedStoreId !== cleanStoreId) {
+              localStorage.setItem(`${INVOICES_STORAGE_KEY_PREFIX}${resolvedStoreId}`, JSON.stringify(fs.warehouse_invoices));
+            }
+          }
+
+          LoyaltyEvents.emit({
+            type: 'INVENTORY_UPDATED',
+            storeId: cleanStoreId,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('InventoryService.syncWithSupabase warning:', err);
+    }
+
+    return {
+      inventory: this.getInventory(cleanStoreId),
+      recipes: this.getRecipes(cleanStoreId),
+      invoices: this.getInvoices(cleanStoreId),
+    };
+  }
+
+  /**
+   * جلب كافة عناصر المخزون للمتجر (مع مزامنة خلفية تلقائية مع قاعدة البيانات)
    */
   static getInventory(storeId: string): InventoryItem[] {
+    const cleanStoreId = storeId || 'default';
     try {
-      const key = `${INVENTORY_STORAGE_KEY_PREFIX}${storeId}`;
+      const key = `${INVENTORY_STORAGE_KEY_PREFIX}${cleanStoreId}`;
       const raw = localStorage.getItem(key);
+      let list: InventoryItem[];
       if (!raw) {
-        // Initialize with demo inventory
-        const seeded = INITIAL_DEMO_INVENTORY.map((item) => ({
+        list = INITIAL_DEMO_INVENTORY.map((item) => ({
           ...item,
-          store_id: storeId,
+          store_id: cleanStoreId,
         }));
-        localStorage.setItem(key, JSON.stringify(seeded));
-        return seeded;
+        localStorage.setItem(key, JSON.stringify(list));
+      } else {
+        list = JSON.parse(raw);
       }
-      return JSON.parse(raw);
+
+      // Trigger non-blocking cloud sync if stale
+      const lastSync = lastInventorySyncMap.get(cleanStoreId) || 0;
+      if (Date.now() - lastSync > 8000) {
+        this.syncWithSupabase(cleanStoreId).catch(() => {});
+      }
+
+      return list;
     } catch (e) {
       console.warn('Failed to parse inventory from localStorage', e);
       return [];
@@ -145,10 +312,11 @@ export class InventoryService {
   }
 
   /**
-   * حفظ أو تحديث مادة خام في المخزون
+   * حفظ أو تحديث مادة خام في المخزون وقاعدة بيانات Supabase الحية
    */
   static saveInventoryItem(storeId: string, itemData: Partial<InventoryItem>): InventoryItem {
-    const list = this.getInventory(storeId);
+    const cleanStoreId = storeId || 'default';
+    const list = this.getInventory(cleanStoreId);
     const nowIso = new Date().toISOString();
 
     let targetItem: InventoryItem;
@@ -158,14 +326,14 @@ export class InventoryService {
       targetItem = {
         ...list[existingIndex],
         ...itemData,
-        store_id: storeId,
+        store_id: cleanStoreId,
         updated_at: nowIso,
       };
       list[existingIndex] = targetItem;
     } else {
       targetItem = {
         id: itemData.id || `inv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        store_id: storeId,
+        store_id: cleanStoreId,
         name: itemData.name || 'مادة جديدة',
         category: itemData.category || 'عام',
         unit: itemData.unit || 'piece',
@@ -174,22 +342,38 @@ export class InventoryService {
         cost_per_unit: Number(itemData.cost_per_unit) || 0,
         supplier_name: itemData.supplier_name || '',
         sku: itemData.sku || '',
-        last_restocked_at: nowIso,
+        last_restocked_at: itemData.last_restocked_at || nowIso,
         updated_at: nowIso,
       };
       list.unshift(targetItem);
     }
 
-    localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(list));
+    localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+
+    LoyaltyEvents.emit({
+      type: 'INVENTORY_UPDATED',
+      storeId: cleanStoreId,
+    });
+
+    persistWarehouseToStoreCloud(cleanStoreId, { warehouse_inventory: list });
+
     return targetItem;
   }
 
   /**
-   * حذف مادة من المخزون
+   * حذف مادة من المخزون وقاعدة بيانات Supabase الحية
    */
   static deleteInventoryItem(storeId: string, itemId: string): void {
-    const list = this.getInventory(storeId).filter((it) => it.id !== itemId);
-    localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(list));
+    const cleanStoreId = storeId || 'default';
+    const list = this.getInventory(cleanStoreId).filter((it) => it.id !== itemId);
+    localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(list));
+
+    LoyaltyEvents.emit({
+      type: 'INVENTORY_UPDATED',
+      storeId: cleanStoreId,
+    });
+
+    persistWarehouseToStoreCloud(cleanStoreId, { warehouse_inventory: list });
   }
 
   /**
@@ -207,68 +391,133 @@ export class InventoryService {
   }
 
   /**
-   * حفظ وصفة لمنتج في المنيو
+   * حفظ وصفة لمنتج في المنيو ومزامنتها مع قاعدة بيانات Supabase الحية
    */
   static saveRecipe(storeId: string, recipe: CatalogItemRecipe): CatalogItemRecipe {
-    const recipes = this.getRecipes(storeId);
+    const cleanStoreId = storeId || 'default';
+    const recipes = this.getRecipes(cleanStoreId);
+    const nowIso = new Date().toISOString();
     const enriched: CatalogItemRecipe = {
       ...recipe,
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
     };
     recipes[recipe.catalog_item_id] = enriched;
-    localStorage.setItem(`${RECIPES_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(recipes));
+    localStorage.setItem(`${RECIPES_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(recipes));
+
+    LoyaltyEvents.emit({
+      type: 'INVENTORY_UPDATED',
+      storeId: cleanStoreId,
+    });
+
+    persistWarehouseToStoreCloud(cleanStoreId, { warehouse_recipes: recipes });
+
     return enriched;
   }
 
   /**
-   * حذف وصفة منتج
+   * حذف وصفة منتج من التخزين المحلي وقاعدة بيانات Supabase الحية
    */
   static deleteRecipe(storeId: string, catalogItemId: string): void {
-    const recipes = this.getRecipes(storeId);
+    const cleanStoreId = storeId || 'default';
+    const recipes = this.getRecipes(cleanStoreId);
     delete recipes[catalogItemId];
-    localStorage.setItem(`${RECIPES_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(recipes));
+    localStorage.setItem(`${RECIPES_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(recipes));
+
+    LoyaltyEvents.emit({
+      type: 'INVENTORY_UPDATED',
+      storeId: cleanStoreId,
+    });
+
+    persistWarehouseToStoreCloud(cleanStoreId, { warehouse_recipes: recipes });
   }
 
   /**
-   * الخصم التلقائي للمخزون عند إتمام البيع (Auto-deduction on Checkout)
+   * جلب سجل فواتير الموردين للمتجر
+   */
+  static getInvoices(storeId: string): ScannedSupplierInvoice[] {
+    try {
+      const invKey = `${INVOICES_STORAGE_KEY_PREFIX}${storeId}`;
+      return JSON.parse(localStorage.getItem(invKey) || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * الخصم التلقائي للمخزون عند إتمام البيع من الكاشير أو قبول/اكتمال طلب أونلاين
+   * يحدث خصم المواد الخام محلياً وفي قاعدة بيانات Supabase لحظياً
    */
   static deductInventoryForOrder(
     storeId: string,
-    orderItems: { catalog_item: CatalogItem; quantity: number }[]
+    orderItems: {
+      catalog_item?: CatalogItem;
+      id?: string;
+      catalog_item_id?: string;
+      name?: string;
+      quantity: number;
+    }[]
   ): {
     success: boolean;
     deductedItemsCount: number;
     lowStockAlerts: InventoryItem[];
   } {
-    const inventory = this.getInventory(storeId);
-    const recipes = this.getRecipes(storeId);
+    const cleanStoreId = storeId || 'default';
+    const inventory = this.getInventory(cleanStoreId);
+    const recipes = this.getRecipes(cleanStoreId);
     const inventoryMap = new Map<string, InventoryItem>();
     inventory.forEach((it) => inventoryMap.set(it.id, it));
 
     let deductedCount = 0;
     const lowStockAlerts: InventoryItem[] = [];
+    const nowIso = new Date().toISOString();
 
-    orderItems.forEach(({ catalog_item, quantity }) => {
-      const recipe = recipes[catalog_item.id];
+    if (!Array.isArray(orderItems) || orderItems.length === 0) {
+      return { success: true, deductedItemsCount: 0, lowStockAlerts: [] };
+    }
+
+    orderItems.forEach((entry) => {
+      const itemId = entry.catalog_item?.id || entry.catalog_item_id || entry.id || '';
+      const quantity = Number(entry.quantity) || 1;
+      if (!itemId) return;
+
+      const recipe = recipes[itemId];
       if (!recipe || !recipe.ingredients || recipe.ingredients.length === 0) return;
 
       recipe.ingredients.forEach((ing) => {
-        const invItem = inventoryMap.get(ing.inventory_item_id);
+        let invItem = inventoryMap.get(ing.inventory_item_id);
+        if (!invItem) {
+          invItem = Array.from(inventoryMap.values()).find(
+            (candidate) =>
+              candidate.id.startsWith(ing.inventory_item_id) ||
+              (ing.inventory_item_name && candidate.name === ing.inventory_item_name)
+          );
+        }
+
         if (invItem) {
-          const qtyToDeduct = (ing.quantity || 0) * (quantity || 1);
+          const qtyToDeduct = (Number(ing.quantity) || 0) * quantity;
           invItem.current_stock = Math.max(0, Math.round((invItem.current_stock - qtyToDeduct) * 1000) / 1000);
-          invItem.updated_at = new Date().toISOString();
+          invItem.updated_at = nowIso;
           deductedCount++;
 
           if (invItem.current_stock <= invItem.min_alert_stock) {
-            lowStockAlerts.push(invItem);
+            if (!lowStockAlerts.some((a) => a.id === invItem!.id)) {
+              lowStockAlerts.push(invItem);
+            }
           }
         }
       });
     });
 
     if (deductedCount > 0) {
-      localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(Array.from(inventoryMap.values())));
+      const updatedList = Array.from(inventoryMap.values());
+      localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(updatedList));
+
+      LoyaltyEvents.emit({
+        type: 'INVENTORY_UPDATED',
+        storeId: cleanStoreId,
+      });
+
+      persistWarehouseToStoreCloud(cleanStoreId, { warehouse_inventory: updatedList });
     }
 
     return {
@@ -280,7 +529,6 @@ export class InventoryService {
 
   /**
    * قارئ فواتير الموردين الذكي (Smart OCR Invoice Parser)
-   * يحلل النص المستخرج من صورة فاتورة المورد ويحوّله إلى عناصر مخزون قابلة للتأكيد والإدخال
    */
   static parseSupplierInvoiceText(
     rawText: string,
@@ -289,7 +537,6 @@ export class InventoryService {
     const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const extracted: ScannedSupplierInvoiceItem[] = [];
 
-    // Unit detection keywords in Arabic/English
     const unitMap: Record<string, StockUnit> = {
       'كجم': 'kg',
       'كيلو': 'kg',
@@ -312,11 +559,9 @@ export class InventoryService {
     };
 
     lines.forEach((line) => {
-      // Look for numbers in line (e.g., quantity, price)
       const numberMatches = line.match(/\d+(\.\d+)?/g);
       if (!numberMatches || numberMatches.length < 1) return;
 
-      // Detect unit if any
       let matchedUnit: StockUnit = 'piece';
       for (const [key, unitVal] of Object.entries(unitMap)) {
         if (line.includes(key)) {
@@ -325,25 +570,21 @@ export class InventoryService {
         }
       }
 
-      // Filter out pure date or phone lines
-      if (line.includes('202') || line.includes('05') && line.length === 10) return;
+      if (line.includes('202') || (line.includes('05') && line.length === 10)) return;
 
       const numbers = numberMatches.map(Number);
-      let qty = numbers[0] || 1;
+      const qty = numbers[0] || 1;
       let price = numbers[1] || 0;
 
-      // Clean up item name by removing digits and currency symbols
       let itemName = line
         .replace(/\d+(\.\d+)?/g, '')
-        .replace(/[﷼\$SARsar\.,\-\/\\:\*]/g, ' ')
+        .replace(/[﷼$SARsar.,\-/\\:*]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
 
-      // Skip lines that have very short names (e.g. "فاتورة" or punctuation)
       if (itemName.length < 3) return;
       if (itemName.includes('المجموع') || itemName.includes('الضريبة') || itemName.includes('الإجمالي') || itemName.includes('فاتورة')) return;
 
-      // Try fuzzy matching with existing inventory items
       const matched = existingInventory.find((ex) =>
         ex.name.toLowerCase().includes(itemName.toLowerCase()) ||
         itemName.toLowerCase().includes(ex.name.toLowerCase())
@@ -368,7 +609,6 @@ export class InventoryService {
       });
     });
 
-    // If nothing structured was parsed, provide standard smart sample entries for the merchant
     if (extracted.length === 0) {
       extracted.push(
         {
@@ -402,21 +642,23 @@ export class InventoryService {
   }
 
   /**
-   * تطبيق فاتورة المورد وإدخال الكميات للمخزون
+   * تطبيق فاتورة المورد وإدخال الكميات للمخزون ومزامنتها في قاعدة بيانات Supabase الحية
    */
   static applySupplierInvoice(
     storeId: string,
     invoice: ScannedSupplierInvoice
   ): { restockedCount: number; newItemsCount: number } {
-    const inventory = this.getInventory(storeId);
+    const cleanStoreId = storeId || 'default';
+    const inventory = this.getInventory(cleanStoreId);
+    const nowIso = new Date().toISOString();
     let restockedCount = 0;
     let newItemsCount = 0;
 
     invoice.items.forEach((scannedItem) => {
-      // Find matching item by ID or name
       const existing = inventory.find(
-        (it) => (scannedItem.matched_inventory_item_id && it.id === scannedItem.matched_inventory_item_id) ||
-                it.name.trim().toLowerCase() === scannedItem.item_name.trim().toLowerCase()
+        (it) =>
+          (scannedItem.matched_inventory_item_id && it.id === scannedItem.matched_inventory_item_id) ||
+          it.name.trim().toLowerCase() === scannedItem.item_name.trim().toLowerCase()
       );
 
       if (existing) {
@@ -424,14 +666,16 @@ export class InventoryService {
         if (Number(scannedItem.unit_price) > 0) {
           existing.cost_per_unit = Number(scannedItem.unit_price);
         }
-        existing.last_restocked_at = new Date().toISOString();
-        existing.updated_at = new Date().toISOString();
+        if (invoice.supplier_name) {
+          existing.supplier_name = invoice.supplier_name;
+        }
+        existing.last_restocked_at = nowIso;
+        existing.updated_at = nowIso;
         restockedCount++;
       } else {
-        // Create new raw material
         const newItem: InventoryItem = {
           id: `inv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          store_id: storeId,
+          store_id: cleanStoreId,
           name: scannedItem.item_name,
           category: 'توريدات الموردين',
           unit: scannedItem.unit || 'piece',
@@ -439,25 +683,36 @@ export class InventoryService {
           min_alert_stock: 5,
           cost_per_unit: Number(scannedItem.unit_price) || 0,
           supplier_name: invoice.supplier_name || 'مورد عام',
-          last_restocked_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          last_restocked_at: nowIso,
+          updated_at: nowIso,
         };
         inventory.unshift(newItem);
         newItemsCount++;
       }
     });
 
-    localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(inventory));
+    localStorage.setItem(`${INVENTORY_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(inventory));
 
-    // Save history invoice
+    let updatedInvoices: ScannedSupplierInvoice[] = [];
     try {
-      const invKey = `${INVOICES_STORAGE_KEY_PREFIX}${storeId}`;
+      const invKey = `${INVOICES_STORAGE_KEY_PREFIX}${cleanStoreId}`;
       const savedInvoices: ScannedSupplierInvoice[] = JSON.parse(localStorage.getItem(invKey) || '[]');
       savedInvoices.unshift(invoice);
-      localStorage.setItem(invKey, JSON.stringify(savedInvoices.slice(0, 50)));
+      updatedInvoices = savedInvoices.slice(0, 50);
+      localStorage.setItem(invKey, JSON.stringify(updatedInvoices));
     } catch (e) {
       console.warn('Failed to save supplier invoice history', e);
     }
+
+    LoyaltyEvents.emit({
+      type: 'INVENTORY_UPDATED',
+      storeId: cleanStoreId,
+    });
+
+    persistWarehouseToStoreCloud(cleanStoreId, {
+      warehouse_inventory: inventory,
+      warehouse_invoices: updatedInvoices,
+    });
 
     return { restockedCount, newItemsCount };
   }

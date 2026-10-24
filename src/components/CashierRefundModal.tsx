@@ -45,9 +45,9 @@ export const CashierRefundModal: React.FC<CashierRefundModalProps> = ({
   onClose,
   onRefundCompleted,
 }) => {
-  // Brand colors
-  const brandPrimary = store.primary_color || '#0F172A';
-  const brandSecondary = store.secondary_color || '#F59E0B';
+  // 🛡️ Radar Pro Operational Theme Colors
+  const brandPrimary = '#0F172A';
+  const brandSecondary = '#F59E0B';
 
   // Search & Orders List State
   const [searchQuery, setSearchQuery] = useState('');

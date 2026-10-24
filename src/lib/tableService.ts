@@ -1,6 +1,60 @@
 import { DiningTable, DiningTableZone } from '../types';
+import { getSupabaseClient, isUUID } from './supabase';
+import { LoyaltyEvents } from './events';
 
 const TABLES_STORAGE_KEY_PREFIX = 'radar_dining_tables_';
+const lastTablesSyncMap = new Map<string, number>();
+
+async function resolveStoreUUID(storeId: string): Promise<string> {
+  if (!storeId || storeId === 'default') return storeId;
+  if (isUUID(storeId)) return storeId;
+  const supabase = getSupabaseClient();
+  if (!supabase) return storeId;
+  try {
+    const { data } = await (supabase as any)
+      .from('stores')
+      .select('id')
+      .or(`id.eq.${storeId},slug.eq.${storeId}`)
+      .limit(1)
+      .single();
+    if (data?.id) return data.id;
+  } catch {}
+  return storeId;
+}
+
+async function persistTablesToStoreCloud(storeId: string, tables: DiningTable[]): Promise<void> {
+  try {
+    const resolvedStoreId = await resolveStoreUUID(storeId);
+    const supabase = getSupabaseClient();
+    if (!supabase || !isUUID(resolvedStoreId)) return;
+
+    const { data: storeRow, error } = await (supabase as any)
+      .from('stores')
+      .select('fulfillment_settings')
+      .eq('id', resolvedStoreId)
+      .maybeSingle();
+
+    if (error) return;
+
+    const currentSettings =
+      storeRow?.fulfillment_settings && typeof storeRow.fulfillment_settings === 'object'
+        ? storeRow.fulfillment_settings
+        : {};
+
+    await (supabase as any)
+      .from('stores')
+      .update({
+        fulfillment_settings: {
+          ...currentSettings,
+          dining_tables: tables,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', resolvedStoreId);
+  } catch (err) {
+    console.warn('persistTablesToStoreCloud warning:', err);
+  }
+}
 
 export const INITIAL_DEMO_TABLES: Omit<DiningTable, 'store_id'>[] = [
   // Singles (الأفراد)
@@ -157,6 +211,57 @@ export const INITIAL_DEMO_TABLES: Omit<DiningTable, 'store_id'>[] = [
 
 export class TableService {
   /**
+   * ☁️ مزامنة طاولات الصالة مع جدول stores الحي في قاعدة بيانات Supabase
+   */
+  static async syncWithSupabase(storeId: string, force = false): Promise<DiningTable[]> {
+    const cleanStoreId = storeId || 'default';
+    const now = Date.now();
+    const lastSync = lastTablesSyncMap.get(cleanStoreId) || 0;
+    if (!force && now - lastSync < 3000) {
+      return this.getTables(cleanStoreId);
+    }
+    lastTablesSyncMap.set(cleanStoreId, now);
+
+    try {
+      const resolvedStoreId = await resolveStoreUUID(cleanStoreId);
+      const supabase = getSupabaseClient();
+      if (supabase && isUUID(resolvedStoreId)) {
+        const { data: storeRow, error } = await (supabase as any)
+          .from('stores')
+          .select('id, fulfillment_settings')
+          .eq('id', resolvedStoreId)
+          .maybeSingle();
+
+        if (!error && storeRow) {
+          const fs =
+            storeRow.fulfillment_settings && typeof storeRow.fulfillment_settings === 'object'
+              ? storeRow.fulfillment_settings
+              : {};
+
+          if (Array.isArray(fs.dining_tables) && fs.dining_tables.length > 0) {
+            localStorage.setItem(`${TABLES_STORAGE_KEY_PREFIX}${cleanStoreId}`, JSON.stringify(fs.dining_tables));
+            if (resolvedStoreId !== cleanStoreId) {
+              localStorage.setItem(`${TABLES_STORAGE_KEY_PREFIX}${resolvedStoreId}`, JSON.stringify(fs.dining_tables));
+            }
+            LoyaltyEvents.emit({
+              type: 'STORE_UPDATED',
+              storeId: cleanStoreId,
+            });
+            return fs.dining_tables;
+          } else {
+            const currentLocal = this.getTables(cleanStoreId);
+            await persistTablesToStoreCloud(resolvedStoreId, currentLocal);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('TableService.syncWithSupabase warning:', err);
+    }
+
+    return this.getTables(cleanStoreId);
+  }
+
+  /**
    * جلب كافة طاولات المتجر، مع إمكانية التصفية بحسب الفرع
    */
   static getTables(storeId: string, branchId?: string | null): DiningTable[] {
@@ -177,6 +282,11 @@ export class TableService {
         list = JSON.parse(raw);
       }
 
+      const lastSync = lastTablesSyncMap.get(storeId) || 0;
+      if (Date.now() - lastSync > 8000) {
+        this.syncWithSupabase(storeId).catch(() => {});
+      }
+
       if (branchId && branchId !== 'ALL') {
         return list.filter((t) => !t.branch_id || t.branch_id === branchId);
       }
@@ -188,7 +298,7 @@ export class TableService {
   }
 
   /**
-   * حفظ أو تحديث طاولة في الصالة
+   * حفظ أو تحديث طاولة في الصالة ومزامنتها سحابياً مع قاعدة البيانات
    */
   static saveTable(storeId: string, tableData: Partial<DiningTable>): DiningTable {
     const list = this.getTables(storeId);
@@ -212,7 +322,7 @@ export class TableService {
         branch_name: tableData.branch_name || null,
         table_number: String(tableData.table_number || list.length + 1).trim(),
         name: tableData.name || `طاولة ${tableData.table_number || list.length + 1}`,
-        zone: tableData.zone || 'singles',
+        zone: (tableData.zone || 'singles') as DiningTableZone,
         capacity: Number(tableData.capacity) || 4,
         shape: tableData.shape || 'square',
         is_active: tableData.is_active !== false,
@@ -224,15 +334,17 @@ export class TableService {
     }
 
     localStorage.setItem(`${TABLES_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(list));
+    persistTablesToStoreCloud(storeId, list);
     return target;
   }
 
   /**
-   * حذف طاولة من الصالة
+   * حذف طاولة من الصالة ومزامنتها سحابياً
    */
   static deleteTable(storeId: string, tableId: string): void {
     const list = this.getTables(storeId).filter((t) => t.id !== tableId);
     localStorage.setItem(`${TABLES_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(list));
+    persistTablesToStoreCloud(storeId, list);
   }
 
   /**

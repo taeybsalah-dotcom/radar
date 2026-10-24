@@ -12,6 +12,7 @@ import { useAuth } from './context/AuthContext';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
 import { registerRadarServiceWorker, sendPortalNotification, saveInboxNotification } from './lib/notifications';
+import { getActiveTenantConfig } from './config/tenant';
 import { playBeepSound } from './lib/sound';
 import { Bell, Coins, X } from 'lucide-react';
 
@@ -576,27 +577,36 @@ export function App() {
     activeTab === 'partner' ||
     activeTab === 'partner-landing';
 
+  // 🛡️ Strict White-Label Isolation: ONLY the Customer Portal reflects the merchant's dynamic colors & theme mode.
+  // All Operational Portals (Cashier POS, Merchant Admin, Driver, KDS, Onboarding) are locked to Radar Pro Dark Slate.
+  const isCustomerWhiteLabelPortal = activeTab === 'customer';
+
   const activeBranding = useMemo(() => {
     if (isPlatformPortal) return null;
     return store || getActiveStoreBranding();
   }, [isPlatformPortal, store]);
 
   const currentThemeMode = useMemo<'light' | 'dark' | 'warm_cream'>(() => {
-    if (isPlatformPortal) return 'dark';
+    if (!isCustomerWhiteLabelPortal) return 'dark';
     return (activeBranding?.theme_mode as any) || 'light';
-  }, [isPlatformPortal, activeBranding]);
+  }, [isCustomerWhiteLabelPortal, activeBranding]);
 
   const currentBgColor = useMemo<string>(() => {
-    if (isPlatformPortal) return '#080B11';
+    if (!isCustomerWhiteLabelPortal) return '#080B11';
     if (activeBranding?.background_color) return activeBranding.background_color;
     if (currentThemeMode === 'warm_cream') return '#FAF6F0';
     if (currentThemeMode === 'dark') return '#080B11';
     return '#F8FAFC';
-  }, [isPlatformPortal, activeBranding, currentThemeMode]);
+  }, [isCustomerWhiteLabelPortal, activeBranding, currentThemeMode]);
 
   useEffect(() => {
-    // 🎨 White-Label Dynamic Theme Sync
+    // 🎨 White-Label Dynamic Theme Sync (Isolated to Customer Portal; Operational Portals locked to Radar Pro Dark)
     document.documentElement.setAttribute('data-theme', currentThemeMode);
+    if (currentThemeMode === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
     document.body.style.backgroundColor = currentBgColor;
 
     let metaTheme = document.querySelector('meta[name="theme-color"]');
@@ -612,14 +622,14 @@ export function App() {
       document.documentElement.style.setProperty('--brand-secondary', '#F59E0B');
       updateDynamicPWA(null, activeTab as any);
     } else if (store) {
-      const p = store.primary_color || '#0F172A';
-      const s = store.secondary_color || '#F59E0B';
+      const p = isCustomerWhiteLabelPortal ? (store.primary_color || '#0F172A') : '#0F172A';
+      const s = isCustomerWhiteLabelPortal ? (store.secondary_color || '#F59E0B') : '#F59E0B';
       document.documentElement.style.setProperty('--brand-primary', p);
       document.documentElement.style.setProperty('--brand-secondary', s);
       updateDynamicPWA(store, activeTab);
       saveActiveStoreBranding(store);
     }
-  }, [store, activeTab, isPlatformPortal, currentThemeMode, currentBgColor]);
+  }, [store, activeTab, isPlatformPortal, isCustomerWhiteLabelPortal, currentThemeMode, currentBgColor]);
 
   const debouncedSyncAppStore = useMemo(
     () =>
@@ -917,8 +927,8 @@ export function App() {
 
   if (loading || authLoading) {
     if (activeBranding && activeBranding.name) {
-      const primaryColor = activeBranding.primary_color || '#0F172A';
-      const secondaryColor = activeBranding.secondary_color || '#F59E0B';
+      const primaryColor = isCustomerWhiteLabelPortal ? (activeBranding.primary_color || '#0F172A') : '#0F172A';
+      const secondaryColor = isCustomerWhiteLabelPortal ? (activeBranding.secondary_color || '#F59E0B') : '#F59E0B';
       const isDark = currentThemeMode === 'dark';
 
       return (
@@ -982,19 +992,24 @@ export function App() {
       );
     }
 
-    // Default Platform Splash Screen (RADAR)
+    // Default Platform Splash Screen (White-Label Dynamic)
+    const tenant = getActiveTenantConfig();
     return (
       <div className="min-h-screen bg-[#080B11] flex flex-col items-center justify-center text-slate-100 selection:bg-amber-500 selection:text-black">
         <div className="flex flex-col items-center gap-4 text-center px-4 animate-fade-in">
-          <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 text-3xl shadow-xl shadow-amber-500/20 font-black animate-pulse">
-            ⚡
+          <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 text-3xl shadow-xl shadow-emerald-500/20 font-black animate-pulse overflow-hidden">
+            {tenant.logoUrl ? (
+              <img src={tenant.logoUrl} alt={tenant.brandName} className="w-full h-full object-cover" />
+            ) : (
+              <span>⚡</span>
+            )}
           </div>
           <div className="space-y-1">
-            <h1 className="text-xl font-black tracking-wide text-white">رادار | RADAR</h1>
-            <p className="text-xs text-slate-400 font-medium">محرك الولاء والمكافآت الذكي</p>
+            <h1 className="text-xl font-black tracking-wide text-white">{tenant.brandName}</h1>
+            <p className="text-xs text-slate-400 font-medium">{tenant.tagline}</p>
           </div>
           <div className="flex items-center gap-2 text-slate-400 font-mono text-xs mt-2 bg-slate-900/80 px-4 py-2 rounded-full border border-slate-800 shadow-lg">
-            <div className="w-3.5 h-3.5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+            <div className="w-3.5 h-3.5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
             <span>جاري التحقق من الصلاحيات وتهيئة البوابة...</span>
           </div>
         </div>
@@ -1242,7 +1257,7 @@ export function App() {
       {(activeTab === 'super-admin' || isSuperAdminPreview) && (
         <footer className="border-t border-slate-900 py-6 text-center text-xs text-slate-500">
           <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <p>© 2026 Radar Loyalty Engine (White-Label Multi-Tenant SaaS Platform).</p>
+            <p>© 2026 {getActiveTenantConfig().copyrightHolder}.</p>
             {isSuperAdminPreview && store ? (
               <div className="flex items-center space-x-3 rtl:space-x-reverse text-slate-400 font-mono text-[11px]">
                 <span>المتجر النشط: <strong className="text-white">{store.name}</strong></span>

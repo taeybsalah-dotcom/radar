@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Store,
   StoreBranch,
@@ -7,7 +7,7 @@ import {
   DriverWorkStatus,
 } from '../types';
 import { DriverService } from '../lib/driverService';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, getSupabaseClient, isUUID } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
 import { playBeepSound } from '../lib/sound';
 import { DriverDoorstepPaymentModal } from './driver/DriverDoorstepPaymentModal';
@@ -36,6 +36,14 @@ import {
   Coffee,
   Copy,
   Check,
+  Home,
+  Briefcase,
+  Trees,
+  Camera,
+  Eye,
+  X,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 interface DriverPortalProps {
@@ -49,9 +57,14 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   activeBranch: initialBranch,
   onClose,
 }) => {
-  // Brand Colors
-  const brandPrimary = store?.primary_color || '#0F172A';
-  const brandSecondary = store?.secondary_color || '#F59E0B';
+  // 🛡️ Radar Pro Operational Theme Colors
+  const brandPrimary = '#0F172A';
+  const brandSecondary = '#F59E0B';
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.body.style.backgroundColor = '#080B11';
+  }, []);
 
   // Fixed/Locked Identity from URL Query Params or Merchant Link
   const queryDriverId = useMemo(() => {
@@ -178,27 +191,101 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     } catch {}
   };
 
-  // Reload orders
-  const reloadOrders = () => {
+  // Reload orders (from local cache + live Supabase cloud sync)
+  const reloadOrders = (forceCloudSync = false) => {
     if (!store?.id || !currentDriver) return;
     setLoadingOrders(true);
     const result = DriverService.getDriverOrders(store.id, currentDriver.id, selectedBranchId);
     setDriverOrders(result);
     setLoadingOrders(false);
+
+    DriverService.syncOrdersWithSupabase(store.id, forceCloudSync)
+      .then(() => {
+        const freshResult = DriverService.getDriverOrders(store.id, currentDriver.id, selectedBranchId);
+        setDriverOrders(freshResult);
+        setSettlementTick((v) => v + 1);
+      })
+      .catch(() => {});
+
+    DriverService.syncSettlementWithSupabase(store.id, currentDriver.id)
+      .then(() => {
+        setSettlementTick((v) => v + 1);
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
-    reloadOrders();
+    reloadOrders(true);
   }, [store?.id, currentDriver?.id, selectedBranchId]);
 
-  // Realtime event listener for instant order status sync
+  // Realtime event listener + Supabase Postgres Changes for instant order & driver sync across mobile devices
   useEffect(() => {
     const unsub = LoyaltyEvents.listen((event) => {
-      if ((event as any).type === 'ORDER_STATUS_UPDATED' || (event as any).type === 'NEW_ORDER') {
+      if (
+        (event as any).type === 'ORDER_STATUS_UPDATED' ||
+        (event as any).type === 'ORDER_CREATED' ||
+        (event as any).type === 'NEW_ORDER'
+      ) {
+        if ((event as any).orderData) {
+          DriverService.upsertOrderInCache((event as any).orderData);
+        }
         reloadOrders();
       }
     });
-    return () => unsub();
+
+    let channel: any = null;
+    const supabase = getSupabaseClient();
+    if (supabase && store?.id && isUUID(store.id)) {
+      channel = supabase
+        .channel(`driver_portal_live_${store.id}_${currentDriver?.id || 'all'}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'store_orders', filter: `store_id=eq.${store.id}` },
+          (payload: any) => {
+            if (payload?.new) {
+              DriverService.upsertOrderInCache(payload.new);
+              if (
+                currentDriver &&
+                payload.new.driver_id === currentDriver.id &&
+                payload.new.delivery_status === 'assigned'
+              ) {
+                // فك الكتم وبدء النغمة المستمرة كل 3 ثوانٍ
+                mutedOrdersSetRef.current.delete(payload.new.id);
+                mutedOrdersSetRef.current.delete(payload.new.order_id);
+                setIsAlertMuted(false);
+                playBeepSound('pos_order_alert');
+              }
+            }
+            reloadOrders();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'store_drivers', filter: `store_id=eq.${store.id}` },
+          () => {
+            DriverService.syncWithSupabase(store.id).then(() => reloadDrivers());
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'driver_settlements', filter: `store_id=eq.${store.id}` },
+          () => {
+            if (currentDriver) {
+              DriverService.syncSettlementWithSupabase(store.id, currentDriver.id).then(() => reloadOrders());
+            }
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      unsub();
+      if (channel && supabase) {
+        try {
+          supabase.removeChannel(channel);
+        } catch {}
+      }
+    };
   }, [store?.id, currentDriver?.id, selectedBranchId]);
 
   // 🔒 Offline Blocked Modal State (حماية السائق من التحول إلى أوفلاين مع وجود طلبات نشطة)
@@ -222,6 +309,63 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     notes: '',
     isSubmitting: false,
   });
+
+  // 📸 معاينة صورة واجهة الموقع / المبنى للطلب
+  const [previewLocationPhoto, setPreviewLocationPhoto] = useState<string | null>(null);
+
+  // 🔔 رنين تنبيه مستمر كل 3 ثوانٍ عند إرسال طلب جديد من الكاشير حتى يقبله السائق أو يوقفه
+  const [isAlertMuted, setIsAlertMuted] = useState(false);
+  const mutedOrdersSetRef = useRef<Set<string>>(new Set());
+  const ringtoneIntervalRef = useRef<any>(null);
+
+  // الطلبات المعلقة في انتظار استلام السائق ولم يتم كتمها يدوياً
+  const unacceptedAssignedOrders = useMemo(() => {
+    return (driverOrders.availableForPickup || []).filter(
+      (o) => !mutedOrdersSetRef.current.has(o.order_id) && !mutedOrdersSetRef.current.has(String((o as any).id))
+    );
+  }, [driverOrders.availableForPickup, isAlertMuted]);
+
+  useEffect(() => {
+    const hasPendingAssignedOrder = unacceptedAssignedOrders.length > 0;
+
+    if (hasPendingAssignedOrder) {
+      // رنين تنبيه فوري
+      playBeepSound('pos_order_alert');
+
+      // تكرار النغمة كل 3 ثوانٍ باستمرار حتى قبول الطلب أو إيقافها
+      if (!ringtoneIntervalRef.current) {
+        ringtoneIntervalRef.current = setInterval(() => {
+          playBeepSound('pos_order_alert');
+        }, 3000);
+      }
+    } else {
+      // إيقاف الرنين فوراً عند عدم وجود طلبات معلقة
+      if (ringtoneIntervalRef.current) {
+        clearInterval(ringtoneIntervalRef.current);
+        ringtoneIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (ringtoneIntervalRef.current) {
+        clearInterval(ringtoneIntervalRef.current);
+        ringtoneIntervalRef.current = null;
+      }
+    };
+  }, [unacceptedAssignedOrders]);
+
+  const handleMuteRingtone = () => {
+    (driverOrders.availableForPickup || []).forEach((o) => {
+      mutedOrdersSetRef.current.add(o.order_id);
+      if ((o as any).id) mutedOrdersSetRef.current.add(String((o as any).id));
+    });
+    setIsAlertMuted(true);
+    if (ringtoneIntervalRef.current) {
+      clearInterval(ringtoneIntervalRef.current);
+      ringtoneIntervalRef.current = null;
+    }
+    playBeepSound('notification');
+  };
 
   // Handle Driver Status Switch with Active Orders State Guard
   const toggleDriverStatus = () => {
@@ -279,6 +423,12 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   // Handle Pickup action
   const handlePickup = (order: WhatsAppOrderPayload) => {
     if (!store?.id || !currentDriver) return;
+    mutedOrdersSetRef.current.add(order.order_id);
+    if ((order as any).id) mutedOrdersSetRef.current.add(String((order as any).id));
+    if (ringtoneIntervalRef.current) {
+      clearInterval(ringtoneIntervalRef.current);
+      ringtoneIntervalRef.current = null;
+    }
     DriverService.pickupOrder(store.id, order.order_id, currentDriver.id);
     playBeepSound('success');
     reloadOrders();
@@ -342,10 +492,28 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   };
 
   // Shift Settlement Data
+  const [settlementTick, setSettlementTick] = useState(0);
   const shiftSettlement = useMemo(() => {
     if (!store?.id || !currentDriver) return null;
     return DriverService.getDriverShiftSettlement(store.id, currentDriver.id);
-  }, [store?.id, currentDriver?.id, driverOrders]);
+  }, [store?.id, currentDriver?.id, driverOrders, settlementTick]);
+
+  const unsettledSummary = useMemo(() => {
+    if (!store?.id || !currentDriver) {
+      return {
+        unsettledOrders: [],
+        unsettledCash: 0,
+        unsettledCard: 0,
+        unsettledOnline: 0,
+        settlementRequested: false,
+      };
+    }
+    return DriverService.getDriverUnsettledSummary(
+      store.id,
+      currentDriver.id,
+      driverOrders.completedToday
+    );
+  }, [store?.id, currentDriver?.id, driverOrders, settlementTick]);
 
   // Active branch details
   const activeBranchName = useMemo(() => {
@@ -538,6 +706,42 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
       {/* 📦 Tab Content Body */}
       <main className="flex-1 p-3 sm:p-4 space-y-3 pb-24 overflow-y-auto">
 
+        {/* 🚨 RINGTONE ALERT BANNER: طلبات مسندة جديدة بانتظار استلام السائق */}
+        {unacceptedAssignedOrders.length > 0 && (
+          <div className="p-3.5 rounded-3xl bg-gradient-to-r from-amber-500 via-rose-500 to-amber-500 text-slate-950 font-black shadow-2xl flex items-center justify-between gap-2 animate-pulse border-2 border-white/40">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-2xl animate-bounce shrink-0">🛵</span>
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-black truncate text-slate-950">
+                  طلب توصيل جديد مسند إليك من الكاشير (#{unacceptedAssignedOrders[0].order_id.slice(-6)})! 🚨
+                </div>
+                <div className="text-[10px] font-bold text-slate-900 opacity-90">
+                  النغمة تتكرر كل 3 ثوانٍ حتى قبول الطلب أو إيقافها
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => handlePickup(unacceptedAssignedOrders[0])}
+                className="px-3 py-1.5 rounded-xl bg-slate-950 text-emerald-400 hover:text-emerald-300 font-black text-xs hover:bg-slate-900 transition flex items-center gap-1 shadow-lg"
+              >
+                <Car className="w-3.5 h-3.5" />
+                <span>قبول واستلام 🛵</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleMuteRingtone}
+                className="px-2.5 py-1.5 rounded-xl bg-slate-950/80 text-white font-bold text-xs hover:bg-slate-950 transition flex items-center gap-1 shadow"
+                title="إيقاف صوت الرنين مؤقتاً"
+              >
+                <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+                <span>كتم 🔕</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* 🚨 DRIVER OPERATIONAL STATUS BANNERS */}
         {currentDriver?.status === 'break' && (
           <div className="p-4 rounded-3xl bg-gradient-to-r from-orange-950/70 to-slate-900 border-2 border-orange-500/50 text-orange-200 space-y-3 shadow-xl animate-fade-in">
@@ -638,32 +842,139 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                 </label>
               </div>
             )}
-            {driverOrders.activeDeliveries.length === 0 ? (
+            {/* 📦 Show Assigned Pickup Orders directly on the main screen so the driver never misses an assigned order */}
+            {driverOrders.availableForPickup.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-xs font-black text-emerald-400 flex items-center gap-1.5">
+                    <span>📦</span>
+                    <span>طلبات مسندة لك بالفرع ({driverOrders.availableForPickup.length})</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">استلم الكيس من الكاونتر واضغط انطلاق</span>
+                </div>
+                {driverOrders.availableForPickup.map((order) => (
+                  <div
+                    key={`main_pickup_${order.order_id}`}
+                    className="p-4 rounded-3xl bg-slate-900 border-2 border-emerald-500/40 shadow-xl space-y-3 relative"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-black text-amber-400 text-sm">
+                          #{order.order_id.slice(-6)}
+                        </span>
+                        {order.status === 'ready' ? (
+                          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-black flex items-center gap-1 animate-bounce">
+                            <span>🟢 جاهز على الكاونتر! استلم وانطلق</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold flex items-center gap-1 animate-pulse">
+                            <span>👨‍🍳 يجهز في المطبخ الآن...</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="text-left font-mono">
+                        <span className="text-lg font-black text-white">{Number(order.total_amount).toFixed(2)}</span>
+                        <span className="text-[10px] text-slate-400 mr-1">ريال</span>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-white font-bold">
+                        <div className="flex items-center gap-1.5">
+                          <span>{order.customer_name}</span>
+                          {order.fulfillment_details?.delivery_address_label && (
+                            <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-black flex items-center gap-1">
+                              {order.fulfillment_details.delivery_address_label === 'العمل' ? (
+                                <Briefcase className="w-3 h-3" />
+                              ) : order.fulfillment_details.delivery_address_label === 'الاستراحة' ? (
+                                <Trees className="w-3 h-3" />
+                              ) : (
+                                <Home className="w-3 h-3" />
+                              )}
+                              <span>{order.fulfillment_details.delivery_address_label}</span>
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-mono text-slate-400">{order.customer_phone}</span>
+                      </div>
+                      <div className="text-slate-400 text-[11px] truncate flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                        <span className="truncate">{order.fulfillment_details?.delivery_address || 'عنوان العميل محدد عبر الـ GPS'}</span>
+                      </div>
+                      {order.fulfillment_details?.delivery_location_photo && (
+                        <div className="pt-1.5 flex items-center justify-between border-t border-slate-900 text-[11px]">
+                          <span className="text-amber-400 font-bold flex items-center gap-1">
+                            <Camera className="w-3.5 h-3.5" /> صورة الموقع مرفقة 📸
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewLocationPhoto(order.fulfillment_details.delivery_location_photo!)}
+                            className="text-sky-400 hover:text-sky-300 font-bold flex items-center gap-1"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> معاينة
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => handlePickup(order)}
+                        className="flex-1 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2"
+                      >
+                        <Car className="w-4 h-4" />
+                        <span>🛵 استلمت الطلب من الفرع وانطلقت للعميل</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEmergencyReleaseModal({
+                            isOpen: true,
+                            order,
+                            reason: 'عطل مفاجئ في الدراجة أو المركبة',
+                            notes: '',
+                            isSubmitting: false,
+                          });
+                          playBeepSound('pos_order_alert');
+                        }}
+                        className="py-3 px-3 rounded-2xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-bold text-xs transition flex items-center justify-center shrink-0"
+                        title="اعتذار طارئ عن استلام هذا الطلب"
+                      >
+                        <AlertCircle className="w-4 h-4 text-rose-400" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {driverOrders.activeDeliveries.length === 0 && driverOrders.availableForPickup.length === 0 ? (
               <div className="text-center py-16 space-y-3">
                 <div className="w-16 h-16 rounded-3xl bg-slate-900 border border-slate-800 flex items-center justify-center text-3xl mx-auto text-slate-600">
                   🛵
                 </div>
-                <h3 className="text-sm font-bold text-slate-300">لا توجد طلبات قيد التوصيل حالياً</h3>
+                <h3 className="text-sm font-bold text-slate-300">لا توجد طلبات مسندة لك حالياً</h3>
                 <p className="text-xs text-slate-500 max-w-xs mx-auto">
-                  تفقد تبويب "بالفرع" لاستلام الطلبات الجاهزة والانطلاق بها إلى العميل.
+                  بمجرد أن يعتمد الكاشير طلب توصيل ويسنده لك سيظهر أمامك هنا فوراً مع تنبيه صوتي.
                 </p>
-                {driverOrders.availableForPickup.length > 0 && (
-                  <button
-                    onClick={() => setActiveTab('pickup')}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black shadow-lg transition"
-                  >
-                    استلام {driverOrders.availableForPickup.length} طلب جاهز الآن 📦
-                  </button>
-                )}
               </div>
             ) : (
               driverOrders.activeDeliveries.map((order) => {
                 const isPaid = order.payment_status === 'paid';
-                const mapsUrl =
-                  order.fulfillment_details?.delivery_gps_link ||
-                  (order.fulfillment_details?.delivery_address
-                    ? `https://maps.google.com/?q=${encodeURIComponent(order.fulfillment_details.delivery_address)}`
-                    : null);
+                const rawGps = (order.fulfillment_details?.delivery_gps_link || (order as any).delivery_gps_link || '').trim();
+                const rawAddr = (order.fulfillment_details?.delivery_address || (order as any).delivery_address || '').trim();
+                const rawLat = order.fulfillment_details?.delivery_lat ?? (order as any).delivery_lat;
+                const rawLng = order.fulfillment_details?.delivery_lng ?? (order as any).delivery_lng;
+
+                const mapsUrl = rawGps
+                  ? rawGps
+                  : (rawLat && rawLng)
+                  ? `https://maps.google.com/?q=${rawLat},${rawLng}`
+                  : (rawAddr && rawAddr !== 'عنوان العميل محدد عبر الـ GPS')
+                  ? `https://maps.google.com/?q=${encodeURIComponent(rawAddr)}`
+                  : null;
 
                 return (
                   <div
@@ -702,9 +1013,21 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     {/* Customer Info & Address */}
                     <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <User className="w-4 h-4 text-amber-400" />
                           <span className="font-bold text-white text-xs">{order.customer_name}</span>
+                          {order.fulfillment_details?.delivery_address_label && (
+                            <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-black flex items-center gap-1">
+                              {order.fulfillment_details.delivery_address_label === 'العمل' ? (
+                                <Briefcase className="w-3 h-3" />
+                              ) : order.fulfillment_details.delivery_address_label === 'الاستراحة' ? (
+                                <Trees className="w-3 h-3" />
+                              ) : (
+                                <Home className="w-3 h-3" />
+                              )}
+                              <span>{order.fulfillment_details.delivery_address_label}</span>
+                            </span>
+                          )}
                         </div>
                         <span className="font-mono text-xs text-slate-300">{order.customer_phone}</span>
                       </div>
@@ -738,6 +1061,31 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                           </button>
                         )}
                       </div>
+
+                      {order.fulfillment_details?.delivery_location_photo && (
+                        <div
+                          onClick={() => setPreviewLocationPhoto(order.fulfillment_details.delivery_location_photo!)}
+                          className="pt-2 border-t border-slate-900 flex items-center justify-between gap-2 cursor-pointer group hover:bg-slate-900/50 p-1.5 rounded-xl transition"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <img
+                              src={order.fulfillment_details.delivery_location_photo}
+                              alt="صورة الموقع"
+                              className="w-10 h-10 rounded-xl object-cover border border-amber-500/40 group-hover:scale-105 transition shrink-0"
+                            />
+                            <div className="min-w-0">
+                              <div className="text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                                <Camera className="w-3 h-3 text-amber-400" />
+                                <span>صورة واجهة المبنى / الباب 📸</span>
+                              </div>
+                              <div className="text-[10px] text-slate-400">انقر لمعاينة الصورة بالحجم الكامل</div>
+                            </div>
+                          </div>
+                          <span className="p-1.5 rounded-lg bg-slate-800 text-slate-300 group-hover:text-white text-xs transition shrink-0">
+                            <Eye className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Quick Items Preview */}
@@ -768,7 +1116,16 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                           if (mapsUrl) {
                             window.open(mapsUrl, '_blank');
                           } else {
-                            alert('لم يتم تحديد عنوان أو رابط خريطة لهذا الطلب');
+                            const ask = confirm(
+                              `لم يتم حفظ رابط لوكيشن تلقائي لهذا الطلب.\n\nهل ترغب في فتح محادثة واتساب مع العميل (${order.customer_name}) لطلب إرسال موقعه الحالي؟ 📍`
+                            );
+                            if (ask && order.customer_phone) {
+                              const cleanPhone = order.customer_phone.replace(/^0/, '966').replace(/\D/g, '');
+                              const waText = encodeURIComponent(
+                                `مرحباً ${order.customer_name}، أنا كابتن التوصيل من متجر ${store.name}، معي طلبك رقم #${order.order_id.slice(-6)}. يرجى إرسال موقعك المباشر (Live Location) هنا عبر الواتساب للوصول إليك سريعاً 🛵`
+                              );
+                              window.open(`https://wa.me/${cleanPhone}?text=${waText}`, '_blank');
+                            }
                           }
                         }}
                         className="py-2.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 border border-slate-700"
@@ -908,14 +1265,43 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                       </div>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-1 text-xs">
+                    <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-1.5 text-xs">
                       <div className="flex items-center justify-between text-white font-bold">
-                        <span>{order.customer_name}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span>{order.customer_name}</span>
+                          {order.fulfillment_details?.delivery_address_label && (
+                            <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[10px] font-black flex items-center gap-1">
+                              {order.fulfillment_details.delivery_address_label === 'العمل' ? (
+                                <Briefcase className="w-3 h-3" />
+                              ) : order.fulfillment_details.delivery_address_label === 'الاستراحة' ? (
+                                <Trees className="w-3 h-3" />
+                              ) : (
+                                <Home className="w-3 h-3" />
+                              )}
+                              <span>{order.fulfillment_details.delivery_address_label}</span>
+                            </span>
+                          )}
+                        </div>
                         <span className="font-mono text-slate-400">{order.customer_phone}</span>
                       </div>
-                      <div className="text-slate-400 text-[11px] truncate">
-                        📍 {order.fulfillment_details?.delivery_address || 'عنوان العميل محدد عبر الـ GPS'}
+                      <div className="text-slate-400 text-[11px] truncate flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                        <span className="truncate">{order.fulfillment_details?.delivery_address || 'عنوان العميل محدد عبر الـ GPS'}</span>
                       </div>
+                      {order.fulfillment_details?.delivery_location_photo && (
+                        <div className="pt-1.5 flex items-center justify-between border-t border-slate-900 text-[11px]">
+                          <span className="text-amber-400 font-bold flex items-center gap-1">
+                            <Camera className="w-3.5 h-3.5" /> صورة الموقع مرفقة 📸
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewLocationPhoto(order.fulfillment_details.delivery_location_photo!)}
+                            className="text-sky-400 hover:text-sky-300 font-bold flex items-center gap-1"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> معاينة
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between text-xs text-slate-400">
@@ -985,7 +1371,12 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                 </p>
               </div>
             ) : (
-              driverOrders.completedToday.map((order) => (
+              driverOrders.completedToday.map((order) => {
+                const isOrderSettled =
+                  (order.fulfillment_details as any)?.driver_cash_settled === true ||
+                  order.driver_payment_method === 'online_link' ||
+                  order.payment_method === 'online';
+                return (
                 <div
                   key={order.order_id}
                   className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3 text-xs"
@@ -995,9 +1386,18 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                       <CheckCircle2 className="w-4 h-4" />
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-mono font-bold text-white">#{order.order_id.slice(-6)}</span>
                         <span className="text-[10px] text-slate-400 truncate">({order.customer_name})</span>
+                        {isOrderSettled ? (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">
+                            تم توريدها للصندوق ✅
+                          </span>
+                        ) : (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
+                            في عهدتك 💵
+                          </span>
+                        )}
                       </div>
                       <div className="text-[10px] text-slate-500 mt-0.5">
                         طريقة التحصيل: {order.driver_payment_method === 'cash' ? '💵 كاش' : order.driver_payment_method === 'card' ? '💳 شبكة' : '📱 أونلاين'}
@@ -1010,7 +1410,8 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     <span className="text-[10px] text-slate-500 mr-1">ريال</span>
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -1027,41 +1428,125 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     <DollarSign className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="font-black text-white text-sm">ملخص عهدة الوردية اليومية</h3>
+                    <h3 className="font-black text-white text-sm">ملخص عهدة الكابتن اليومية</h3>
                     <span className="text-[10px] text-slate-400">{new Date().toLocaleDateString('ar-SA')}</span>
                   </div>
                 </div>
 
                 <span className="px-2.5 py-1 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-black">
-                  {shiftSettlement?.delivered_orders_count || 0} طلبات مسلمة
+                  {driverOrders.completedToday.length || shiftSettlement?.delivered_orders_count || 0} طلبات مسلمة اليوم
                 </span>
               </div>
 
-              {/* Cash in Hand to Turn in */}
-              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-1">
-                <span className="text-xs text-amber-300 font-bold">إجمالي الكاش النقدي في حوزتك (واجب توريده لكاشير الفرع):</span>
-                <div className="text-3xl font-black text-amber-400 font-mono">
-                  {(shiftSettlement?.total_cash_collected || 0).toFixed(2)}{' '}
-                  <span className="text-xs font-normal text-amber-200">ريال</span>
+              {/* Cash in Hand to Turn in (Active Unsettled Custody) */}
+              <div
+                className={`p-4 rounded-2xl border space-y-1.5 transition ${
+                  unsettledSummary.unsettledCash > 0 || unsettledSummary.unsettledCard > 0
+                    ? 'bg-amber-500/10 border-amber-500/40'
+                    : 'bg-emerald-500/10 border-emerald-500/30'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span
+                    className={`text-xs font-bold ${
+                      unsettledSummary.unsettledCash > 0 || unsettledSummary.unsettledCard > 0
+                        ? 'text-amber-300'
+                        : 'text-emerald-300'
+                    }`}
+                  >
+                    الكاش النقدي الحالي في عهدتك (واجب تسليمه للكاشير):
+                  </span>
+                  {unsettledSummary.unsettledCash === 0 && unsettledSummary.unsettledCard === 0 && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-black">
+                      العهدة مصفرة ✅
+                    </span>
+                  )}
+                </div>
+                <div
+                  className={`text-3xl font-black font-mono ${
+                    unsettledSummary.unsettledCash > 0 ? 'text-amber-400' : 'text-emerald-400'
+                  }`}
+                >
+                  {unsettledSummary.unsettledCash.toFixed(2)}{' '}
+                  <span className="text-xs font-normal text-slate-300">ريال</span>
                 </div>
               </div>
 
               {/* Financial Breakdown Grid */}
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px]">تحصيلات شبكة / بطاقات:</span>
+                  <span className="text-slate-400 text-[11px]">إيصالات شبكة في عهدتك:</span>
                   <div className="font-bold text-white font-mono text-sm">
-                    {(shiftSettlement?.total_card_collected || 0).toFixed(2)} ريال
+                    {unsettledSummary.unsettledCard.toFixed(2)} ريال
                   </div>
                 </div>
 
                 <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px]">مدفوعات أونلاين مسبقة:</span>
+                  <span className="text-slate-400 text-[11px]">مدفوعات أونلاين بالتطبيق:</span>
                   <div className="font-bold text-white font-mono text-sm">
-                    {(shiftSettlement?.total_online_collected || 0).toFixed(2)} ريال
+                    {(unsettledSummary.unsettledOnline || shiftSettlement?.total_online_collected || 0).toFixed(2)} ريال
                   </div>
                 </div>
               </div>
+
+              {/* Unsettled Invoices List */}
+              {unsettledSummary.unsettledOrders.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-black text-amber-300">
+                      📋 الفواتير الحالية في عهدتك ({unsettledSummary.unsettledOrders.length}):
+                    </span>
+                    <span className="text-[10px] text-slate-400">تُسلم للكاشير لتصفير العهدة</span>
+                  </div>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                    {unsettledSummary.unsettledOrders.map((uo) => {
+                      const method = (uo.fulfillment_details as any)?.driver_payment_method || uo.driver_payment_method || uo.payment_method;
+                      return (
+                        <div
+                          key={`unsettled_${uo.order_id}`}
+                          className="flex items-center justify-between p-2 rounded-xl bg-slate-900 border border-slate-800 text-[11px]"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-mono font-black text-amber-400">#{String(uo.order_id).slice(-6)}</span>
+                            <span className="text-slate-300 truncate">{uo.customer_name}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] font-bold">
+                              {method === 'cash' ? '💵 كاش' : '💳 شبكة'}
+                            </span>
+                            <span className="font-mono font-black text-white">
+                              {Number(uo.total_amount || 0).toFixed(2)} ر.س
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Last Settled Receipt Box (When Cashier has signed off) */}
+              {shiftSettlement?.settled && shiftSettlement?.settled_at && (
+                <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-emerald-300 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span>سند تصفية وتوقيع استلام معتمد من الكاشير</span>
+                    </span>
+                    <span className="text-[10px] font-mono text-emerald-400/90">
+                      {new Date(shiftSettlement.settled_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-300 flex items-center justify-between pt-1 border-t border-emerald-500/20">
+                    <span>تم التوقيع والاستلام بواسطة: <strong className="text-white">{shiftSettlement.settled_by_cashier || 'كاشير الفرع'}</strong></span>
+                    {(shiftSettlement.last_settled_cash || shiftSettlement.last_settled_card) ? (
+                      <span className="font-mono font-black text-emerald-300">
+                        تم توريد {Number((shiftSettlement.last_settled_cash || 0) + (shiftSettlement.last_settled_card || 0)).toFixed(2)} ر.س
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              )}
 
               {/* Commission Earnings for Driver */}
               {Number(currentDriver?.commission_per_order) > 0 && (
@@ -1073,28 +1558,56 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     </span>
                   </div>
                   <div className="text-lg font-black text-emerald-400 font-mono">
-                    {((shiftSettlement?.delivered_orders_count || 0) * (currentDriver.commission_per_order || 0)).toFixed(2)} ريال
+                    {((driverOrders.completedToday.length || shiftSettlement?.delivered_orders_count || 0) * (currentDriver.commission_per_order || 0)).toFixed(2)} ريال
                   </div>
                 </div>
               )}
 
-              {/* Settle Shift Button */}
-              <button
-                onClick={() => {
-                  if (!store?.id || !currentDriver) return;
-                  const confirm = window.confirm('هل تريد تأكيد تسليم العهدة النقدية لكاشير الفرع وإغلاق الوردية الحالية؟');
-                  if (confirm) {
-                    DriverService.settleDriverShift(store.id, currentDriver.id);
+              {/* Handover Request Action */}
+              {unsettledSummary.settlementRequested ? (
+                <div className="p-4 rounded-2xl bg-amber-500/15 border-2 border-amber-500/50 text-center space-y-2 animate-pulse">
+                  <div className="text-xs font-black text-amber-300 flex items-center justify-center gap-1.5">
+                    <span>⏳ بانتظار عدّ المبلغ وتوقيع الاستلام من شاشة الكاشير...</span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    وصل إشعار تسليم العهدة لشاشة الكاشير الآن. بمجرد استلام الكاشير للمبلغ والضغط على زر <strong className="text-white">"توقيع الاستلام"</strong> ستتصفر عهدتك تلقائياً إلى 0.00 ريال.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!store?.id || !currentDriver) return;
+                      DriverService.requestDriverSettlement(store.id, currentDriver.id);
+                      setSettlementTick((v) => v + 1);
+                      playBeepSound('notification');
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/30 text-[10px] font-bold transition"
+                  >
+                    🔔 إعادة إرسال تنبيه للكاشير
+                  </button>
+                </div>
+              ) : unsettledSummary.unsettledCash > 0 || unsettledSummary.unsettledCard > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!store?.id || !currentDriver) return;
+                    DriverService.requestDriverSettlement(store.id, currentDriver.id);
+                    setSettlementTick((v) => v + 1);
                     playBeepSound('success');
-                    alert('تم تسجيل تسليم العهدة النقدية بنجاح للكاشير! شكراً لجهودك.');
-                    reloadOrders();
-                  }
-                }}
-                className="w-full py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-bold text-xs transition border border-slate-700 flex items-center justify-center gap-2"
-              >
-                <ShieldCheck className="w-4 h-4 text-amber-400" />
-                <span>تسليم العهدة النقدية لكاشير الفرع وتصفية الوردية</span>
-              </button>
+                    reloadOrders(true);
+                  }}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs sm:text-sm transition shadow-xl flex items-center justify-center gap-2"
+                >
+                  <ShieldCheck className="w-4 h-4 text-slate-950" />
+                  <span>
+                    ✋ إرسال طلب تسليم العهدة للكاشير ({(unsettledSummary.unsettledCash + unsettledSummary.unsettledCard).toFixed(2)} ر.س)
+                  </span>
+                </button>
+              ) : (
+                <div className="w-full py-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-400 font-bold text-xs flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>عهدتك الحالية مصفرة (0.00 ريال) — لا توجد مبالغ معلقة للتوريد</span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1226,6 +1739,50 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
                     <span>تأكيد الإعفاء وإشعار الكاشير 🚨</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📸 نافذة معاينة صورة موقع العميل بكامل الشاشة للكابتن */}
+      {previewLocationPhoto && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setPreviewLocationPhoto(null)}
+        >
+          <div
+            className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3 shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Camera className="w-4 h-4 text-amber-400" />
+                <span className="font-bold text-white text-xs">صورة واجهة المبنى / الباب 📸</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewLocationPhoto(null)}
+                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 flex items-center justify-center max-h-[70vh]">
+              <img
+                src={previewLocationPhoto}
+                alt="واجهة المبنى"
+                className="w-full h-auto max-h-[70vh] object-contain"
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>تأكد من مطابقة الواجهة عند الوصول لموقع العميل</span>
+              <button
+                type="button"
+                onClick={() => setPreviewLocationPhoto(null)}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black transition"
+              >
+                إغلاق
               </button>
             </div>
           </div>

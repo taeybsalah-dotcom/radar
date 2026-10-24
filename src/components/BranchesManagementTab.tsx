@@ -32,6 +32,8 @@ import {
 } from 'lucide-react';
 import { TablesManagementView } from './merchant/TablesManagementView';
 import { DriversManagementView } from './merchant/DriversManagementView';
+import { SubTabsHubGrid } from './merchant/SubTabsHubGrid';
+import { SubSectionFocusedHeader } from './merchant/SubSectionFocusedHeader';
 
 interface BranchesManagementTabProps {
   store: Store;
@@ -44,7 +46,7 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
   staffList,
   onStaffUpdated,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'branches' | 'tables' | 'drivers'>('branches');
+  const [activeSubTab, setActiveSubTab] = useState<'hub' | 'branches' | 'tables' | 'drivers'>('hub');
   const [branches, setBranches] = useState<StoreBranch[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -476,63 +478,126 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
         </div>
       )}
 
-      {/* 🧭 Subtabs: Branches vs Tables */}
-      <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-2xl border border-slate-800 w-fit shadow-lg">
-        <button
-          type="button"
-          onClick={() => setActiveSubTab('branches')}
-          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 ${
-            activeSubTab === 'branches'
-              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
-          }`}
-        >
-          <Building2 className="w-4 h-4" />
-          <span>الفروع ومواعيد العمل ({branches.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSubTab('tables')}
-          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 ${
-            activeSubTab === 'tables'
-              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
-          }`}
-        >
-          <Utensils className="w-4 h-4" />
-          <span>إدارة الصالة والطاولات 🍽️</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSubTab('drivers')}
-          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black transition flex items-center gap-2 ${
-            activeSubTab === 'drivers'
-              ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-              : 'text-slate-400 hover:text-white hover:bg-slate-900/60'
-          }`}
-        >
-          <span className="text-sm">🛵</span>
-          <span>كباتن وأسطول التوصيل</span>
-        </button>
-      </div>
-
-      {activeSubTab === 'tables' ? (
-        <TablesManagementView store={store} branches={branches} />
-      ) : activeSubTab === 'drivers' ? (
-        <DriversManagementView store={store} branches={branches} />
+      {activeSubTab === 'hub' ? (
+        /* 🔲 Executive Subtabs Grid Navigation */
+        <SubTabsHubGrid<'branches' | 'tables' | 'drivers'>
+          activeTab={'branches'}
+          onSelectTab={(tab) => {
+            setActiveSubTab(tab);
+            window.scrollTo({ top: 150, behavior: 'smooth' });
+          }}
+          columns="3"
+          tabs={[
+            {
+              id: 'branches',
+              label: 'الفروع ومواعيد العمل',
+              description: 'إدارة شبكة الفروع، ساعات وأيام العمل الأسبوعية، والموقع الجغرافي ونطاقات التوصيل',
+              icon: Building2,
+              badge: `${branches.length} فروع`,
+              glowColor: 'bg-cyan-500/20',
+              iconBg: 'bg-cyan-500/15',
+              iconBorder: 'border-cyan-500/30',
+              iconColor: 'text-cyan-400',
+              statHighlight: `${branches.length} فرع مسجل بالمتجر`,
+            },
+            {
+              id: 'tables',
+              label: 'إدارة الصالة وطاولات الطعام',
+              description: 'توزيع طاولات المطعم/المقهى، ملصقات QR الذكية للطلب والدفع، وحالة الإشغال الفورية',
+              icon: Utensils,
+              badge: 'ملصقات QR 🍽️',
+              glowColor: 'bg-amber-500/20',
+              iconBg: 'bg-amber-500/15',
+              iconBorder: 'border-amber-500/30',
+              iconColor: 'text-amber-400',
+              statHighlight: 'طاولات الصالة وQR',
+            },
+            {
+              id: 'drivers',
+              label: 'كباتن وأسطول التوصيل',
+              description: 'إدارة السائقين، تعيين طلبات التوصيل، تتبع حالة الطلب، وبوابة الكابتن المستقلة',
+              icon: Bike,
+              badge: 'أسطول نشط 🛵',
+              glowColor: 'bg-emerald-500/20',
+              iconBg: 'bg-emerald-500/15',
+              iconBorder: 'border-emerald-500/30',
+              iconColor: 'text-emerald-400',
+              statHighlight: 'إدارة الكباتن وبوابة السائق',
+            },
+          ]}
+        />
       ) : (
+        /* ⬅️ Focused Header when a sub-section is open */
         <>
-          {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-            <div className="flex items-center space-x-3 rtl:space-x-reverse">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
-            <Building2 className="w-6 h-6" />
-          </div>
-          <div>
-            <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
-              <span>إدارة الفروع وأوقات العمل</span>
+          <SubSectionFocusedHeader
+            title={
+              activeSubTab === 'branches'
+                ? 'الفروع ومواعيد العمل الأسبوعية'
+                : activeSubTab === 'tables'
+                ? 'إدارة الصالة وطاولات الطعام وملصقات QR'
+                : 'كباتن وأسطول التوصيل'
+            }
+            badge={
+              activeSubTab === 'branches'
+                ? `${branches.length} فرع`
+                : activeSubTab === 'tables'
+                ? 'الصالة وQR'
+                : 'أسطول التوصيل'
+            }
+            icon={
+              activeSubTab === 'branches'
+                ? Building2
+                : activeSubTab === 'tables'
+                ? Utensils
+                : Bike
+            }
+            iconBg={
+              activeSubTab === 'branches'
+                ? 'bg-cyan-500/15'
+                : activeSubTab === 'tables'
+                ? 'bg-amber-500/15'
+                : 'bg-emerald-500/15'
+            }
+            iconBorder={
+              activeSubTab === 'branches'
+                ? 'border-cyan-500/30'
+                : activeSubTab === 'tables'
+                ? 'border-amber-500/30'
+                : 'border-emerald-500/30'
+            }
+            iconColor={
+              activeSubTab === 'branches'
+                ? 'text-cyan-400'
+                : activeSubTab === 'tables'
+                ? 'text-amber-400'
+                : 'text-emerald-400'
+            }
+            backLabel="العودة لأقسام الفروع والصالة"
+            onBack={() => setActiveSubTab('hub')}
+            activeId={activeSubTab}
+            onSelectQuickJump={(id) => setActiveSubTab(id as any)}
+            quickJumpOptions={[
+              { id: 'branches', label: 'الفروع ومواعيد العمل' },
+              { id: 'tables', label: 'إدارة الصالة والطاولات' },
+              { id: 'drivers', label: 'كباتن وأسطول التوصيل' },
+            ]}
+          />
+
+          {activeSubTab === 'tables' ? (
+            <TablesManagementView store={store} branches={branches} />
+          ) : activeSubTab === 'drivers' ? (
+            <DriversManagementView store={store} branches={branches} />
+          ) : (
+            <>
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
+                <div className="flex items-center space-x-3 rtl:space-x-reverse">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+                <Building2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-white flex items-center space-x-2 rtl:space-x-reverse">
+                  <span>إدارة الفروع وأوقات العمل</span>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-bold font-mono">
                 {branches.length} فروع
               </span>
@@ -831,7 +896,9 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
           })}
         </div>
       )}
-      </>
+            </>
+          )}
+        </>
       )}
 
       {/* ======================================================== */}

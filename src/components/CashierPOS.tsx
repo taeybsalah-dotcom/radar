@@ -64,6 +64,7 @@ import {
   MapPin,
 } from 'lucide-react';
 import { DriverService } from '../lib/driverService';
+import { InventoryService } from '../lib/inventoryService';
 
 interface CashierPOSProps {
   store: Store;
@@ -77,111 +78,31 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   });
 
   useEffect(() => {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.body.style.backgroundColor = '#080B11';
     if (store) {
       saveActiveStoreBranding(store);
     }
   }, [store]);
 
-  // Memoized brand styling derived from store colors
+  // 🛡️ Radar Pro Operational Theme Lock:
+  // Cashier POS is strictly isolated from merchant White-Label colors & themes to guarantee 100% high-contrast legibility.
   const brandColors = useMemo(() => {
-    const rawPrimary = store?.primary_color || '#0F172A';
-    const rawSecondary = store?.secondary_color || '#535EB2';
-
-    const safePrimary = /^#[0-9A-Fa-f]{6}$/.test(rawPrimary) ? rawPrimary : '#0F172A';
-    const safeSecondary = /^#[0-9A-Fa-f]{6}$/.test(rawSecondary) ? rawSecondary : '#535EB2';
-
-    const hexToRgb = (hex: string) => {
-      const clean = hex.replace('#', '');
-      return {
-        r: parseInt(clean.substring(0, 2), 16) || 0,
-        g: parseInt(clean.substring(2, 4), 16) || 0,
-        b: parseInt(clean.substring(4, 6), 16) || 0,
-      };
-    };
-
-    const rgbToHsl = (r: number, g: number, b: number) => {
-      r /= 255; g /= 255; b /= 255;
-      const max = Math.max(r, g, b), min = Math.min(r, g, b);
-      let h = 0, s = 0;
-      const l = (max + min) / 2;
-      if (max !== min) {
-        const d = max - min;
-        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        switch (max) {
-          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-          case g: h = (b - r) / d + 2; break;
-          case b: h = (r - g) / d + 4; break;
-        }
-        h /= 6;
-      }
-      return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
-    };
-
-    const hslToRgb = (h: number, s: number, l: number) => {
-      h /= 360; s /= 100; l /= 100;
-      let r, g, b;
-      if (s === 0) {
-        r = g = b = l;
-      } else {
-        const hue2rgb = (p: number, q: number, t: number) => {
-          if (t < 0) t += 1;
-          if (t > 1) t -= 1;
-          if (t < 1/6) return p + (q - p) * 6 * t;
-          if (t < 1/2) return q;
-          if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-          return p;
-        };
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        r = hue2rgb(p, q, h + 1/3);
-        g = hue2rgb(p, q, h);
-        b = hue2rgb(p, q, h - 1/3);
-      }
-      return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
-    };
-
-    const rgbToHex = (r: number, g: number, b: number) =>
-      `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
-
-    const shiftLightness = (hsl: { h: number; s: number; l: number }, deltaPercent: number) => {
-      const newL = Math.max(0, Math.min(100, hsl.l + deltaPercent));
-      const rgb = hslToRgb(hsl.h, hsl.s, newL);
-      return rgbToHex(rgb.r, rgb.g, rgb.b);
-    };
-
-    const secRgb = hexToRgb(safeSecondary);
-    const secHsl = rgbToHsl(secRgb.r, secRgb.g, secRgb.b);
-    const secContrast = (0.299 * secRgb.r + 0.587 * secRgb.g + 0.114 * secRgb.b) / 255;
-    const contrastOnSecondary = secContrast > 0.55 ? '#000000' : '#FFFFFF';
-
-    const priRgb = hexToRgb(safePrimary);
-    const priHsl = rgbToHsl(priRgb.r, priRgb.g, priRgb.b);
-    const priContrast = (0.299 * priRgb.r + 0.587 * priRgb.g + 0.114 * priRgb.b) / 255;
-    const isPrimaryLight = priContrast > 0.60;
-    const contrastOnPrimary = isPrimaryLight ? '#0F172A' : '#FFFFFF';
-
-    let textLightL = secHsl.l;
-    if (textLightL > 42) textLightL = 36;
-    const textOnLightRgb = hslToRgb(secHsl.h, Math.max(secHsl.s, 65), textLightL);
-    const textOnLightHex = rgbToHex(textOnLightRgb.r, textOnLightRgb.g, textOnLightRgb.b);
-
-    const buttonGradient = `linear-gradient(135deg, ${shiftLightness(secHsl, 10)} 0%, ${safeSecondary} 55%, ${shiftLightness(secHsl, -10)} 100%)`;
-
     return {
-      primary: safePrimary,
-      secondary: safeSecondary,
-      isPrimaryLight,
-      contrastOnPrimary,
-      contrastOnSecondary,
-      textOnLightHex,
-      buttonGradient,
-      glow: `${safeSecondary}40`,
+      primary: '#0F172A',
+      secondary: '#F59E0B',
+      isPrimaryLight: false,
+      contrastOnPrimary: '#FFFFFF',
+      contrastOnSecondary: '#000000',
+      textOnLightHex: '#FBBF24',
+      buttonGradient: 'linear-gradient(135deg, #FBBF24 0%, #F59E0B 55%, #D97706 100%)',
+      glow: '#F59E0B40',
     };
-  }, [store?.primary_color, store?.secondary_color]);
+  }, []);
 
-  const isDarkTheme = store?.theme_mode === 'dark';
-  const isWarmTheme = store?.theme_mode === 'warm_cream';
-  const isLightOrWarm = !isDarkTheme;
+  const isDarkTheme = true;
+  const isWarmTheme = false;
+  const isLightOrWarm = false;
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
@@ -550,11 +471,23 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     customerPhone?: string;
   } | null>(null);
 
+  // 💵 نافذة استلام وتصفير عهدة الكابتن بتوقيع الكاشير
+  const [driverSettlementModal, setDriverSettlementModal] = useState<StoreDriver | null>(null);
+
+  // 💰 نافذة تحصيل مبلغ طلبات التطبيق (الدفع بالفرع: كاش / شبكة) عند التسليم
+  const [collectingAppOrderModal, setCollectingAppOrderModal] = useState<{
+    order: any;
+    completeUponCollection: boolean;
+  } | null>(null);
+  const [isCollectingOrderSubmitting, setIsCollectingOrderSubmitting] = useState(false);
+
   useEffect(() => {
     if (store?.id) {
       DriverService.syncWithSupabase(store.id).then(() => {
         setDriversRefreshTrigger((v) => v + 1);
       });
+      DriverService.syncOrdersWithSupabase(store.id).catch(() => {});
+      InventoryService.syncWithSupabase(store.id).catch(() => {});
     }
 
     const unsub = LoyaltyEvents.listen((event: any) => {
@@ -572,6 +505,14 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
           });
           playBeepSound('pos_order_alert');
         }
+
+        // Catch driver custody handover request event
+        if (
+          event.orderData?.fulfillment_details?.driver_settlement_requested &&
+          !event.orderData?.fulfillment_details?.driver_cash_settled
+        ) {
+          playBeepSound('pos_order_alert');
+        }
       }
     });
     return () => unsub();
@@ -585,7 +526,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   const handleAssignDriver = (order: any, driverId: string) => {
     if (!store?.id) return;
     const orderId = order.id || order.order_id || order.order_number;
-    const updated = DriverService.assignOrderToDriver(store.id, orderId, driverId);
+    const updated = DriverService.assignOrderToDriver(store.id, orderId, driverId, order);
     if (updated) {
       setLiveOrders((prev) =>
         prev.map((o) =>
@@ -596,6 +537,19 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       );
       setDriversRefreshTrigger((v) => v + 1);
       playBeepSound('success');
+    }
+  };
+
+  // ⚡ خطوة واحدة للكاشير: قبول طلب التوصيل + إرساله للمطبخ + إسناده للكابتن المتاح فوراً
+  const handleAcceptAndDispatchDeliveryOrder = async (order: any) => {
+    if (!store?.id) return;
+    const targetDriverId =
+      order.driver_id ||
+      DriverService.getSuggestedBranchDriver(store.id, activeBranchId)?.id ||
+      '';
+    await updateOrderStatus(order.id, 'accepted');
+    if (targetDriverId) {
+      handleAssignDriver({ ...order, status: 'accepted' }, targetDriverId);
     }
   };
 
@@ -625,6 +579,133 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     DriverService.setDriverStatus(store.id, driverId, status);
     setDriversRefreshTrigger((v) => v + 1);
     playBeepSound('notification');
+  };
+
+  // ✍️ توقيع الكاشير باستلام العهدة النقدية من الكابتن وتصفير عهدته وإدخال الفواتير بالصندوق
+  const handleConfirmDriverSettlementByCashier = (driver: StoreDriver) => {
+    if (!store?.id) return;
+    const staffName = activeStaff?.name || authenticatedCashier?.name || 'كاشير الفرع';
+    const nowIso = new Date().toISOString();
+
+    DriverService.settleDriverShift(store.id, driver.id, staffName, liveOrders);
+
+    setLiveOrders((prev) =>
+      prev.map((o) => {
+        const isDriver = o.driver_id === driver.id || o.fulfillment_details?.driver_id === driver.id;
+        const isDelivered = o.delivery_status === 'delivered' || o.fulfillment_details?.delivery_status === 'delivered';
+        if (isDriver && isDelivered && o.fulfillment_details?.driver_cash_settled !== true) {
+          return {
+            ...o,
+            cashier_name: staffName,
+            fulfillment_details: {
+              ...(o.fulfillment_details || {}),
+              driver_cash_settled: true,
+              driver_cash_settled_at: nowIso,
+              driver_cash_settled_by: staffName,
+              driver_settlement_requested: false,
+            },
+          };
+        }
+        return o;
+      })
+    );
+
+    setDriverSettlementModal(null);
+    setDriversRefreshTrigger((v) => v + 1);
+    playBeepSound('success');
+  };
+
+  // 💰 تحصيل قيمة طلب التطبيق (الدفع بالفرع: كاش أو شبكة) وإدخاله في صندوق الوردية ومنح نقاط الولاء
+  const handleCollectAndCompleteAppOrder = async (
+    order: any,
+    method: 'cash' | 'mada',
+    completeUponCollection = true
+  ) => {
+    if (!store?.id || !order || isCollectingOrderSubmitting) return;
+    setIsCollectingOrderSubmitting(true);
+    try {
+      stopAlertRinger();
+      const staffName = activeStaff?.name || authenticatedCashier?.name || 'كاشير الفرع';
+      const staffId = activeStaff?.id || authenticatedCashier?.id || null;
+      const effectiveBranchId = activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || order.branch_id || null;
+      const effectiveBranchName = activeBranchObj?.name || order.branch_name || null;
+      const nowIso = new Date().toISOString();
+      const nextStatus = completeUponCollection ? 'completed' : order.status;
+
+      const wasPointsAwarded = Boolean(order.points_awarded || order.fulfillment_details?.points_awarded);
+      const wasInventoryDeducted = Boolean(order.inventory_deducted || order.fulfillment_details?.inventory_deducted);
+
+      if (!wasInventoryDeducted && Array.isArray(order.items) && order.items.length > 0) {
+        try {
+          InventoryService.deductInventoryForOrder(store.id, order.items);
+        } catch (invErr) {
+          console.warn('Inventory deduction on app order collection warning:', invErr);
+        }
+      }
+
+      const updatedFulfillmentDetails = {
+        ...(order.fulfillment_details || {}),
+        collected_by_cashier: staffName,
+        collected_at: nowIso,
+        points_awarded: true,
+        inventory_deducted: true,
+      };
+
+      await LoyaltyService.updateStoreOrder(order.id, {
+        status: nextStatus,
+        payment_status: 'paid',
+        payment_method: method,
+        cashier_id: staffId,
+        cashier_name: staffName,
+        fulfillment_details: updatedFulfillmentDetails,
+      });
+
+      if (!wasPointsAwarded && order.customer_phone) {
+        const orderTotal = Number(order.total_price || order.total_amount || 0);
+        const pointsToAward =
+          Number(order.loyalty_points_earned) > 0
+            ? Number(order.loyalty_points_earned)
+            : Math.max(1, Math.floor(orderTotal * (store.points_per_riyal || 1)));
+
+        LoyaltyService.rewardPointsForCompletedTransaction(
+          order.store_id || store.id,
+          order.customer_phone,
+          pointsToAward,
+          `تحصيل واستلام الطلب #${order.order_number || order.id} (${method === 'cash' ? 'كاش' : 'شبكة'})`,
+          order.customer_name,
+          staffName,
+          effectiveBranchId,
+          effectiveBranchName,
+          orderTotal,
+          'PURCHASE'
+        ).catch((err) => console.warn('Failed to reward loyalty points upon cashier collection:', err));
+      }
+
+      setLiveOrders((prev) =>
+        prev.map((o) =>
+          o.id === order.id
+            ? {
+                ...o,
+                status: nextStatus,
+                payment_status: 'paid',
+                payment_method: method,
+                cashier_id: staffId,
+                cashier_name: staffName,
+                points_awarded: true,
+                inventory_deducted: true,
+                fulfillment_details: updatedFulfillmentDetails,
+              }
+            : o
+        )
+      );
+
+      setCollectingAppOrderModal(null);
+      playBeepSound('success');
+    } catch (err: any) {
+      setOrderActionError(err?.message || 'تعذر تسجيل تحصيل الطلب.');
+    } finally {
+      setIsCollectingOrderSubmitting(false);
+    }
   };
 
   const handleNotifyDriverWhatsApp = (order: any) => {
@@ -1015,8 +1096,30 @@ ${portalUrl}`;
       const staffName = activeStaff?.name || authenticatedCashier?.name || 'الكاشير';
       const effectiveBranchId = activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null;
       const effectiveBranchName = activeBranchObj?.name || null;
+
+      // Deduct raw materials from cloud inventory when an online order is accepted or completed
+      const targetOrder = liveOrders.find(o => o.id === orderId || o.order_id === orderId || o.order_number === orderId);
+      if (
+        targetOrder &&
+        (status === 'accepted' || status === 'completed') &&
+        !targetOrder.inventory_deducted &&
+        !targetOrder.fulfillment_details?.inventory_deducted &&
+        Array.isArray(targetOrder.items) &&
+        targetOrder.items.length > 0
+      ) {
+        try {
+          InventoryService.deductInventoryForOrder(store.id, targetOrder.items);
+          targetOrder.inventory_deducted = true;
+        } catch (invErr) {
+          console.warn('Online order inventory deduction warning:', invErr);
+        }
+      }
+
       await LoyaltyService.updateOrderStatus(orderId, status, staffName, effectiveBranchId, effectiveBranchName);
-      setLiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+      setLiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, status, inventory_deducted: targetOrder?.inventory_deducted || o.inventory_deducted } : o));
+      if (targetOrder) {
+        DriverService.upsertOrderInCache({ ...targetOrder, status });
+      }
     } catch (e: any) {
       setOrderActionError(e.message || 'حدث خطأ أثناء تحديث الحالة.');
       console.error(e);
@@ -2626,6 +2729,45 @@ ${portalUrl}`;
                 </div>
               </div>
 
+              {/* 🔔 تنبيه فوري للكاشير عند طلب كابتن تسليم وتصفير العهدة بالفرع */}
+              {branchDrivers.map((drv) => {
+                const summary = DriverService.getDriverUnsettledSummary(store.id, drv.id, liveOrders);
+                if (!summary.settlementRequested) return null;
+                return (
+                  <div
+                    key={`settle_req_${drv.id}`}
+                    className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/15 to-slate-900 border-2 border-amber-500/70 flex flex-wrap items-center justify-between gap-3 shadow-xl animate-pulse"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black text-lg shrink-0 shadow">
+                        💵
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs sm:text-sm font-black text-white flex items-center gap-2 flex-wrap">
+                          <span>🔔 الكابتن ({drv.name}) بالفرع يطلب تسليم وتصفير العهدة</span>
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black font-mono">
+                            {(summary.unsettledCash + summary.unsettledCard).toFixed(2)} ر.س ({summary.unsettledOrders.length} فواتير)
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-amber-200/90 mt-0.5">
+                          استلم المبلغ النقدي وإيصالات الشبكة من الكابتن ثم اضغط توقيع الاستلام لإدخال الفواتير بالصندوق وتصفير عهدته.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDriverSettlementModal(drv);
+                        playBeepSound('notification');
+                      }}
+                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-lg transition shrink-0 flex items-center gap-1.5"
+                    >
+                      <span>✍️ مراجعة الفواتير وتوقيع الاستلام</span>
+                    </button>
+                  </div>
+                );
+              })}
+
               {/* Drivers Grid */}
               {branchDrivers.length === 0 ? (
                 <div className="text-center py-4 text-xs text-slate-500">
@@ -2644,12 +2786,16 @@ ${portalUrl}`;
                     }[driver.status || 'available'];
 
                     const cleanPhone = driver.phone ? driver.phone.replace(/^0/, '966').replace(/\D/g, '') : '';
+                    const driverCustody = DriverService.getDriverUnsettledSummary(store.id, driver.id, liveOrders);
+                    const hasUnsettledCustody = driverCustody.unsettledCash > 0 || driverCustody.unsettledCard > 0;
 
                     return (
                       <div
                         key={driver.id}
                         className={`p-3 rounded-2xl border transition relative space-y-2.5 ${
-                          driver.status === 'loading'
+                          driverCustody.settlementRequested
+                            ? 'bg-amber-950/30 border-2 border-amber-500 shadow-lg'
+                            : driver.status === 'loading'
                             ? 'bg-amber-950/20 border-amber-500/50 shadow-md'
                             : driver.status === 'available'
                             ? 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
@@ -2677,6 +2823,36 @@ ${portalUrl}`;
                             <span>{statusConfig.label}</span>
                           </span>
                         </div>
+
+                        {/* 💵 شريط عهدة الكابتن الحالية + زر التصفية السريع للكاشير */}
+                        {hasUnsettledCustody ? (
+                          <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="text-[10px] text-amber-300 font-bold block">
+                                💵 عهدة بذمة الكابتن ({driverCustody.unsettledOrders.length} طلبات):
+                              </span>
+                              <span className="text-xs font-black font-mono text-white">
+                                {driverCustody.unsettledCash.toFixed(2)} كاش
+                                {driverCustody.unsettledCard > 0 ? ` + ${driverCustody.unsettledCard.toFixed(2)} شبكة` : ''}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDriverSettlementModal(driver);
+                                playBeepSound('notification');
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] shadow transition shrink-0"
+                            >
+                              ✍️ استلام العهدة
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="px-2.5 py-1 rounded-xl bg-slate-900/80 border border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
+                            <span>العهدة النقدية الحالية:</span>
+                            <span className="font-mono font-bold text-emerald-400">0.00 ر.س (مصفرة ✅)</span>
+                          </div>
+                        )}
 
                         {/* Driver Quick Actions */}
                         <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-800/60">
@@ -2878,7 +3054,9 @@ ${portalUrl}`;
                                     </span>
                                   ) : (
                                     <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-amber-50 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30">
-                                      الدفع بالفرع ⏳
+                                      {order.order_type === 'delivery' || order.fulfillment_type === 'delivery'
+                                        ? '💵 دفع عند الاستلام (مع الكابتن)'
+                                        : 'الدفع بالفرع ⏳'}
                                     </span>
                                   )}
                                 </div>
@@ -2958,20 +3136,20 @@ ${portalUrl}`;
                             </div>
                           </div>
 
-                          {/* 🛵 Delivery Driver Dispatch Section (Only for Accepted/Preparing/Ready delivery orders) */}
-                          {(order.order_type === 'delivery' || order.fulfillment_type === 'delivery') && !isPending && (
-                            <div className="mb-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-950 border border-amber-500/30 space-y-2">
+                          {/* 🛵 Delivery Driver Dispatch Section (Visible immediately from Pending through Delivery) */}
+                          {(order.order_type === 'delivery' || order.fulfillment_type === 'delivery') && (
+                            <div className="mb-3 p-3 rounded-2xl bg-slate-950 border border-amber-500/30 space-y-2">
                               <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                                <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
                                   <span>🛵</span>
                                   <span>كابتن التوصيل:</span>
                                 </span>
                                 {order.driver_name ? (
-                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40">
-                                    {order.delivery_status === 'picked_up' ? 'في الطريق 🛵' : order.delivery_status === 'delivered' ? 'تم التسليم ✅' : 'تم الإسناد ⏳'}
+                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                    {order.delivery_status === 'picked_up' ? `في الطريق مع ${order.driver_name} 🛵` : order.delivery_status === 'delivered' ? 'تم التسليم ✅' : `مسند لـ ${order.driver_name} ⏳`}
                                   </span>
                                 ) : (
-                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-500/20 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-500/40 animate-pulse">
+                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
                                     بانتظار إسناد سائق ⏳
                                   </span>
                                 )}
@@ -2979,7 +3157,7 @@ ${portalUrl}`;
 
                               {/* Customer Address & GPS & Distance */}
                               {(order.delivery_address || order.fulfillment_details?.delivery_address) && (
-                                <div className="space-y-1 text-[11px] text-slate-700 dark:text-slate-300">
+                                <div className="space-y-1 text-[11px] text-slate-300">
                                   <div className="flex items-start gap-1">
                                     <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
                                     <span className="truncate">{order.delivery_address || order.fulfillment_details?.delivery_address}</span>
@@ -2988,7 +3166,7 @@ ${portalUrl}`;
                                   {/* Distance, Tier, & Map Link */}
                                   <div className="flex items-center gap-2 flex-wrap text-[10px]">
                                     {order.delivery_distance_km !== undefined && (
-                                      <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-bold border border-blue-500/20">
+                                      <span className="px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 font-bold border border-blue-500/20">
                                         📏 {Number(order.delivery_distance_km).toFixed(1)} كم {order.delivery_tier_label ? `• ${order.delivery_tier_label}` : ''}
                                       </span>
                                     )}
@@ -2997,7 +3175,7 @@ ${portalUrl}`;
                                         href={order.delivery_gps_link || order.fulfillment_details?.delivery_gps_link}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-0.5 font-bold"
+                                        className="text-amber-400 hover:underline flex items-center gap-0.5 font-bold"
                                       >
                                         <Navigation className="w-3 h-3" />
                                         <span>فتح الخريطة 🗺️</span>
@@ -3024,24 +3202,26 @@ ${portalUrl}`;
                                     </div>
                                   )}
 
-                                  {/* Smart Suggested Driver One-Click Button */}
+                                  {/* Smart Suggested Driver One-Click Hint */}
                                   {!order.driver_id && (() => {
                                     const suggested = DriverService.getSuggestedBranchDriver(store.id, activeBranchId);
                                     if (suggested) {
                                       return (
                                         <div className="flex items-center justify-between text-[11px] bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1.5 rounded-xl">
                                           <span className="text-emerald-400 font-bold flex items-center gap-1">
-                                            <span>💡 مقترح:</span>
+                                            <span>💡 الكابتن الجاهز:</span>
                                             <span className="text-white">{suggested.name}</span>
                                             <span className="text-slate-400 font-normal">({suggested.status === 'available' ? 'متفرغ بالفرع' : 'يجهز بالفرع'})</span>
                                           </span>
-                                          <button
-                                            type="button"
-                                            onClick={() => handleAssignDriver(order, suggested.id)}
-                                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] shadow transition flex items-center gap-1"
-                                          >
-                                            <span>إسناد سريع ⚡</span>
-                                          </button>
+                                          {!isPending && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleAssignDriver(order, suggested.id)}
+                                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] shadow transition flex items-center gap-1"
+                                            >
+                                              <span>إسناد سريع ⚡</span>
+                                            </button>
+                                          )}
                                         </div>
                                       );
                                     }
@@ -3052,16 +3232,15 @@ ${portalUrl}`;
                                     <select
                                       value={order.driver_id || ''}
                                       onChange={(e) => handleAssignDriver(order, e.target.value)}
-                                      className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-amber-500"
+                                      className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
                                     >
-                                      <option value="">-- اختر سائق من الفرع --</option>
+                                      <option value="">-- اختر أو غيّر كابتن التوصيل --</option>
                                       {branchDrivers.map((d) => {
                                         const isFull = d.status === 'loading' && (d.current_trip_orders_count || 0) >= 3;
                                         const isUnavailable = !d.is_active || d.status === 'delivering' || d.status === 'break' || d.status === 'off_duty' || isFull;
                                         let label = `${d.name} (${DriverService.getVehicleLabel(d.vehicle_type)})`;
-                                        if (d.status === 'available') label += ' - 🟢 متفرغ بالفرع';
+                                        if (d.status === 'available' || d.status === 'returning') label += ' - 🟢 متاح بالفرع';
                                         else if (d.status === 'loading') label += ` - 🟡 بالفرع (معه ${d.current_trip_orders_count || 1}/3 - ضم للرحلة)`;
-                                        else if (d.status === 'returning') label += ` - 🛵 راجع للفرع (~${d.estimated_return_minutes || 10} د)`;
                                         else if (d.status === 'delivering') label += ' - 🚗 بالطريق (مشغول)';
                                         else if (d.status === 'break') label += ' - ☕ استراحة';
                                         else if (d.status === 'off_duty') label += ' - ⚪ غير متاح';
@@ -3083,11 +3262,11 @@ ${portalUrl}`;
                                           title="إشعار السائق بتفاصيل الطلب عبر واتساب"
                                         >
                                           <MessageSquare className="w-3.5 h-3.5" />
-                                          <span className="hidden sm:inline">إشعار واتساب</span>
+                                          <span className="hidden sm:inline">واتساب</span>
                                         </button>
                                         <a
                                           href={`tel:${order.driver_phone}`}
-                                          className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 transition"
+                                          className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
                                           title="اتصال بالسائق"
                                         >
                                           <Phone className="w-3.5 h-3.5" />
@@ -3095,46 +3274,17 @@ ${portalUrl}`;
                                       </>
                                     )}
                                   </div>
-
-                                  {/* If assigned and driver is loading in store: Show Depart button directly */}
-                                  {order.driver_id && (() => {
-                                    const drv = branchDrivers.find((d) => d.id === order.driver_id);
-                                    if (drv && drv.status === 'loading') {
-                                      return (
-                                        <div className="flex items-center justify-between p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px]">
-                                          <span className="text-amber-400 font-bold flex items-center gap-1">
-                                            <span>🟡 مجهز مع {drv.name}</span>
-                                            {order.fulfillment_details?.trip_stop_index && (
-                                              <span className="text-slate-400">(محطة #{order.fulfillment_details.trip_stop_index})</span>
-                                            )}
-                                          </span>
-                                          <button
-                                            type="button"
-                                            onClick={() => handleDepartTrip(drv.id)}
-                                            className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] shadow transition"
-                                          >
-                                            🚀 انطلاق الرحلة الآن
-                                          </button>
-                                        </div>
-                                      );
-                                    }
-                                    return null;
-                                  })()}
                                 </div>
                               )}
                             </div>
                           )}
 
-                          {/* Transfer to POS Cart & Invoice */}
-                          {!isDone && !isCancelled && (
+                          {/* Transfer to POS Cart & Invoice (ONLY for Dine-in / Takeaway orders, NOT Delivery) */}
+                          {!isDone && !isCancelled && order.order_type !== 'delivery' && order.fulfillment_type !== 'delivery' && (
                             <button
                               type="button"
                               onClick={() => handleTransferOrderToPOS(order)}
-                              className={`w-full mb-2 py-2 px-3 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 border ${
-                                isDarkTheme
-                                  ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/35'
-                                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
-                              }`}
+                              className="w-full mb-2 py-2 px-3 rounded-xl font-bold text-xs transition flex items-center justify-center gap-1.5 border bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/35"
                             >
                               <Receipt className="w-3.5 h-3.5 text-amber-500" />
                               <span>🧾 تحويل للسلة والمحاسبة (POS)</span>
@@ -3142,75 +3292,201 @@ ${portalUrl}`;
                           )}
 
                           {/* Action Buttons */}
-                          <div className="flex gap-2 pt-1 border-t border-slate-200 dark:border-slate-800/80 mt-auto">
-                            {isPending && (
+                          <div className="flex gap-2 pt-1 border-t border-slate-800/80 mt-auto">
+                            {(order.order_type === 'delivery' || order.fulfillment_type === 'delivery') ? (
                               <>
-                                <button
-                                  type="button"
-                                  onClick={() => updateOrderStatus(order.id, 'accepted')}
-                                  className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition shadow-md shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95"
-                                >
-                                  <ChefHat className="w-3.5 h-3.5" />
-                                  <span>قبول وإرسال للمطبخ 👨‍🍳</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => updateOrderStatus(order.id, 'cancelled')}
-                                  className="px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/15 dark:hover:bg-rose-500/30 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30 font-bold text-xs transition"
-                                  title="إلغاء الطلب"
-                                >
-                                  إلغاء ❌
-                                </button>
-                              </>
-                            )}
+                                {/* 🛵 مسار التوصيل المختصر الواضح (4 محطات) */}
+                                {isPending && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAcceptAndDispatchDeliveryOrder(order)}
+                                      className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition shadow-md shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95"
+                                    >
+                                      <ChefHat className="w-3.5 h-3.5" />
+                                      <span>قبول وإرسال للمطبخ والكابتن 👨‍🍳🛵</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateOrderStatus(order.id, 'cancelled')}
+                                      className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition"
+                                      title="إلغاء الطلب"
+                                    >
+                                      إلغاء ❌
+                                    </button>
+                                  </>
+                                )}
 
-                            {isAccepted && (
+                                {(isAccepted || isPrep) && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateOrderStatus(order.id, 'ready')}
+                                      className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition shadow-md shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95"
+                                    >
+                                      <CheckCircle2 className="w-4 h-4" />
+                                      <span>جاهز على الكاونتر (إشعار الكابتن بالاستلام) 📦</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateOrderStatus(order.id, 'cancelled')}
+                                      className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition"
+                                      title="إلغاء الطلب"
+                                    >
+                                      إلغاء ❌
+                                    </button>
+                                  </>
+                                )}
+
+                                {isReady && (
+                                  order.delivery_status === 'picked_up' ? (
+                                    <div className="w-full py-2 px-3 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[11px] font-bold flex items-center justify-center gap-1.5 text-center">
+                                      <span>🛵 مع الكابتن ({order.driver_name || 'المندوب'}) في الطريق للعميل... يُغلق تلقائياً عند التسليم</span>
+                                    </div>
+                                  ) : (
+                                    <div className="w-full flex items-center justify-between gap-2 p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px]">
+                                      <span className="text-emerald-300 font-bold">
+                                        🟢 جاهز بانتظار استلام الكابتن ({order.driver_name || 'اختر كابتن'})
+                                      </span>
+                                      {order.driver_id && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDepartTrip(order.driver_id)}
+                                          className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] shadow transition shrink-0"
+                                        >
+                                          🚀 استلم وانطلق
+                                        </button>
+                                      )}
+                                    </div>
+                                  )
+                                )}
+
+                                {(isDone || isCancelled) && (
+                                  <div className="w-full text-center py-1.5 text-[11px] font-bold text-slate-500">
+                                    {isDone ? 'تم تسليم الطلب للعميل وتحصيل المبلغ ✅' : 'تم إلغاء هذا الطلب ❌'}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
                               <>
-                                <button
-                                  type="button"
-                                  onClick={() => updateOrderStatus(order.id, 'preparing')}
-                                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white keep-white font-black text-xs transition shadow-md shadow-blue-900/20 flex items-center justify-center gap-1.5 active:scale-95"
-                                >
-                                  <ChefHat className="w-3.5 h-3.5" />
-                                  <span>بدء التحضير 🍳</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => updateOrderStatus(order.id, 'cancelled')}
-                                  className="px-3 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/15 dark:hover:bg-rose-500/30 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30 font-bold text-xs transition"
-                                  title="إلغاء الطلب"
-                                >
-                                  إلغاء ❌
-                                </button>
+                                {/* 🍽️🥡 مسار الطلبات المحلية والسفري */}
+                                {isPending && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateOrderStatus(order.id, 'accepted')}
+                                      className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition shadow-md shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95"
+                                    >
+                                      <ChefHat className="w-3.5 h-3.5" />
+                                      <span>قبول وإرسال للمطبخ 👨‍🍳</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateOrderStatus(order.id, 'cancelled')}
+                                      className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition"
+                                      title="إلغاء الطلب"
+                                    >
+                                      إلغاء ❌
+                                    </button>
+                                  </>
+                                )}
+
+                                {isAccepted && (
+                                  <div className="w-full space-y-1.5">
+                                    <div className="flex items-center gap-1.5 w-full">
+                                      <button
+                                        type="button"
+                                        onClick={() => updateOrderStatus(order.id, 'preparing')}
+                                        className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white keep-white font-black text-xs transition shadow-md shadow-blue-900/20 flex items-center justify-center gap-1.5 active:scale-95"
+                                      >
+                                        <ChefHat className="w-3.5 h-3.5" />
+                                        <span>بدء التحضير 🍳</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => updateOrderStatus(order.id, 'cancelled')}
+                                        className="px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-bold text-xs transition"
+                                        title="إلغاء الطلب"
+                                      >
+                                        إلغاء ❌
+                                      </button>
+                                    </div>
+                                    {order.payment_status !== 'paid' && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCollectingAppOrderModal({
+                                            order,
+                                            completeUponCollection: false,
+                                          })
+                                        }
+                                        className="w-full py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40 font-black text-[11px] transition flex items-center justify-center gap-1.5"
+                                      >
+                                        <span>💰 تحصيل مبلغ الفاتورة الآن ({Number(order.total_price || order.total_amount || 0).toFixed(2)} ر.س)</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+
+                                {isPrep && (
+                                  <div className="w-full space-y-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => updateOrderStatus(order.id, 'ready')}
+                                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition shadow-md shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95"
+                                    >
+                                      <CheckCircle2 className="w-4 h-4" />
+                                      <span>الطلب جاهز للاستلام 📦</span>
+                                    </button>
+                                    {order.payment_status !== 'paid' && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCollectingAppOrderModal({
+                                            order,
+                                            completeUponCollection: false,
+                                          })
+                                        }
+                                        className="w-full py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40 font-black text-[11px] transition flex items-center justify-center gap-1.5"
+                                      >
+                                        <span>💰 تحصيل مبلغ الفاتورة الآن ({Number(order.total_price || order.total_amount || 0).toFixed(2)} ر.س)</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+
+                                {isReady && (
+                                  order.payment_status === 'paid' ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => updateOrderStatus(order.id, 'completed')}
+                                      className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/20 active:scale-95"
+                                    >
+                                      <Check className="w-4 h-4 text-white" />
+                                      <span>تسليم الطلب للعميل (مدفوع ✅)</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setCollectingAppOrderModal({
+                                          order,
+                                          completeUponCollection: true,
+                                        })
+                                      }
+                                      className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg active:scale-95"
+                                    >
+                                      <span>💰 تحصيل ({Number(order.total_price || order.total_amount || 0).toFixed(2)} ر.س) وتسليم الطلب</span>
+                                    </button>
+                                  )
+                                )}
+
+                                {(isDone || isCancelled) && (
+                                  <div className="w-full text-center py-1.5 text-[11px] font-bold text-slate-500">
+                                    {isDone ? 'تم إنهاء وتسليم الطلب ✅' : 'تم إلغاء هذا الطلب ❌'}
+                                  </div>
+                                )}
                               </>
-                            )}
-
-                            {isPrep && (
-                              <button
-                                type="button"
-                                onClick={() => updateOrderStatus(order.id, 'ready')}
-                                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition shadow-md shadow-emerald-900/20 flex items-center justify-center gap-1.5 active:scale-95"
-                              >
-                                <CheckCircle2 className="w-4 h-4" />
-                                <span>الطلب جاهز للاستلام 📦</span>
-                              </button>
-                            )}
-
-                            {isReady && (
-                              <button
-                                type="button"
-                                onClick={() => updateOrderStatus(order.id, 'completed')}
-                                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white keep-white font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/20 active:scale-95"
-                              >
-                                <Check className="w-4 h-4 text-white" />
-                                <span>تسليم وإنهاء الطلب ✅</span>
-                              </button>
-                            )}
-
-                            {(isDone || isCancelled) && (
-                              <div className="w-full text-center py-1.5 text-[11px] font-bold text-slate-500">
-                                {isDone ? 'تم إنهاء وتسليم الطلب ✅' : 'تم إلغاء هذا الطلب ❌'}
-                              </div>
                             )}
                           </div>
                         </div>
@@ -3939,8 +4215,8 @@ ${portalUrl}`;
                     onChange={(e) => setInvoiceAmount(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="0.00"
                     style={{
-                      borderColor: `${store.secondary_color || '#F59E0B'}60`,
-                      color: store.secondary_color || '#F59E0B',
+                      borderColor: `${brandColors.secondary}60`,
+                      color: brandColors.textOnLightHex,
                     }}
                     className="w-full bg-slate-950 border-2 rounded-2xl px-5 py-4 text-3xl font-black placeholder-slate-700 outline-none transition shadow-inner font-mono text-center sm:text-right"
                   />
@@ -3979,7 +4255,7 @@ ${portalUrl}`;
                 type="submit"
                 disabled={loading || !invoiceAmount || Number(invoiceAmount) <= 0}
                 style={{
-                  backgroundColor: store.secondary_color || '#F59E0B',
+                  backgroundColor: brandColors.secondary,
                   color: '#000000',
                 }}
                 className="w-full py-4 rounded-2xl font-black text-base flex items-center justify-center space-x-2 rtl:space-x-reverse transition shadow-xl hover:brightness-110 disabled:opacity-50"
@@ -4495,6 +4771,239 @@ ${portalUrl}`;
           </div>
         </div>
       )}
+
+      {/* 💵 MODAL: DRIVER CUSTODY HANDOVER & CASHIER SIGN-OFF (استلام وتصفير عهدة الكابتن) */}
+      {driverSettlementModal && (() => {
+        const summary = DriverService.getDriverUnsettledSummary(store.id, driverSettlementModal.id, liveOrders);
+        const staffName = activeStaff?.name || authenticatedCashier?.name || 'كاشير الفرع';
+        return (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
+            <div className="w-full max-w-lg rounded-3xl bg-slate-900 border-2 border-amber-500/60 shadow-2xl overflow-hidden text-right" dir="rtl">
+              <div className="p-5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center text-xl font-black">
+                    💵
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black text-white">
+                      محضر استلام وتصفير عهدة الكابتن ({driverSettlementModal.name})
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      مراجعة الفواتير المسلمة وتوقيع استلام المبلغ لإدخاله في صندوق الوردية
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDriverSettlementModal(null)}
+                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 space-y-1">
+                    <span className="text-[11px] text-amber-300 font-bold block">الكاش النقدي المطلوب استلامه:</span>
+                    <div className="text-2xl font-black font-mono text-amber-400">
+                      {summary.unsettledCash.toFixed(2)} <span className="text-xs font-normal">ر.س</span>
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-blue-500/15 border border-blue-500/40 space-y-1">
+                    <span className="text-[11px] text-blue-300 font-bold block">إيصالات الشبكة (مدى):</span>
+                    <div className="text-2xl font-black font-mono text-blue-300">
+                      {summary.unsettledCard.toFixed(2)} <span className="text-xs font-normal">ر.س</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Invoices List */}
+                <div className="rounded-2xl bg-slate-950 border border-slate-800 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between text-xs border-b border-slate-800 pb-2">
+                    <span className="font-black text-slate-200">
+                      📋 الفواتير المشمولة في هذه التسوية ({summary.unsettledOrders.length}):
+                    </span>
+                    <span className="text-[10px] text-emerald-400 font-bold">ستدخل صندوق الوردية فور التوقيع</span>
+                  </div>
+                  {summary.unsettledOrders.length === 0 ? (
+                    <div className="py-4 text-center text-xs text-slate-400">
+                      جميع فواتير هذا الكابتن مصفرة ومستلمة مسبقاً.
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                      {summary.unsettledOrders.map((ord) => {
+                        const method =
+                          (ord.fulfillment_details as any)?.driver_payment_method ||
+                          ord.driver_payment_method ||
+                          ord.payment_method;
+                        return (
+                          <div
+                            key={`cashier_settle_${ord.order_id}`}
+                            className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="font-mono font-black text-amber-400">
+                                #{String((ord as any).order_number || ord.order_id).slice(-6)}
+                              </span>
+                              <span className="text-slate-200 font-bold truncate">{ord.customer_name}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                                  method === 'cash'
+                                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                    : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                                }`}
+                              >
+                                {method === 'cash' ? '💵 كاش' : '💳 شبكة'}
+                              </span>
+                              <span className="font-mono font-black text-white">
+                                {Number(ord.total_amount || (ord as any).total_price || 0).toFixed(2)} ر.س
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 text-[11px] text-emerald-200 flex items-center justify-between">
+                  <span>المستلم والموقع على العهدة:</span>
+                  <strong className="text-white font-black">{staffName}</strong>
+                </div>
+
+                <div className="flex items-center gap-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setDriverSettlementModal(null)}
+                    className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmDriverSettlementByCashier(driverSettlementModal)}
+                    className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-slate-950" />
+                    <span>
+                      ✍️ توقيع استلام ({(summary.unsettledCash + summary.unsettledCard).toFixed(2)} ر.س) وتصفير عهدة الكابتن
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 💰 MODAL: COLLECT & COMPLETE CUSTOMER APP ORDER (تحصيل وتسليم طلبات التطبيق بالفرع) */}
+      {collectingAppOrderModal && collectingAppOrderModal.order && (() => {
+        const ord = collectingAppOrderModal.order;
+        const orderTotal = Number(ord.total_price || ord.total_amount || 0);
+        const pointsToEarn =
+          Number(ord.loyalty_points_earned) > 0
+            ? Number(ord.loyalty_points_earned)
+            : Math.max(1, Math.floor(orderTotal * (store.points_per_riyal || 1)));
+
+        return (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
+            <div className="w-full max-w-md rounded-3xl bg-slate-900 border-2 border-amber-500/60 shadow-2xl overflow-hidden text-right" dir="rtl">
+              <div className="p-5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center text-xl font-black">
+                    💰
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black text-white">
+                      تحصيل قيمة الطلب #{ord.order_number || String(ord.id).slice(0, 6)}
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      اختر طريقة الدفع المستلمة من العميل لإدخال الفاتورة بصندوق الوردية
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCollectingAppOrderModal(null)}
+                  className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4">
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs text-slate-400 block">العميل:</span>
+                    <span className="text-sm font-black text-white">{ord.customer_name || 'عميل التطبيق'}</span>
+                    <span className="text-[11px] font-mono text-slate-400 block">{ord.customer_phone}</span>
+                  </div>
+                  <div className="text-left">
+                    <span className="text-[11px] text-amber-300 font-bold block">المبلغ المطلوب تحصيله:</span>
+                    <div className="text-2xl font-black font-mono text-amber-400">
+                      {orderTotal.toFixed(2)} <span className="text-xs font-normal">ر.س</span>
+                    </div>
+                  </div>
+                </div>
+
+                {ord.customer_phone && (
+                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-xs">
+                    <span className="text-emerald-300 font-bold">🎁 نقاط الولاء التي ستُمنح للعميل تلقائياً:</span>
+                    <span className="font-mono font-black text-emerald-400">+{pointsToEarn} نقطة</span>
+                  </div>
+                )}
+
+                <div className="space-y-2.5 pt-1">
+                  <button
+                    type="button"
+                    disabled={isCollectingOrderSubmitting}
+                    onClick={() =>
+                      handleCollectAndCompleteAppOrder(
+                        ord,
+                        'cash',
+                        collectingAppOrderModal.completeUponCollection
+                      )
+                    }
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <span>
+                      💵 تم الاستلام كاش (نقدي) {collectingAppOrderModal.completeUponCollection ? 'وتسليم الطلب ✅' : 'وتأكيد الدفع'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isCollectingOrderSubmitting}
+                    onClick={() =>
+                      handleCollectAndCompleteAppOrder(
+                        ord,
+                        'mada',
+                        collectingAppOrderModal.completeUponCollection
+                      )
+                    }
+                    className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <span>
+                      💳 تم الاستلام شبكة (مدى / بطاقة) {collectingAppOrderModal.completeUponCollection ? 'وتسليم الطلب ✅' : 'وتأكيد الدفع'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCollectingAppOrderModal(null)}
+                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+                  >
+                    تراجع
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

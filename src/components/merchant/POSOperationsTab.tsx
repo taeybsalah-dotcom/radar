@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Store, StoreBranch, StoreStaff, POSShift, POSCashMovement, StoreSpecialist, getStoreActiveModules } from '../../types';
 import { LoyaltyService } from '../../lib/supabase';
 import { QRCodeSVG } from 'qrcode.react';
+import { SubTabsHubGrid } from './SubTabsHubGrid';
+import { SubSectionFocusedHeader } from './SubSectionFocusedHeader';
 import {
   Receipt,
   TrendingDown,
@@ -48,7 +50,7 @@ export const POSOperationsTab: React.FC<POSOperationsTabProps> = ({
   branches = [],
   staffList = [],
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'shifts' | 'expenses' | 'discounts' | 'specialists' | 'kds'>('shifts');
+  const [activeSubTab, setActiveSubTab] = useState<'hub' | 'shifts' | 'expenses' | 'discounts' | 'specialists' | 'kds'>('hub');
   const [loading, setLoading] = useState(true);
 
   // KDS Link Generator States
@@ -519,129 +521,227 @@ export const POSOperationsTab: React.FC<POSOperationsTabProps> = ({
 
       </div>
 
-      {/* 🧭 Subtabs Switcher & Filters Row */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 p-2 rounded-2xl shadow-md">
-        
-        {/* Subtabs Buttons */}
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('shifts')}
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 shrink-0 ${
+      {activeSubTab === 'hub' ? (
+        /* 🔲 Executive Subtabs Grid Navigation */
+        <SubTabsHubGrid<'shifts' | 'expenses' | 'discounts' | 'specialists' | 'kds'>
+          activeTab={'shifts'}
+          onSelectTab={(tab) => {
+            setActiveSubTab(tab);
+            window.scrollTo({ top: 150, behavior: 'smooth' });
+          }}
+          columns="3"
+          tabs={[
+            {
+              id: 'shifts',
+              label: 'سجل الورديات وجرد الصناديق',
+              description: 'مطابقة العهد النقدية، إغلاق الورديات، الفائض والعجز المالي لكل كاشير',
+              icon: History,
+              badge: `${filteredShifts.length}`,
+              glowColor: 'bg-teal-500/20',
+              iconBg: 'bg-teal-500/15',
+              iconBorder: 'border-teal-500/30',
+              iconColor: 'text-teal-400',
+              statHighlight: `${filteredShifts.length} وردية مسجلة`,
+            },
+            {
+              id: 'expenses',
+              label: 'المصروفات النثرية والدرج',
+              description: 'حركة النقدية اليومية، سحب المصروفات، إيداعات الدرج، والمشتريات السريعة',
+              icon: TrendingDown,
+              badge: `${filteredMovements.length}`,
+              glowColor: 'bg-rose-500/20',
+              iconBg: 'bg-rose-500/15',
+              iconBorder: 'border-rose-500/30',
+              iconColor: 'text-rose-400',
+              statHighlight: `${filteredMovements.length} حركة نقدية`,
+            },
+            {
+              id: 'discounts',
+              label: 'رقابة وتدقيق الخصومات',
+              description: 'رصد كافة الخصومات اليدوية ونسب الخصم الممنوحة من الكاشير على الفواتير',
+              icon: Receipt,
+              badge: `${discountedOrders.length}`,
+              glowColor: 'bg-blue-500/20',
+              iconBg: 'bg-blue-500/15',
+              iconBorder: 'border-blue-500/30',
+              iconColor: 'text-blue-400',
+              statHighlight: `${discountedOrders.length} فاتورة مخفضة`,
+            },
+            {
+              id: 'specialists',
+              label: 'مبيعات المختصين والخدمات',
+              description: 'أداء طاقم العمل والمختصين، حجم المبيعات لكل ممارس، ومواعيد الحجوزات',
+              icon: Scissors,
+              badge: `${specialistsMetrics.length}`,
+              glowColor: 'bg-purple-500/20',
+              iconBg: 'bg-purple-500/15',
+              iconBorder: 'border-purple-500/30',
+              iconColor: 'text-purple-400',
+              statHighlight: `${specialistsMetrics.length} مختص معتمد`,
+            },
+            {
+              id: 'kds',
+              label: 'شاشات المطبخ والعرض (KDS)',
+              description: 'إدارة خطوط الإنتاج والتحضير المباشرة في المطبخ وأجهزة شاشات العرض',
+              icon: ChefHat,
+              badge: 'شاشة حية 📺',
+              glowColor: 'bg-amber-500/20',
+              iconBg: 'bg-amber-500/15',
+              iconBorder: 'border-amber-500/30',
+              iconColor: 'text-amber-400',
+              statHighlight: 'شاشات العرض المباشرة',
+            },
+          ]}
+        />
+      ) : (
+        /* ⬅️ Focused Header when a sub-section is open */
+        <>
+          <SubSectionFocusedHeader
+            title={
               activeSubTab === 'shifts'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-            }`}
-          >
-            <History className="w-4 h-4" />
-            <span>سجل الورديات وجرد الصناديق ({filteredShifts.length})</span>
-          </button>
+                ? 'سجل الورديات ومطابقة الصناديق'
+                : activeSubTab === 'expenses'
+                ? 'المصروفات النثرية وحركة الدرج'
+                : activeSubTab === 'discounts'
+                ? 'رقابة وتدقيق الخصومات الممنوحة'
+                : activeSubTab === 'specialists'
+                ? 'مبيعات المختصين وأداء الخدمات'
+                : 'شاشات المطبخ وأجهزة العرض (KDS)'
+            }
+            badge={
+              activeSubTab === 'shifts'
+                ? `${filteredShifts.length} وردية`
+                : activeSubTab === 'expenses'
+                ? `${filteredMovements.length} حركة`
+                : activeSubTab === 'discounts'
+                ? `${discountedOrders.length} فاتورة`
+                : activeSubTab === 'specialists'
+                ? `${specialistsMetrics.length} مختص`
+                : 'شاشة نشطة'
+            }
+            icon={
+              activeSubTab === 'shifts'
+                ? History
+                : activeSubTab === 'expenses'
+                ? TrendingDown
+                : activeSubTab === 'discounts'
+                ? Receipt
+                : activeSubTab === 'specialists'
+                ? Scissors
+                : ChefHat
+            }
+            iconBg={
+              activeSubTab === 'shifts'
+                ? 'bg-teal-500/15'
+                : activeSubTab === 'expenses'
+                ? 'bg-rose-500/15'
+                : activeSubTab === 'discounts'
+                ? 'bg-blue-500/15'
+                : activeSubTab === 'specialists'
+                ? 'bg-purple-500/15'
+                : 'bg-amber-500/15'
+            }
+            iconBorder={
+              activeSubTab === 'shifts'
+                ? 'border-teal-500/30'
+                : activeSubTab === 'expenses'
+                ? 'border-rose-500/30'
+                : activeSubTab === 'discounts'
+                ? 'border-blue-500/30'
+                : activeSubTab === 'specialists'
+                ? 'border-purple-500/30'
+                : 'border-amber-500/30'
+            }
+            iconColor={
+              activeSubTab === 'shifts'
+                ? 'text-teal-400'
+                : activeSubTab === 'expenses'
+                ? 'text-rose-400'
+                : activeSubTab === 'discounts'
+                ? 'text-blue-400'
+                : activeSubTab === 'specialists'
+                ? 'text-purple-400'
+                : 'text-amber-400'
+            }
+            backLabel="العودة لأقسام الورديات والمصروفات"
+            onBack={() => setActiveSubTab('hub')}
+            activeId={activeSubTab}
+            onSelectQuickJump={(id) => setActiveSubTab(id as any)}
+            quickJumpOptions={[
+              { id: 'shifts', label: 'سجل الورديات وجرد الصناديق' },
+              { id: 'expenses', label: 'المصروفات النثرية والدرج' },
+              { id: 'discounts', label: 'رقابة الخصومات' },
+              { id: 'specialists', label: 'مبيعات المختصين' },
+              { id: 'kds', label: 'شاشات المطبخ (KDS)' },
+            ]}
+          />
 
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('expenses')}
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 shrink-0 ${
-              activeSubTab === 'expenses'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-            }`}
-          >
-            <TrendingDown className="w-4 h-4 text-rose-400" />
-            <span>المصروفات النثرية والدرج ({filteredMovements.length})</span>
-          </button>
+          {/* 🔍 Filters Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 p-3 rounded-2xl shadow-md">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-300">
+                تصفية وبحث في {
+                  activeSubTab === 'shifts' ? 'الورديات' :
+                  activeSubTab === 'expenses' ? 'المصروفات' :
+                  activeSubTab === 'discounts' ? 'الخصومات' :
+                  activeSubTab === 'specialists' ? 'المختصين' : 'شاشات المطبخ'
+                }:
+              </span>
+            </div>
 
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('discounts')}
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 shrink-0 ${
-              activeSubTab === 'discounts'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-            }`}
-          >
-            <Receipt className="w-4 h-4 text-blue-400" />
-            <span>رقابة الخصومات ({discountedOrders.length})</span>
-          </button>
+            {/* Filter Dropdowns & Search */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Branch Filter */}
+              {branches.length > 0 && (
+                <select
+                  value={selectedBranchId}
+                  onChange={(e) => setSelectedBranchId(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
+                >
+                  <option value="ALL">كافة الفروع 🏢</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              )}
 
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('specialists')}
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 shrink-0 ${
-              activeSubTab === 'specialists'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-            }`}
-          >
-            <Scissors className="w-4 h-4 text-purple-400" />
-            <span>مبيعات المختصين والخدمات ({specialistsMetrics.length})</span>
-          </button>
+              {/* Search Input */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="بحث بالاسم أو البيان... 🔍"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none w-44"
+                />
+              </div>
 
-          <button
-            type="button"
-            onClick={() => setActiveSubTab('kds')}
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 shrink-0 ${
-              activeSubTab === 'kds'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-            }`}
-          >
-            <ChefHat className="w-4 h-4 text-amber-400" />
-            <span>شاشات المطبخ وأجهزة العرض (KDS) 📺</span>
-          </button>
-        </div>
-
-        {/* Filter Dropdowns & Search */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Branch Filter */}
-          {branches.length > 0 && (
-            <select
-              value={selectedBranchId}
-              onChange={(e) => setSelectedBranchId(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
-            >
-              <option value="ALL">كافة الفروع 🏢</option>
-              {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {/* Search Input */}
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="بحث بالاسم أو البيان... 🔍"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none w-44"
-            />
+              {/* Export CSV Button */}
+              {activeSubTab === 'shifts' ? (
+                <button
+                  onClick={handleExportShiftsCSV}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition"
+                  title="تصدير سجل الورديات إكسل"
+                >
+                  <Download className="w-3.5 h-3.5 text-amber-400" />
+                  <span>تصدير CSV</span>
+                </button>
+              ) : activeSubTab === 'expenses' ? (
+                <button
+                  onClick={handleExportExpensesCSV}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition"
+                  title="تصدير كشف المصروفات النثرية"
+                >
+                  <Download className="w-3.5 h-3.5 text-rose-400" />
+                  <span>تصدير CSV</span>
+                </button>
+              ) : null}
+            </div>
           </div>
-
-          {/* Export CSV Button */}
-          {activeSubTab === 'shifts' ? (
-            <button
-              onClick={handleExportShiftsCSV}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition"
-              title="تصدير سجل الورديات إكسل"
-            >
-              <Download className="w-3.5 h-3.5 text-amber-400" />
-              <span>تصدير CSV</span>
-            </button>
-          ) : activeSubTab === 'expenses' ? (
-            <button
-              onClick={handleExportExpensesCSV}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition"
-              title="تصدير كشف المصروفات النثرية"
-            >
-              <Download className="w-3.5 h-3.5 text-rose-400" />
-              <span>تصدير CSV</span>
-            </button>
-          ) : null}
-        </div>
-
-      </div>
+        </>
+      )}
 
       {/* ============================================================== */}
       {/* 🔒 SUBTAB 1: SHIFTS & Z-REPORTS LEDGER                          */}

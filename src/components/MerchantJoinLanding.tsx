@@ -22,6 +22,7 @@ import {
   ChevronLeft,
 } from 'lucide-react';
 import { getSupabaseClient, LoyaltyService } from '../lib/supabase';
+import { getActiveTenantConfig } from '../config/tenant';
 import confetti from 'canvas-confetti';
 
 // ==============================================================================
@@ -50,9 +51,11 @@ export const MerchantJoinLanding: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const formRef = useRef<HTMLDivElement | null>(null);
 
+  const tenant = getActiveTenantConfig();
+
   // Capture referral code quietly in background without showing it
   useEffect(() => {
-    document.title = 'بوابة التسجيل | RADAR';
+    document.title = `بوابة التسجيل | ${tenant.brandName}`;
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const ref = urlParams.get('ref') || urlParams.get('r') || '';
@@ -158,19 +161,25 @@ export const MerchantJoinLanding: React.FC = () => {
       {/* Top Floating Navbar */}
       <header className="relative z-30 max-w-6xl mx-auto px-4 sm:px-6 pt-6 pb-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl p-0.5 bg-gradient-to-br from-cyan-400 via-emerald-400 to-amber-400 shadow-lg shadow-cyan-500/20">
-            <img
-              src="/radar-logo-dark.jpg"
-              alt="RADAR"
-              className="w-full h-full object-cover rounded-[14px]"
-            />
+          <div className="w-12 h-12 rounded-2xl p-0.5 bg-gradient-to-br from-cyan-400 via-emerald-400 to-amber-400 shadow-lg shadow-cyan-500/20 flex items-center justify-center font-black text-slate-950 text-xl overflow-hidden">
+            {tenant.logoUrl ? (
+              <img
+                src={tenant.logoUrl}
+                alt={tenant.brandName}
+                className="w-full h-full object-cover rounded-[14px]"
+              />
+            ) : (
+              <span className="w-full h-full bg-slate-950 text-white rounded-[14px] flex items-center justify-center font-black text-sm">
+                {tenant.brandName.slice(0, 2)}
+              </span>
+            )}
           </div>
           <div>
             <span className="text-lg font-black tracking-wider text-white flex items-center gap-1.5">
-              <span>RADAR</span>
+              <span>{tenant.brandName}</span>
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             </span>
-            <p className="text-[10px] text-cyan-300/80 font-medium">منظومة الولاء والتسويق الذكي</p>
+            <p className="text-[10px] text-cyan-300/80 font-medium">{tenant.tagline}</p>
           </div>
         </div>
 
@@ -188,7 +197,7 @@ export const MerchantJoinLanding: React.FC = () => {
         {/* Glowing Badge */}
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/80 border border-cyan-400/40 text-cyan-300 text-xs sm:text-sm font-bold shadow-xl backdrop-blur-xl animate-fade-in">
           <Sparkles className="w-4 h-4 text-cyan-400" />
-          <span>المنصة السعودية الذكية لمضاعفة عوائد المتاجر</span>
+          <span>المنصة الذكية لمضاعفة عوائد ومبيعات المتاجر</span>
         </div>
 
         {/* Main Hero Headline */}
@@ -201,7 +210,7 @@ export const MerchantJoinLanding: React.FC = () => {
 
         {/* Subtitle */}
         <p className="text-base sm:text-xl text-slate-300 max-w-2xl mx-auto leading-relaxed font-normal">
-          رادار يساعدك تعرف عملاءك، تكافئ الدائم منهم، وترجع اللي انقطع عنك — من نظام واحد يحمل اسم نشاطك.
+          {tenant.brandName} يساعدك تعرف عملاءك، تكافئ الدائم منهم، وترجع اللي انقطع عنك — من نظام واحد يحمل اسم نشاطك.
         </p>
 
         {/* CTA Buttons */}
@@ -355,19 +364,25 @@ export const MerchantJoinLanding: React.FC = () => {
         <div className="relative rounded-3xl p-6 sm:p-10 bg-gradient-to-b from-slate-900/95 to-slate-950 border-2 border-cyan-400/40 shadow-2xl backdrop-blur-2xl space-y-6">
           
           <div className="text-center space-y-2">
-            <div className="w-16 h-16 rounded-3xl p-1 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 mx-auto shadow-xl shadow-cyan-500/20">
-              <img
-                src="/radar-logo-dark.jpg"
-                alt="Radar Logo"
-                className="w-full h-full object-cover rounded-[20px]"
-              />
+            <div className="w-16 h-16 rounded-3xl p-1 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 mx-auto shadow-xl shadow-cyan-500/20 flex items-center justify-center overflow-hidden">
+              {tenant.logoUrl ? (
+                <img
+                  src={tenant.logoUrl}
+                  alt={tenant.brandName}
+                  className="w-full h-full object-cover rounded-[20px]"
+                />
+              ) : (
+                <span className="w-full h-full bg-slate-950 text-white rounded-[20px] flex items-center justify-center font-black text-xl">
+                  {tenant.brandName.slice(0, 2)}
+                </span>
+              )}
             </div>
             
             <h2 className="text-2xl sm:text-3xl font-black text-white pt-2">
-              خلنا نجهز لك رادار
+              خلنا نجهز لك {tenant.brandName}
             </h2>
             <p className="text-xs sm:text-sm text-slate-300">
-              سجّل بيانات نشاطك وسيقوم مستشار رادار بالتواصل معك لتجهيز بطاقتك وتفعيل نظامك فوراً.
+              سجّل بيانات نشاطك وسيقوم فريق {tenant.brandName} بالتواصل معك لتجهيز بطاقتك وتفعيل نظامك فوراً.
             </p>
           </div>
 
@@ -462,7 +477,7 @@ export const MerchantJoinLanding: React.FC = () => {
               </div>
               <h3 className="text-2xl font-black text-white">تم استلام طلبك بنجاح! 🎉</h3>
               <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                شكراً لانضمامك إلى منظومة رادار. سيتواصل معك مستشار رادار المختص لتجهيز هويتك وتفعيل لوحتك وكاشيرك فوراً.
+                شكراً لانضمامك إلى منظومة {tenant.brandName}. سيتواصل معك فريق {tenant.brandName} لتجهيز هويتك وتفعيل لوحتك وكاشيرك فوراً.
               </p>
             </div>
           )}
@@ -473,10 +488,9 @@ export const MerchantJoinLanding: React.FC = () => {
       {/* FOOTER */}
       <footer className="relative z-20 border-t border-slate-800/80 py-8 text-center text-xs text-slate-500 space-y-2">
         <div className="flex items-center justify-center gap-2">
-          <img src="/radar-logo-dark.jpg" alt="Radar" className="w-6 h-6 rounded-lg object-cover" />
-          <span className="font-bold text-slate-400">منظومة RADAR للولاء الذكي</span>
+          <span className="font-bold text-slate-400">{tenant.copyrightHolder}</span>
         </div>
-        <p>© 2026 جميع الحقوق محفوظة • اعرف عميلك . قرّبه . خله يرجع.</p>
+        <p>© 2026 جميع الحقوق محفوظة • {tenant.tagline}</p>
       </footer>
 
     </div>

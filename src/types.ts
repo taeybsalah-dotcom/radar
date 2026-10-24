@@ -330,6 +330,7 @@ export interface CustomerSavedAddress {
   map_url?: string; // رابط خرائط قوقل
   lat?: number;
   lng?: number;
+  photo_url?: string; // صورة واجهة المبنى أو الموقع (مضغوطة)
   is_default?: boolean;
   created_at?: string;
 }
@@ -543,6 +544,7 @@ export interface StoreFulfillmentSettings {
   delivery_fee: number; // رسوم التوصيل بالريال (0 = مجاني)
   allow_service_booking: boolean; // متاح حجز مواعيد خدمات وحضور
   booking_notice_minutes?: number; // وقت الإشعار المسبق للموعد (افتراضياً 30 دقيقة)
+  booking_confirmation_mode?: 'auto' | 'manual'; // نمط تأكيد المواعيد: auto فوري تلقائي، manual يدوي من الكاشير أو التلجرام
 
   // 💳 سياسات الدفع الإلكتروني في التطبيق (تحكم التاجر)
   online_payment_enabled?: boolean; // تفعيل الدفع الإلكتروني العام بالمتجر
@@ -588,6 +590,7 @@ export interface CatalogItemRecipe {
   total_cost: number; // إجمالي تكلفة المواد للطبق الواحد
   profit_margin?: number; // هامش الربح %
   food_cost_percentage?: number; // نسبة تكلفة الطعام من سعر البيع
+  notes?: string;
   updated_at?: string;
 }
 
@@ -610,6 +613,7 @@ export interface ScannedSupplierInvoice {
   total_amount?: number;
   items: ScannedSupplierInvoiceItem[];
   scanned_image_url?: string;
+  status?: string;
   created_at: string;
 }
 
@@ -637,8 +641,9 @@ export interface WhatsAppOrderPayload {
   delivery_fee: number;
   total_amount: number;
   loyalty_points_earned: number;
-  status?: 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled';
+  status?: 'pending' | 'accepted' | 'preparing' | 'ready' | 'completed' | 'cancelled';
   points_awarded?: boolean;
+  inventory_deducted?: boolean;
   payment_method?: 'pay_at_store' | 'online' | 'cash' | 'mada' | 'visa' | 'mastercard' | 'credit_card';
   payment_status?: 'pending' | 'paid' | 'failed' | 'refunded';
   payment_transaction_id?: string;
@@ -655,10 +660,21 @@ export interface WhatsAppOrderPayload {
     delivery_lng?: number;
     delivery_distance_km?: number;
     delivery_tier_label?: string;
+    delivery_address_label?: string;
+    delivery_location_photo?: string;
     trip_batch_id?: string;
     trip_stop_index?: number;
     specialist_name?: string;
     general_notes?: string;
+    driver_payment_method?: 'cash' | 'card' | 'online_link';
+    driver_collected_amount?: number;
+    driver_cash_settled?: boolean;
+    driver_cash_settled_at?: string;
+    driver_cash_settled_by?: string;
+    driver_settlement_requested?: boolean;
+    driver_settlement_requested_at?: string;
+    collected_by_cashier?: string;
+    collected_at?: string;
   };
   branch_id?: string;
   branch_name?: string;
@@ -1463,4 +1479,11 @@ export interface DriverShiftSettlement {
   total_delivery_fees: number;
   settled: boolean;
   settled_at?: string;
+  settled_by_cashier?: string;
+  settlement_requested?: boolean;
+  settlement_requested_at?: string;
+  last_settled_cash?: number;
+  last_settled_card?: number;
+  last_settled_orders_count?: number;
+  notes?: string;
 }

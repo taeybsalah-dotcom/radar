@@ -119,108 +119,26 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
   transferredOrder,
   onClearTransferredOrder,
 }) => {
-  // Memoized brand styling derived from store colors
+  // 🛡️ Radar Pro Operational Theme Lock:
+  // Cashier Register is strictly isolated from merchant White-Label colors & themes to guarantee 100% high-contrast legibility.
   const brandColors = useMemo(() => {
-    const rawPrimary = store?.primary_color || '#0F172A';
-    const rawSecondary = store?.secondary_color || '#535EB2';
-
-    const safePrimary = /^#[0-9A-Fa-f]{6}$/.test(rawPrimary) ? rawPrimary : '#0F172A';
-    const safeSecondary = /^#[0-9A-Fa-f]{6}$/.test(rawSecondary) ? rawSecondary : '#535EB2';
-
-    const hexToRgb = (hex: string) => {
-      const clean = hex.replace('#', '');
-      return {
-        r: parseInt(clean.substring(0, 2), 16) || 0,
-        g: parseInt(clean.substring(2, 4), 16) || 0,
-        b: parseInt(clean.substring(4, 6), 16) || 0,
-      };
-    };
-
-    const rgbToHsl = (r: number, g: number, b: number) => {
-      r /= 255; g /= 255; b /= 255;
-      const max = Math.max(r, g, b), min = Math.min(r, g, b);
-      let h = 0, s = 0;
-      const l = (max + min) / 2;
-      if (max !== min) {
-        const d = max - min;
-        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        switch (max) {
-          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-          case g: h = (b - r) / d + 2; break;
-          case b: h = (r - g) / d + 4; break;
-        }
-        h /= 6;
-      }
-      return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
-    };
-
-    const hslToRgb = (h: number, s: number, l: number) => {
-      h /= 360; s /= 100; l /= 100;
-      let r, g, b;
-      if (s === 0) {
-        r = g = b = l;
-      } else {
-        const hue2rgb = (p: number, q: number, t: number) => {
-          if (t < 0) t += 1;
-          if (t > 1) t -= 1;
-          if (t < 1/6) return p + (q - p) * 6 * t;
-          if (t < 1/2) return q;
-          if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-          return p;
-        };
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        r = hue2rgb(p, q, h + 1/3);
-        g = hue2rgb(p, q, h);
-        b = hue2rgb(p, q, h - 1/3);
-      }
-      return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
-    };
-
-    const rgbToHex = (r: number, g: number, b: number) =>
-      `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
-
-    const shiftLightness = (hsl: { h: number; s: number; l: number }, deltaPercent: number) => {
-      const newL = Math.max(0, Math.min(100, hsl.l + deltaPercent));
-      const rgb = hslToRgb(hsl.h, hsl.s, newL);
-      return rgbToHex(rgb.r, rgb.g, rgb.b);
-    };
-
-    const secRgb = hexToRgb(safeSecondary);
-    const secHsl = rgbToHsl(secRgb.r, secRgb.g, secRgb.b);
-    const secContrast = (0.299 * secRgb.r + 0.587 * secRgb.g + 0.114 * secRgb.b) / 255;
-    const contrastOnSecondary = secContrast > 0.55 ? '#000000' : '#FFFFFF';
-
-    const priRgb = hexToRgb(safePrimary);
-    const priHsl = rgbToHsl(priRgb.r, priRgb.g, priRgb.b);
-    const priContrast = (0.299 * priRgb.r + 0.587 * priRgb.g + 0.114 * priRgb.b) / 255;
-    const isPrimaryLight = priContrast > 0.60;
-    const contrastOnPrimary = isPrimaryLight ? '#0F172A' : '#FFFFFF';
-
-    let textLightL = secHsl.l;
-    if (textLightL > 42) textLightL = 36;
-    const textOnLightRgb = hslToRgb(secHsl.h, Math.max(secHsl.s, 65), textLightL);
-    const textOnLightHex = rgbToHex(textOnLightRgb.r, textOnLightRgb.g, textOnLightRgb.b);
-
-    const buttonGradient = `linear-gradient(135deg, ${shiftLightness(secHsl, 10)} 0%, ${safeSecondary} 55%, ${shiftLightness(secHsl, -10)} 100%)`;
-
     return {
-      primary: safePrimary,
-      secondary: safeSecondary,
-      isPrimaryLight,
-      contrastOnPrimary,
-      contrastOnSecondary,
-      textOnLightHex,
-      buttonGradient,
-      glow: `${safeSecondary}40`,
+      primary: '#0F172A',
+      secondary: '#F59E0B',
+      isPrimaryLight: false,
+      contrastOnPrimary: '#FFFFFF',
+      contrastOnSecondary: '#000000',
+      textOnLightHex: '#FBBF24',
+      buttonGradient: 'linear-gradient(135deg, #FBBF24 0%, #F59E0B 55%, #D97706 100%)',
+      glow: '#F59E0B40',
     };
-  }, [store?.primary_color, store?.secondary_color]);
+  }, []);
 
   const brandPrimary = brandColors.primary;
   const brandSecondary = brandColors.secondary;
-  const isDarkTheme = store?.theme_mode === 'dark';
-  const isWarmTheme = store?.theme_mode === 'warm_cream';
-  const isLightOrWarm = !isDarkTheme;
+  const isDarkTheme = true;
+  const isWarmTheme = false;
+  const isLightOrWarm = false;
 
   // Active store modules based on merchant activity & permissions
   const activeModules = useMemo(() => getStoreActiveModules(store), [store]);
@@ -272,6 +190,9 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
     appOrderNumber: string;
     isAppPrepaid: boolean;
     appPaymentMethod?: string;
+    fulfillmentDetails?: any;
+    deliveryAddress?: string;
+    deliveryGpsLink?: string;
   } | null>(null);
 
   // 💇‍♂️ Services & Specialists State
@@ -421,12 +342,19 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
       transferredOrder.payment_method === 'online' ||
       Boolean(transferredOrder.is_app_paid);
 
+    const origFd = (transferredOrder.fulfillment_details || {}) as any;
+    const deliveryAddr = transferredOrder.delivery_address || origFd.delivery_address || '';
+    const deliveryGps = transferredOrder.delivery_gps_link || origFd.delivery_gps_link || '';
+
     setTransferredMetadata({
       orderSource: isBooking ? 'customer_app_booking' : 'customer_app',
       originalOrderId: transferredOrder.id,
       appOrderNumber: String(transferredOrder.order_number || transferredOrder.id?.slice(0, 6) || ''),
       isAppPrepaid: isPaid,
       appPaymentMethod: transferredOrder.payment_method || (isPaid ? 'online' : 'pay_at_store'),
+      fulfillmentDetails: origFd,
+      deliveryAddress: deliveryAddr,
+      deliveryGpsLink: deliveryGps,
     });
 
     // 1. Link customer
@@ -927,7 +855,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         try {
           // 🛡️ Settle existing online menu order: Mark as paid + accepted (sent to kitchen for preparation)
           // ⚠️ Do NOT mark as 'completed'! It must go to the Kitchen KDS Column 1 for food preparation!
-          const updateFields = {
+          const updateFields: any = {
             status: 'accepted', // 👨‍🍳 معتمد من الكاشير - يرسل للمطبخ في بداية التحضير
             payment_status: 'paid', // 💰 مسدد
             payment_method: transferredMetadata?.isAppPrepaid ? 'online' : paymentMethod,
@@ -946,6 +874,14 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             branch_id: activeBranch?.id || null,
             branch_name: activeBranch?.name || null,
           };
+          if (transferredMetadata?.fulfillmentDetails || transferredMetadata?.deliveryAddress || transferredMetadata?.deliveryGpsLink) {
+            updateFields.delivery_address = transferredMetadata?.deliveryAddress || transferredMetadata?.fulfillmentDetails?.delivery_address || null;
+            updateFields.fulfillment_details = {
+              ...(transferredMetadata?.fulfillmentDetails || {}),
+              delivery_address: transferredMetadata?.deliveryAddress || transferredMetadata?.fulfillmentDetails?.delivery_address || '',
+              delivery_gps_link: transferredMetadata?.deliveryGpsLink || transferredMetadata?.fulfillmentDetails?.delivery_gps_link || '',
+            };
+          }
           savedOrder = await LoyaltyService.updateStoreOrder(transferredMetadata.originalOrderId, updateFields);
           if (!savedOrder) {
             savedOrder = {

@@ -149,11 +149,14 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                 onClick={() => setActivePlatform('apple')}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 ${
                   activePlatform === 'apple'
-                    ? 'bg-white text-black shadow-md'
+                    ? 'bg-slate-900 text-white keep-white shadow-md border border-slate-700'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <span> Apple Wallet</span>
+                <svg className="w-3.5 h-3.5 fill-current shrink-0" viewBox="0 0 384 512">
+                  <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+                </svg>
+                <span>محفظة آبل</span>
               </button>
 
               <button
@@ -161,21 +164,27 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                 onClick={() => setActivePlatform('google')}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 ${
                   activePlatform === 'google'
-                    ? 'bg-blue-600 text-white shadow-md'
+                    ? 'bg-blue-600 text-white keep-white shadow-md'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <span>G Google Wallet</span>
+                <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 48 48">
+                  <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z" />
+                  <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z" />
+                  <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z" />
+                  <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z" />
+                </svg>
+                <span>محفظة قوقل</span>
               </button>
             </div>
 
             {/* Live Distance Radar Pill */}
             {proximityInfo && (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
-                <MapPin className="w-3.5 h-3.5 text-emerald-400 animate-bounce" />
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 text-xs font-bold">
+                <MapPin className="w-3.5 h-3.5 text-emerald-500 animate-bounce" />
                 <span>
                   أقرب فرع ({proximityInfo.nearestBranchName}):{' '}
-                  <strong className="text-white font-mono">{proximityInfo.formattedDistance}</strong>
+                  <strong className="font-mono font-black">{proximityInfo.formattedDistance}</strong>
                 </span>
               </div>
             )}
@@ -184,9 +193,9 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
           {/* ======================================================== */}
           {/* 📱 3D REALISTIC DIGITAL PASS CARD (Apple / Google Style) */}
           {/* ======================================================== */}
-          <div className="relative perspective-1000 max-w-sm mx-auto">
+          <div className="relative perspective-1000 max-w-sm mx-auto keep-white">
             <div
-              className={`w-full rounded-3xl p-5 shadow-2xl border transition-all duration-500 relative overflow-hidden cursor-pointer select-none ${
+              className={`w-full rounded-3xl p-5 shadow-2xl border transition-all duration-500 relative overflow-hidden cursor-pointer select-none keep-white text-white vip-card-shine ${
                 isFlipped ? 'rotate-y-180' : ''
               }`}
               style={{
@@ -232,7 +241,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                     </div>
 
                     <div
-                      className="px-2.5 py-1 rounded-full text-[10px] font-black border uppercase tracking-wider flex items-center gap-1 shadow-sm"
+                      className="px-2.5 py-1 rounded-full text-[10px] font-black border flex items-center gap-1 shadow-sm"
                       style={{
                         backgroundColor: `${brandColor}25`,
                         color: brandColor,
@@ -240,7 +249,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                       }}
                     >
                       <Award className="w-3 h-3" />
-                      <span>{tier?.tier_name ? `VIP ${tier.tier_name}` : 'VIP GOLD'}</span>
+                      <span>{tier?.tier_name ? `عضوية ${tier.tier_name}` : 'عضوية VIP'}</span>
                     </div>
                   </div>
 
@@ -248,7 +257,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                   <div className="my-2 p-3.5 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md flex items-center justify-between">
                     <div>
                       <span className="text-[10px] text-white/70 block font-bold">رصيد النقاط الحالي</span>
-                      <div className="text-3xl font-black font-mono tracking-tight text-white flex items-baseline gap-1 mt-0.5">
+                      <div className="text-3xl font-black font-mono text-white flex items-baseline gap-1 mt-0.5">
                         <span style={{ color: brandColor }}>{customerPoints.toLocaleString()}</span>
                         <span className="text-xs font-bold text-white/80">نقطة</span>
                       </div>
@@ -265,7 +274,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                   {/* High Contrast Barcode / QR Section for Cashier */}
                   <div className="p-3 bg-white rounded-2xl flex flex-col items-center justify-center shadow-lg border-2 border-white/20">
                     <QRCodeSVG value={qrPayload} size={110} level="M" includeMargin={false} />
-                    <span className="text-[10px] font-mono font-black text-black tracking-widest mt-1">
+                    <span className="text-[10px] font-mono font-black text-slate-900 mt-1">
                       {customer?.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-GUEST'}
                     </span>
                   </div>
@@ -290,7 +299,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
 
                     <div className="space-y-2.5 mt-3 text-[11px] text-white/80">
                       <div>
-                        <strong className="text-white block font-bold">تنبيهات شاشة القفل (Geofencing):</strong>
+                        <strong className="text-white block font-bold">تنبيهات شاشة القفل الذكية:</strong>
                         <p className="text-[10px] text-white/70 leading-relaxed mt-0.5">
                           تظهر هذه البطاقة تلقائياً على شاشة القفل بمجرد اقترابك من أي فرع لكسب
                           واستبدال النقاط بدون فتح الهاتف.
@@ -338,25 +347,32 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
               <button
                 type="button"
                 onClick={handleDownloadPass}
-                className="w-full py-3.5 px-5 rounded-2xl bg-black hover:bg-neutral-900 text-white font-black text-sm flex items-center justify-center gap-2.5 shadow-xl border border-white/20 transition-all hover:scale-[1.02] active:scale-95"
+                className="w-full py-3.5 px-5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white keep-white font-black text-sm flex items-center justify-center gap-2.5 shadow-xl border border-slate-700 transition-all hover:scale-[1.02] active:scale-95"
               >
-                <span className="text-lg"></span>
-                <span>إضافة إلى Apple Wallet (آبل واليت)</span>
+                <svg className="w-4 h-4 fill-current shrink-0" viewBox="0 0 384 512">
+                  <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+                </svg>
+                <span>إضافة إلى محفظة آبل (Apple Wallet)</span>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={handleDownloadPass}
-                className="w-full py-3.5 px-5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm flex items-center justify-center gap-2.5 shadow-xl transition-all hover:scale-[1.02] active:scale-95"
+                className="w-full py-3.5 px-5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white keep-white font-black text-sm flex items-center justify-center gap-2.5 shadow-xl transition-all hover:scale-[1.02] active:scale-95"
               >
-                <span className="font-bold text-base">G</span>
-                <span>حفظ في Google Wallet (قوقل واليت)</span>
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 48 48">
+                  <path fill="#FFC107" d="M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z" />
+                  <path fill="#FF3D00" d="M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z" />
+                  <path fill="#4CAF50" d="M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z" />
+                  <path fill="#1976D2" d="M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z" />
+                </svg>
+                <span>حفظ في محفظة قوقل (Google Wallet)</span>
               </button>
             )}
 
             {isDownloaded && (
-              <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold text-center animate-fade-in flex items-center justify-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <div className="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 text-xs font-bold text-center animate-fade-in flex items-center justify-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                 <span>تم إعداد بطاقة المحفظة وتجهيز ملفها بنجاح! 🚀</span>
               </div>
             )}
@@ -367,7 +383,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
               onClick={() => setShowLockScreenSim(!showLockScreenSim)}
               className="w-full py-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 text-xs font-bold transition flex items-center justify-center gap-2"
             >
-              <Bell className="w-3.5 h-3.5 text-amber-400" />
+              <Bell className="w-3.5 h-3.5 text-amber-500" />
               <span>
                 {showLockScreenSim
                   ? 'إخفاء محاكي شاشة القفل'
@@ -383,10 +399,10 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
             <div className="p-4 rounded-3xl bg-slate-950 border border-slate-800 space-y-3 animate-fade-in">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-black text-slate-400 flex items-center gap-1.5">
-                  <Smartphone className="w-4 h-4 text-amber-400" />
+                  <Smartphone className="w-4 h-4 text-amber-500" />
                   <span>محاكاة شاشة قفل الآيفون عند اقتراب العميل من الفرع:</span>
                 </span>
-                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                <span className="text-[10px] text-emerald-500 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
                   تلقائي بالكامل 100%
                 </span>
               </div>
@@ -395,10 +411,12 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
               <div className="rounded-2xl p-3.5 bg-slate-900/90 border border-slate-700/80 shadow-2xl backdrop-blur-xl space-y-1.5 text-right">
                 <div className="flex items-center justify-between text-[11px] text-slate-400">
                   <div className="flex items-center gap-1.5 font-bold text-white">
-                    <span className="w-4 h-4 rounded-md bg-amber-500 flex items-center justify-center text-[10px] text-black font-black">
-                      
+                    <span className="w-4 h-4 rounded-md bg-amber-500 flex items-center justify-center text-slate-950 font-black">
+                      <svg className="w-2.5 h-2.5 fill-current" viewBox="0 0 384 512">
+                        <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+                      </svg>
                     </span>
-                    <span>Apple Wallet • {store.name}</span>
+                    <span>محفظة الهاتف • {store.name}</span>
                   </div>
                   <span className="font-mono text-[10px]">الآن</span>
                 </div>
@@ -410,7 +428,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
 
                 <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800">
                   <span>المسافة الحالية: {proximityInfo?.formattedDistance || '140 متر'}</span>
-                  <span className="text-amber-400 font-bold">اسحب لفتح البطاقة &gt;</span>
+                  <span className="text-amber-500 font-bold">اسحب لفتح البطاقة &gt;</span>
                 </div>
               </div>
 

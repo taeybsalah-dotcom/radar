@@ -3672,26 +3672,18 @@ export const LoyaltyService = {
       ).catch((e: any) => console.warn('Supabase purchaseCoupon audit log failed', e));
     }
 
-    // ─── 7. إشعار تليجرام التفاعلي لطلب استبدال المكافأة (قسم حصرياتي) ───
+    // ─── 7. إشعار تليجرام للعلم فقط عند شراء مكافأة (بدون كود وبدون أزرار لمنع الصرف بدون حضور العميل) ───
     try {
-      const rewardTelegramMsg = `🎁 طلب استبدال مكافأة بالنقاط (حصرياتي)!\n\n` +
-        `👤 العميل: ${customer.name || 'عميل المتجر'}\n` +
+      const rewardTelegramMsg =
+        "🎟️ إشعار شراء مكافأة بالنقاط (للعلم فقط)\n\n" +
+        `👤 العميل: ${customer.name || "عميل المتجر"}\n` +
         `📱 الجوال: ${customer.phone}\n` +
         `🏆 المكافأة: ${privilege.title}\n` +
-        `💎 النقاط المخصومة: ${cost} نقطة\n` +
-        `🔢 كود الكوبون: ${newCoupon.coupon_code}\n\n` +
-        `يرجى اعتماد التسليم أو الرفض أدناه:`;
-      const rewardReplyMarkup = {
-        inline_keyboard: [
-          [
-            { text: '✅ اعتماد التسليم', callback_data: `cpn_clm:${newCoupon.id}` },
-            { text: '❌ رفض', callback_data: `cpn_rej:${newCoupon.id}` }
-          ]
-        ]
-      };
-      sendTelegramNotification(resolvedStoreId, rewardTelegramMsg, rewardReplyMarkup);
+        `💎 النقاط المخصومة: ${cost} نقطة\n\n` +
+        "📌 ملاحظة: المكافأة محفوظة الآن في محفظة العميل (حصرياتي)، وسيتم صرفها وتسليمها حصراً عند حضور العميل للفرع ومسح الباركود عبر الكاشير.";
+      sendTelegramNotification(resolvedStoreId, rewardTelegramMsg);
     } catch (e) {
-      console.warn('reward telegram notification failed:', e);
+      console.warn("reward telegram notification failed:", e);
     }
 
     return { success: true, coupon: newCoupon, updatedCustomer };
@@ -7505,7 +7497,14 @@ export const LoyaltyService = {
       order_source: resolvedOrderSource,
       cashier_id: payload.cashier_id || null,
       cashier_name: payload.cashier_name || null,
-      notes: payload.notes || payload.fulfillment_details?.general_notes || ''
+      notes: payload.notes || payload.fulfillment_details?.general_notes || '',
+      fulfillment_details: payload.fulfillment_details || {},
+      delivery_address: payload.fulfillment_details?.delivery_address || payload.delivery_address || null,
+      delivery_fee: Number(payload.delivery_fee || payload.fulfillment_details?.delivery_fee || 0),
+      delivery_status: payload.delivery_status || (payload.fulfillment_type === 'delivery' || payload.order_type === 'delivery' ? 'unassigned' : null),
+      driver_id: payload.driver_id || payload.fulfillment_details?.driver_id || null,
+      driver_name: payload.driver_name || payload.fulfillment_details?.driver_name || null,
+      driver_phone: payload.driver_phone || payload.fulfillment_details?.driver_phone || null
     };
 
     if (supabase && isUUID(resolvedStoreId)) {
@@ -7930,6 +7929,8 @@ export const LoyaltyService = {
     const newSpec: StoreSpecialist = {
       ...data,
       store_id: resolvedStoreId,
+      branch_id: data.branch_id || null,
+      branch_name: data.branch_name || null,
       id: 'spec-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
       created_at: new Date().toISOString(),
     };
@@ -7946,20 +7947,22 @@ export const LoyaltyService = {
         );
         if (res?.item) {
           const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
-          list.unshift(res.item as unknown as StoreSpecialist);
+          const createdItem = res.item as unknown as StoreSpecialist;
+          list.unshift(createdItem);
           saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, list);
           LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: resolvedStoreId });
-          return res.item as unknown as StoreSpecialist;
+          return createdItem;
         }
       } else {
         try {
           const { data: created, error } = await supabase.from('store_specialists').insert([stripDataUrls({ ...newSpec }) as any]).select().single();
           if (!error && created) {
             const list: StoreSpecialist[] = getLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, []);
-            list.unshift(created as unknown as StoreSpecialist);
+            const createdItem = created as unknown as StoreSpecialist;
+            list.unshift(createdItem);
             saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, list);
             LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: resolvedStoreId });
-            return created as unknown as StoreSpecialist;
+            return createdItem;
           }
         } catch (e) {
           console.warn('Supabase addStoreSpecialist fallback', e);
@@ -7979,30 +7982,43 @@ export const LoyaltyService = {
     const idx = list.findIndex((s) => s.id === id);
     let updatedSpec: StoreSpecialist | null = null;
 
-    if (idx !== -1) {
-      list[idx] = { ...list[idx], ...updates };
-      updatedSpec = list[idx];
-      saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, list);
-    }
-
     const supabase = getSupabaseClient();
     if (supabase) {
-      const adminToken = this.getStaffToken(updates.store_id || updatedSpec?.store_id, 'admin');
+      const adminToken = this.getStaffToken(updates.store_id || (idx !== -1 ? list[idx]?.store_id : undefined), 'admin');
       await this.assertCanWrite(adminToken);
       if (adminToken) {
         const res = await this.callWithStaffToken('merchant_save_specialist', { p_item_id: id, p_item: stripDataUrls({ ...updates }) }, adminToken);
-        if (res?.item) updatedSpec = res.item as unknown as StoreSpecialist;
+        if (res?.item) {
+          updatedSpec = res.item as unknown as StoreSpecialist;
+        }
       } else {
         try {
           const { data: remoteUpdated } = await supabase.from('store_specialists').update(stripDataUrls({ ...updates }) as any).eq('id', id).select().single();
-          if (remoteUpdated) updatedSpec = remoteUpdated as unknown as StoreSpecialist;
+          if (remoteUpdated) {
+            updatedSpec = remoteUpdated as unknown as StoreSpecialist;
+          }
         } catch (e) {
           console.warn('Supabase updateStoreSpecialist fallback', e);
         }
       }
     }
 
-    if (!updatedSpec) throw new Error(`المختص غير موجود`);
+    if (!updatedSpec) {
+      if (idx !== -1) {
+        list[idx] = { ...list[idx], ...updates };
+        updatedSpec = list[idx];
+      } else {
+        throw new Error('المختص غير موجود');
+      }
+    }
+
+    if (idx !== -1) {
+      list[idx] = updatedSpec;
+    } else {
+      list.unshift(updatedSpec);
+    }
+    saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, list);
+
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: updatedSpec.store_id });
     return updatedSpec;
   },

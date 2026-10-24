@@ -12,6 +12,7 @@ import {
   Radar,
   TrendingUp,
   Download,
+  FileSpreadsheet,
   Calendar,
   ShieldCheck,
   Coins,
@@ -135,20 +136,20 @@ export const StoreAnalyticsView: React.FC<StoreAnalyticsViewProps> = ({
 
           <button
             onClick={onExportCustomersCSV}
-            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse border border-slate-700 transition shadow-sm"
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse border border-slate-700/80 hover:border-amber-500/50 transition shadow-sm"
             title="تصدير ملف إكسل لبيانات العملاء"
           >
-            <Download className="w-3.5 h-3.5 text-amber-400" />
-            <span>تصدير العملاء (CSV)</span>
+            <FileSpreadsheet className="w-3.5 h-3.5 text-amber-400" />
+            <span>تصدير العملاء (Excel)</span>
           </button>
 
           <button
             onClick={onExportAuditLogsCSV}
-            className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse border border-slate-700 transition shadow-sm"
-            title="تصدير سجل العمليات والتدقيق المالي"
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center space-x-1.5 rtl:space-x-reverse border border-slate-700/80 hover:border-emerald-500/50 transition shadow-sm"
+            title="تصدير سجل العمليات والتدقيق المالي بصيغة إكسل منظمة"
           >
-            <Download className="w-3.5 h-3.5 text-emerald-400" />
-            <span>تصدير العمليات (CSV)</span>
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+            <span>تصدير العمليات (Excel)</span>
           </button>
         </div>
       </div>

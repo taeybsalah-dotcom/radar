@@ -1694,6 +1694,8 @@ export type Database = {
         Row: {
           id: string;
           store_id: string;
+          branch_id: string | null;
+          branch_name: string | null;
           name: string;
           specialty: string | null;
           service_categories: Json | null;
@@ -1708,6 +1710,8 @@ export type Database = {
         Insert: {
           id?: string;
           store_id: string;
+          branch_id?: string | null;
+          branch_name?: string | null;
           name: string;
           specialty?: string | null;
           service_categories?: Json | null;
@@ -1722,6 +1726,8 @@ export type Database = {
         Update: {
           id?: string;
           store_id?: string;
+          branch_id?: string | null;
+          branch_name?: string | null;
           name?: string;
           specialty?: string | null;
           service_categories?: Json | null;
