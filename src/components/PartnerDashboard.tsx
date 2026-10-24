@@ -148,7 +148,7 @@ const buildDefaultStatusTemplates = (pName: string, pRef: string) => {
     },
     paid: {
       title: 'تهنئة التأسيس والانطلاق (Welcome Onboard)',
-      body: `ألف مبروك انضمامكم لشبكة رادار! 🎉\nتم تأسيس وربط متجركم بنجاح. سنكون معك في كل خطوة لضمان مضاعفة زيارات عملائك ومبيعاتك.\n\nبالتوفيق والنجاح الدائم!\n${pName}`,
+      body: `ألف مبروك انضمامكم لشبكة المتاجر! 🎉\nتم تأسيس وربط متجركم بنجاح. سنكون معك في كل خطوة لضمان مضاعفة زيارات عملائك ومبيعاتك.\n\nبالتوفيق والنجاح الدائم!\n${pName}`,
     },
     active: {
       title: 'متابعة الأداء الدوري (Active Relationship)',
@@ -1785,14 +1785,14 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
             <div className="space-y-2 pt-2">
               <label className="text-xs font-bold text-slate-300 block">رسالة المتابعة المخصصة لهذا العميل:</label>
               <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 text-xs text-slate-300 whitespace-pre-line leading-relaxed select-all">
-                {`مرحباً بك ${selectedLead.manager_name} 👋\nمعك ${partner.display_name} من رادار.\nحبيت أطمئن كيف كانت تجربتك واطلاعك على المنظومة لمتجركم (${selectedLead.store_name})؟ هل تحب أساعدك بتفعيل أول بطاقة ولاء؟ 🚀`}
+                {`مرحباً بك ${selectedLead.manager_name} 👋\nمعك ${partner.display_name} من إدارة المنصة.\nحبيت أطمئن كيف كانت تجربتك واطلاعك على المنظومة لمتجركم (${selectedLead.store_name})؟ هل تحب أساعدك بتفعيل أول بطاقة ولاء؟ 🚀`}
               </div>
             </div>
 
             <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={() => {
-                  const msg = `مرحباً بك ${selectedLead.manager_name} 👋\nمعك ${partner.display_name} من رادار.\nحبيت أطمئن كيف كانت تجربتك واطلاعك على المنظومة لمتجركم (${selectedLead.store_name})؟ هل تحب أساعدك بتفعيل أول بطاقة ولاء؟ 🚀`;
+                  const msg = `مرحباً بك ${selectedLead.manager_name} 👋\nمعك ${partner.display_name} من إدارة المنصة.\nحبيت أطمئن كيف كانت تجربتك واطلاعك على المنظومة لمتجركم (${selectedLead.store_name})؟ هل تحب أساعدك بتفعيل أول بطاقة ولاء؟ 🚀`;
                   copyText(msg, `lead-msg-${selectedLead.id}`);
                 }}
                 className="flex-1 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition flex items-center justify-center gap-1.5"
@@ -1805,7 +1805,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
                 onClick={() => {
                   const cleanPhone = (selectedLead.phone || '').replace(/\D/g, '');
                   const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
-                  const msg = `مرحباً بك ${selectedLead.manager_name} 👋\nمعك ${partner.display_name} من رادار.\nحبيت أطمئن كيف كانت تجربتك واطلاعك على المنظومة لمتجركم (${selectedLead.store_name})؟ هل تحب أساعدك بتفعيل أول بطاقة ولاء؟ 🚀`;
+                  const msg = `مرحباً بك ${selectedLead.manager_name} 👋\nمعك ${partner.display_name} من إدارة المنصة.\nحبيت أطمئن كيف كانت تجربتك واطلاعك على المنظومة لمتجركم (${selectedLead.store_name})؟ هل تحب أساعدك بتفعيل أول بطاقة ولاء؟ 🚀`;
                   window.open(`https://wa.me/${intlPhone}?text=${encodeURIComponent(msg)}`, '_blank');
                 }}
                 className="px-4 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition flex items-center gap-1.5"

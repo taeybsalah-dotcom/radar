@@ -7454,7 +7454,7 @@ export const LoyaltyService = {
       lines.push(`3️⃣ ⏳ نعتذر منك، يرجى التواصل معنا للتعديل.`);
     }
     lines.push(`━━━━━━━━━━━━━━━━━━━━`);
-    lines.push(`_تم الإرسال عبر محرك الرادار الذكي (Radar Hub)_`);
+    lines.push(`_تم الإرسال عبر محرك الطلبات الذكي_`);
 
     return lines.join('\n');
   },
@@ -8625,7 +8625,7 @@ export const LoyaltyService = {
     lines.push(`1️⃣ ✅ أهلاً بك! تم تأكيد وتثبيت موعدك بنجاح ونحن بانتظارك 🌟`);
     lines.push(`2️⃣ ⏳ نعتذر منك، هذا الوقت ممتلئ، يرجى اختيار موعد بديل.`);
     lines.push(`━━━━━━━━━━━━━━━━━━━━`);
-    lines.push(`_تم الإرسال عبر محرك حجز الرادار الذكي (Radar Appointments)_`);
+    lines.push(`_تم الإرسال عبر محرك الحجوزات الذكي_`);
     return lines.join('\n');
   },
 

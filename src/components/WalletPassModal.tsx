@@ -332,7 +332,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                   </div>
 
                   <div className="text-[10px] text-white/50 text-center pt-2 border-t border-white/10">
-                    منصة رادار الذكية لبرامج الولاء والمحفظة الرقمية 2026
+                    المنصة الذكية لبرامج الولاء والمكافآت والمحفظة الرقمية 2026
                   </div>
                 </div>
               )}

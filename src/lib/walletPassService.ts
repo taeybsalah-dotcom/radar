@@ -248,7 +248,7 @@ export class WalletPassService {
           {
             key: 'poweredBy',
             label: 'النظام المشغل',
-            value: 'منصة رادار للولاء والمدفوعات الذكية • radar.taeybsalah.workers.dev',
+            value: 'منصة الولاء والمدفوعات السحابية • radar.taeybsalah.workers.dev',
           },
         ],
       },
