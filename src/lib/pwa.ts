@@ -1,29 +1,36 @@
 import { Store } from '../types';
+import { getActiveTenantConfig } from '../config/tenant';
 
 let activeBlobUrl: string | null = null;
 
-function generateStoreSvgIcon(name: string, primaryColor: string, secondaryColor: string): string {
-  const initials = (name || 'ST').slice(0, 2);
+function generateStoreSvgIcon(storeName: string, primaryColor: string, secondaryColor: string): string {
+  const char = (storeName || 'ST').trim().slice(0, 2).toUpperCase();
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
-    <rect width="192" height="192" rx="44" fill="${primaryColor}"/>
-    <rect x="8" y="8" width="176" height="176" rx="36" fill="none" stroke="${secondaryColor}" stroke-width="4" stroke-opacity="0.6"/>
-    <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="70" fill="${secondaryColor}">${initials}</text>
+    <rect width="192" height="192" rx="42" fill="${primaryColor}" />
+    <circle cx="96" cy="96" r="70" fill="none" stroke="${secondaryColor}" stroke-width="4" stroke-dasharray="8 6" opacity="0.6" />
+    <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="#FFFFFF" font-family="sans-serif" font-weight="900" font-size="64" letter-spacing="1">
+      ${char}
+    </text>
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
 /**
  * Updates dynamic PWA manifest, Apple touch icon, meta tags, and title based on current store & portal.
- * Strictly separates titles and headers across all 5 tiers.
+ * Respects Active Tenant Branding (White-Label) across all portals.
  */
 export function updateDynamicPWA(store: Store | null, portal: string = 'customer') {
   if (typeof window === 'undefined') return;
 
-  let pageTitle = 'رادار | RADAR';
-  let manifestName = 'رادار | RADAR للولاء الذكي';
-  let manifestShortName = 'RADAR';
-  let primaryColor = '#0B0F17';
-  let secondaryColor = '#F59E0B';
+  const tenant = getActiveTenantConfig();
+  const tenantBrand = tenant.brandName || 'المنصة السحابية';
+  const tenantLogo = tenant.faviconUrl || tenant.logoUrl || '/favicon.png';
+
+  let pageTitle = tenantBrand;
+  let manifestName = `${tenantBrand} للولاء الذكي`;
+  let manifestShortName = tenant.brandEnglishName || tenantBrand;
+  let primaryColor = tenant.primaryColorHex || '#0B0F17';
+  let secondaryColor = tenant.accentColorHex || '#F59E0B';
 
   const effectiveStore =
     portal === 'super-admin' ||
@@ -35,17 +42,17 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
 
   switch (portal) {
     case 'super-admin':
-      pageTitle = 'RADAR';
-      manifestName = 'منصة رادار | RADAR';
-      manifestShortName = 'RADAR';
+      pageTitle = `بوابة المالك | ${tenantBrand}`;
+      manifestName = `منصة ${tenantBrand}`;
+      manifestShortName = tenantBrand;
       primaryColor = '#0B0F17';
-      secondaryColor = '#F59E0B';
+      secondaryColor = tenant.primaryColorHex || '#F59E0B';
       break;
 
     case 'partner':
-      pageTitle = 'بوابة الشريك | RADAR';
-      manifestName = 'بوابة شركاء المبيعات | RADAR';
-      manifestShortName = 'شريك رادار';
+      pageTitle = `بوابة الشريك | ${tenantBrand}`;
+      manifestName = `بوابة شركاء المبيعات | ${tenantBrand}`;
+      manifestShortName = `شريك ${tenantBrand}`;
       primaryColor = '#0B0F17';
       secondaryColor = '#10B981';
       break;
@@ -66,7 +73,7 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
         : 'نظام الكاشير';
       manifestName = effectiveStore?.name
         ? `${effectiveStore.name} - كاشير الولاء`
-        : 'كاشير رادار';
+        : `كاشير ${tenantBrand}`;
       manifestShortName = effectiveStore?.name
         ? `${effectiveStore.name.slice(0, 8)} POS`
         : 'الكاشير';
@@ -89,10 +96,10 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
     case 'driver':
       pageTitle = effectiveStore?.name
         ? `${effectiveStore.name} - تطبيق كابتن التوصيل 🛵`
-        : 'كابتن التوصيل | RADAR';
+        : `كابتن التوصيل | ${tenantBrand}`;
       manifestName = effectiveStore?.name
         ? `${effectiveStore.name} - كابتن التوصيل`
-        : 'كابتن توصيل رادار';
+        : `كابتن توصيل ${tenantBrand}`;
       manifestShortName = effectiveStore?.name
         ? `${effectiveStore.name.slice(0, 8)} سائق`
         : 'كابتن التوصيل';
@@ -113,37 +120,37 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
       break;
 
     case 'join':
-      pageTitle = 'بوابة التسجيل | RADAR';
-      manifestName = 'تسجيل متجر جديد | RADAR';
+      pageTitle = `بوابة التسجيل | ${tenantBrand}`;
+      manifestName = `تسجيل متجر جديد | ${tenantBrand}`;
       manifestShortName = 'بوابة التسجيل';
       primaryColor = '#0B0F17';
       secondaryColor = '#F59E0B';
       break;
 
     case 'partner-landing':
-      pageTitle = 'بوابة الشريك | RADAR';
+      pageTitle = `بوابة الشريك | ${tenantBrand}`;
       manifestName = 'بوابة الشريك المعتمد';
-      manifestShortName = 'شريك رادار';
+      manifestShortName = `شريك ${tenantBrand}`;
       primaryColor = '#0B0F17';
       secondaryColor = '#10B981';
       break;
 
     case 'onboarding':
-      pageTitle = effectiveStore?.name ? `${effectiveStore.name} - إعداد المتجر` : 'بوابة إعداد المتجر | RADAR';
-      manifestName = 'تأسيس المتجر | RADAR';
+      pageTitle = effectiveStore?.name ? `${effectiveStore.name} - إعداد المتجر` : `بوابة إعداد المتجر | ${tenantBrand}`;
+      manifestName = `تأسيس المتجر | ${tenantBrand}`;
       manifestShortName = 'تأسيس متجر';
       primaryColor = '#0B0F17';
       secondaryColor = '#F59E0B';
       break;
 
     default:
-      pageTitle = 'RADAR';
-      manifestName = 'رادار | RADAR';
-      manifestShortName = 'RADAR';
+      pageTitle = tenantBrand;
+      manifestName = tenantBrand;
+      manifestShortName = tenantBrand;
   }
 
-  // Determine active icon: Store custom logo -> Store SVG icon -> Platform icon
-  let storeIconUrl = '/icon-192.png';
+  // Determine active icon: Store custom logo -> Store SVG icon -> Tenant logo
+  let storeIconUrl = tenantLogo;
   if (effectiveStore) {
     if (effectiveStore.logo_url && effectiveStore.logo_url.trim()) {
       storeIconUrl = effectiveStore.logo_url;
@@ -153,39 +160,24 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
   }
 
   // 1. Build Dynamic Manifest Object
-  const manifestIcons = effectiveStore
-    ? [
-        {
-          src: storeIconUrl,
-          sizes: '192x192 512x512',
-          type: storeIconUrl.startsWith('data:image/svg')
-            ? 'image/svg+xml'
-            : storeIconUrl.startsWith('data:image/png')
-            ? 'image/png'
-            : 'image/jpeg',
-          purpose: 'any maskable',
-        },
-        {
-          src: '/icon-192.png',
-          sizes: '192x192',
-          type: 'image/png',
-          purpose: 'any',
-        },
-      ]
-    : [
-        {
-          src: '/icon-192.png',
-          sizes: '192x192',
-          type: 'image/png',
-          purpose: 'any',
-        },
-        {
-          src: '/icon-512.png',
-          sizes: '512x512',
-          type: 'image/png',
-          purpose: 'any',
-        },
-      ];
+  const manifestIcons = [
+    {
+      src: storeIconUrl,
+      sizes: '192x192 512x512',
+      type: storeIconUrl.startsWith('data:image/svg')
+        ? 'image/svg+xml'
+        : storeIconUrl.startsWith('data:image/png')
+        ? 'image/png'
+        : 'image/jpeg',
+      purpose: 'any maskable',
+    },
+    {
+      src: storeIconUrl,
+      sizes: '192x192',
+      type: 'image/png',
+      purpose: 'any',
+    },
+  ];
 
   const slug = effectiveStore?.slug || '';
   const startUrl =
@@ -202,7 +194,7 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
   const manifestObject = {
     name: manifestName,
     short_name: manifestShortName,
-    description: `منصة رادار للولاء والمكافآت الذكية - ${manifestName}`,
+    description: `منصة ${tenantBrand} للولاء والمكافآت الذكية - ${manifestName}`,
     start_url: startUrl,
     scope: '/',
     display: 'standalone',
@@ -233,7 +225,7 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
     console.warn('Dynamic manifest blob error:', e);
   }
 
-  // 3. Apple Touch Icon for iOS Safari Home Screen
+  // 3. Apple Touch Icon
   let appleTouchIcon = document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement;
   if (!appleTouchIcon) {
     appleTouchIcon = document.createElement('link');
@@ -242,8 +234,8 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
   }
   appleTouchIcon.href = storeIconUrl;
 
-  // 4. Favicon
-  let favicon = document.querySelector('link[rel="icon"]') as HTMLLinkElement;
+  // 4. Favicon - Strictly sets the tab icon to the tenant's uploaded logo!
+  let favicon = (document.getElementById('app-favicon') || document.querySelector('link[rel="icon"]')) as HTMLLinkElement;
   if (!favicon) {
     favicon = document.createElement('link');
     favicon.rel = 'icon';
@@ -269,17 +261,6 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
   }
   themeColorMeta.content = secondaryColor;
 
-  // 7. Page Document Title - Strictly Role & Portal Isolated
+  // 7. Page Document Title - Completely dynamic based on tenantBrand
   document.title = pageTitle;
-
-  // 8. Persist last active store & portal in localStorage ONLY if inside a specific store portal
-  if (slug && portal !== 'super-admin' && portal !== 'partner') {
-    try {
-      localStorage.setItem('radar_last_store_slug', slug);
-      localStorage.setItem('radar_last_portal', portal);
-      localStorage.setItem('radar_last_store_name', pageTitle);
-    } catch (e) {
-      // ignore
-    }
-  }
 }
