@@ -4,7 +4,19 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const MASTER_SUPABASE_URL = (import.meta as any).env?.VITE_MASTER_SUPABASE_URL || 'https://zagpvflyizbmzsbmhnts.supabase.co';
 const MASTER_SUPABASE_ANON = (import.meta as any).env?.VITE_MASTER_SUPABASE_ANON_KEY || 'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
 
+// 🛡️ Sovereign Secret Master Handshake Token
+// Loaded from master-control/.env.local (git-ignored). NEVER hardcode it in source.
+export const SOVEREIGN_MASTER_TOKEN: string = (import.meta as any).env?.VITE_SOVEREIGN_MASTER_TOKEN || '';
+if (!SOVEREIGN_MASTER_TOKEN) {
+  console.error('[Master Control] VITE_SOVEREIGN_MASTER_TOKEN is missing in master-control/.env.local');
+}
+
 export const masterSupabase: SupabaseClient = createClient(MASTER_SUPABASE_URL, MASTER_SUPABASE_ANON, {
+  global: {
+    headers: {
+      'x-master-token': SOVEREIGN_MASTER_TOKEN,
+    },
+  },
   auth: {
     storageKey: 'radar_master_control_auth',
     persistSession: true,
@@ -29,13 +41,6 @@ export interface ResellerInstance {
   notes?: string | null;
   created_at: string;
   updated_at: string;
-}
-
-// 🛡️ Sovereign Secret Master Handshake Token
-// Loaded from master-control/.env.local (git-ignored). NEVER hardcode it in source.
-export const SOVEREIGN_MASTER_TOKEN: string = (import.meta as any).env?.VITE_SOVEREIGN_MASTER_TOKEN || '';
-if (!SOVEREIGN_MASTER_TOKEN) {
-  console.error('[Master Control] VITE_SOVEREIGN_MASTER_TOKEN is missing in master-control/.env.local');
 }
 
 /**
