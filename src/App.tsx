@@ -64,7 +64,7 @@ const StoreAdmin = lazyWithRetry(
   'StoreAdmin'
 );
 const MerchantJoinLanding = lazyWithRetry(
-  () => import('./components/SadeemRakeenStyleLanding').then((m) => ({ default: m.SadeemRakeenStyleLanding })),
+  () => import('./components/MerchantJoinLanding').then((m) => ({ default: m.MerchantJoinLanding })),
   'MerchantJoinLanding'
 );
 const PartnerDashboard = lazyWithRetry(
