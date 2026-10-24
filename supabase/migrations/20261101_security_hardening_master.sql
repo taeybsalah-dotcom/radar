@@ -9,7 +9,7 @@
 -- 4. [CRITICAL] Harden is_super_admin() to NEVER trust client-writable user_metadata.
 -- 5. [CRITICAL] Self-contained staff session helpers (has_valid_staff_access) for RLS.
 -- 6. [CRITICAL] Database-level Kill Switch enforcement: is_platform_active() guards on write RPCs.
--- 7. [RLS HARDENING] Tighten store_customers & customer_coupons write policies against direct tampering.
+-- 7. [RLS HARDENING] Tighten store_customers & customer_coupons write policies safely with to_regclass check.
 -- 8. [POSTGREST] Notify schema reload and set search_path = public, extensions.
 -- ==============================================================================
 
@@ -362,7 +362,6 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.assert_platform_active() TO anon, authenticated, service_role;
 
--- 7.1 Trigger on store_orders: reject new orders when suspended
 CREATE OR REPLACE FUNCTION public.trg_check_killswitch_store_orders()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -375,13 +374,6 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_killswitch_store_orders ON public.store_orders;
-CREATE TRIGGER trg_killswitch_store_orders
-BEFORE INSERT ON public.store_orders
-FOR EACH ROW
-EXECUTE FUNCTION public.trg_check_killswitch_store_orders();
-
--- 7.2 Trigger on audit_logs: reject new audit logs when suspended
 CREATE OR REPLACE FUNCTION public.trg_check_killswitch_audit_logs()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -394,69 +386,84 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_killswitch_audit_logs ON public.audit_logs;
-CREATE TRIGGER trg_killswitch_audit_logs
-BEFORE INSERT ON public.audit_logs
-FOR EACH ROW
-EXECUTE FUNCTION public.trg_check_killswitch_audit_logs();
+DO $$
+BEGIN
+    IF to_regclass('public.store_orders') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_killswitch_store_orders ON public.store_orders;
+        CREATE TRIGGER trg_killswitch_store_orders
+        BEFORE INSERT ON public.store_orders
+        FOR EACH ROW
+        EXECUTE FUNCTION public.trg_check_killswitch_store_orders();
+    END IF;
+
+    IF to_regclass('public.audit_logs') IS NOT NULL THEN
+        DROP TRIGGER IF EXISTS trg_killswitch_audit_logs ON public.audit_logs;
+        CREATE TRIGGER trg_killswitch_audit_logs
+        BEFORE INSERT ON public.audit_logs
+        FOR EACH ROW
+        EXECUTE FUNCTION public.trg_check_killswitch_audit_logs();
+    END IF;
+END $$;
 
 
 -- ==============================================================================
--- 8. RLS HARDENING: TIGHTEN store_customers & customer_coupons WRITES
+-- 8. RLS HARDENING: TIGHTEN store_customers & customer_coupons SAFELY
 -- ==============================================================================
-
--- 8.1 customer_coupons: Prevent direct manipulation of active coupons
 DO $$
 DECLARE r RECORD;
 BEGIN
-    FOR r IN SELECT policyname FROM pg_policies
-             WHERE schemaname='public' AND tablename='customer_coupons' AND cmd IN ('UPDATE', 'DELETE')
-               AND roles && ARRAY['anon','authenticated','public']::name[]
-    LOOP
-        EXECUTE format('DROP POLICY IF EXISTS %I ON public.customer_coupons', r.policyname);
-    END LOOP;
+    -- 8.1 customer_coupons (Apply ONLY IF table exists)
+    IF to_regclass('public.customer_coupons') IS NOT NULL THEN
+        FOR r IN SELECT policyname FROM pg_policies
+                 WHERE schemaname='public' AND tablename='customer_coupons' AND cmd IN ('UPDATE', 'DELETE')
+                   AND roles && ARRAY['anon','authenticated','public']::name[]
+        LOOP
+            EXECUTE format('DROP POLICY IF EXISTS %I ON public.customer_coupons', r.policyname);
+        END LOOP;
+
+        EXECUTE $pol$
+            CREATE POLICY customer_coupons_update_staff_token
+            ON public.customer_coupons
+            FOR UPDATE
+            TO anon, authenticated
+            USING (public.has_valid_staff_access(store_id, FALSE))
+            WITH CHECK (public.has_valid_staff_access(store_id, FALSE));
+
+            CREATE POLICY customer_coupons_delete_staff_token
+            ON public.customer_coupons
+            FOR DELETE
+            TO anon, authenticated
+            USING (public.has_valid_staff_access(store_id, FALSE));
+        $pol$;
+    END IF;
+
+    -- 8.2 store_customers (Apply ONLY IF table exists)
+    IF to_regclass('public.store_customers') IS NOT NULL THEN
+        FOR r IN SELECT policyname FROM pg_policies
+                 WHERE schemaname='public' AND tablename='store_customers' AND cmd IN ('UPDATE')
+                   AND roles && ARRAY['anon','authenticated','public']::name[]
+        LOOP
+            EXECUTE format('DROP POLICY IF EXISTS %I ON public.store_customers', r.policyname);
+        END LOOP;
+
+        EXECUTE $pol$
+            CREATE POLICY store_customers_update_staff_or_self
+            ON public.store_customers
+            FOR UPDATE
+            TO anon, authenticated
+            USING (
+                public.has_valid_staff_access(store_id, FALSE)
+                OR public.is_super_admin()
+                OR (auth.uid() IS NOT NULL)
+            )
+            WITH CHECK (
+                public.has_valid_staff_access(store_id, FALSE)
+                OR public.is_super_admin()
+                OR (auth.uid() IS NOT NULL)
+            );
+        $pol$;
+    END IF;
 END $$;
-
-CREATE POLICY customer_coupons_update_staff_token
-ON public.customer_coupons
-FOR UPDATE
-TO anon, authenticated
-USING (public.has_valid_staff_access(store_id, FALSE))
-WITH CHECK (public.has_valid_staff_access(store_id, FALSE));
-
-CREATE POLICY customer_coupons_delete_staff_token
-ON public.customer_coupons
-FOR DELETE
-TO anon, authenticated
-USING (public.has_valid_staff_access(store_id, FALSE));
-
-
--- 8.2 store_customers: Prevent unauthorized balance updates
-DO $$
-DECLARE r RECORD;
-BEGIN
-    FOR r IN SELECT policyname FROM pg_policies
-             WHERE schemaname='public' AND tablename='store_customers' AND cmd IN ('UPDATE')
-               AND roles && ARRAY['anon','authenticated','public']::name[]
-    LOOP
-        EXECUTE format('DROP POLICY IF EXISTS %I ON public.store_customers', r.policyname);
-    END LOOP;
-END $$;
-
-CREATE POLICY store_customers_update_staff_or_self
-ON public.store_customers
-FOR UPDATE
-TO anon, authenticated
-USING (
-    public.has_valid_staff_access(store_id, FALSE)
-    OR public.is_super_admin()
-    OR (auth.uid() IS NOT NULL)
-)
-WITH CHECK (
-    public.has_valid_staff_access(store_id, FALSE)
-    OR public.is_super_admin()
-    OR (auth.uid() IS NOT NULL)
-);
 
 
 -- ==============================================================================
