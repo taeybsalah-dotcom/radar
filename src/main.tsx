@@ -6,11 +6,21 @@ import { AuthProvider } from './context/AuthContext.tsx'
 import { getActiveTenantConfig } from './config/tenant.ts'
 import './index.css'
 
-// 🎨 Apply Dynamic White-Label Brand Title & Meta
+// 🎨 Apply Dynamic White-Label Brand Title, Meta & Favicon
 if (typeof document !== 'undefined') {
   const tenant = getActiveTenantConfig();
   if (tenant.brandName) {
     document.title = tenant.brandName;
+  }
+  if (tenant.logoUrl) {
+    const faviconLink = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+    if (faviconLink) {
+      faviconLink.href = tenant.logoUrl;
+    }
+    const appleIcon = document.querySelector("link[rel*='apple-touch-icon']") as HTMLLinkElement;
+    if (appleIcon) {
+      appleIcon.href = tenant.logoUrl;
+    }
   }
 }
 
