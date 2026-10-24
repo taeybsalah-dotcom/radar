@@ -195,7 +195,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
               className="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 text-xs font-bold transition"
             >
               <MessageCircle className="w-4 h-4" />
-              <span>واتساب المبيعات: {agentPhone}</span>
+              <span>تواصل معنا عبر واتساب</span>
             </a>
 
             <button
@@ -245,7 +245,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
             className="w-full sm:w-auto px-8 py-4 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-white font-black text-base transition flex items-center justify-center gap-2.5"
           >
             <MessageCircle className="w-5 h-5 text-emerald-400" />
-            <span>تواصل مع فريق سديم المباشر ({agentPhone})</span>
+            <span>تواصل مباشرة عبر واتساب</span>
           </a>
         </div>
 
@@ -346,7 +346,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
               className="w-full px-8 py-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-xl shadow-emerald-500/20 transition transform hover:scale-105"
             >
               <MessageCircle className="w-5 h-5" />
-              <span>تحدث مع فريق سديم الآن: {agentPhone}</span>
+              <span>تحدث مع فريق المبيعات عبر واتساب</span>
             </a>
           </div>
         </div>
@@ -451,7 +451,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
                   className="text-xs text-slate-400 hover:text-emerald-400 inline-flex items-center gap-1.5 transition"
                 >
                   <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>أو تواصل فوراً عبر الواتساب: <strong>{agentPhone}</strong></span>
+                  <span>أو تواصل فوراً عبر الواتساب</span>
                 </a>
               </div>
             </form>
@@ -491,7 +491,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-4 text-slate-400">
-            <span>خدمة العملاء والمبيعات: <strong className="text-white font-mono">{agentPhone}</strong></span>
+            <span>خدمة العملاء والمبيعات متوفرة على مدار الساعة</span>
           </div>
         </div>
         <p className="text-[11px] text-slate-600">© 2026 جميع الحقوق محفوظة • متوافق مع هيئة الزكاة والضريبة والجمارك</p>
