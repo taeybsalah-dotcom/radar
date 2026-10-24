@@ -973,7 +973,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   setAdminEmail(e.target.value);
                   setPinError(null);
                 }}
-                placeholder="admin@radar-loyalty.com"
+                placeholder="admin@domain.com"
                 className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3.5 text-right text-sm text-amber-400 font-mono outline-none transition"
                 autoFocus
                 required
