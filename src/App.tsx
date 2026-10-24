@@ -1273,8 +1273,8 @@ export function App() {
         </footer>
       )}
 
-      {/* ⚡ Radar Quick Switcher & Reset Floating Dock */}
-      {activeTab !== 'kds' && (
+      {/* ⚡ Radar Quick Switcher & Reset Floating Dock (Hidden automatically on White-Label clients) */}
+      {activeTab !== 'kds' && !getActiveTenantConfig().isWhiteLabelTenant && (
         <RadarQuickSwitcher
           currentStore={store}
           activePortal={activeTab}

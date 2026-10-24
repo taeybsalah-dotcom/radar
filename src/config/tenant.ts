@@ -27,6 +27,9 @@ export interface WhiteLabelTenantConfig {
   
   // Copyright & Legal
   copyrightHolder: string;      // e.g. "شركة الوسيط للتقنية"
+  
+  // White-Label Mode Flag
+  isWhiteLabelTenant: boolean;  // True if running as dedicated reseller/client instance
 }
 
 /**
@@ -47,6 +50,7 @@ export const DEFAULT_TENANT_CONFIG: WhiteLabelTenantConfig = {
   accentColorHex: import.meta.env.VITE_BRAND_ACCENT_COLOR || '#10B981',
   pwaAppName: import.meta.env.VITE_BRAND_PWA_NAME || 'رادار - نقاط البيع والولاء',
   copyrightHolder: import.meta.env.VITE_BRAND_COPYRIGHT || 'منظومة رادار السحابية',
+  isWhiteLabelTenant: Boolean(import.meta.env.VITE_BRAND_NAME && import.meta.env.VITE_BRAND_NAME !== 'رادار'),
 };
 
 /**
