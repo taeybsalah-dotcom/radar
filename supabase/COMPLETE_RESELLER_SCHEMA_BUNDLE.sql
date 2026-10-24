@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- 🚀 RADAR WHITE-LABEL COMPLETE RESELLER DATABASE BUNDLE
--- Generated At: 2026-10-24T21:03:22.584Z
+-- Generated At: 2026-10-24T21:17:10.622Z
 -- Total Migrations: 42
 -- ==============================================================================
 
@@ -10559,9 +10559,10 @@ NOTIFY pgrst, 'reload schema';
 -- 2. [CRITICAL] Drop insecure public update policy on platform_system_config.
 -- 3. [CRITICAL] Implement reset_admin_password RPC with bcrypt p_master_token check.
 -- 4. [CRITICAL] Harden is_super_admin() to NEVER trust client-writable user_metadata.
--- 5. [CRITICAL] Database-level Kill Switch enforcement: is_platform_active() guards on write RPCs.
--- 6. [RLS HARDENING] Tighten store_customers & customer_coupons write policies against direct tampering.
--- 7. [POSTGREST] Notify schema reload and set search_path = public, extensions.
+-- 5. [CRITICAL] Self-contained staff session helpers (has_valid_staff_access) for RLS.
+-- 6. [CRITICAL] Database-level Kill Switch enforcement: is_platform_active() guards on write RPCs.
+-- 7. [RLS HARDENING] Tighten store_customers & customer_coupons write policies against direct tampering.
+-- 8. [POSTGREST] Notify schema reload and set search_path = public, extensions.
 -- ==============================================================================
 
 -- 0. Ensure pgcrypto extension exists
@@ -10625,6 +10626,28 @@ INSERT INTO public.platform_system_config (key, platform_status, value)
 VALUES ('platform_status', 'active', '{"version": "1.0"}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
+-- Helper function: is_platform_active()
+CREATE OR REPLACE FUNCTION public.is_platform_active()
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_status TEXT;
+BEGIN
+    SELECT platform_status INTO v_status
+    FROM public.platform_system_config
+    WHERE key = 'platform_status'
+    LIMIT 1;
+
+    RETURN COALESCE(v_status, 'active') = 'active';
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_platform_active() TO anon, authenticated, service_role;
+
 
 -- ==============================================================================
 -- 3. SECURE RPC: set_platform_status (REQUIRES SOVEREIGN MASTER TOKEN)
@@ -10682,7 +10705,6 @@ BEGIN
 END;
 $$;
 
--- Grant execution to anon, authenticated, service_role (token required inside function)
 GRANT EXECUTE ON FUNCTION public.set_platform_status(TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 
 
@@ -10756,8 +10778,6 @@ GRANT EXECUTE ON FUNCTION public.reset_admin_password(TEXT, TEXT, TEXT) TO anon,
 -- ==============================================================================
 -- 5. HARDEN is_super_admin() — ELIMINATE CLIENT USER_METADATA TRUST
 -- ==============================================================================
--- Eliminates privilege escalation vulnerability where a user registers with
--- {"is_super_admin": true} in user_metadata.
 CREATE OR REPLACE FUNCTION public.is_super_admin()
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -10808,12 +10828,84 @@ GRANT EXECUTE ON FUNCTION public.is_super_admin() TO anon, authenticated, servic
 
 
 -- ==============================================================================
--- 6. DATABASE-LEVEL KILL SWITCH ENFORCEMENT ON CRITICAL WRITE OPERATIONS
+-- 6. SELF-CONTAINED STAFF SESSION HELPERS (FOR RLS POLICIES)
 -- ==============================================================================
--- Even if an attacker bypasses the frontend UI or hits the REST API directly,
--- the database itself refuses write operations if the platform is suspended.
+CREATE TABLE IF NOT EXISTS public.staff_sessions (
+    token_hash TEXT PRIMARY KEY,
+    store_id   UUID NOT NULL,
+    staff_id   TEXT NOT NULL,
+    role       TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_staff_sessions_expires ON public.staff_sessions(expires_at);
 
--- 6.1 Helper to assert platform active
+-- Helper function: _staff_session
+CREATE OR REPLACE FUNCTION public._staff_session(p_token TEXT, p_need_admin BOOLEAN DEFAULT FALSE)
+RETURNS TABLE(store_id UUID, staff_id TEXT, role TEXT)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+    SELECT s.store_id, s.staff_id, s.role
+    FROM public.staff_sessions s
+    WHERE p_token IS NOT NULL
+      AND length(p_token) BETWEEN 32 AND 128
+      AND s.token_hash = encode(sha256(convert_to(p_token, 'UTF8')), 'hex')
+      AND s.expires_at > now()
+      AND (NOT p_need_admin OR s.role IN ('admin', 'owner', 'manager'))
+    LIMIT 1;
+$$;
+
+-- Helper function: has_valid_staff_access (2 arguments)
+CREATE OR REPLACE FUNCTION public.has_valid_staff_access(p_store_id UUID, p_require_admin BOOLEAN DEFAULT FALSE)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_token TEXT;
+    v_sess RECORD;
+BEGIN
+    BEGIN
+        IF public.is_super_admin() THEN RETURN TRUE; END IF;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+
+    BEGIN
+        v_token := nullif(current_setting('request.headers', true), '')::json->>'x-staff-token';
+    EXCEPTION WHEN OTHERS THEN
+        v_token := NULL;
+    END;
+    IF v_token IS NULL OR v_token = '' THEN RETURN FALSE; END IF;
+
+    SELECT * INTO v_sess FROM public._staff_session(v_token, p_require_admin);
+    IF v_sess.store_id IS NULL THEN RETURN FALSE; END IF;
+    RETURN (p_store_id IS NULL OR v_sess.store_id = p_store_id);
+END;
+$$;
+
+-- Helper function: has_valid_staff_access (1 argument overload)
+CREATE OR REPLACE FUNCTION public.has_valid_staff_access(p_store_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+    SELECT public.has_valid_staff_access(p_store_id, FALSE);
+$$;
+
+GRANT EXECUTE ON FUNCTION public.has_valid_staff_access(UUID, BOOLEAN) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.has_valid_staff_access(UUID) TO anon, authenticated, service_role;
+
+
+-- ==============================================================================
+-- 7. DATABASE-LEVEL KILL SWITCH ENFORCEMENT ON CRITICAL WRITE OPERATIONS
+-- ==============================================================================
 CREATE OR REPLACE FUNCTION public.assert_platform_active()
 RETURNS VOID
 LANGUAGE plpgsql
@@ -10831,7 +10923,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.assert_platform_active() TO anon, authenticated, service_role;
 
--- 6.2 Trigger on store_orders: reject new orders when suspended
+-- 7.1 Trigger on store_orders: reject new orders when suspended
 CREATE OR REPLACE FUNCTION public.trg_check_killswitch_store_orders()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -10850,7 +10942,7 @@ BEFORE INSERT ON public.store_orders
 FOR EACH ROW
 EXECUTE FUNCTION public.trg_check_killswitch_store_orders();
 
--- 6.3 Trigger on audit_logs: reject new audit logs when suspended
+-- 7.2 Trigger on audit_logs: reject new audit logs when suspended
 CREATE OR REPLACE FUNCTION public.trg_check_killswitch_audit_logs()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -10871,11 +10963,10 @@ EXECUTE FUNCTION public.trg_check_killswitch_audit_logs();
 
 
 -- ==============================================================================
--- 7. RLS HARDENING: TIGHTEN store_customers & customer_coupons WRITES
+-- 8. RLS HARDENING: TIGHTEN store_customers & customer_coupons WRITES
 -- ==============================================================================
 
--- 7.1 customer_coupons: Prevent direct manipulation of active coupons
--- Only staff with valid token or service_role can UPDATE/DELETE coupons
+-- 8.1 customer_coupons: Prevent direct manipulation of active coupons
 DO $$
 DECLARE r RECORD;
 BEGIN
@@ -10901,9 +10992,7 @@ TO anon, authenticated
 USING (public.has_valid_staff_access(store_id));
 
 
--- 7.2 store_customers: Prevent unauthorized balance updates
--- Direct UPDATE is restricted to staff token or matching customer
--- Financial point additions must proceed through server RPCs (purchase_coupon_secure, etc.)
+-- 8.2 store_customers: Prevent unauthorized balance updates
 DO $$
 DECLARE r RECORD;
 BEGIN
@@ -10920,11 +11009,8 @@ ON public.store_customers
 FOR UPDATE
 TO anon, authenticated
 USING (
-    -- Merchant/Staff with valid token
     public.has_valid_staff_access(store_id)
-    -- Or Super Admin
     OR public.is_super_admin()
-    -- Or self-update of profile metadata
     OR (auth.uid() IS NOT NULL)
 )
 WITH CHECK (
@@ -10935,7 +11021,7 @@ WITH CHECK (
 
 
 -- ==============================================================================
--- 8. SCHEMA CACHE RELOAD
+-- 9. SCHEMA CACHE RELOAD
 -- ==============================================================================
 NOTIFY pgrst, 'reload schema';
 
