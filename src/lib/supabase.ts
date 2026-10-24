@@ -216,6 +216,20 @@ export function clearSupabaseCredentials() {
   localStorage.removeItem(STORAGE_KEYS.ANON_KEY);
 }
 
+function getActiveStaffToken(): string | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('radar_stoken_')) {
+        const t = localStorage.getItem(k);
+        if (t) return t;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 let supabaseInstance: SupabaseClient<Database> | null = null;
 
 export function getSupabaseClient(): SupabaseClient<Database> | null {
@@ -223,7 +237,21 @@ export function getSupabaseClient(): SupabaseClient<Database> | null {
   if (!isConfigured) return null;
   if (!supabaseInstance) {
     try {
-      supabaseInstance = createClient<Database>(url, anonKey);
+      supabaseInstance = createClient<Database>(url, anonKey, {
+        global: {
+          fetch: (input, init) => {
+            const token = getActiveStaffToken();
+            if (token) {
+              const headers = new Headers(init?.headers);
+              if (!headers.has('x-staff-token')) {
+                headers.set('x-staff-token', token);
+              }
+              return fetch(input, { ...init, headers });
+            }
+            return fetch(input, init);
+          },
+        },
+      });
       LoyaltyEvents.initRealtime(supabaseInstance as any);
     } catch (e) {
       console.error('Failed to initialize Supabase client:', e);
@@ -3564,6 +3592,31 @@ export const LoyaltyService = {
 
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        if (customerPhone) {
+          try {
+            const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('get_customer_wallet_public', {
+              p_store_id: resolvedStoreId,
+              p_phone: customerPhone.trim(),
+            });
+            if (!rpcErr && rpcRes && rpcRes.success && Array.isArray(rpcRes.coupons)) {
+              return rpcRes.coupons.map((c: any) => ({
+                id: c.id,
+                coupon_code: c.coupon_code,
+                customer_id: customerId,
+                customer_phone: customerPhone.trim(),
+                store_id: resolvedStoreId,
+                privilege_id: c.privilege_id,
+                privilege_title: c.privilege_title,
+                privilege_image_url: c.privilege_image_url,
+                cost_points: Number(c.cost_points) || 0,
+                status: c.status,
+                valid_start_time: c.valid_start_time,
+                valid_end_time: c.valid_end_time,
+                purchased_at: c.purchased_at,
+              })) as CustomerCoupon[];
+            }
+          } catch {}
+        }
         const couponKey = `${resolvedStoreId}:${customerId}`;
         let query = supabase
           .from('customer_coupons')
@@ -3842,29 +3895,25 @@ export const LoyaltyService = {
           purchased_at: nowIso,
         };
 
-        const [custUpRes, privUpRes, cpnInsRes] = await Promise.all([
-          supabase
-            .from('store_customers')
-            .update({ wallet_balance: newBalance })
-            .eq('id', customerId)
-            .select()
-            .maybeSingle(),
-          supabase
-            .from('privileges')
-            .update({
-              redeemed_count: nextRedeemedCount,
-              is_hidden: isNowSoldOut ? true : privilege.is_hidden,
-            })
-            .eq('id', privilegeId),
-          supabase
-            .from('customer_coupons')
-            .insert([dbCouponPayload])
-            .select('id')
-            .maybeSingle(),
-        ]);
+        // 🛡️ [SEC-PURCHASE] شراء الكوبون عبر RPC ذري بالسيرفر محصن بـ assert_platform_active
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('purchase_coupon_secure', {
+          p_store_id: resolvedStoreId,
+          p_customer_id: customerId,
+          p_privilege_id: privilegeId,
+          p_coupon_code: code,
+        });
 
-        if (cpnInsRes.data && cpnInsRes.data.id) {
-          newCoupon.id = cpnInsRes.data.id;
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          if (rpcRes.coupon_id) newCoupon.id = rpcRes.coupon_id;
+          if (rpcRes.new_balance !== undefined) {
+            updatedCustomer.wallet_balance = Number(rpcRes.new_balance);
+          }
+        } else {
+          const errCode = rpcRes?.error || rpcErr?.message;
+          if (errCode === 'INSUFFICIENT_POINTS') throw new Error('رصيد نقاطك غير كافٍ');
+          if (errCode === 'SOLD_OUT') throw new Error('نفدت الكمية المتاحة من هذه المكافأة');
+          if (errCode === 'LIMIT_REACHED') throw new Error('وصلت للحد الأقصى المسموح به لهذه المكافأة');
+          throw new Error(rpcRes?.message || errCode || 'تعذر استبدال النقاط بالمكافأة');
         }
       } catch (e) {
         console.warn('purchaseCoupon: fast write failed', e);
@@ -4083,20 +4132,20 @@ export const LoyaltyService = {
           updatePayload.branch_id = branchId;
         }
 
-        // 🛡️ تنفيذ التحديث كـ Atomic Transaction بشرط أن تكون الحالة ACTIVE لمنع التكرار
-        const { data: updatedRows, error: updateErr } = await supabase
-          .from('customer_coupons')
-          .update(updatePayload)
-          .eq('id', coupon.id)
-          .eq('status', 'ACTIVE')
-          .select('id');
+        // 🛡️ [SEC-REDEEM] استهلاك الكوبون عبر RPC ذري بالسيرفر مؤمن بالتوكن
+        const staffToken = this.getStaffToken(resolvedStoreId, 'any') || getActiveStaffToken();
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('redeem_coupon_secure', {
+          p_store_id: resolvedStoreId,
+          p_coupon_code: coupon.coupon_code || coupon.id,
+          p_staff_token: staffToken || null,
+          p_staff_id: isUUID(staffId) ? staffId : null,
+          p_staff_name: staffName || null,
+          p_branch_id: branchId && isUUID(branchId) ? branchId : null,
+          p_branch_name: branchName || null,
+        });
 
-        if (updateErr) {
-          console.error('Supabase atomic update customer_coupons error:', updateErr);
-        }
-
-        if (updatedRows && updatedRows.length === 0) {
-          throw new Error('هذا الكوبون محروق وتم استخدامه مسبقاً');
+        if (rpcErr || (rpcRes && rpcRes.success === false)) {
+          throw new Error(rpcRes?.message || rpcErr?.message || 'هذا الكوبون محروق وتم استخدامه مسبقاً');
         }
 
         await (supabase as any).from('audit_logs').insert([
@@ -4634,6 +4683,33 @@ export const LoyaltyService = {
     if (supabase && isUUID(resolvedId)) {
       try {
         const cleanPhone = phone.trim();
+        // 🛡️ [SEC-WALLET] قراءة آمنة عبر RPC معزول ومحصن يمنع سحب بيانات العملاء
+        try {
+          const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('get_customer_wallet_public', {
+            p_store_id: resolvedId,
+            p_phone: cleanPhone,
+          });
+
+          if (!rpcErr && rpcRes && rpcRes.success && rpcRes.customer) {
+            const cust = rpcRes.customer;
+            return {
+              id: cust.id,
+              store_id: cust.store_id,
+              phone: cust.phone,
+              name: cust.name || 'عميل مميز',
+              special_date: cust.special_date || null,
+              special_date_type: cust.special_date_type || 'يوم ميلادي',
+              wallet_balance: Number(cust.wallet_balance) || 0,
+              lifetime_xp: Number(cust.lifetime_xp) || 0,
+              last_visit_date: cust.last_visit_date ? cust.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
+              is_active: cust.is_active !== undefined ? cust.is_active : true,
+              visits_count: cust.visits_count || 1,
+              created_at: cust.created_at,
+            } as Customer;
+          }
+        } catch {
+          /* Fallback to direct query below for staff token */
+        }
         const candidatePhones = Array.from(
           new Set([
             cleanPhone,
@@ -4808,6 +4884,19 @@ export const LoyaltyService = {
             }
             saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, customers);
             return updated;
+          } else if (error) {
+            // 🛡️ [SEC-PROFILE] تحديث الاسم وتاريخ الميلاد بأمان للعميل عبر RPC
+            const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
+            const currentCust = localCustomers.find((c) => c.id === customerId);
+            if (currentCust?.store_id && currentCust?.phone) {
+              await (supabase as any).rpc('update_customer_profile_public', {
+                p_store_id: currentCust.store_id,
+                p_phone: currentCust.phone,
+                p_name: updates.name || null,
+                p_special_date: (updates as any).special_date || null,
+                p_special_date_type: (updates as any).special_date_type || null,
+              });
+            }
           }
         }
       } catch (e) {
@@ -4987,6 +5076,33 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        // 🛡️ [SEC-REG] تسجيل عميل جديد بأمان عبر RPC لمنع التلاعب برصيد الترحيب
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('register_or_get_customer_wallet', {
+          p_store_id: resolvedStoreId,
+          p_phone: normInput,
+          p_name: customerName,
+        });
+
+        if (!rpcErr && rpcRes && rpcRes.success && rpcRes.customer) {
+          const data = rpcRes.customer;
+          createdCust = {
+            id: data.id,
+            store_id: data.store_id,
+            phone: data.phone,
+            name: data.name || customerName,
+            wallet_balance: Number(data.wallet_balance) || 0,
+            lifetime_xp: Number(data.lifetime_xp) || 0,
+            last_visit_date: data.last_visit_date ? data.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
+            is_active: true,
+            visits_count: 1,
+            created_at: data.created_at,
+          };
+          const customers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
+          saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, [createdCust, ...customers.filter((c) => c.id !== createdCust.id)]);
+          LoyaltyEvents.emit({ type: 'CUSTOMER_UPDATED', storeId: resolvedStoreId, phone: data.phone });
+          return createdCust;
+        }
+
         const { data, error } = await supabase
           .from('store_customers')
           .insert([dbPayload])
@@ -5335,60 +5451,87 @@ export const LoyaltyService = {
           .limit(1)
           .maybeSingle();
 
-        if (matchedCust) {
-          const newLifetime = (matchedCust.lifetime_xp || 0) + pointsEarned;
-          const newBalance = (matchedCust.wallet_balance || 0) + pointsEarned;
-          const updatePayload: any = {
-            lifetime_xp: newLifetime,
-            wallet_balance: newBalance,
+        // 🛡️ [SEC-POINTS] إضافة النقاط عبر دالة RPC سيرفرية مؤمنة بالتوكن
+        const staffToken = this.getStaffToken(resolvedStoreId, 'any') || getActiveStaffToken();
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('add_customer_points_secure', {
+          p_store_id: resolvedStoreId,
+          p_phone: phone.trim(),
+          p_points: pointsEarned,
+          p_staff_token: staffToken || null,
+          p_customer_name: (globalName && globalName !== 'عميل مميز') ? globalName : null,
+          p_purchase_amount: amount,
+          p_invoice_number: note || null,
+        });
+
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          supabaseUpdatedCust = {
+            id: rpcRes.customer_id,
+            store_id: resolvedStoreId,
+            phone: rpcRes.phone || phone.trim(),
+            name: rpcRes.name || globalName || 'عميل مميز',
+            wallet_balance: rpcRes.new_balance,
+            lifetime_xp: rpcRes.lifetime_xp,
             last_visit_date: new Date().toISOString(),
-          };
-          if (
-            (!matchedCust.name || matchedCust.name === 'عميل' || matchedCust.name === 'عميل مميز') &&
-            globalName &&
-            globalName !== 'عميل مميز'
-          ) {
-            updatePayload.name = globalName;
-          }
-
-          const { data: updatedData } = await supabase
-            .from('store_customers')
-            .update(updatePayload)
-            .eq('id', matchedCust.id)
-            .select()
-            .single();
-
-          if (updatedData) supabaseUpdatedCust = updatedData as Customer;
+            is_active: true,
+            visits_count: 1,
+            created_at: new Date().toISOString(),
+          } as Customer;
         } else {
-          // تسجيل العميل تلقائياً في هذا المتجر مع الحفاظ على اسمه المسجل
-          const { data: insertedData } = await supabase
-            .from('store_customers')
-            .insert([
-              {
-                store_id: resolvedStoreId,
-                phone: phone.trim(),
-                name: globalName,
-                lifetime_xp: pointsEarned,
-                wallet_balance: pointsEarned,
-                last_visit_date: new Date().toISOString(),
-              },
-            ])
-            .select()
-            .single();
-
-          if (insertedData) {
-            supabaseUpdatedCust = {
-              id: insertedData.id,
-              store_id: insertedData.store_id,
-              phone: insertedData.phone,
-              name: insertedData.name || globalName,
-              wallet_balance: Number(insertedData.wallet_balance) || 0,
-              lifetime_xp: Number(insertedData.lifetime_xp) || 0,
-              last_visit_date: insertedData.last_visit_date || new Date().toISOString(),
-              is_active: true,
-              visits_count: 1,
-              created_at: insertedData.created_at,
+          // Fallback if RPC not yet deployed
+          if (matchedCust) {
+            const newLifetime = (matchedCust.lifetime_xp || 0) + pointsEarned;
+            const newBalance = (matchedCust.wallet_balance || 0) + pointsEarned;
+            const updatePayload: any = {
+              lifetime_xp: newLifetime,
+              wallet_balance: newBalance,
+              last_visit_date: new Date().toISOString(),
             };
+            if (
+              (!matchedCust.name || matchedCust.name === 'عميل' || matchedCust.name === 'عميل مميز') &&
+              globalName &&
+              globalName !== 'عميل مميز'
+            ) {
+              updatePayload.name = globalName;
+            }
+
+            const { data: updatedData } = await supabase
+              .from('store_customers')
+              .update(updatePayload)
+              .eq('id', matchedCust.id)
+              .select()
+              .single();
+
+            if (updatedData) supabaseUpdatedCust = updatedData as Customer;
+          } else {
+            const { data: insertedData } = await supabase
+              .from('store_customers')
+              .insert([
+                {
+                  store_id: resolvedStoreId,
+                  phone: phone.trim(),
+                  name: globalName,
+                  lifetime_xp: pointsEarned,
+                  wallet_balance: pointsEarned,
+                  last_visit_date: new Date().toISOString(),
+                },
+              ])
+              .select()
+              .single();
+
+            if (insertedData) {
+              supabaseUpdatedCust = {
+                id: insertedData.id,
+                store_id: insertedData.store_id,
+                phone: insertedData.phone,
+                name: insertedData.name || globalName,
+                wallet_balance: Number(insertedData.wallet_balance) || 0,
+                lifetime_xp: Number(insertedData.lifetime_xp) || 0,
+                last_visit_date: insertedData.last_visit_date || new Date().toISOString(),
+                is_active: true,
+                visits_count: 1,
+                created_at: insertedData.created_at,
+              };
+            }
           }
         }
 
@@ -8007,6 +8150,39 @@ export const LoyaltyService = {
 
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        // 🛡️ [SEC-POINTS] إضافة النقاط عبر دالة RPC سيرفرية مؤمنة بـ staff_token لمنع التلاعب
+        const staffToken = this.getStaffToken(resolvedStoreId, 'any') || getActiveStaffToken();
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('add_customer_points_secure', {
+          p_store_id: resolvedStoreId,
+          p_phone: cleanPhone,
+          p_points: pointsEarned,
+          p_staff_token: staffToken || null,
+          p_customer_name: customerName || null,
+          p_purchase_amount: purchaseAmount || null,
+          p_invoice_number: reason || null,
+        });
+
+        if (!rpcErr && rpcRes && rpcRes.success) {
+          LoyaltyEvents.emit({
+            type: 'POINTS_ADDED',
+            storeId: resolvedStoreId,
+            phone: rpcRes.phone || cleanPhone,
+            points: pointsEarned,
+            newBalance: rpcRes.new_balance,
+          });
+          LoyaltyEvents.emit({
+            type: 'CUSTOMER_UPDATED',
+            storeId: resolvedStoreId,
+            phone: rpcRes.phone || cleanPhone,
+          });
+          LoyaltyEvents.emit({
+            type: 'WALLET_UPDATED',
+            storeId: resolvedStoreId,
+            phone: rpcRes.phone || cleanPhone,
+          });
+          return true;
+        }
+
         const { data: matchedCust } = await supabase
           .from('store_customers')
           .select('*')
