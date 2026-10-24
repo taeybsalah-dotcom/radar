@@ -306,7 +306,10 @@ AS $$
     LIMIT 1;
 $$;
 
--- Helper function: has_valid_staff_access (2 arguments)
+-- Drop standalone 1-argument signature to prevent ambiguous overload conflict
+DROP FUNCTION IF EXISTS public.has_valid_staff_access(UUID);
+
+-- Helper function: has_valid_staff_access (Single signature with default FALSE)
 CREATE OR REPLACE FUNCTION public.has_valid_staff_access(p_store_id UUID, p_require_admin BOOLEAN DEFAULT FALSE)
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -336,19 +339,7 @@ BEGIN
 END;
 $$;
 
--- Helper function: has_valid_staff_access (1 argument overload)
-CREATE OR REPLACE FUNCTION public.has_valid_staff_access(p_store_id UUID)
-RETURNS BOOLEAN
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public, extensions
-AS $$
-    SELECT public.has_valid_staff_access(p_store_id, FALSE);
-$$;
-
 GRANT EXECUTE ON FUNCTION public.has_valid_staff_access(UUID, BOOLEAN) TO anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.has_valid_staff_access(UUID) TO anon, authenticated, service_role;
 
 
 -- ==============================================================================
@@ -430,14 +421,14 @@ CREATE POLICY customer_coupons_update_staff_token
 ON public.customer_coupons
 FOR UPDATE
 TO anon, authenticated
-USING (public.has_valid_staff_access(store_id))
-WITH CHECK (public.has_valid_staff_access(store_id));
+USING (public.has_valid_staff_access(store_id, FALSE))
+WITH CHECK (public.has_valid_staff_access(store_id, FALSE));
 
 CREATE POLICY customer_coupons_delete_staff_token
 ON public.customer_coupons
 FOR DELETE
 TO anon, authenticated
-USING (public.has_valid_staff_access(store_id));
+USING (public.has_valid_staff_access(store_id, FALSE));
 
 
 -- 8.2 store_customers: Prevent unauthorized balance updates
@@ -457,12 +448,12 @@ ON public.store_customers
 FOR UPDATE
 TO anon, authenticated
 USING (
-    public.has_valid_staff_access(store_id)
+    public.has_valid_staff_access(store_id, FALSE)
     OR public.is_super_admin()
     OR (auth.uid() IS NOT NULL)
 )
 WITH CHECK (
-    public.has_valid_staff_access(store_id)
+    public.has_valid_staff_access(store_id, FALSE)
     OR public.is_super_admin()
     OR (auth.uid() IS NOT NULL)
 );
