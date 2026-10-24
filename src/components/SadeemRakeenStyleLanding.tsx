@@ -177,7 +177,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-700/60 p-1 flex items-center justify-center shadow-lg shadow-[#00A3E0]/10 overflow-hidden">
-              <img src="/sadeem-logo.jpg" alt={tenant.brandName} className="w-full h-full object-cover rounded-xl" />
+              <img src={tenant.logoUrl || "/radar-logo-dark.jpg"} alt={tenant.brandName} className="w-full h-full object-cover rounded-xl" />
             </div>
             <div>
               <span className="text-xl font-black text-white tracking-wide block">
@@ -358,7 +358,7 @@ export const SadeemRakeenStyleLanding: React.FC = () => {
           
           <div className="text-center space-y-2">
             <div className="w-16 h-16 rounded-2xl bg-slate-950 border border-slate-700/80 p-1 mx-auto flex items-center justify-center shadow-xl shadow-[#00A3E0]/15 overflow-hidden">
-              <img src="/sadeem-logo.jpg" alt={tenant.brandName} className="w-full h-full object-cover rounded-xl" />
+              <img src={tenant.logoUrl || "/radar-logo-dark.jpg"} alt={tenant.brandName} className="w-full h-full object-cover rounded-xl" />
             </div>
             
             <h2 className="text-2xl sm:text-3xl font-black text-white pt-2">
