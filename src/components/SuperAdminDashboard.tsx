@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Store, StoreOnboardingPayload, MerchantLead, LeadStatus, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage, getStoreUnifiedStage } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
+import { getActiveTenantConfig } from '../config/tenant';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
@@ -349,7 +350,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [pinError, setPinError] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = 'RADAR';
+    const tenant = getActiveTenantConfig(); document.title = `لوحة المالك | ${tenant.brandName}`;
   }, []);
 
   useEffect(() => {
