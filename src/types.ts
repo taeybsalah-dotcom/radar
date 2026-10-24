@@ -46,6 +46,23 @@ export interface StoreWallet {
   updated_at?: string;
 }
 
+export interface PlatformIntegrationsConfig {
+  id?: string;
+  telegram_bot_token?: string;
+  telegram_admin_chat_id?: string;
+  telegram_enabled: boolean;
+  gemini_api_key?: string;
+  gemini_model: string;
+  gemini_enabled: boolean;
+  whatsapp_provider: 'meta' | 'ultramsg' | 'custom';
+  whatsapp_phone_number_id?: string;
+  whatsapp_waba_id?: string;
+  whatsapp_access_token?: string;
+  whatsapp_instance_id?: string;
+  whatsapp_enabled: boolean;
+  updated_at?: string;
+}
+
 export type StoreSubscriptionStatus = 'trial' | 'active' | 'past_due' | 'suspended' | 'cancelled';
 
 // 🏛️ Unified 5-Stage Status Pipeline (Standardized across all dashboards & database)

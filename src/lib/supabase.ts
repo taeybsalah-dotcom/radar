@@ -46,6 +46,7 @@ import {
   POSRefundItem,
   POSCashMovement,
   POSCartDiscount,
+  PlatformIntegrationsConfig,
 } from '../types';
 import { generateZatcaTLVQR } from './zatcaQR';
 import {
@@ -932,16 +933,29 @@ async function sendTelegramNotification(
     }
     
     if (targetChatId && enabled) {
-      fetch('https://radar-telegram-bot.taeybsalah.workers.dev/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          chatId: targetChatId, 
-          text: message,
-          replyMarkup: replyMarkup || null,
-          metadata: metadata || null,
-        })
-      }).catch(err => console.error('Telegram API fetch error:', err));
+      const platformCfg = await LoyaltyService.getPlatformIntegrations().catch(() => null);
+      if (platformCfg?.telegram_bot_token && platformCfg.telegram_enabled !== false) {
+        fetch(`https://api.telegram.org/bot${platformCfg.telegram_bot_token.trim()}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: targetChatId,
+            text: message,
+            reply_markup: replyMarkup || undefined,
+          }),
+        }).catch(err => console.error('[Proprietary Telegram Bot] send error:', err));
+      } else {
+        fetch('https://radar-telegram-bot.taeybsalah.workers.dev/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            chatId: targetChatId, 
+            text: message,
+            replyMarkup: replyMarkup || null,
+            metadata: metadata || null,
+          })
+        }).catch(err => console.error('Telegram API fetch error:', err));
+      }
     }
   } catch (err) {
     console.error('Telegram notification error:', err);
@@ -1623,6 +1637,50 @@ export const LoyaltyService = {
     invalidateAdminStoresCache();
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId });
     return true;
+  },
+
+  // 3.3 إدارة التكاملات والمفاتيح السحابية للمنصة (Platform Integrations & APIs)
+  async getPlatformIntegrations(): Promise<PlatformIntegrationsConfig> {
+    const defaultCfg: PlatformIntegrationsConfig = {
+      telegram_bot_token: '',
+      telegram_admin_chat_id: '',
+      telegram_enabled: false,
+      gemini_api_key: '',
+      gemini_model: 'gemini-1.5-flash',
+      gemini_enabled: false,
+      whatsapp_provider: 'meta',
+      whatsapp_phone_number_id: '',
+      whatsapp_waba_id: '',
+      whatsapp_access_token: '',
+      whatsapp_instance_id: '',
+      whatsapp_enabled: false,
+    };
+    const supabase = getSupabaseClient();
+    if (!supabase) return defaultCfg;
+    try {
+      const { data, error } = await (supabase.from as any)('platform_integrations').select('*').limit(1).maybeSingle();
+      if (error || !data) return defaultCfg;
+      return { ...defaultCfg, ...data };
+    } catch {
+      return defaultCfg;
+    }
+  },
+
+  async updatePlatformIntegrations(payload: Partial<PlatformIntegrationsConfig>): Promise<{ success: boolean; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: 'تعذر الاتصال بقاعدة البيانات' };
+    try {
+      const current = await this.getPlatformIntegrations();
+      const updated = { ...current, ...payload, updated_at: new Date().toISOString() };
+      
+      const { error } = await (supabase.from as any)('platform_integrations').upsert(updated);
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'حدث خطأ أثناء حفظ الإعدادات' };
+    }
   },
 
   // 3.2 تفريغ وحذف جميع المتاجر والبيانات بالكامل (Hard Reset)

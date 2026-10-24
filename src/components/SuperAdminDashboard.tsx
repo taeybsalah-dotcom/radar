@@ -57,6 +57,7 @@ import confetti from 'canvas-confetti';
 import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
 import { SuperAdminPartnersConsole } from './SuperAdminPartnersConsole';
 import { SuperAdminBillingConsole } from './SuperAdminBillingConsole';
+import { SuperAdminIntegrationsHub } from './SuperAdminIntegrationsHub';
 import { SendNotificationModal } from './SendNotificationModal';
 import { NotificationBell } from './NotificationBell';
 import { clearAllInboxNotifications } from '../lib/notifications';
@@ -67,14 +68,14 @@ interface SuperAdminDashboardProps {
 }
 
 export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSelectStore }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'stores' | 'partners' | 'billing'>(() => {
+  const [activeSubTab, setActiveSubTab] = useState<'stores' | 'partners' | 'billing' | 'integrations'>(() => {
     if (typeof window === 'undefined') return 'stores';
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get('tab');
     return tabParam === 'partners' || tabParam === 'billing' ? tabParam : 'stores';
   });
 
-  const handleSubTabChange = (newTab: 'stores' | 'partners' | 'billing') => {
+  const handleSubTabChange = (newTab: 'stores' | 'partners' | 'billing' | 'integrations') => {
     setActiveSubTab(newTab);
     const url = new URL(window.location.href);
     if (newTab === 'partners' || newTab === 'billing') {
@@ -1152,10 +1153,25 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
           <CreditCard className="w-4 h-4 text-amber-400" />
           <span>الفوترة والاشتراكات (Billing) 💳</span>
         </button>
+        <button
+          onClick={() => handleSubTabChange('integrations')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+            activeSubTab === 'integrations'
+              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <KeyRound className="w-4 h-4 text-amber-400" />
+          <span>التكاملات ومفاتيح الربط (APIs & Bot) ⚙️</span>
+        </button>
       </div>
 
       <div className={activeSubTab === 'partners' ? 'block' : 'hidden'}>
         <SuperAdminPartnersConsole />
+      </div>
+
+            <div className={activeSubTab === 'integrations' ? 'block' : 'hidden'}>
+        <SuperAdminIntegrationsHub />
       </div>
 
       <div className={activeSubTab === 'billing' ? 'block' : 'hidden'}>
