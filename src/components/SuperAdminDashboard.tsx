@@ -955,7 +955,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       <div className="max-w-md mx-auto py-12 px-4 animate-fade-in text-center">
         <div className="rounded-3xl p-8 bg-slate-900/90 border-2 border-amber-500/40 shadow-2xl backdrop-blur-2xl space-y-6">
           <div className="w-20 h-20 mx-auto rounded-3xl p-1 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-2xl shadow-cyan-500/20">
-            <img src="/radar-logo-dark.jpg" alt="RADAR" className="w-full h-full object-cover rounded-[22px]" />
+            <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-[22px]" />
           </div>
 
           <div className="space-y-2">
@@ -1053,12 +1053,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-x-4 rtl:space-x-reverse flex items-start">
             <div className="w-14 h-14 rounded-2xl p-0.5 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-lg shadow-cyan-500/20 flex-shrink-0">
-              <img src="/radar-logo-dark.jpg" alt="RADAR" className="w-full h-full object-cover rounded-[14px]" />
+              <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-[14px]" />
             </div>
             <div>
               <div className="flex items-center space-x-2 rtl:space-x-reverse">
                 <h2 className="text-xl sm:text-2xl font-black text-white">
-                  بوابة المالك | Super Admin Dashboard
+                  بوابة المالك | {getActiveTenantConfig().brandName}
                 </h2>
                 <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
                   Concierge SaaS

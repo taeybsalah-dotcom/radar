@@ -2,31 +2,50 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236366f1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6'/%3E%3C/svg%3E" id="app-favicon" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Radar</title>
+    <title>منصة الولاء والمبيعات الذكية</title>
     <link rel="manifest" href="/api/manifest" id="app-manifest" />
     <meta name="theme-color" content="#0B0F17" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Radar" />
+    <meta name="apple-mobile-web-app-title" content="المنصة السحابية" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <!-- ⚡ Instant Zero-Flicker Branding Hydration Script (Runs before HTML paints) -->
+    <script>
+      (function() {
+        try {
+          var cached = localStorage.getItem('radar_cached_tenant_branding');
+          if (cached) {
+            var b = JSON.parse(cached);
+            if (b.brand_name) {
+              document.title = b.brand_name;
+            }
+            if (b.favicon_url || b.logo_url) {
+              var fav = document.getElementById('app-favicon');
+              if (fav) fav.href = b.favicon_url || b.logo_url;
+            }
+          }
+        } catch(e) {}
+      })();
+    </script>
+
     <script>
       // Global error listener to prevent silent black screen
       window.addEventListener('error', function(e) {
-        console.error('Radar Window Error:', e);
+        console.error('Platform Window Error:', e);
         var root = document.getElementById('root');
-        if (root && (!root.innerHTML || root.innerHTML.indexOf('radar-preloader') !== -1)) {
+        if (root && (!root.innerHTML || root.innerHTML.indexOf('platform-preloader') !== -1)) {
           var errMsg = (e && e.message) ? e.message : 'حدث خطأ أثناء تحميل الحزم البرمجية';
           root.innerHTML = '<div style="min-height:100vh;background:#080B11;color:#fff;display:flex;align-items:center;justify-content:center;padding:20px;font-family:Cairo,sans-serif;text-align:center;direction:rtl;">' +
             '<div style="max-width:440px;width:100%;background:#0F172A;border:1px solid rgba(239,68,68,0.4);border-radius:24px;padding:28px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">' +
               '<div style="font-size:36px;margin-bottom:12px;">⚠️</div>' +
-              '<h2 style="font-size:18px;font-weight:900;margin-bottom:8px;color:#fff;">تحديث منصة رادار</h2>' +
-              '<p style="font-size:12px;color:#94A3B8;margin-bottom:16px;line-height:1.6;">تم نشر تحديث جديد للمنصة. يرجى الضغط على الزر لتحديث المتصفح ومسح الذاكرة المؤقتة.</p>' +
+              '<h2 style="font-size:18px;font-weight:900;margin-bottom:8px;color:#fff;">تحديث المنصة السحابية</h2>' +
+              '<p style="font-size:12px;color:#94A3B8;margin-bottom:16px;line-height:1.6;">تم نشر تحديث جديد. يرجى الضغط على الزر لتحديث المتصفح ومسح الذاكرة المؤقتة.</p>' +
               '<div style="background:#020617;padding:10px;border-radius:12px;font-family:monospace;font-size:10px;color:#FCA5A5;margin-bottom:16px;text-align:left;direction:ltr;overflow:auto;max-height:80px;">' + errMsg + '</div>' +
               '<button onclick="localStorage.clear();sessionStorage.clear();if(window.caches){caches.keys().then(function(keys){keys.forEach(function(k){caches.delete(k);});});}window.location.reload(true);" style="width:100%;background:#F59E0B;color:#000;border:none;border-radius:14px;padding:12px;font-weight:900;font-size:13px;cursor:pointer;font-family:Cairo,sans-serif;">🔄 تحديث فوري ومسح الكاش</button>' +
             '</div>' +
@@ -34,101 +53,57 @@
         }
       });
       
-      // Register Radar Web Push Service Worker
+      // Register Web Push Service Worker
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', function() {
           navigator.serviceWorker.register('/sw.js', { scope: '/' })
-            .then(function(reg) {
-              console.log('[Radar SW] Registered successfully with scope:', reg.scope);
-            })
             .catch(function(err) {
-              console.warn('[Radar SW] Registration error:', err);
+              console.warn('[SW] Registration error:', err);
             });
         });
       }
     </script>
-    <script type="module" crossorigin src="/assets/index-TGCldLx2.js"></script>
+    <script type="module" crossorigin src="/assets/index-92GNoUsg.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-Cs0SUoAF.css">
   </head>
   <body class="bg-[#0B0F17] text-slate-100 font-sans min-h-screen antialiased selection:bg-amber-500 selection:text-black">
     <div id="root">
       <!-- Instant White-Label Preloader (replaces blank black screen while scripts load) -->
-      <div id="radar-preloader" style="min-height:100vh;background:#080B11;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#F8FAFC;font-family:Cairo,sans-serif;direction:rtl;padding:20px;">
+      <div id="platform-preloader" style="min-height:100vh;background:#080B11;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#F8FAFC;font-family:Cairo,sans-serif;direction:rtl;padding:20px;">
         <div style="display:flex;flex-direction:column;align-items:center;gap:16px;text-align:center;">
-          <div id="preloader-logo-container" style="width:68px;height:68px;border-radius:24px;background:linear-gradient(135deg,#F59E0B,#FCD34D);display:flex;align-items:center;justify-content:center;font-size:32px;box-shadow:0 10px 25px -5px rgba(245,158,11,0.4);font-weight:900;animation:pulse 2s infinite;overflow:hidden;">
+          <div id="preloader-logo-container" style="width:68px;height:68px;border-radius:24px;background:linear-gradient(135deg,#6366F1,#4338CA);display:flex;align-items:center;justify-content:center;font-size:32px;box-shadow:0 10px 25px -5px rgba(99,102,241,0.4);font-weight:900;animation:pulse 2s infinite;overflow:hidden;">
             ⚡
           </div>
           <div>
-            <h1 id="preloader-title" style="font-size:22px;font-weight:900;letter-spacing:1px;margin:0;color:#fff;">رادار | RADAR</h1>
-            <p id="preloader-subtitle" style="font-size:12px;color:#94A3B8;margin-top:4px;margin-bottom:0;">محرك الولاء والمكافآت الذكي</p>
+            <h1 id="preloader-title" style="font-size:20px;font-weight:900;letter-spacing:1px;margin:0;color:#fff;">المنصة السحابية</h1>
+            <p id="preloader-subtitle" style="font-size:12px;color:#94A3B8;margin-top:4px;margin-bottom:0;">منظومة الولاء والمبيعات الذكية</p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;background:rgba(15,23,42,0.8);border:1px solid #1E293B;padding:8px 16px;border-radius:999px;font-size:11px;color:#CBD5E1;margin-top:8px;">
-            <div id="preloader-spinner" style="width:12px;height:12px;border:2px solid #F59E0B;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;"></div>
+            <div id="preloader-spinner" style="width:12px;height:12px;border:2px solid #6366F1;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;"></div>
             <span id="preloader-status-text">جاري تشغيل المنصة...</span>
           </div>
         </div>
       </div>
       <script>
-        // ⚡ Instant White-label Branding Hydration (0ms overhead before React mounts)
+        // ⚡ Neutral Instant Hydration from Cached Tenant Branding
         (function() {
           try {
-            var search = window.location.search || '';
-            var pathname = (window.location.pathname || '').toLowerCase();
-            var urlParams = new URLSearchParams(search);
-            var storeParam = urlParams.get('store');
-            var portalParam = (urlParams.get('portal') || '').toLowerCase();
-            var isPlatformPortal = pathname === '/super-admin' || pathname === '/owner' || pathname === '/admin' || pathname === '/partner' || pathname === '/join' || portalParam === 'super-admin' || portalParam === 'partner' || portalParam === 'join';
-
-            if (isPlatformPortal && !storeParam) return;
-
-            var rawBranding = sessionStorage.getItem('radar_active_store_branding') || localStorage.getItem('radar_active_store_branding');
-            var branding = null;
-            if (rawBranding) {
-              try { branding = JSON.parse(rawBranding); } catch(e) {}
-            }
-
-            // Fallback: If URL has a specific store slug differing from cached branding, inspect local stores list
-            if (storeParam && (!branding || (branding.slug !== storeParam && branding.id !== storeParam))) {
-              var rawList = localStorage.getItem('radar_local_stores');
-              if (rawList) {
-                try {
-                  var stores = JSON.parse(rawList);
-                  for (var i = 0; i < stores.length; i++) {
-                    if (stores[i].slug === storeParam || stores[i].id === storeParam) {
-                      branding = stores[i];
-                      break;
-                    }
-                  }
-                } catch(e) {}
+            var raw = localStorage.getItem('radar_cached_tenant_branding');
+            if (raw) {
+              var b = JSON.parse(raw);
+              if (b.brand_name) {
+                var titleEl = document.getElementById('preloader-title');
+                if (titleEl) titleEl.textContent = b.brand_name;
+              }
+              if (b.logo_url) {
+                var logoContainer = document.getElementById('preloader-logo-container');
+                if (logoContainer) {
+                  logoContainer.style.background = b.primary_color_hex || '#0F172A';
+                  logoContainer.innerHTML = '<img src="' + b.logo_url + '" alt="' + (b.brand_name || '') + '" style="width:100%;height:100%;object-fit:cover;border-radius:22px;" onerror="this.onerror=null;this.parentElement.textContent=\'⚡\';" />';
+                }
               }
             }
-
-            if (branding && branding.name) {
-              var titleEl = document.getElementById('preloader-title');
-              var subtitleEl = document.getElementById('preloader-subtitle');
-              var logoContainer = document.getElementById('preloader-logo-container');
-              var spinner = document.getElementById('preloader-spinner');
-
-              if (titleEl) titleEl.textContent = branding.name;
-              if (subtitleEl) subtitleEl.textContent = 'أهلاً بك في ' + branding.name;
-
-              if (branding.secondary_color && spinner) {
-                spinner.style.borderColor = branding.secondary_color;
-                spinner.style.borderTopColor = 'transparent';
-              }
-
-              if (branding.logo_url && logoContainer) {
-                logoContainer.style.background = branding.primary_color || '#0F172A';
-                logoContainer.style.boxShadow = '0 10px 25px -5px rgba(0,0,0,0.5)';
-                logoContainer.innerHTML = '<img src="' + branding.logo_url + '" alt="' + branding.name + '" style="width:100%;height:100%;object-fit:cover;border-radius:22px;" onerror="this.onerror=null;this.parentElement.textContent=\'🏪\';" />';
-              } else if (logoContainer) {
-                logoContainer.style.background = branding.primary_color || 'linear-gradient(135deg,#3B82F6,#1D4ED8)';
-                logoContainer.textContent = branding.name.charAt(0);
-              }
-            }
-          } catch(e) {
-            console.warn('[Preloader Branding Hydration]', e);
-          }
+          } catch(e) {}
         })();
       </script>
       <style>

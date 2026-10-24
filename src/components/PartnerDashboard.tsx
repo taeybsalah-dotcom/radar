@@ -14,6 +14,7 @@ import { LoyaltyService, getSupabaseClient, normalizeLead, normalizePhone, withT
 import { LoyaltyEvents } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
+import { getActiveTenantConfig } from '../config/tenant';
 import { QRCodeSVG } from 'qrcode.react';
 import { NotificationBell } from './NotificationBell';
 import { clearAllInboxNotifications } from '../lib/notifications';
@@ -816,7 +817,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
         <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl backdrop-blur-xl">
           <div className="text-center space-y-3">
             <div className="w-20 h-20 mx-auto rounded-3xl p-1 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-2xl shadow-cyan-500/20">
-              <img src="/radar-logo-dark.jpg" alt="RADAR" className="w-full h-full object-cover rounded-[22px]" />
+              <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-[22px]" />
             </div>
             <div>
               <h2 className="text-xl font-black text-white">بوابة شركاء المبيعات | Partner Portal</h2>
@@ -904,7 +905,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl p-0.5 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-lg shadow-cyan-500/20 flex-shrink-0">
-            <img src="/radar-logo-dark.jpg" alt="RADAR" className="w-full h-full object-cover rounded-[14px]" />
+            <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-[14px]" />
           </div>
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
