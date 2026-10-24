@@ -50,6 +50,7 @@ import handlerReactivationCustomers from '../src/api-handlers/reactivation/custo
 import handlerReactivationSegments from '../src/api-handlers/reactivation/segments';
 import handlerReactivationSend from '../src/api-handlers/reactivation/send';
 import handlerReactivationTemplates from '../src/api-handlers/reactivation/templates';
+import handlerMasterManageResellerUser from '../src/api-handlers/admin/master-manage-reseller-user';
 
 declare const process: any;
 
@@ -99,6 +100,7 @@ const routes: Record<string, (req: any, res: any) => any> = {
   '/api/reactivation/segments': handlerReactivationSegments,
   '/api/reactivation/send': handlerReactivationSend,
   '/api/reactivation/templates': handlerReactivationTemplates,
+  '/api/admin/master-manage-reseller-user': handlerMasterManageResellerUser,
 };
 
 export default async function handler(req: any, res: any) {
