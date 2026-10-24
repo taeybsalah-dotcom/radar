@@ -1266,7 +1266,7 @@ export function App() {
               </div>
             ) : (
               <div className="flex items-center space-x-3 rtl:space-x-reverse text-slate-400 font-mono text-[11px]">
-                <span>لوحة التحكم المركزية لمالك المنصة (Super Admin) 👑</span>
+                <span>لوحة التحكم المركزية لمالك المنصة - سديم الأثر 👑</span>
               </div>
             )}
           </div>
