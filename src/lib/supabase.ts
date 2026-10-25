@@ -1844,7 +1844,7 @@ export const LoyaltyService = {
       telegram_admin_chat_id: '',
       telegram_enabled: false,
       gemini_api_key: '',
-      gemini_model: 'gemini-1.5-flash',
+      gemini_model: 'gemini-flash-lite-latest',
       gemini_enabled: false,
       whatsapp_provider: 'meta',
       whatsapp_phone_number_id: '',

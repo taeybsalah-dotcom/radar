@@ -24,7 +24,7 @@ export const SuperAdminIntegrationsHub: React.FC = () => {
     telegram_admin_chat_id: '',
     telegram_enabled: false,
     gemini_api_key: '',
-    gemini_model: 'gemini-1.5-flash',
+    gemini_model: 'gemini-flash-lite-latest',
     gemini_enabled: false,
     whatsapp_provider: 'meta',
     whatsapp_phone_number_id: '',
@@ -136,7 +136,10 @@ export const SuperAdminIntegrationsHub: React.FC = () => {
     setIsTestingGemini(true);
     setGeminiTestResult(null);
     try {
-      const model = config.gemini_model || 'gemini-1.5-flash';
+      const rawModel = config.gemini_model || '';
+      const model = (rawModel && !rawModel.includes('1.5') && !rawModel.includes('2.5')) 
+        ? rawModel 
+        : 'gemini-flash-lite-latest';
       const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.gemini_api_key.trim()}`,
         {
@@ -394,12 +397,18 @@ export const SuperAdminIntegrationsHub: React.FC = () => {
                   النموذج المعتمد (AI Model)
                 </label>
                 <select
-                  value={config.gemini_model || 'gemini-1.5-flash'}
+                  value={
+                    config.gemini_model && !config.gemini_model.includes('1.5') && !config.gemini_model.includes('2.5')
+                      ? config.gemini_model
+                      : 'gemini-flash-lite-latest'
+                  }
                   onChange={(e) => setConfig({ ...config, gemini_model: e.target.value })}
                   className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3 py-2.5 text-xs text-white outline-none transition"
                 >
-                  <option value="gemini-1.5-flash">Gemini 1.5 Flash (فائق السرعة واقتصادي - موصى به)</option>
-                  <option value="gemini-1.5-pro">Gemini 1.5 Pro (تحليلات عميقة للمنيو الضخم)</option>
+                  <option value="gemini-flash-lite-latest">Gemini Flash Lite Latest (الأحدث، فائق السرعة، وموصى به لمسح المنيو)</option>
+                  <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (مستقر وعالي الدقة للنصوص والصور)</option>
+                  <option value="gemini-flash-latest">Gemini Flash Latest (نموذج فلاش القياسي)</option>
+                  <option value="gemini-pro-latest">Gemini Pro Latest (يتطلب تفعيل الفوترة في حساب Google Cloud)</option>
                 </select>
               </div>
 

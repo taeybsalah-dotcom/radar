@@ -209,8 +209,8 @@ async function handleParseMenu(request: Request, env: Env): Promise<Response> {
       imageBase64 = imageBase64.split(',')[1];
     }
 
-    // Use gemini-3.8-flash exclusively as requested
-    const result = await callGeminiVision(apiKey, imageBase64, mimeType, 'gemini-3.8-flash');
+    // Use gemini-flash-lite-latest (fastest & officially supported multimodal vision model)
+    const result = await callGeminiVision(apiKey, imageBase64, mimeType, 'gemini-flash-lite-latest');
 
     return jsonResponse({
       success: true,
