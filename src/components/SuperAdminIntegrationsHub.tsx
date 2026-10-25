@@ -72,6 +72,9 @@ export const SuperAdminIntegrationsHub: React.FC = () => {
     try {
       const res = await LoyaltyService.updatePlatformIntegrations(config);
       if (res.success) {
+        if (res.bot_username) {
+          setConfig(prev => ({ ...prev, telegram_bot_username: res.bot_username }));
+        }
         setSaveStatus({ type: 'success', message: 'تم حفظ مفاتيح وتكاملات المنصة بنجاح في قاعدة البيانات 🚀' });
         setTimeout(() => setSaveStatus(null), 4000);
       } else {
@@ -93,6 +96,15 @@ export const SuperAdminIntegrationsHub: React.FC = () => {
     setIsTestingTelegram(true);
     setTelegramTestResult(null);
     try {
+      // 1. Auto detect Bot Username
+      try {
+        const meRes = await fetch(`https://api.telegram.org/bot${config.telegram_bot_token.trim()}/getMe`);
+        const meData = await meRes.json();
+        if (meData?.ok && meData?.result?.username) {
+          setConfig(prev => ({ ...prev, telegram_bot_username: meData.result.username }));
+        }
+      } catch {}
+
       const testMsg = `🔔 تجربة اتصال ناجحة من لوحة المالك!\nمنظومتك متصلة بنجاح مع تليجرام في: ${new Date().toLocaleTimeString('ar-SA')}`;
       const res = await fetch(`https://api.telegram.org/bot${config.telegram_bot_token.trim()}/sendMessage`, {
         method: 'POST',
@@ -273,6 +285,28 @@ export const SuperAdminIntegrationsHub: React.FC = () => {
                 />
                 <span className="text-[10px] text-slate-500 block">رقم المحادثة أو القناة لاستقبال تنبيهات الإدارة العامة</span>
               </div>
+
+              {config.telegram_bot_username ? (
+                <div className="p-3 rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-between text-xs font-bold text-sky-300">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+                    <span>معرف البوت المعتمد لجميع المتاجر:</span>
+                  </div>
+                  <a
+                    href={`https://t.me/${config.telegram_bot_username}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-white bg-sky-600/40 px-2.5 py-1 rounded-lg hover:bg-sky-600/60 transition inline-flex items-center gap-1"
+                  >
+                    <span>@{config.telegram_bot_username}</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              ) : null}
+
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
+                💡 <strong className="text-slate-200">الربط التلقائي للمتاجر:</strong> يتم توليد روابط تفعيل المتاجر داخل لوحات تحكم التجار ديناميكياً باستخدام معرف هذا البوت حصرياً، دون أي خلط أو تبعية للمنصة الأم.
+              </div>
             </div>
 
             {/* Test Feedback */}
@@ -367,6 +401,10 @@ export const SuperAdminIntegrationsHub: React.FC = () => {
                   <option value="gemini-1.5-flash">Gemini 1.5 Flash (فائق السرعة واقتصادي - موصى به)</option>
                   <option value="gemini-1.5-pro">Gemini 1.5 Pro (تحليلات عميقة للمنيو الضخم)</option>
                 </select>
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300/90 leading-relaxed">
+                ⭐ <strong className="text-amber-200">ميزة تنافسية مدمجة:</strong> يتحمل الوكيل/مالك المنصة فاتورة استهلاك الذكاء الاصطناعي (Google Gemini) كاملاً، وتُقدم أدوات تحليل المنيو وتوليد الحملات مجاناً لجميع التجار كميزة اشتراك.
               </div>
             </div>
 
@@ -498,6 +536,10 @@ export const SuperAdminIntegrationsHub: React.FC = () => {
                   </div>
                 </>
               )}
+
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-300/90 leading-relaxed">
+                🛡️ <strong className="text-emerald-200">باقة الدخول الافتتاحية للمتاجر:</strong> تُستخدم هذه البوابة لمنح كل تاجر جديد 100 رسالة تحقق (OTP) مجانية لدخول المستخدمين فقط لضمان انطلاقة فورية. لا تُستخدم للحملات أو الفواتير، حيث يقوم التاجر بربط حسابه الخاص بميتا وتكون الفاتورة عليه مباشرة.
+              </div>
             </div>
           </div>
 

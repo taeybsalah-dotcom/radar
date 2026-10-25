@@ -48,6 +48,7 @@ import {
   POSCashMovement,
   POSCartDiscount,
   PlatformIntegrationsConfig,
+  PublicPlatformIntegrations,
   SuperAdminUser,
   AdminRole,
   AdminPermissions,
@@ -978,17 +979,6 @@ async function sendTelegramNotification(
             reply_markup: replyMarkup || undefined,
           }),
         }).catch(err => console.error('[Proprietary Telegram Bot] send error:', err));
-      } else {
-        fetch('https://radar-telegram-bot.taeybsalah.workers.dev/notify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            chatId: targetChatId, 
-            text: message,
-            replyMarkup: replyMarkup || null,
-            metadata: metadata || null,
-          })
-        }).catch(err => console.error('Telegram API fetch error:', err));
       }
     }
   } catch (err) {
@@ -1850,6 +1840,7 @@ export const LoyaltyService = {
   async getPlatformIntegrations(): Promise<PlatformIntegrationsConfig> {
     const defaultCfg: PlatformIntegrationsConfig = {
       telegram_bot_token: '',
+      telegram_bot_username: '',
       telegram_admin_chat_id: '',
       telegram_enabled: false,
       gemini_api_key: '',
@@ -1873,18 +1864,83 @@ export const LoyaltyService = {
     }
   },
 
-  async updatePlatformIntegrations(payload: Partial<PlatformIntegrationsConfig>): Promise<{ success: boolean; error?: string }> {
+  async getPublicPlatformIntegrations(): Promise<PublicPlatformIntegrations> {
+    const defaultPublic: PublicPlatformIntegrations = {
+      telegram_enabled: false,
+      telegram_bot_username: null,
+      gemini_enabled: false,
+      whatsapp_enabled: false,
+    };
+    const supabase = getSupabaseClient();
+    if (!supabase) return defaultPublic;
+    try {
+      const { data, error } = await (supabase.rpc as any)('get_platform_integrations_public');
+      if (error || !data) return defaultPublic;
+      return {
+        telegram_enabled: Boolean(data.telegram_enabled),
+        telegram_bot_username: data.telegram_bot_username || null,
+        gemini_enabled: Boolean(data.gemini_enabled),
+        whatsapp_enabled: Boolean(data.whatsapp_enabled),
+      };
+    } catch {
+      return defaultPublic;
+    }
+  },
+
+  async consumeMerchantWhatsAppOtp(storeKey: string): Promise<{
+    success: boolean;
+    source?: 'store_meta' | 'platform_free_quota';
+    has_own_meta?: boolean;
+    remaining?: number;
+    used?: number;
+    quota?: number;
+    error?: string;
+    message?: string;
+  }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return { success: true, source: 'platform_free_quota', remaining: 100, used: 0, quota: 100 };
+    }
+    try {
+      const { data, error } = await (supabase.rpc as any)('consume_merchant_whatsapp_otp', {
+        p_store_key: storeKey,
+      });
+      if (error || !data) {
+        console.warn('consumeMerchantWhatsAppOtp error:', error);
+        return { success: true, source: 'platform_free_quota' };
+      }
+      return data;
+    } catch (e: any) {
+      console.warn('consumeMerchantWhatsAppOtp failed:', e);
+      return { success: true, source: 'platform_free_quota' };
+    }
+  },
+
+  async updatePlatformIntegrations(payload: Partial<PlatformIntegrationsConfig>): Promise<{ success: boolean; error?: string; bot_username?: string }> {
     const supabase = getSupabaseClient();
     if (!supabase) return { success: false, error: 'تعذر الاتصال بقاعدة البيانات' };
     try {
       const current = await this.getPlatformIntegrations();
       const updated = { ...current, ...payload, updated_at: new Date().toISOString() };
       
+      // Auto-detect and sync Telegram bot username if token is supplied
+      if (updated.telegram_bot_token && updated.telegram_bot_token.trim()) {
+        try {
+          const res = await fetch(`https://api.telegram.org/bot${updated.telegram_bot_token.trim()}/getMe`);
+          const botData = await res.json();
+          if (botData?.ok && botData?.result?.username) {
+            updated.telegram_bot_username = botData.result.username;
+          }
+        } catch (botErr) {
+          console.warn('Could not auto-fetch telegram bot info:', botErr);
+        }
+      }
+
       const { error } = await (supabase.from as any)('platform_integrations').upsert(updated);
       if (error) {
         return { success: false, error: error.message };
       }
-      return { success: true };
+      return { success: true, bot_username: updated.telegram_bot_username };
     } catch (e: any) {
       return { success: false, error: e.message || 'حدث خطأ أثناء حفظ الإعدادات' };
     }
@@ -5284,52 +5340,71 @@ export const LoyaltyService = {
       const cleanDigits = phone.replace(/\D/g, '');
       const norm = cleanDigits.startsWith('0') ? cleanDigits.substring(1) : cleanDigits;
       const intlPhone = norm.startsWith('966') ? norm : '966' + norm;
-      const wallet = await this.getStoreWallet(storeId);
       const name = (customerName || '').trim() || 'عميلنا العزيز';
       const msg = `مرحباً ${name} 🌟\nرمز التحقق الخاص بك لمتجر ${storeName} هو: *${otp}*`;
 
-      if (wallet?.whatsapp_provider === 'qr') {
-        const res = await fetch('https://radar-wa-salah.loca.lt/api/whatsapp/send', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Bypass-Tunnel-Reminder': 'true'
-          },
-          body: JSON.stringify({
-            storeId,
-            phone: intlPhone,
-            message: msg
-          })
-        });
-        const data = await res.json();
-        const ok = Boolean(data?.success);
-        if (!ok) {
-          sendTelegramNotification(storeId, '⚠️ تنبيه عاجل: انقطع اتصال الواتساب في متجرك، يرجى الدخول للوحة التحكم وإعادة الربط');
-        }
-        return ok;
-      } else if (wallet?.whatsapp_provider === 'meta' && wallet.meta_phone_number_id && wallet.meta_access_token) {
-        const res = await fetch(`https://graph.facebook.com/v18.0/${wallet.meta_phone_number_id}/messages`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${wallet.meta_access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: intlPhone,
-            type: 'text',
-            text: { body: msg }
-          })
-        });
-        if (!res.ok) {
-          sendTelegramNotification(storeId, '⚠️ تنبيه عاجل: انقطع اتصال الواتساب في متجرك، يرجى الدخول للوحة التحكم وإعادة الربط');
-        }
-        return res.ok;
+      // 1. Check and atomically consume WhatsApp OTP quota
+      const quotaCheck = await this.consumeMerchantWhatsAppOtp(storeId);
+      if (!quotaCheck.success) {
+        console.warn('[WhatsApp OTP Quota] Quota check failed:', quotaCheck.message || quotaCheck.error);
+        sendTelegramNotification(
+          storeId,
+          `⚠️ تنبيه استهلاك رصيد الواتساب: لقد نفد رصيد رسائل الدخول الافتتاحي المجاني (100 رسالة). يرجى ربط حساب واتساب ميتا الخاص بمتجرك لمتابعة إرسال رموز التحقق.`
+        );
+        return false;
       }
+
+      // 2. Scenario A: Store has connected their own Meta Cloud account (unlimited, billed to store)
+      if (quotaCheck.source === 'store_meta') {
+        const wallet = await this.getStoreWallet(storeId);
+        if (wallet?.meta_phone_number_id && wallet?.meta_access_token) {
+          const res = await fetch(`https://graph.facebook.com/v18.0/${wallet.meta_phone_number_id}/messages`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${wallet.meta_access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              messaging_product: 'whatsapp',
+              to: intlPhone,
+              type: 'text',
+              text: { body: msg }
+            })
+          });
+          if (!res.ok) {
+            sendTelegramNotification(storeId, '⚠️ تنبيه عاجل: تعذر إرسال رسالة الواتساب عبر حساب Meta الخاص بمتجرك. تأكد من صحة التوكن ورقم الهاتف.');
+          }
+          return res.ok;
+        }
+      }
+
+      // 3. Scenario B: Using Platform Opening Free Quota (100 OTP messages billed to reseller)
+      if (quotaCheck.source === 'platform_free_quota') {
+        const platformCfg = await this.getPlatformIntegrations().catch(() => null);
+        if (platformCfg?.whatsapp_enabled && platformCfg.whatsapp_phone_number_id && platformCfg.whatsapp_access_token) {
+          const res = await fetch(`https://graph.facebook.com/v18.0/${platformCfg.whatsapp_phone_number_id}/messages`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${platformCfg.whatsapp_access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              messaging_product: 'whatsapp',
+              to: intlPhone,
+              type: 'text',
+              text: { body: msg }
+            })
+          });
+          if (!res.ok) {
+            console.warn('[Platform WhatsApp Gateway] HTTP error:', await res.text().catch(() => ''));
+          }
+          return res.ok;
+        }
+      }
+
       return false;
     } catch (e) {
       console.warn('sendStoreWhatsAppOTP failed:', e);
-      sendTelegramNotification(storeId, '⚠️ تنبيه عاجل: انقطع اتصال الواتساب في متجرك، يرجى الدخول للوحة التحكم وإعادة الربط');
       return false;
     }
   },
@@ -11944,25 +12019,19 @@ export const LoyaltyService = {
 
     if (targetChatId) {
       try {
-        fetch('https://radar-telegram-bot.taeybsalah.workers.dev/notify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chatId: targetChatId,
-            text: message,
-          }),
-        }).catch(async () => {
-          const BOT_TOKEN = '8065372904:AAH8xReiWQ2zTrog0gwnQD-4Vz1zcyE51XY';
-          fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        const platformCfg = await this.getPlatformIntegrations().catch(() => null);
+        if (platformCfg?.telegram_bot_token && platformCfg.telegram_enabled !== false) {
+          fetch(`https://api.telegram.org/bot${platformCfg.telegram_bot_token.trim()}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               chat_id: targetChatId,
               text: message,
+              parse_mode: 'Markdown',
             }),
-          }).catch(() => {});
-        });
-        return true;
+          }).catch(e => console.warn('[Shift Telegram Report] send error:', e));
+          return true;
+        }
       } catch (err) {
         console.warn('Failed to send Telegram shift report:', err);
       }

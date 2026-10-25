@@ -28,6 +28,7 @@ import {
   getPlanPriceSuffix,
   resolveUnifiedStage,
   getStoreUnifiedStage,
+  PublicPlatformIntegrations,
 } from '../types';
 import { LoyaltyService, normalizeStore, getSupabaseClient } from '../lib/supabase';
 import { getActiveTenantConfig } from '../config/tenant';
@@ -173,6 +174,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [storeWallet, setStoreWallet] = useState<StoreWallet | null>(null);
   const [telegramChatId, setTelegramChatId] = useState(store?.telegram_chat_id || '');
   const [showManualTelegram, setShowManualTelegram] = useState(false);
+  const [publicIntegrations, setPublicIntegrations] = useState<PublicPlatformIntegrations | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Active Admin Navigation Tab & Sub-Sections
@@ -1151,6 +1153,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         setMetaWabaId(wallet.meta_waba_id || '');
         setMetaAccessToken(wallet.meta_access_token || '');
       }
+
+      // جلب إعدادات المنصة العامة (Zero-Trust لمعرف البوت وبوابات الواتساب)
+      LoyaltyService.getPublicPlatformIntegrations().then(setPublicIntegrations).catch(() => {});
 
       // إيقاف شاشة التحميل فوراً ليتمكن التاجر من استخدام المنصة فوراً
       setLoading(false);
@@ -9774,48 +9779,60 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               <p className="text-sm font-bold text-white">
                 اختر طريقة الربط التلقائي بضغطة زر واحدة:
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {/* Button 1: Private chat */}
-                <a 
-                  href={`https://t.me/Myradarstore_bot?start=store_${store?.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm shadow-lg shadow-blue-900/30 transition flex items-center justify-between group"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
-                      <Send className="w-4 h-4" />
-                    </div>
-                    <div className="text-right">
-                      <div className="font-black text-sm">🔗 ربط بحسابي الخاص</div>
-                      <div className="text-[11px] text-blue-100 font-normal">استقبال الطلبات في محادثتك الشخصية</div>
-                    </div>
-                  </div>
-                  <span className="text-xs bg-white/20 px-2.5 py-1 rounded-lg">فتح البوت</span>
-                </a>
+              {publicIntegrations?.telegram_enabled && publicIntegrations?.telegram_bot_username ? (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    {/* Button 1: Private chat */}
+                    <a 
+                      href={`https://t.me/${publicIntegrations.telegram_bot_username}?start=store_${store?.slug || store?.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm shadow-lg shadow-blue-900/30 transition flex items-center justify-between group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
+                          <Send className="w-4 h-4" />
+                        </div>
+                        <div className="text-right">
+                          <div className="font-black text-sm">🔗 ربط بحسابي الخاص</div>
+                          <div className="text-[11px] text-blue-100 font-normal">استقبال الطلبات في محادثتك الشخصية</div>
+                        </div>
+                      </div>
+                      <span className="text-xs bg-white/20 px-2.5 py-1 rounded-lg">فتح @{publicIntegrations.telegram_bot_username}</span>
+                    </a>
 
-                {/* Button 2: Group chat */}
-                <a 
-                  href={`https://t.me/Myradarstore_bot?startgroup=store_${store?.id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-900/30 transition flex items-center justify-between group"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
-                      <Users className="w-4 h-4" />
-                    </div>
-                    <div className="text-right">
-                      <div className="font-black text-sm">👥 ربط بقروب عمل (للموظفين)</div>
-                      <div className="text-[11px] text-indigo-100 font-normal">إضافة البوت للقروب واستقبال الطلبات جماعياً</div>
-                    </div>
+                    {/* Button 2: Group chat */}
+                    <a 
+                      href={`https://t.me/${publicIntegrations.telegram_bot_username}?startgroup=store_${store?.slug || store?.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm shadow-lg shadow-indigo-900/30 transition flex items-center justify-between group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
+                          <Users className="w-4 h-4" />
+                        </div>
+                        <div className="text-right">
+                          <div className="font-black text-sm">👥 ربط بقروب عمل (للموظفين)</div>
+                          <div className="text-[11px] text-indigo-100 font-normal">إضافة البوت للقروب واستقبال الطلبات جماعياً</div>
+                        </div>
+                      </div>
+                      <span className="text-xs bg-white/20 px-2.5 py-1 rounded-lg">اختيار قروب</span>
+                    </a>
                   </div>
-                  <span className="text-xs bg-white/20 px-2.5 py-1 rounded-lg">اختيار قروب</span>
-                </a>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                💡 بمجرد الضغط على Start أو إضافة البوت للقروب، يلتقط النظام المتجر تلقائياً ويتم تفعيل الإشعارات فوراً.
-              </p>
+                  <p className="text-[11px] text-slate-400">
+                    💡 بمجرد الضغط على Start أو إضافة البوت (@{publicIntegrations.telegram_bot_username}) للقروب، يلتقط النظام المتجر تلقائياً ويتم تفعيل الإشعارات فوراً.
+                  </p>
+                </>
+              ) : (
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs font-bold flex items-center gap-2.5">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0 text-amber-400" />
+                  <div>
+                    <div>خدمة بوت تليجرام غير مفعّلة حالياً على هذه المنصة.</div>
+                    <div className="text-[11px] font-normal text-amber-400/80 mt-0.5">يرجى من إدارة المنصة تفعيل بوت التليجرام الخاص بها من مركز التكاملات ليتمكن التجار من الربط بضغطة زر.</div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* If connected, show active Chat ID & Unlink option */}
@@ -9891,17 +9908,38 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
               {/* Wallets & Quota Quick Badges */}
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 font-mono flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>رصيد واتساب:</span>
-                  <strong className="text-emerald-400">{storeWallet?.wa_quota ?? 200} رسالة</strong>
-                </div>
+                {storeWallet?.meta_access_token && storeWallet?.meta_phone_number_id ? (
+                  <div className="px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>حساب واتساب ميتا الخاص: متصل (إرسال غير محدود) ✅</span>
+                  </div>
+                ) : (
+                  <div className="px-3.5 py-1.5 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-300 text-xs font-bold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+                    <span>رصيد رسائل الدخول الافتتاحي (OTP):</span>
+                    <strong className="font-mono text-white">
+                      {Math.max(0, (storeWallet?.wa_quota ?? 100) - (storeWallet?.wa_used ?? 0))} / {storeWallet?.wa_quota ?? 100} رسالة
+                    </strong>
+                  </div>
+                )}
                 <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 font-mono flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-blue-400"></span>
                   <span>رصيد SMS:</span>
                   <strong className="text-blue-400">{storeWallet?.sms_quota ?? 500} رسالة</strong>
                 </div>
               </div>
+            </div>
+
+            {/* Informative Platform vs Merchant Meta Quota Card */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-300 space-y-1.5">
+              <div className="flex items-center gap-2 font-bold text-white">
+                <span className="text-emerald-400">⚡</span>
+                <span>سياسة رسائل الواتساب وحساب المتجر:</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                يمنحك النظام رصيداً افتتاحياً مجانياً (100 رسالة OTP) مخصصة حصرياً لبث رموز الدخول وكلمات مرور المستخدمين حتى لا يتعطل عملك من اليوم الأول.
+                لإرسال الفواتير الإلكترونية لعملائك وإطلاق حملات إعادة استهداف الزبائن (Radar Retention) بشكل غير محدود وباسم متجرك، قم بربط حساب واتساب ميتا (Meta Cloud API) الخاص بك أدناه وتكون تكلفة الرسائل على حسابك في ميتا مباشرة.
+              </p>
             </div>
 
             <form onSubmit={handleSaveMetaWhatsAppSettings} className="space-y-6">

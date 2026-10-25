@@ -49,6 +49,7 @@ export interface StoreWallet {
 export interface PlatformIntegrationsConfig {
   id?: string;
   telegram_bot_token?: string;
+  telegram_bot_username?: string;
   telegram_admin_chat_id?: string;
   telegram_enabled: boolean;
   gemini_api_key?: string;
@@ -61,6 +62,13 @@ export interface PlatformIntegrationsConfig {
   whatsapp_instance_id?: string;
   whatsapp_enabled: boolean;
   updated_at?: string;
+}
+
+export interface PublicPlatformIntegrations {
+  telegram_enabled: boolean;
+  telegram_bot_username?: string | null;
+  gemini_enabled: boolean;
+  whatsapp_enabled: boolean;
 }
 
 export type StoreSubscriptionStatus = 'trial' | 'active' | 'past_due' | 'suspended' | 'cancelled';
