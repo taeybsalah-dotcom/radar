@@ -9,3 +9,4 @@ scripts/.migration-backup/
 *.local
 
 master-control/dist/
+.wrangler/

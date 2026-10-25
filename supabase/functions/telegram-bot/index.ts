@@ -67,29 +67,34 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } });
     }
 
-    // 2. Message /start
+    // 2. Message /start or /link
     if (update.message && update.message.text) {
       const chatId = update.message.chat.id;
       const text = update.message.text.trim();
       
-      if (text.startsWith("/start")) {
-        const rawPayload = text.replace(/^\/start(?:@\w+)?/i, '').trim();
-        const storeKey = rawPayload.replace(/^store_/, '').trim();
+      if (text.startsWith("/start") || text.startsWith("/link") || text.startsWith("/connect") || text.startsWith("ربط")) {
+        let storeKey = '';
+        if (text.startsWith("/start")) {
+          const rawPayload = text.replace(/^\/start(?:@\w+)?/i, '').trim();
+          storeKey = rawPayload.replace(/^store_/, '').trim();
+        } else {
+          storeKey = text.replace(/^\/(?:link|connect)(?:@\w+)?\s*/i, '').replace(/^ربط\s*/i, '').replace(/^store_/, '').trim();
+        }
         
         if (storeKey) {
-          const { data: stores } = await supabase.from('stores')
-            .update({ telegram_chat_id: String(chatId), telegram_notifications_enabled: true, updated_at: new Date().toISOString() })
-            .or(`id.eq.${storeKey},slug.eq.${storeKey}`)
-            .select('id, name');
+          const { data: linkResult, error: linkErr } = await supabase.rpc('link_store_telegram', {
+            p_store_key: storeKey,
+            p_chat_id: String(chatId)
+          });
           
-          const store = stores && stores.length > 0 ? stores[0] : null;
-          if (store) {
-            await sendMsg(chatId, `✅ تم ربط متجر "${store.name}" بنجاح! ستصل الطلبات والحجوزات هنا.`);
+          const linkData = linkResult as any;
+          if (linkErr || !linkData || !linkData.success) {
+            await sendMsg(chatId, `⚠️ تعذر ربط المتجر بالكود: "${storeKey}"\nتأكد من كتابة الاسم التعريفي لمتجرك بشكل صحيح (مثال: \`/link haf-mlywn\`) أو استخدم الرابط المباشر من لوحة التحكم.`);
           } else {
-            await sendMsg(chatId, `⚠️ تعذر ربط المتجر، لم يتم العثور على المتجر.`);
+            await sendMsg(chatId, `🎉 تم ربط متجر "${linkData.store_name}" بنجاح! 🔔 ستصلك جميع الطلبات والحجوزات وتقارير Z-Report هنا لحظياً.`);
           }
         } else {
-          await sendMsg(chatId, `أهلاً بك في بوت منصة رادار 🎯\nلربط متجرك، يرجى الدخول للوحة التحكم واختيار "ربط بحسابي الخاص" أو "ربط بقروب عمل".`);
+          await sendMsg(chatId, `أهلاً بك في بوت منصة رادار 🎯\nمعرف المحادثة (Chat ID): \`${chatId}\`\n\nلربط متجرك، يرجى الدخول للوحة التحكم واختيار "ربط بحسابي الخاص" أو الرد هنا بكتابة:\n\`/link اسم_المتجر\``);
         }
       }
     }
