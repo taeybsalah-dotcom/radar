@@ -197,7 +197,7 @@ export const MenuAutoBuilderModal: React.FC<MenuAutoBuilderModalProps> = ({
               <h2 className="text-lg sm:text-xl font-black text-white flex items-center gap-2">
                 <span>المنشئ الآلي للمنيو بالذكاء الاصطناعي</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  Gemini 3.8 Flash
+                  Gemini Flash Vision
                 </span>
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">

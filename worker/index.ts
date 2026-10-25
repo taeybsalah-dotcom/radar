@@ -65,18 +65,19 @@ async function callGeminiVision(
   apiKey: string,
   base64Data: string,
   mimeType: string,
-  modelName: string
+  modelName: string = 'gemini-flash-lite-latest'
 ): Promise<ParsedMenuResult> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  const prompt = `استخرج أصناف المنيو على شكل مصفوفة JSON مضغوطة بمفاتيح من حرف واحد فقط:
-[{"n": "اسم الصنف", "c": "القسم", "p": 15}]
-- n: اسم الصنف بدقة.
-- c: اسم القسم المناسب.
-- p: السعر المالي كرقم إنجليزي فقط (مثلاً 15 أو 24.5).
-  * حوّل أي أرقام عربية إلى إنجليزية (15).
-  * تجاهل السعرات الحرارية تماماً (cal/سعرة/kcal/🔥).
-لا تستخرج وصفاً نهائياً.`;
+  const prompt = `أنت خبير محترف في رقمنة قوائم الطعام والخدمات (Menu Digitizer).
+قم بتحليل صورة المنيو بدقة واستخرج كافة الأصناف والمنتجات والخدمات.
+لكل صنف استخرج:
+1. name: اسم الصنف بدقة كما هو مكتوب.
+2. category: اسم القسم المناسب (مثل: أطباق رئيسية، برجر، مقبلات، مشروبات، حلويات، خدمات عامة).
+3. price: السعر كرقم مجرد فقط (مثلاً 25 أو 18.5) بدون علامات عملة، وإذا لم يوجد سعر ضعه 0.
+4. description: وصف الصنف أو مكوناته إن وجدت، أو اتركه فارغاً.
+5. item_type: حدد هل هو "product" (طعام، مشروبات، منتجات) أو "service" (خدمات مواعيد، حلاقة، مساج، إلخ).
+استخرج أيضاً قائمة بجميع الأقسام المميزة في categories.`;
 
   const payload = {
     contents: [
@@ -93,23 +94,36 @@ async function callGeminiVision(
       },
     ],
     generationConfig: {
-      temperature: 0,
-      maxOutputTokens: 8192,
-      thinkingConfig: {
-        thinkingBudget: 0,
-      },
+      temperature: 0.1,
       responseMimeType: 'application/json',
       responseSchema: {
-        type: 'ARRAY',
-        items: {
-          type: 'OBJECT',
-          properties: {
-            n: { type: 'STRING', description: 'اسم الصنف' },
-            c: { type: 'STRING', description: 'القسم' },
-            p: { type: 'NUMBER', description: 'السعر المالي' },
+        type: 'OBJECT',
+        properties: {
+          categories: {
+            type: 'ARRAY',
+            items: { type: 'STRING' },
+            description: 'قائمة الأقسام المستخرجة من المنيو',
           },
-          required: ['n', 'c', 'p'],
+          items: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                name: { type: 'STRING', description: 'اسم الصنف' },
+                category: { type: 'STRING', description: 'القسم أو التصنيف' },
+                price: { type: 'NUMBER', description: 'السعر كرقم مجرد' },
+                description: { type: 'STRING', description: 'الوصف أو المكونات' },
+                item_type: {
+                  type: 'STRING',
+                  enum: ['product', 'service'],
+                  description: 'نوع الصنف',
+                },
+              },
+              required: ['name', 'category', 'price', 'item_type'],
+            },
+          },
         },
+        required: ['categories', 'items'],
       },
     },
   };
@@ -138,58 +152,42 @@ async function callGeminiVision(
     throw new Error('لم يتم استخراج أي بيانات من الصورة، يرجى التأكد من وضوح المنيو.');
   }
 
-  let rawList: any[] = [];
-  try {
-    const parsed = JSON.parse(rawText);
-    rawList = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray(parsed?.items)
-      ? parsed.items
-      : [];
-  } catch (e) {
-    throw new Error('فشل في قراءة بيانات المنيو المستخرجة.');
-  }
-
-  const categoriesSet = new Set<string>();
-  const items: ParsedMenuItem[] = [];
-
-  for (const it of rawList) {
-    const name = String(it.n || it.name || '').trim();
-    const category = String(it.c || it.category || 'عام').trim();
-    const price = cleanPrice(it.p ?? it.price);
-    if (!name) continue;
-
-    if (category) categoriesSet.add(category);
-    items.push({
-      name,
-      category,
-      price,
-      description: '',
-      item_type: 'product',
-    });
-  }
-
+  const parsed = JSON.parse(rawText) as ParsedMenuResult;
+  const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
   return {
-    categories: Array.from(categoriesSet),
-    items,
+    categories: Array.isArray(parsed.categories) ? parsed.categories : [],
+    items: rawItems.map((it: any) => ({
+      name: String(it.name || '').trim(),
+      category: String(it.category || 'عام').trim(),
+      price: cleanPrice(it.price),
+      description: it.description ? String(it.description).trim() : '',
+      item_type: it.item_type === 'service' ? 'service' : 'product',
+    })),
   };
 }
 
 async function handleParseMenu(request: Request, env: Env): Promise<Response> {
-  const apiKey = env.GEMINI_API_KEY;
+  let body: any = null;
+  try {
+    body = await request.json();
+  } catch {}
+
+  const apiKey = (body?.apiKey && typeof body.apiKey === 'string' && body.apiKey.trim())
+    ? body.apiKey.trim()
+    : env.GEMINI_API_KEY;
+
   if (!apiKey || apiKey.trim() === '') {
     return jsonResponse(
       {
         success: false,
         code: 'GEMINI_API_KEY_MISSING',
-        error: 'مفتاح Gemini API غير مضبوط في السيرفر. يرجى تفعيله عبر Cloudflare Secret.',
+        error: 'مفتاح Gemini API غير مضبوط في السيرفر. يرجى تفعيله عبر مركز التكاملات أو Cloudflare Secret.',
       },
       503
     );
   }
 
   try {
-    const body: any = await request.json();
     let imageBase64: string = body?.imageBase64 || '';
     const mimeType: string = body?.mimeType || 'image/jpeg';
 
@@ -209,8 +207,8 @@ async function handleParseMenu(request: Request, env: Env): Promise<Response> {
       imageBase64 = imageBase64.split(',')[1];
     }
 
-    // Use gemini-flash-lite-latest (fastest & officially supported multimodal vision model)
-    const result = await callGeminiVision(apiKey, imageBase64, mimeType, 'gemini-flash-lite-latest');
+    const modelName = body?.model || 'gemini-flash-lite-latest';
+    const result = await callGeminiVision(apiKey, imageBase64, mimeType, modelName);
 
     return jsonResponse({
       success: true,
