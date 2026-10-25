@@ -554,6 +554,22 @@ export interface StorePaymentConfig {
   allow_external_pos: boolean; // جهاز شبكة بنكي خارجي عادي
 }
 
+export interface PlatformPaymentConfig {
+  enabled: boolean;
+  provider: OnlineGatewayProvider;
+  mode: 'sandbox' | 'live';
+  public_key?: string;
+  secret_key?: string;
+  allow_cash: boolean;
+  allow_bank_transfer: boolean;
+  bank_details?: {
+    bank_name: string;
+    account_name: string;
+    iban: string;
+  };
+  updated_at?: string;
+}
+
 export interface StoreFulfillmentSettings {
   allow_dine_in: boolean; // متاح تناول محلي (طاولات)
   allow_takeaway: boolean; // متاح استلام سفري / سيارة

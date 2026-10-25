@@ -40,6 +40,11 @@ import {
   UserCheck,
   Briefcase,
   Landmark,
+  Key,
+  Eye,
+  EyeOff,
+  Copy,
+  Banknote,
 } from 'lucide-react';
 import {
   BillingPlan,
@@ -54,13 +59,16 @@ import {
   PartnerAccount,
   FinancialTransactionType,
   FinancialPlatformConfig,
+  PlatformPaymentConfig,
+  OnlineGatewayProvider,
 } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
+import { ManualSubscriptionModal } from './ManualSubscriptionModal';
 
 export const SuperAdminBillingConsole: React.FC = () => {
   // Navigation Subtabs
-  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payouts' | 'refunds' | 'plans'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payouts' | 'refunds' | 'plans' | 'gateways'>('overview');
 
   // Data States
   const [ledgerEntries, setLedgerEntries] = useState<FinancialLedgerEntry[]>(() => {
@@ -191,6 +199,29 @@ export const SuperAdminBillingConsole: React.FC = () => {
   const [calcMethod, setCalcMethod] = useState<string>('mada');
   const [calcRate, setCalcRate] = useState<number>(0.20);
 
+  // 💳 Platform Subscription Omnichannel Payment Gateways Config State
+  const [platformPaymentConfig, setPlatformPaymentConfig] = useState<PlatformPaymentConfig>({
+    enabled: true,
+    provider: 'sandbox',
+    mode: 'sandbox',
+    public_key: '',
+    secret_key: '',
+    allow_cash: true,
+    allow_bank_transfer: true,
+    bank_details: {
+      bank_name: 'مصرف الراجحي (Al Rajhi Bank)',
+      account_name: 'مؤسسة رادار الرقمية لتقنية المعلومات',
+      iban: '',
+    },
+  });
+  const [isSavingPaymentConfig, setIsSavingPaymentConfig] = useState(false);
+  const [showSecretKey, setShowSecretKey] = useState(false);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
+
+  // 💵 Manual Subscription Activation Modal State
+  const [isManualSubModalOpen, setIsManualSubModalOpen] = useState(false);
+  const [manualSubPreSelectedStoreId, setManualSubPreSelectedStoreId] = useState<string | undefined>(undefined);
+
   // Load all data
   const loadAllFinancialData = async () => {
     if (ledgerEntries.length === 0 && !metrics) {
@@ -199,6 +230,11 @@ export const SuperAdminBillingConsole: React.FC = () => {
     try {
       const cfg = LoyaltyService.getFinancialConfig();
       setFinancialConfig(cfg);
+
+      // Fetch platform payment gateway configuration
+      LoyaltyService.getPlatformPaymentConfig().then((payCfg) => {
+        if (payCfg) setPlatformPaymentConfig(payCfg);
+      }).catch((e) => console.warn('[SuperAdminBillingConsole] Platform payment config fetch error:', e));
 
       // Fetch plans immediately and independently so they appear on frame 0
       LoyaltyService.getAllSubscriptionPlans().then((freshPlans) => {
@@ -404,6 +440,30 @@ export const SuperAdminBillingConsole: React.FC = () => {
       } catch (err) {
         console.error(err);
       }
+    }
+  };
+
+  // --- Handlers: Platform Payment Gateways Config ---
+  const handleSavePlatformPaymentConfig = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setIsSavingPaymentConfig(true);
+    try {
+      const res = await LoyaltyService.updatePlatformPaymentConfig(platformPaymentConfig);
+      if (res.success && res.config) {
+        setPlatformPaymentConfig(res.config);
+        setActionSuccess('تم حفظ وتثبيت إعدادات بوابات الدفع لاشتراكات المنصة بنجاح 💾');
+      } else {
+        setActionError(res.error || 'تعذر حفظ إعدادات البوابة');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setActionError(err.message || 'حدث خطأ أثناء حفظ الإعدادات');
+    } finally {
+      setIsSavingPaymentConfig(false);
+      setTimeout(() => {
+        setActionSuccess(null);
+        setActionError(null);
+      }, 3500);
     }
   };
 
@@ -628,6 +688,17 @@ export const SuperAdminBillingConsole: React.FC = () => {
 
           <div className="flex items-center gap-3">
             <button
+              onClick={() => {
+                setManualSubPreSelectedStoreId(undefined);
+                setIsManualSubModalOpen(true);
+              }}
+              className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20"
+            >
+              <Banknote className="w-4 h-4" />
+              <span>سداد اشتراك (كاش / تحويل) 💵</span>
+            </button>
+
+            <button
               onClick={handleOpenManualAdjustment}
               className="px-4 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/40 text-xs font-bold transition flex items-center gap-1.5 shadow-lg"
             >
@@ -707,6 +778,18 @@ export const SuperAdminBillingConsole: React.FC = () => {
         >
           <Layers className="w-4 h-4" />
           <span>باقات الاشتراك ({plans.length}) 💳</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('gateways')}
+          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
+            activeTab === 'gateways'
+              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
+              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <CreditCard className="w-4 h-4" />
+          <span>بوابات وطرق الدفع ({platformPaymentConfig.provider === 'sandbox' ? 'تجريبي' : platformPaymentConfig.provider.toUpperCase()}) ⚡</span>
         </button>
       </div>
 
@@ -1526,6 +1609,457 @@ export const SuperAdminBillingConsole: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
+      {/* TAB 6: OMNICHANNEL PLATFORM SUBSCRIPTION PAYMENT GATEWAYS & CASH */}
+      {/* ========================================================================= */}
+      {activeTab === 'gateways' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Top Info Banner & Quick Action */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-black text-2xl shrink-0 shadow-lg shadow-emerald-500/20">
+                <CreditCard className="w-7 h-7 text-slate-950" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-base sm:text-lg font-black text-white">
+                    بوابات الدفع الإلكتروني وتحصيل اشتراكات رادار
+                  </h4>
+                  <span className={`text-xs font-bold px-3 py-0.5 rounded-full border ${
+                    platformPaymentConfig.enabled
+                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                      : 'bg-rose-500/15 text-rose-300 border-rose-500/40'
+                  }`}>
+                    {platformPaymentConfig.enabled ? 'التحصيل التلقائي مفعّل 🟢' : 'التحصيل الإلكتروني متوقف 🔴'}
+                  </span>
+                  <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-slate-700">
+                    {platformPaymentConfig.mode === 'live' ? '⚡ وضع الإنتاج (LIVE)' : '🧪 بيئة تجريبية (SANDBOX)'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                  تحديد بوابات الدفع المستخدمة لتحصيل رسوم اشتراكات المتاجر (ميسر، جيديا، تاب، أو البيئة التجريبية)، مع إمكانية تحصيل الاشتراكات نقداً (كاش) أو عبر التحويل البنكي وتفعيل المتاجر يدوياً فوراً.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setManualSubPreSelectedStoreId(undefined);
+                  setIsManualSubModalOpen(true);
+                }}
+                className="px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs sm:text-sm transition flex items-center gap-2 shadow-lg shadow-emerald-500/25"
+              >
+                <Banknote className="w-4 h-4" />
+                <span>تفعيل اشتراك كاش / تحويل 💵</span>
+              </button>
+            </div>
+          </div>
+
+          <form onSubmit={handleSavePlatformPaymentConfig} className="space-y-6">
+            {/* 1. Master Online Collection Toggle */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl flex items-center justify-between gap-4">
+              <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                  platformPaymentConfig.enabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-500'
+                }`}>
+                  <Zap className="w-5 h-5" />
+                </div>
+                <div>
+                  <h5 className="text-sm font-bold text-white">تفعيل بوابة الدفع الإلكتروني لاشتراكات المنصة</h5>
+                  <p className="text-xs text-slate-400">عند التعطيل، لن يتمكن التجار من الدفع ببطاقاتهم أونلاين وسيقتصر التحصيل على الكاش والتحويل البنكي.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlatformPaymentConfig({ ...platformPaymentConfig, enabled: !platformPaymentConfig.enabled })}
+                className={`relative inline-flex h-7 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  platformPaymentConfig.enabled ? 'bg-emerald-500' : 'bg-slate-800'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                    platformPaymentConfig.enabled ? 'translate-x-0' : '-translate-x-7'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {/* 2. Provider Selection (4 Cards) */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h5 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-emerald-400" />
+                    <span>اختر مزود بوابة الدفع الإلكتروني المعتمد للمنصة:</span>
+                  </h5>
+                  <span className="text-xs text-slate-400">سيتم توجيه جميع عمليات سداد الاشتراكات عبر هذه البوابة</span>
+                </div>
+                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setPlatformPaymentConfig({ ...platformPaymentConfig, mode: 'sandbox' })}
+                    className={`px-3 py-1.5 rounded-lg transition ${
+                      platformPaymentConfig.mode === 'sandbox'
+                        ? 'bg-amber-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    تجريبي (Sandbox)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlatformPaymentConfig({ ...platformPaymentConfig, mode: 'live' })}
+                    className={`px-3 py-1.5 rounded-lg transition ${
+                      platformPaymentConfig.mode === 'live'
+                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    حي (Live الإنتاج)
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+                {[
+                  {
+                    id: 'sandbox' as const,
+                    name: 'البيئة التجريبية (Sandbox)',
+                    desc: 'مدمج ومجاني للاختبار الفوري دون اشتراك أو أوراق',
+                    badge: 'جاهز فوراً ⚡',
+                    badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
+                  },
+                  {
+                    id: 'moyasar' as const,
+                    name: 'ميسر (Moyasar)',
+                    desc: 'الأسرع تفعيلاً لمدى وApple Pay بحسابك البنكي التجاري',
+                    badge: 'معتمد من ساما 🇸🇦',
+                    badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+                  },
+                  {
+                    id: 'geidea' as const,
+                    name: 'جيديا (Geidea E-Com)',
+                    desc: 'حل موحد متكامل للدفع الإلكتروني وأجهزة نقاط البيع',
+                    badge: 'حل موحد 🔄',
+                    badgeColor: 'text-purple-400 bg-purple-500/10 border-purple-500/30',
+                  },
+                  {
+                    id: 'tap' as const,
+                    name: 'تاب (Tap Payments)',
+                    desc: 'بوابة إقليمية موثوقة تدعم بطاقات الخليج كافة ومدى وApple Pay',
+                    badge: 'إقليمي 🌐',
+                    badgeColor: 'text-blue-400 bg-blue-500/10 border-blue-500/30',
+                  },
+                ].map((prov) => {
+                  const isSelected = (platformPaymentConfig.provider || 'sandbox') === prov.id;
+                  return (
+                    <div
+                      key={prov.id}
+                      onClick={() => setPlatformPaymentConfig({ ...platformPaymentConfig, provider: prov.id })}
+                      className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between space-y-3 ${
+                        isSelected
+                          ? 'bg-emerald-500/10 border-emerald-500 shadow-md ring-1 ring-emerald-500/40'
+                          : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs sm:text-sm font-black text-white">{prov.name}</span>
+                          {isSelected && <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />}
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          {prov.desc}
+                        </p>
+                      </div>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border inline-block w-fit ${prov.badgeColor}`}>
+                        {prov.badge}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Provider Keys & Credentials */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4 mt-4">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                  <span className="text-xs font-black text-white flex items-center gap-2">
+                    <Key className="w-4 h-4 text-amber-400" />
+                    <span>بيانات ومفاتيح تشغيل بوابة {
+                      platformPaymentConfig.provider === 'sandbox' ? 'البيئة التجريبية (Sandbox)' :
+                      platformPaymentConfig.provider === 'moyasar' ? 'ميسر (Moyasar)' :
+                      platformPaymentConfig.provider === 'geidea' ? 'جيديا (Geidea)' : 'تاب (Tap Payments)'
+                    }</span>
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    الوضع: <strong className={platformPaymentConfig.mode === 'live' ? 'text-emerald-400' : 'text-amber-400'}>{platformPaymentConfig.mode === 'live' ? 'LIVE الإنتاج' : 'SANDBOX تجريبي'}</strong>
+                  </span>
+                </div>
+
+                {platformPaymentConfig.provider === 'sandbox' ? (
+                  <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-amber-400 shrink-0" />
+                    <span className="leading-relaxed">
+                      البيئة التجريبية (Sandbox) مدمجة في نظام رادار. يمكنك أنت والتجار تجربة سداد الاشتراكات باستخدام أي بطاقة اختبار مدى أو فيزا أو أبل باي بشكل وهمي فوراً دون الحاجة لإدخال مفاتيح API.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-slate-300 font-bold block mb-1.5">
+                          المفتاح العام (Publishable / Public API Key):
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={
+                            platformPaymentConfig.provider === 'moyasar'
+                              ? (platformPaymentConfig.mode === 'live' ? 'pk_live_...' : 'pk_test_...')
+                              : (platformPaymentConfig.mode === 'live' ? 'pk_live_...' : 'pk_test_...')
+                          }
+                          value={platformPaymentConfig.public_key || ''}
+                          onChange={(e) => setPlatformPaymentConfig({ ...platformPaymentConfig, public_key: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono outline-none focus:border-emerald-500 transition"
+                        />
+                        <span className="text-[10px] text-slate-500 mt-1 block">يُستخدم لتهيئة نموذج الدفع على واجهة المستخدم.</span>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-xs text-slate-300 font-bold block">
+                            المفتاح السري (Secret API Key):
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowSecretKey(!showSecretKey)}
+                            className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 transition"
+                          >
+                            {showSecretKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            <span>{showSecretKey ? 'إخفاء' : 'إظهار'}</span>
+                          </button>
+                        </div>
+                        <input
+                          type={showSecretKey ? 'text' : 'password'}
+                          placeholder={
+                            platformPaymentConfig.provider === 'moyasar'
+                              ? (platformPaymentConfig.mode === 'live' ? 'sk_live_...' : 'sk_test_...')
+                              : (platformPaymentConfig.mode === 'live' ? 'sk_live_...' : 'sk_test_...')
+                          }
+                          value={platformPaymentConfig.secret_key || ''}
+                          onChange={(e) => setPlatformPaymentConfig({ ...platformPaymentConfig, secret_key: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono outline-none focus:border-emerald-500 transition"
+                        />
+                        <span className="text-[10px] text-slate-500 mt-1 block">يُحفظ بأمان في قاعدة البيانات ولا يُعرض لعامة الزوار.</span>
+                      </div>
+                    </div>
+
+                    {/* Webhook URL Display */}
+                    <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div>
+                        <span className="text-slate-300 font-bold block">رابط استلام إشعارات الدفع (Webhook URL):</span>
+                        <code className="text-emerald-400 font-mono text-[11px] break-all select-all">
+                          {typeof window !== 'undefined' ? `${window.location.origin}/api/webhooks/platform-subscription` : '/api/webhooks/platform-subscription'}
+                        </code>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = `${window.location.origin}/api/webhooks/platform-subscription`;
+                          navigator.clipboard.writeText(url);
+                          setCopiedWebhook(true);
+                          setTimeout(() => setCopiedWebhook(false), 2500);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-[11px] flex items-center gap-1.5 shrink-0 transition"
+                      >
+                        {copiedWebhook ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedWebhook ? 'تم النسخ!' : 'نسخ الرابط'}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 3. Manual & Offline Payment Methods (Cash & Bank Transfer) */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl space-y-5">
+              <div>
+                <h5 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Banknote className="w-4 h-4 text-amber-400" />
+                  <span>طرق التحصيل اليدوي والمباشر (Cash & Direct Bank Transfer)</span>
+                </h5>
+                <span className="text-xs text-slate-400">خيارات السداد خارج البوابة الإلكترونية مع إمكانية التفعيل الفوري</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Cash Option */}
+                <div className={`p-5 rounded-2xl border transition-all ${
+                  platformPaymentConfig.allow_cash
+                    ? 'bg-emerald-500/5 border-emerald-500/30'
+                    : 'bg-slate-950/60 border-slate-800'
+                }`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold">
+                        💵
+                      </div>
+                      <div>
+                        <h6 className="text-xs font-black text-white">السماح بالدفع كاش (Cash)</h6>
+                        <span className="text-[10px] text-slate-400">تحصيل نقدي مباشر عبر الإدارة أو المشرف الميداني</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPlatformPaymentConfig({ ...platformPaymentConfig, allow_cash: !platformPaymentConfig.allow_cash })}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                        platformPaymentConfig.allow_cash ? 'bg-emerald-500' : 'bg-slate-800'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                          platformPaymentConfig.allow_cash ? 'translate-x-0' : '-translate-x-5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    يتيح لك كمسؤول تفعيل اشتراك أي متجر بضغطة زر وتحديد المدة والمبلغ عند استلام النقد، مع إصدار فاتورة نظامية وتوثيق القيد في السجل المالي العام لضمان مطابقة الصندوق.
+                  </p>
+                </div>
+
+                {/* Bank Transfer Option */}
+                <div className={`p-5 rounded-2xl border transition-all ${
+                  platformPaymentConfig.allow_bank_transfer
+                    ? 'bg-blue-500/5 border-blue-500/30'
+                    : 'bg-slate-950/60 border-slate-800'
+                }`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold">
+                        🏦
+                      </div>
+                      <div>
+                        <h6 className="text-xs font-black text-white">التحويل البنكي المباشر (Bank Wire)</h6>
+                        <span className="text-[10px] text-slate-400">تحويل لحساب مؤسسة رادار الرسمي</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPlatformPaymentConfig({ ...platformPaymentConfig, allow_bank_transfer: !platformPaymentConfig.allow_bank_transfer })}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                        platformPaymentConfig.allow_bank_transfer ? 'bg-blue-500' : 'bg-slate-800'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                          platformPaymentConfig.allow_bank_transfer ? 'translate-x-0' : '-translate-x-5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    يعرض للتجار بيانات الحساب البنكي والآيبان للتحويل المباشر مع إرفاق الإشعار، وتفعيل الاشتراك يدوياً من لوحة التحكم برقم الحوالة البنكية.
+                  </p>
+                </div>
+              </div>
+
+              {/* Bank Account Details Inputs */}
+              {platformPaymentConfig.allow_bank_transfer && (
+                <div className="p-4 sm:p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
+                  <span className="text-xs font-bold text-slate-300 block">بيانات الحساب البنكي للمنصة (التي تظهر للتجار):</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                    <div>
+                      <label className="text-[11px] text-slate-400 font-bold block mb-1">اسم البنك:</label>
+                      <input
+                        type="text"
+                        placeholder="مثال: مصرف الراجحي"
+                        value={platformPaymentConfig.bank_details?.bank_name || ''}
+                        onChange={(e) => setPlatformPaymentConfig({
+                          ...platformPaymentConfig,
+                          bank_details: {
+                            bank_name: e.target.value,
+                            account_name: platformPaymentConfig.bank_details?.account_name || '',
+                            iban: platformPaymentConfig.bank_details?.iban || '',
+                          },
+                        })}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-white outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] text-slate-400 font-bold block mb-1">اسم صاحب الحساب:</label>
+                      <input
+                        type="text"
+                        placeholder="مثال: مؤسسة رادار الرقمية"
+                        value={platformPaymentConfig.bank_details?.account_name || ''}
+                        onChange={(e) => setPlatformPaymentConfig({
+                          ...platformPaymentConfig,
+                          bank_details: {
+                            bank_name: platformPaymentConfig.bank_details?.bank_name || '',
+                            account_name: e.target.value,
+                            iban: platformPaymentConfig.bank_details?.iban || '',
+                          },
+                        })}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-white outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] text-slate-400 font-bold block mb-1">رقم الآيبان (IBAN):</label>
+                      <input
+                        type="text"
+                        placeholder="SA0000000000000000000000"
+                        value={platformPaymentConfig.bank_details?.iban || ''}
+                        onChange={(e) => setPlatformPaymentConfig({
+                          ...platformPaymentConfig,
+                          bank_details: {
+                            bank_name: platformPaymentConfig.bank_details?.bank_name || '',
+                            account_name: platformPaymentConfig.bank_details?.account_name || '',
+                            iban: e.target.value.toUpperCase(),
+                          },
+                        })}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-white font-mono outline-none focus:border-blue-500"
+                        dir="ltr"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Submit & Save Bar */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-slate-800">
+              <span className="text-xs text-slate-400">
+                🔒 يتم حفظ الإعدادات بصلاحيات سيرفرية مؤمنة (Security Definer RPC) بدون أي مخاطر كشف للمفاتيح الحساسة.
+              </span>
+
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualSubPreSelectedStoreId(undefined);
+                    setIsManualSubModalOpen(true);
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-bold text-xs transition flex items-center gap-2"
+                >
+                  <Banknote className="w-4 h-4 text-emerald-400" />
+                  <span>تفعيل اشتراك يدوي 💵</span>
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isSavingPaymentConfig}
+                  className="px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition flex-1 sm:flex-initial"
+                >
+                  {isSavingPaymentConfig ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  <span>حفظ وتثبيت إعدادات البوابات 💾</span>
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* MODAL 1: LEDGER ENTRY AUDIT TRACE */}
       {/* ========================================================================= */}
       {selectedLedgerAudit && (
@@ -2061,6 +2595,21 @@ export const SuperAdminBillingConsole: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* MODAL 6: MANUAL STORE SUBSCRIPTION (CASH / BANK TRANSFER) */}
+      {/* ========================================================================= */}
+      <ManualSubscriptionModal
+        isOpen={isManualSubModalOpen}
+        onClose={() => setIsManualSubModalOpen(false)}
+        stores={stores}
+        preSelectedStoreId={manualSubPreSelectedStoreId}
+        onSuccess={async (updatedStore, invoice) => {
+          setActionSuccess(`تم تفعيل اشتراك متجر "${updatedStore.name}" بنجاح وإصدار فاتورة برقم: ${invoice?.invoice_number || invoice?.id || 'N/A'} 💵`);
+          await loadAllFinancialData();
+          setTimeout(() => setActionSuccess(null), 4000);
+        }}
+      />
     </div>
   );
 };

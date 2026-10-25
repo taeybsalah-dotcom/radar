@@ -52,6 +52,7 @@ import {
   Bell,
   Volume2,
   Send,
+  Banknote,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
@@ -59,6 +60,7 @@ import { SuperAdminPartnersConsole } from './SuperAdminPartnersConsole';
 import { SuperAdminBillingConsole } from './SuperAdminBillingConsole';
 import { SuperAdminIntegrationsHub } from './SuperAdminIntegrationsHub';
 import { SuperAdminTeamConsole } from './SuperAdminTeamConsole';
+import { ManualSubscriptionModal } from './ManualSubscriptionModal';
 import {
   SuperAdminUser,
   AdminRole,
@@ -560,6 +562,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   // Financial Log & Invoices State
   const [allInvoices, setAllInvoices] = useState<Record<string, StoreInvoice[]>>({});
   const [selectedStoreForFinancials, setSelectedStoreForFinancials] = useState<Store | null>(null);
+  const [isManualSubModalOpen, setIsManualSubModalOpen] = useState(false);
+  const [selectedStoreForManualSub, setSelectedStoreForManualSub] = useState<Store | null>(null);
 
   // 🏛️ 5-Stage Status Filter & Search State
   const [storeStageFilter, setStoreStageFilter] = useState<'ALL' | UnifiedLifecycleStage>('ALL');
@@ -1868,14 +1872,29 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setSelectedStoreForFinancials(s)}
-                        className="px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border border-amber-500/30 transition text-xs font-bold flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-sm shrink-0"
-                      >
-                        <CreditCard className="w-4 h-4" />
-                        <span>كشف الحساب والمدفوعات ({storeInvs.length})</span>
-                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedStoreForManualSub(s);
+                            setIsManualSubModalOpen(true);
+                          }}
+                          className="px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 transition text-xs font-bold flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-sm"
+                          title="تفعيل أو تجديد الاشتراك كاش / تحويل"
+                        >
+                          <Banknote className="w-4 h-4" />
+                          <span>تفعيل كاش 💵</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedStoreForFinancials(s)}
+                          className="px-3.5 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border border-amber-500/30 transition text-xs font-bold flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-sm"
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          <span>كشف الحساب ({storeInvs.length})</span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Portal Quick Access Buttons */}
@@ -2957,12 +2976,25 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => setSelectedStoreForFinancials(null)}
-                className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedStoreForManualSub(selectedStoreForFinancials);
+                    setIsManualSubModalOpen(true);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20"
+                >
+                  <Banknote className="w-4 h-4" />
+                  <span>تفعيل كاش 💵</span>
+                </button>
+                <button
+                  onClick={() => setSelectedStoreForFinancials(null)}
+                  className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Financial Overview Cards */}
@@ -3278,6 +3310,30 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         targetId={notificationModalData.targetId}
         onSuccess={(notif) => {
           setNotifHistory((prev) => [notif, ...prev]);
+        }}
+      />
+
+      {/* 💵 Manual Store Subscription Activation (Cash / Bank Transfer) Modal */}
+      <ManualSubscriptionModal
+        isOpen={isManualSubModalOpen}
+        onClose={() => {
+          setIsManualSubModalOpen(false);
+          setSelectedStoreForManualSub(null);
+        }}
+        stores={stores}
+        preSelectedStoreId={selectedStoreForManualSub?.id}
+        onSuccess={(updatedStore, invoice) => {
+          setStores((prev) => prev.map((s) => (s.id === updatedStore.id ? updatedStore : s)));
+          if (selectedStoreForFinancials && selectedStoreForFinancials.id === updatedStore.id) {
+            setSelectedStoreForFinancials(updatedStore);
+          }
+          if (invoice) {
+            setAllInvoices((prev) => ({
+              ...prev,
+              [updatedStore.id]: [invoice, ...(prev[updatedStore.id] || [])],
+            }));
+          }
+          confetti({ particleCount: 70, spread: 60, origin: { y: 0.7 } });
         }}
       />
 

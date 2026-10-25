@@ -36,6 +36,7 @@ import {
   MasterFinancialMetrics,
   ProratedUpgradeCalculation,
   FinancialPlatformConfig,
+  PlatformPaymentConfig,
   UnifiedLifecycleStage,
   UnifiedStageInfo,
   resolveUnifiedStage,
@@ -5959,6 +5960,109 @@ export const LoyaltyService = {
     saveLocalData(STORAGE_KEYS.LOCAL_FINANCIAL_CONFIG, updated);
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global_financial_config' });
     return updated;
+  },
+
+  // 💳 جلب إعدادات بوابات دفع منصة رادار لتحصيل الاشتراكات (Platform Omnichannel Payment Gateways)
+  async getPlatformPaymentConfig(): Promise<PlatformPaymentConfig> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await (supabase.rpc as any)('get_platform_payment_gateway_config');
+        if (!error && data) {
+          saveLocalData('radar_platform_payment_config', data);
+          return data as unknown as PlatformPaymentConfig;
+        }
+      } catch (err) {
+        console.warn('[getPlatformPaymentConfig] RPC error, fallback to local:', err);
+      }
+    }
+    return getLocalData<PlatformPaymentConfig>('radar_platform_payment_config', {
+      enabled: true,
+      provider: 'sandbox',
+      mode: 'sandbox',
+      public_key: '',
+      secret_key: '',
+      allow_cash: true,
+      allow_bank_transfer: true,
+      bank_details: {
+        bank_name: 'مصرف الراجحي',
+        account_name: 'مؤسسة رادار لحلول الاتصالات وتقنية المعلومات',
+        iban: 'SA0380000000000000000000',
+      },
+    });
+  },
+
+  // 💾 تحديث وحفظ إعدادات بوابات دفع منصة رادار في قاعدة البيانات
+  async updatePlatformPaymentConfig(config: PlatformPaymentConfig): Promise<{ success: boolean; config?: PlatformPaymentConfig; error?: string; message?: string }> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await (supabase.rpc as any)('update_platform_payment_gateway_config', {
+          p_config: config,
+        });
+        if (!error) {
+          saveLocalData('radar_platform_payment_config', config);
+          LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'platform_payment_gateway' });
+          return { success: true, config, message: 'تم حفظ وتفعيل إعدادات الدفع لمنصة رادار بنجاح' };
+        }
+        return { success: false, error: error.message };
+      } catch (err: any) {
+        return { success: false, error: err.message || 'فشل حفظ الإعدادات' };
+      }
+    }
+    saveLocalData('radar_platform_payment_config', config);
+    return { success: true, config, message: 'تم الحفظ محلياً' };
+  },
+
+  // 💵 التفعيل اليدوي لاشتراك المتجر (نقداً كاش / تحويل بنكي) من لوحة تحكم رادار
+  async manualActivateStoreSubscription(payload: {
+    storeId: string;
+    durationMonths: number;
+    amount: number;
+    paymentMethod?: 'cash' | 'bank_transfer';
+    planId?: string;
+    notes?: string;
+  }): Promise<{ success: boolean; invoice?: any; store?: any; error?: string }> {
+    const supabase = getSupabaseClient();
+    const paymentMethod = payload.paymentMethod || 'cash';
+    const durationMonths = Number(payload.durationMonths) || 1;
+    const amount = Number(payload.amount) || 0;
+
+    if (supabase && isUUID(payload.storeId)) {
+      try {
+        const { data, error } = await (supabase.rpc as any)('super_admin_manual_activate_subscription', {
+          p_store_id: payload.storeId,
+          p_duration_months: durationMonths,
+          p_amount: amount,
+          p_payment_method: paymentMethod,
+          p_plan_id: payload.planId || null,
+          p_notes: payload.notes || null,
+        });
+
+        if (error) {
+          return { success: false, error: error.message };
+        }
+
+        const resData = data as any;
+        if (resData && (resData.success || resData.invoice_id)) {
+          const freshStore = await this.resolveStore(payload.storeId, true);
+          LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: payload.storeId });
+          LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: payload.storeId });
+          LoyaltyEvents.emit({ type: 'PAYMENT_COMPLETED', storeId: payload.storeId });
+          return {
+            success: true,
+            store: freshStore,
+            invoice: resData.invoice || { id: resData.invoice_id },
+          };
+        }
+
+        return { success: false, error: resData?.error || 'فشلت معالجة التفعيل اليدوي' };
+      } catch (err: any) {
+        return { success: false, error: err.message || 'حدث خطأ أثناء معالجة التفعيل' };
+      }
+    }
+
+    return { success: false, error: 'الاتصال بقاعدة البيانات غير متوفر' };
   },
 
   // حساب التفكيك المالي الدقيق والضريبة (Flexible VAT 0%-15%, Gateway Fee, Absolute Marketer Commission, Net Platform Revenue)
