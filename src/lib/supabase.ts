@@ -7905,6 +7905,7 @@ export const LoyaltyService = {
       loyalty_points_earned: payload.loyalty_points_earned || 0,
       status: resolvedStatus,
       payment_status: resolvedPaymentStatus,
+      payment_method: payload.payment_method || (isDirectPOSOrder ? 'cash' : 'card'),
       order_source: resolvedOrderSource,
       cashier_id: payload.cashier_id || null,
       cashier_name: payload.cashier_name || null,
