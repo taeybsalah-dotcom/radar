@@ -812,24 +812,8 @@ const COUPON_FULL_COLS = COUPON_SAFE_COLS + ', used_at, cashier_name';
 
 // Probe (zero-row query, no payload) once per table to learn which optional columns exist.
 const colProbeCache = new Map<string, Promise<'*'>>();
-function probeCols(supabase: any, table: string, full: string, safe: string): Promise<'*'> {
-  let p = colProbeCache.get(table);
-  if (!p) {
-    p = (async () => {
-      try {
-        const r: any = await (supabase.from as any)(table).select(full).limit(0);
-        if (!r.error) return full as unknown as '*';
-        if (!/column|42703|PGRST204/i.test(String(r.error.code || '') + String(r.error.message || ''))) {
-          colProbeCache.delete(table); // transient error — retry next time
-        }
-      } catch {
-        colProbeCache.delete(table);
-      }
-      return safe as unknown as '*';
-    })();
-    colProbeCache.set(table, p);
-  }
-  return p;
+function probeCols(_supabase: any, _table: string, full: string, _safe: string): Promise<'*'> {
+  return Promise.resolve(full as unknown as '*');
 }
 const storeCols = (s: any) => probeCols(s, 'stores', STORE_FULL_COLS, STORE_SAFE_COLS);
 const customerCols = (s: any) => probeCols(s, 'store_customers', CUSTOMER_FULL_COLS, CUSTOMER_SAFE_COLS);
@@ -874,11 +858,11 @@ async function attachStoreAssets(supabase: any, row: any): Promise<any> {
 // Non-heavy tables: explicit list, falls back to '*' only if a listed column is missing in the live schema.
 const WALLET_COLS = 'id, store_id, sms_quota, sms_used, wa_quota, wa_used, cashier_limit, extra_cashiers_purchased, whatsapp_provider, meta_phone_number_id, meta_waba_id, meta_access_token, created_at, updated_at';
 const STAFF_COLS = 'id, store_id, branch_id, assigned_branch_ids, user_id, name, phone, role, is_active, can_manual_input_phone, created_at, updated_at';
-const TIER_COLS = 'id, store_id, tier_name, required_xp, badge_color, icon, created_at';
+const TIER_COLS = 'id, store_id, tier_name, required_xp, badge_color, created_at, updated_at';
 const PRIVILEGE_COLS = 'id, store_id, required_tier_id, title, description, image_url, cost_points, quantity_limit, per_customer_limit, redeemed_count, valid_start_time, valid_end_time, is_active, is_hidden, created_at';
-const LEDGER_COLS = 'id, ledger_id, transaction_id, invoice_id, store_id, store_name, affiliate_id, affiliate_name, payment_id, transaction_type, gross_amount, vat_amount, gateway_fee, affiliate_commission, net_platform_amount, status, created_at, effective_at, reversal_of, refund_of, created_by, metadata';
+const LEDGER_COLS = 'id, transaction_id, invoice_id, store_id, affiliate_id, payment_id, transaction_type, gross_amount, vat_amount, gateway_fee, affiliate_commission, net_platform_amount, status, reversal_of, refund_of, created_by, metadata, effective_at, created_at';
 const LEAD_COLS = 'id, store_name, manager_name, phone, normalized_phone, city, business_type, attribution_source, referral_code, affiliate_id, status, conversion_started_at, conversion_error, converted_store_id, notes, created_at, updated_at';
-const PLAN_COLS = 'id, code, name, description, amount, currency, duration_months, billing_interval, trial_days, features, active, created_at';
+const PLAN_COLS = 'id, code, name, description, amount, currency, billing_interval, trial_days, active, provider_price_id, metadata, created_at, updated_at';
 const walletCols = (s: any) => probeCols(s, 'store_wallets', WALLET_COLS, '*');
 const staffCols = (s: any) => probeCols(s, 'store_staff', STAFF_COLS, '*');
 const tierCols = (s: any) => probeCols(s, 'tiers', TIER_COLS, '*');
@@ -6113,7 +6097,13 @@ export const LoyaltyService = {
         }
 
         const { data, error } = await withTimeout(query, 6000);
-        if (!error && data && data.length > 0) {
+        if (!error && Array.isArray(data)) {
+          if (data.length === 0) {
+            if (isDefaultQuery) {
+              ledgerListCache = { data: [], timestamp: Date.now() };
+            }
+            return [];
+          }
           const partnersList = await this.getAllPartners();
           const formatted: FinancialLedgerEntry[] = data.map((d: any) => {
             const partner = partnersList.find((p) => p.id === d.affiliate_id || p.affiliate_id === d.affiliate_id);
@@ -9288,9 +9278,10 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
+        const isAuth = Boolean(supabase.auth && typeof supabase.auth.getSession === 'function' ? (await supabase.auth.getSession().catch(() => null))?.data?.session : null);
         const [affRes, paRes] = await Promise.all([
           withTimeout(supabase.from('affiliates').select('*').order('created_at', { ascending: false }), 6000),
-          withTimeout(supabase.from('partner_accounts').select('*'), 6000).catch(() => ({ data: [] })),
+          isAuth ? withTimeout(supabase.from('partner_accounts').select('*'), 6000).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
         ]);
 
         const affList = affRes?.data || [];
@@ -12589,11 +12580,23 @@ export const LoyaltyService = {
   },
 };
 
+// ⚡ Global In-Flight Request Deduplication to prevent simultaneous API spam
+const inFlightRequests = new Map<string, Promise<any>>();
+function wrapInFlight<T extends (...args: any[]) => Promise<any>>(keyPrefix: string, fn: T): T {
+  return ((...args: any[]) => {
+    const key = keyPrefix + (args.length > 0 ? '_' + JSON.stringify(args) : '');
+    const existing = inFlightRequests.get(key);
+    if (existing) return existing;
+    const promise = fn(...args).finally(() => inFlightRequests.delete(key));
+    inFlightRequests.set(key, promise);
+    return promise;
+  }) as T;
+}
 
-
-
-
-
-
-
+LoyaltyService.getAllInvoices = wrapInFlight('getAllInvoices', LoyaltyService.getAllInvoices.bind(LoyaltyService));
+LoyaltyService.getSuperAdminStoresSummary = wrapInFlight('getSuperAdminStoresSummary', LoyaltyService.getSuperAdminStoresSummary.bind(LoyaltyService));
+LoyaltyService.getAllPartnerFinancialSummaries = wrapInFlight('getAllPartnerFinancialSummaries', LoyaltyService.getAllPartnerFinancialSummaries.bind(LoyaltyService));
+LoyaltyService.getAllPartners = wrapInFlight('getAllPartners', LoyaltyService.getAllPartners.bind(LoyaltyService));
+LoyaltyService.checkAndUpdateStoreSubscription = wrapInFlight('checkAndUpdateStoreSubscription', LoyaltyService.checkAndUpdateStoreSubscription.bind(LoyaltyService));
+LoyaltyService.getFinancialLedger = wrapInFlight('getFinancialLedger', LoyaltyService.getFinancialLedger.bind(LoyaltyService));
 
