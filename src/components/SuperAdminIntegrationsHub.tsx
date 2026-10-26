@@ -14,6 +14,8 @@ import {
   Smartphone,
   Save,
   HelpCircle,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { LoyaltyService } from '../lib/supabase';
 import { PlatformIntegrationsConfig } from '../types';
@@ -41,7 +43,9 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'warning' | 'error'; message: string } | null>(null);
+  const [sqlNotice, setSqlNotice] = useState<string | null>(null);
+  const [isCopiedSql, setIsCopiedSql] = useState(false);
 
   // Testing States
   const [isTestingTelegram, setIsTestingTelegram] = useState(false);
@@ -80,8 +84,17 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
         if (res.bot_username) {
           setConfig(prev => ({ ...prev, telegram_bot_username: res.bot_username }));
         }
-        setSaveStatus({ type: 'success', message: 'تم حفظ مفاتيح وتكاملات المنصة بنجاح في قاعدة البيانات 🚀' });
-        setTimeout(() => setSaveStatus(null), 4000);
+        if (res.sqlNotice) {
+          setSqlNotice(res.sqlNotice);
+          setSaveStatus({ 
+            type: 'warning', 
+            message: 'تم حفظ وتفعيل مفاتيح المنصة بنجاح في قاعدة البيانات! 🚀 لتثبيت عمود تسعير باقة الواتساب بقاعدة البيانات، انسخ كود SQL أدناه وشغله في Supabase SQL Editor.' 
+          });
+        } else {
+          setSqlNotice(null);
+          setSaveStatus({ type: 'success', message: 'تم حفظ مفاتيح وتكاملات المنصة بنجاح في قاعدة البيانات 🚀' });
+          setTimeout(() => setSaveStatus(null), 4000);
+        }
       } else {
         setSaveStatus({ type: 'error', message: res.error || 'فشل في حفظ الإعدادات' });
       }
@@ -220,15 +233,48 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
           className={`p-4 rounded-2xl border flex items-center gap-3 animate-fade-in text-sm font-bold ${
             saveStatus.type === 'success'
               ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+              : saveStatus.type === 'warning'
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
               : 'bg-rose-500/15 border-rose-500/40 text-rose-400'
           }`}
         >
           {saveStatus.type === 'success' ? (
             <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+          ) : saveStatus.type === 'warning' ? (
+            <Zap className="w-5 h-5 flex-shrink-0 text-amber-400" />
           ) : (
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
           )}
           <span>{saveStatus.message}</span>
+        </div>
+      )}
+
+      {/* SQL Migration Notice if Column Not Yet Applied in Supabase */}
+      {sqlNotice && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-3 animate-fade-in shadow-lg">
+          <div className="flex items-center justify-between">
+            <span className="font-bold flex items-center gap-2 text-amber-300 text-sm">
+              <Zap className="w-4 h-4 text-amber-400" /> خطوة سريعة: تفعيل عمود تسعير باقة 1,000 رسالة في Supabase
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(sqlNotice);
+                setIsCopiedSql(true);
+                setTimeout(() => setIsCopiedSql(false), 2500);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 font-bold text-xs transition-colors"
+            >
+              {isCopiedSql ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {isCopiedSql ? 'تم النسخ بنجاح!' : 'نسخ كود SQL'}
+            </button>
+          </div>
+          <p className="text-slate-300 text-xs leading-relaxed">
+            تم حفظ مفاتيح المنصة السحابية بنجاح وهي تعمل بالكامل. لتسجيل عمود التسعير بقاعدة بيانات Supabase، انسخ السطر التالي وشغّله لمرة واحدة في <strong>Supabase &gt; SQL Editor</strong>:
+          </p>
+          <pre className="p-3 rounded-xl bg-slate-950/90 border border-slate-800 text-emerald-400 font-mono text-xs overflow-x-auto select-all dir-ltr text-left">
+            {sqlNotice}
+          </pre>
         </div>
       )}
 

@@ -1838,6 +1838,12 @@ export const LoyaltyService = {
 
   // 3.3 إدارة التكاملات والمفاتيح السحابية للمنصة (Platform Integrations & APIs)
   async getPlatformIntegrations(): Promise<PlatformIntegrationsConfig> {
+    let localPrice = 150;
+    try {
+      const cached = localStorage.getItem('radar_whatsapp_tier_1000_price');
+      if (cached) localPrice = Number(cached);
+    } catch {}
+
     const defaultCfg: PlatformIntegrationsConfig = {
       telegram_bot_token: '',
       telegram_bot_username: '',
@@ -1852,32 +1858,44 @@ export const LoyaltyService = {
       whatsapp_access_token: '',
       whatsapp_instance_id: '',
       whatsapp_enabled: false,
-      whatsapp_tier_1000_price: 150,
+      whatsapp_tier_1000_price: localPrice,
     };
     const supabase = getSupabaseClient();
     if (!supabase) return defaultCfg;
     try {
       const { data, error } = await (supabase.from as any)('platform_integrations').select('*').limit(1).maybeSingle();
       if (error || !data) return defaultCfg;
-      return { ...defaultCfg, ...data };
+      return { 
+        ...defaultCfg, 
+        ...data,
+        whatsapp_tier_1000_price: data.whatsapp_tier_1000_price !== undefined && data.whatsapp_tier_1000_price !== null 
+          ? Number(data.whatsapp_tier_1000_price) 
+          : localPrice
+      };
     } catch {
       return defaultCfg;
     }
   },
 
   async getPublicPlatformIntegrations(): Promise<PublicPlatformIntegrations> {
+    let localPrice = 150;
+    try {
+      const cached = localStorage.getItem('radar_whatsapp_tier_1000_price');
+      if (cached) localPrice = Number(cached);
+    } catch {}
+
     const defaultPublic: PublicPlatformIntegrations = {
       telegram_enabled: false,
       telegram_bot_username: null,
       gemini_enabled: false,
       whatsapp_enabled: false,
-      whatsapp_tier_1000_price: 150,
+      whatsapp_tier_1000_price: localPrice,
     };
     const supabase = getSupabaseClient();
     if (!supabase) return defaultPublic;
     try {
       const { data: directData } = await (supabase.from as any)('platform_integrations')
-        .select('whatsapp_tier_1000_price, whatsapp_enabled, telegram_enabled, gemini_enabled, telegram_bot_username')
+        .select('*')
         .limit(1)
         .maybeSingle();
 
@@ -1887,7 +1905,9 @@ export const LoyaltyService = {
           telegram_bot_username: directData.telegram_bot_username || null,
           gemini_enabled: Boolean(directData.gemini_enabled),
           whatsapp_enabled: Boolean(directData.whatsapp_enabled),
-          whatsapp_tier_1000_price: directData.whatsapp_tier_1000_price ? Number(directData.whatsapp_tier_1000_price) : 150,
+          whatsapp_tier_1000_price: directData.whatsapp_tier_1000_price !== undefined && directData.whatsapp_tier_1000_price !== null
+            ? Number(directData.whatsapp_tier_1000_price)
+            : localPrice,
         };
       }
 
@@ -1898,7 +1918,9 @@ export const LoyaltyService = {
         telegram_bot_username: data.telegram_bot_username || null,
         gemini_enabled: Boolean(data.gemini_enabled),
         whatsapp_enabled: Boolean(data.whatsapp_enabled),
-        whatsapp_tier_1000_price: data.whatsapp_tier_1000_price ? Number(data.whatsapp_tier_1000_price) : 150,
+        whatsapp_tier_1000_price: data.whatsapp_tier_1000_price !== undefined && data.whatsapp_tier_1000_price !== null
+          ? Number(data.whatsapp_tier_1000_price)
+          : localPrice,
       };
     } catch {
       return defaultPublic;
@@ -1934,12 +1956,12 @@ export const LoyaltyService = {
     }
   },
 
-  async updatePlatformIntegrations(payload: Partial<PlatformIntegrationsConfig>): Promise<{ success: boolean; error?: string; bot_username?: string }> {
+  async updatePlatformIntegrations(payload: Partial<PlatformIntegrationsConfig>): Promise<{ success: boolean; error?: string; bot_username?: string; sqlNotice?: string }> {
     const supabase = getSupabaseClient();
     if (!supabase) return { success: false, error: 'تعذر الاتصال بقاعدة البيانات' };
     try {
       const current = await this.getPlatformIntegrations();
-      const updated = { ...current, ...payload, updated_at: new Date().toISOString() };
+      const updated: any = { ...current, ...payload, updated_at: new Date().toISOString() };
       
       // Auto-detect and sync Telegram bot username if token is supplied
       if (updated.telegram_bot_token && updated.telegram_bot_token.trim()) {
@@ -1954,8 +1976,39 @@ export const LoyaltyService = {
         }
       }
 
+      // Persist desired price locally so system operates seamlessly
+      if (updated.whatsapp_tier_1000_price !== undefined) {
+        try {
+          localStorage.setItem('radar_whatsapp_tier_1000_price', String(updated.whatsapp_tier_1000_price));
+        } catch {}
+      }
+
       const { error } = await (supabase.from as any)('platform_integrations').upsert(updated);
+
       if (error) {
+        // Check if error is due to missing whatsapp_tier_1000_price column in DB schema
+        const isMissingPriceColumn = 
+          (error.message && error.message.includes('whatsapp_tier_1000_price')) ||
+          (error.details && error.details.includes('whatsapp_tier_1000_price')) ||
+          ((error.message && error.message.includes('schema cache')) && (error.message.includes('whatsapp_tier_1000_price') || error.message.includes('column')));
+
+        if (isMissingPriceColumn) {
+          console.warn('Column whatsapp_tier_1000_price missing from Supabase schema. Retrying upsert without it to save other keys.');
+          const sanitized = { ...updated };
+          delete sanitized.whatsapp_tier_1000_price;
+
+          const retryRes = await (supabase.from as any)('platform_integrations').upsert(sanitized);
+          if (retryRes.error) {
+            return { success: false, error: retryRes.error.message };
+          }
+
+          return { 
+            success: true, 
+            bot_username: updated.telegram_bot_username,
+            sqlNotice: 'ALTER TABLE public.platform_integrations ADD COLUMN IF NOT EXISTS whatsapp_tier_1000_price NUMERIC DEFAULT 150;'
+          };
+        }
+
         return { success: false, error: error.message };
       }
       return { success: true, bot_username: updated.telegram_bot_username };
