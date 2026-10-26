@@ -65,6 +65,7 @@ import {
   Copy,
   Utensils,
   Calendar,
+  CalendarCheck,
   MapPin,
   Car,
   Plus,
@@ -3019,7 +3020,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 <div className="pt-1">
                   <button
                     type="button"
-                    onClick={() => setActiveTab('menu')}
+                    onClick={() => {
+                      if (activeModules.orders) setActiveTab('menu');
+                      else if (activeModules.bookings) setActiveTab('services');
+                      else setActiveTab('perks');
+                    }}
                     className={`px-4 py-1.5 rounded-full font-black text-xs shadow-lg flex items-center gap-1.5 hover:scale-105 active:scale-95 transition ${
                       brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white' : ''
                     }`}
@@ -3028,7 +3033,13 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                       color: brandColors.contrastOnSecondary,
                     }}
                   >
-                    <span>اطلب الآن</span>
+                    <span>
+                      {activeModules.orders
+                        ? 'اطلب الآن'
+                        : activeModules.bookings
+                        ? 'احجز موعدك الآن'
+                        : 'استكشف المكافآت'}
+                    </span>
                     <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -6251,7 +6262,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               ? 'shadow-[0_-8px_30px_rgba(0,0,0,0.5)] bg-slate-950/95 backdrop-blur-3xl border border-white/10'
               : 'shadow-[0_-4px_25px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-3xl border border-slate-200/90'
           }`}>
-            {/* Slot 1: المنيو (Rightmost in RTL) */}
+            {/* Slot 1: المنيو أو حجز موعد للصالونات أو المستويات للتجزئة */}
             <div className="flex justify-center items-center">
               {activeModules.orders ? (
                 <button
@@ -6288,12 +6299,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     </span>
                   )}
                 </button>
-              ) : <div className="h-10" />}
-            </div>
-
-            {/* Slot 2: حجز موعد */}
-            <div className="flex justify-center items-center">
-              {activeModules.bookings ? (
+              ) : activeModules.bookings ? (
                 <button
                   type="button"
                   onClick={() => setActiveTab('services')}
@@ -6318,7 +6324,141 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     <span className="w-4 h-1 opacity-0" />
                   )}
                 </button>
-              ) : <div className="h-10" />}
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('tiers')}
+                  style={activeTab === 'tiers' ? { color: safeAccentText } : undefined}
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
+                    activeTab === 'tiers'
+                      ? 'font-black scale-105'
+                      : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
+                  }`}
+                >
+                  <Crown
+                    className="w-5 h-5 transition-transform duration-300"
+                    style={activeTab === 'tiers' ? { filter: `drop-shadow(0 0 6px ${safeAccentText}40)` } : undefined}
+                  />
+                  <span className="text-[10px] sm:text-[11px] leading-tight">المستويات</span>
+                  {activeTab === 'tiers' ? (
+                    <span
+                      className="w-4 h-1 rounded-full animate-fade-in"
+                      style={{ backgroundColor: safeAccentText }}
+                    />
+                  ) : (
+                    <span className="w-4 h-1 opacity-0" />
+                  )}
+                </button>
+              )}
+            </div>
+
+            {/* Slot 2: طلباتي (للمطاعم والكافيهات) أو مواعيدي (للصالونات) أو حجز موعد (عند تفعيل الاثنين) أو النقاط (للولاء) */}
+            <div className="flex justify-center items-center">
+              {activeModules.orders && !activeModules.bookings ? (
+                /* 🛍️ مطعم / كافيه: استبدال الفراغ بزر "طلباتي ومتابعة الطلب" */
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPastModalTab('orders');
+                    setShowPastOrdersModal(true);
+                  }}
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
+                    isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
+                  }`}
+                  title="سجل ومتابعة طلباتي الحالية"
+                >
+                  <div className="relative flex items-center justify-center">
+                    <Clock className="w-5 h-5 transition-transform duration-300" />
+                    {pastOrders.some((o) => o.status === 'pending' || o.status === 'preparing' || o.status === 'ready') && (
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white animate-ping" />
+                    )}
+                  </div>
+                  <span className="text-[10px] sm:text-[11px] leading-tight">طلباتي</span>
+                  {pastOrders.length > 0 && (
+                    <span
+                      className={`absolute top-0.5 right-1 sm:right-2 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm ${
+                        safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                      }`}
+                      style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
+                    >
+                      {pastOrders.length}
+                    </span>
+                  )}
+                  <span className="w-4 h-1 opacity-0" />
+                </button>
+              ) : !activeModules.orders && activeModules.bookings ? (
+                /* 📅 صالون / عيادة / سبا: استبدال الفراغ بزر "مواعيدي القادمة" */
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPastModalTab('bookings');
+                    setShowPastOrdersModal(true);
+                  }}
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
+                    isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
+                  }`}
+                  title="سجل ومتابعة مواعيدي"
+                >
+                  <div className="relative flex items-center justify-center">
+                    <CalendarCheck className="w-5 h-5 transition-transform duration-300" />
+                    {customerServiceBookings.some((b) => b.status === 'confirmed' || b.status === 'pending') && (
+                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-purple-400 ring-2 ring-white animate-ping" />
+                    )}
+                  </div>
+                  <span className="text-[10px] sm:text-[11px] leading-tight">مواعيدي</span>
+                  {customerServiceBookings.length > 0 && (
+                    <span
+                      className={`absolute top-0.5 right-1 sm:right-2 min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black flex items-center justify-center shadow-sm ${
+                        safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                      }`}
+                      style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
+                    >
+                      {customerServiceBookings.length}
+                    </span>
+                  )}
+                  <span className="w-4 h-1 opacity-0" />
+                </button>
+              ) : activeModules.bookings ? (
+                /* 📅 المتجر الشامل (طلبات + حجوزات): حجز موعد */
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('services')}
+                  style={activeTab === 'services' ? { color: safeAccentText } : undefined}
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
+                    activeTab === 'services'
+                      ? 'font-black scale-105'
+                      : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
+                  }`}
+                >
+                  <Calendar
+                    className="w-5 h-5 transition-transform duration-300"
+                    style={activeTab === 'services' ? { filter: `drop-shadow(0 0 6px ${safeAccentText}40)` } : undefined}
+                  />
+                  <span className="text-[10px] sm:text-[11px] leading-tight">حجز موعد</span>
+                  {activeTab === 'services' ? (
+                    <span
+                      className="w-4 h-1 rounded-full animate-fade-in"
+                      style={{ backgroundColor: safeAccentText }}
+                    />
+                  ) : (
+                    <span className="w-4 h-1 opacity-0" />
+                  )}
+                </button>
+              ) : (
+                /* 💎 تجزئة وولاء فقط: كيف أجمع نقاطاً */
+                <button
+                  type="button"
+                  onClick={() => setShowHowToEarnPoints(true)}
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
+                    isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
+                  }`}
+                  title="كيف تجمع نقاطاً؟"
+                >
+                  <Coins className="w-5 h-5 transition-transform duration-300" />
+                  <span className="text-[10px] sm:text-[11px] leading-tight">النقاط</span>
+                  <span className="w-4 h-1 opacity-0" />
+                </button>
+              )}
             </div>
 
             {/* Slot 3: Center FAB Spacer Slot (Exactly 20% column width for absolute symmetry) */}

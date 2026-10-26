@@ -111,6 +111,8 @@ import {
   EyeOff,
   Layers,
   Package,
+  Monitor,
+  Truck,
   ChevronDown,
   ChevronUp,
   BarChart3,
@@ -350,41 +352,59 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [enableOrders, setEnableOrders] = useState(currentStore?.enable_orders !== false);
   const [enableBookings, setEnableBookings] = useState(currentStore?.enable_bookings !== false);
   const [enableLoyalty, setEnableLoyalty] = useState(currentStore?.enable_loyalty !== false);
+  const [enablePos, setEnablePos] = useState(currentStore?.enable_pos !== false);
+  const [enableKds, setEnableKds] = useState(currentStore?.enable_kds !== false);
+  const [enableDrivers, setEnableDrivers] = useState(currentStore?.enable_drivers !== false);
+  const [enableInventory, setEnableInventory] = useState(currentStore?.enable_inventory !== false);
   const [moduleToggleError, setModuleToggleError] = useState<string | null>(null);
   const [moduleToggleSuccess, setModuleToggleSuccess] = useState<string | null>(null);
   const [isTogglingModule, setIsTogglingModule] = useState<string | null>(null);
 
-  const handleToggleModule = async (module: 'orders' | 'bookings' | 'loyalty', targetVal: boolean) => {
+  useEffect(() => {
+    const s = store || currentStore;
+    if (s) {
+      setEnableOrders(s.enable_orders !== false);
+      setEnableBookings(s.enable_bookings !== false);
+      setEnableLoyalty(s.enable_loyalty !== false);
+      setEnablePos(s.enable_pos !== false);
+      setEnableKds(s.enable_kds !== false);
+      setEnableDrivers(s.enable_drivers !== false);
+      setEnableInventory(s.enable_inventory !== false);
+    }
+  }, [store?.id, currentStore?.id]);
+
+  type SaaSModuleKey = 'orders' | 'bookings' | 'loyalty' | 'pos' | 'kds' | 'drivers' | 'inventory';
+
+  const handleToggleModule = async (module: SaaSModuleKey, targetVal: boolean) => {
     setModuleToggleError(null);
     setModuleToggleSuccess(null);
 
-    // 1. فحص قفل المالك (SaaS Hierarchy Check)
-    if (module === 'orders' && (store?.owner_enable_orders === false || currentStore?.owner_enable_orders === false)) {
-      setModuleToggleError('موديول الطلبات والمنيو غير مشمول في باقة متجرك الحالية 🔒 يرجى التواصل مع إدارة المنصة للترقية.');
-      return;
-    }
-    if (module === 'bookings' && (store?.owner_enable_bookings === false || currentStore?.owner_enable_bookings === false)) {
-      setModuleToggleError('موديول الحجوزات والمواعيد غير مشمول في باقة متجرك الحالية 🔒 يرجى التواصل مع إدارة المنصة للترقية.');
-      return;
-    }
-    if (module === 'loyalty' && (store?.owner_enable_loyalty === false || currentStore?.owner_enable_loyalty === false)) {
-      setModuleToggleError('موديول برنامج الولاء والمكافآت غير مشمول في باقة متجرك الحالية 🔒 يرجى التواصل مع إدارة المنصة للترقية.');
+    const s = store || currentStore;
+    const isOwnerLocked =
+      module === 'orders' ? s?.owner_enable_orders === false :
+      module === 'bookings' ? s?.owner_enable_bookings === false :
+      module === 'loyalty' ? s?.owner_enable_loyalty === false :
+      module === 'pos' ? s?.owner_enable_pos === false :
+      module === 'kds' ? s?.owner_enable_kds === false :
+      module === 'drivers' ? s?.owner_enable_drivers === false :
+      module === 'inventory' ? s?.owner_enable_inventory === false : false;
+
+    if (isOwnerLocked) {
+      setModuleToggleError('هذا الموديول غير مشمول في باقة متجرك الحالية 🔒 يرجى التواصل مع إدارة المنصة للترقية.');
       return;
     }
 
-    // 2. حساب الحالات القادمة
+    // شرط القيد الإلزامي: منع إيقاف كافة الخدمات الرئيسية دفعة واحدة
     const nextOrders = module === 'orders' ? targetVal : enableOrders;
     const nextBookings = module === 'bookings' ? targetVal : enableBookings;
     const nextLoyalty = module === 'loyalty' ? targetVal : enableLoyalty;
 
-    // 3. حساب الموديولات الفعالة فعلياً
-    const effOrders = ((store?.owner_enable_orders ?? currentStore?.owner_enable_orders) !== false) && nextOrders;
-    const effBookings = ((store?.owner_enable_bookings ?? currentStore?.owner_enable_bookings) !== false) && nextBookings;
-    const effLoyalty = ((store?.owner_enable_loyalty ?? currentStore?.owner_enable_loyalty) !== false) && nextLoyalty;
+    const effOrders = (s?.owner_enable_orders !== false) && nextOrders;
+    const effBookings = (s?.owner_enable_bookings !== false) && nextBookings;
+    const effLoyalty = (s?.owner_enable_loyalty !== false) && nextLoyalty;
 
-    // شرط القيد الإلزامي: منع إيقاف جميع الموديولات دفعة واحدة
     if (!effOrders && !effBookings && !effLoyalty) {
-      setModuleToggleError('⚠️ لا يمكن إيقاف كافة الخدمات دفعة واحدة. يجب أن يبقى موديول واحد نشطاً على الأقل لضمان عمل المتجر لعملائك.');
+      setModuleToggleError('⚠️ لا يمكن إيقاف كافة الخدمات الرئيسية دفعة واحدة. يجب أن يبقى موديول واحد نشطاً على الأقل لضمان عمل المتجر لعملائك.');
       return;
     }
 
@@ -392,25 +412,44 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     if (module === 'orders') setEnableOrders(targetVal);
     if (module === 'bookings') setEnableBookings(targetVal);
     if (module === 'loyalty') setEnableLoyalty(targetVal);
+    if (module === 'pos') setEnablePos(targetVal);
+    if (module === 'kds') setEnableKds(targetVal);
+    if (module === 'drivers') setEnableDrivers(targetVal);
+    if (module === 'inventory') setEnableInventory(targetVal);
 
     try {
       const updates: Partial<Store> = {};
       if (module === 'orders') updates.enable_orders = targetVal;
       if (module === 'bookings') updates.enable_bookings = targetVal;
       if (module === 'loyalty') updates.enable_loyalty = targetVal;
+      if (module === 'pos') updates.enable_pos = targetVal;
+      if (module === 'kds') updates.enable_kds = targetVal;
+      if (module === 'drivers') updates.enable_drivers = targetVal;
+      if (module === 'inventory') updates.enable_inventory = targetVal;
 
       const targetStoreId = store?.id || currentStore?.id;
       const updated = await LoyaltyService.updateStoreSettings(targetStoreId, updates);
       setStore(updated);
-      const modName = module === 'orders' ? 'الطلبات والمنيو' : module === 'bookings' ? 'الحجوزات والمواعيد' : 'برنامج الولاء والمكافآت';
-      setModuleToggleSuccess(`تم ${targetVal ? 'تفعيل' : 'إيقاف'} موديول ${modName} بنجاح ${targetVal ? '✅' : '⏸️'}`);
+      const modNames: Record<SaaSModuleKey, string> = {
+        orders: 'الطلبات والمنيو',
+        bookings: 'الحجوزات والمواعيد',
+        loyalty: 'برنامج الولاء والمكافآت',
+        pos: 'الكاشير ونقاط البيع POS',
+        kds: 'شاشة المطبخ KDS',
+        drivers: 'أسطول السائقين والتوصيل',
+        inventory: 'المخزون والوصفات الذكية',
+      };
+      setModuleToggleSuccess(`تم ${targetVal ? 'تفعيل' : 'إيقاف'} موديول ${modNames[module]} بنجاح ${targetVal ? '✅' : '⏸️'}`);
       setTimeout(() => setModuleToggleSuccess(null), 3500);
     } catch (err: any) {
       setModuleToggleError(err?.message || 'حدث خطأ أثناء حفظ الإعدادات');
-      // Revert on failure
       if (module === 'orders') setEnableOrders(!targetVal);
       if (module === 'bookings') setEnableBookings(!targetVal);
       if (module === 'loyalty') setEnableLoyalty(!targetVal);
+      if (module === 'pos') setEnablePos(!targetVal);
+      if (module === 'kds') setEnableKds(!targetVal);
+      if (module === 'drivers') setEnableDrivers(!targetVal);
+      if (module === 'inventory') setEnableInventory(!targetVal);
     } finally {
       setIsTogglingModule(null);
     }
@@ -1489,189 +1528,225 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     }
   };
 
-  const renderModulesCard = () => (
-    <div className="rounded-3xl p-6 sm:p-7 bg-slate-950/90 border border-slate-800 space-y-4 shadow-xl">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
-        <div className="flex items-center space-x-3 rtl:space-x-reverse">
-          <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-            <Layers className="w-5 h-5" />
+  const renderSingleModuleToggleCard = (
+    key: SaaSModuleKey,
+    title: string,
+    description: string,
+    icon: any,
+    colorTheme: {
+      bg: string;
+      border: string;
+      text: string;
+      accentBg: string;
+    },
+    isEnabled: boolean,
+    isOwnerEnabled: boolean,
+  ) => {
+    const isLocked = !isOwnerEnabled;
+    const isToggling = isTogglingModule === key;
+    const IconComponent = icon;
+
+    return (
+      <div
+        key={key}
+        className={`p-5 rounded-2xl border transition-all duration-300 relative overflow-hidden flex flex-col justify-between ${
+          isLocked
+            ? 'bg-slate-900/40 border-slate-800/80 opacity-85'
+            : isEnabled
+            ? `bg-slate-900/90 ${colorTheme.border} shadow-lg shadow-black/20`
+            : 'bg-slate-900/60 border-slate-800'
+        }`}
+      >
+        <div>
+          <div className="flex items-center justify-between gap-2 mb-2.5">
+            <div className="flex items-center space-x-2 rtl:space-x-reverse">
+              <div className={`w-8 h-8 rounded-xl ${colorTheme.bg} ${colorTheme.text} flex items-center justify-center`}>
+                <IconComponent className="w-4 h-4" />
+              </div>
+              <span className="text-xs sm:text-sm font-black text-white">{title}</span>
+            </div>
+
+            {isLocked ? (
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                <Lock className="w-2.5 h-2.5 text-rose-400" />
+                <span>غير مشمول 🔒</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={isToggling}
+                onClick={() => handleToggleModule(key, !isEnabled)}
+                className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
+                  isEnabled
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 shadow-sm'
+                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full ${isEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
+                <span>{isEnabled ? 'مفعل ✅' : 'معطل ✕'}</span>
+              </button>
+            )}
           </div>
-          <div>
-            <h4 className="text-sm sm:text-base font-black text-white">التحكم في خدمات وموديولات المتجر (Module Toggles)</h4>
-            <p className="text-xs text-slate-400 mt-0.5">
-              فعل أو عطل الخدمات التي تظهر لعملائك في المتجر (يجب بقاء موديول واحد نشطاً على الأقل لضمان عمل المتجر)
-            </p>
-          </div>
+          <p className="text-xs text-slate-400 leading-relaxed">{description}</p>
         </div>
-        <span className="text-[11px] font-mono text-amber-400 bg-amber-500/10 px-3 py-1 rounded-xl border border-amber-500/20 self-start sm:self-auto font-bold">
-          تحديث لحظي فوري ⚡
-        </span>
+
+        {isLocked ? (
+          <div className="mt-3 pt-2.5 border-t border-slate-800/60">
+            <a
+              href={`https://wa.me/966577371780?text=${encodeURIComponent(
+                `السلام عليكم، أرغب في ترقية باقة متجري (${(store || currentStore)?.name || ''}) وتفعيل موديول: ${title}`
+              )}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-2 px-3 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>طلب التفعيل والترقية 💬</span>
+            </a>
+          </div>
+        ) : null}
       </div>
+    );
+  };
 
-      {moduleToggleError && (
-        <div className="p-3.5 rounded-2xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2 animate-shake">
-          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-          <span className="font-bold leading-relaxed">{moduleToggleError}</span>
-        </div>
-      )}
+  const renderModulesCard = () => {
+    const s = store || currentStore;
+    const ownerOrders = s?.owner_enable_orders !== false;
+    const ownerBookings = s?.owner_enable_bookings !== false;
+    const ownerPos = s?.owner_enable_pos !== false;
+    const ownerKds = s?.owner_enable_kds !== false;
+    const ownerDrivers = s?.owner_enable_drivers !== false;
+    const ownerInventory = s?.owner_enable_inventory !== false;
+    const ownerLoyalty = s?.owner_enable_loyalty !== false;
 
-      {moduleToggleSuccess && (
-        <div className="p-3.5 rounded-2xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs flex items-center gap-2 animate-fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span className="font-bold leading-relaxed">{moduleToggleSuccess}</span>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-        {/* 1. Orders & Menu Module */}
-        <div className={`p-5 rounded-2xl border transition relative overflow-hidden flex flex-col justify-between ${
-          (store?.owner_enable_orders ?? currentStore?.owner_enable_orders) === false
-            ? 'bg-slate-900/40 border-slate-800 opacity-80'
-            : enableOrders
-            ? 'bg-slate-900/90 border-blue-500/40 shadow-lg shadow-blue-500/5'
-            : 'bg-slate-900/60 border-slate-800'
-        }`}>
-          <div>
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <div className="w-8 h-8 rounded-xl bg-blue-500/15 text-blue-400 flex items-center justify-center">
-                  <ShoppingBag className="w-4 h-4" />
-                </div>
-                <span className="text-xs sm:text-sm font-black text-white">الطلبات الفورية والمنيو</span>
-              </div>
-              
-              {(store?.owner_enable_orders ?? currentStore?.owner_enable_orders) === false ? (
-                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1">
-                  <Lock className="w-2.5 h-2.5 text-rose-400" />
-                  <span>غير مشمول بالباقة 🔒</span>
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={isTogglingModule === 'orders'}
-                  onClick={() => handleToggleModule('orders', !enableOrders)}
-                  className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
-                    enableOrders
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 shadow-sm'
-                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
-                  }`}
-                >
-                  <span className={`w-2 h-2 rounded-full ${enableOrders ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
-                  <span>{enableOrders ? 'مفعل ✅' : 'معطل ✕'}</span>
-                </button>
-              )}
+    return (
+      <div className="rounded-3xl p-6 sm:p-7 bg-slate-950/90 border border-slate-800 space-y-6 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+          <div className="flex items-center space-x-3 rtl:space-x-reverse">
+            <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <Layers className="w-5 h-5" />
             </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              عرض قائمة المأكولات والمنتجات للعميل، السلة الذكية، والطلب المباشر لتناول محلي أو سفري أو توصيل.
-            </p>
+            <div>
+              <h4 className="text-sm sm:text-base font-black text-white">التحكم في خدمات وموديولات المتجر (SaaS Modules)</h4>
+              <p className="text-xs text-slate-400 mt-0.5">
+                فعل أو عطل الخدمات المصرح بها لمتجرك أو تواصل مع إدارة المنصة لترقية الباقة وفتح ميزات جديدة
+              </p>
+            </div>
           </div>
-          {(store?.owner_enable_orders ?? currentStore?.owner_enable_orders) === false && (
-            <p className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 mt-3 font-medium">
-              ⚠️ ميزة المنيو غير مشمولة في باقة متجرك الحالية من إدارة المنصة. تواصل مع الإدارة للترقية.
-            </p>
-          )}
+          <span className="text-[11px] font-mono text-amber-400 bg-amber-500/10 px-3 py-1 rounded-xl border border-amber-500/20 self-start sm:self-auto font-bold">
+            تحديث لحظي فوري ⚡
+          </span>
         </div>
 
-        {/* 2. Appointments & Bookings Module */}
-        <div className={`p-5 rounded-2xl border transition relative overflow-hidden flex flex-col justify-between ${
-          (store?.owner_enable_bookings ?? currentStore?.owner_enable_bookings) === false
-            ? 'bg-slate-900/40 border-slate-800 opacity-80'
-            : enableBookings
-            ? 'bg-slate-900/90 border-amber-500/40 shadow-lg shadow-amber-500/5'
-            : 'bg-slate-900/60 border-slate-800'
-        }`}>
-          <div>
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center">
-                  <Calendar className="w-4 h-4" />
-                </div>
-                <span className="text-xs sm:text-sm font-black text-white">حجوزات المواعيد والخدمات</span>
-              </div>
-
-              {(store?.owner_enable_bookings ?? currentStore?.owner_enable_bookings) === false ? (
-                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1">
-                  <Lock className="w-2.5 h-2.5 text-rose-400" />
-                  <span>غير مشمول بالباقة 🔒</span>
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={isTogglingModule === 'bookings'}
-                  onClick={() => handleToggleModule('bookings', !enableBookings)}
-                  className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
-                    enableBookings
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 shadow-sm'
-                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
-                  }`}
-                >
-                  <span className={`w-2 h-2 rounded-full ${enableBookings ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
-                  <span>{enableBookings ? 'مفعل ✅' : 'معطل ✕'}</span>
-                </button>
-              )}
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              عرض خدمات الصالونات، العيادات، والاستشارات، اختيار المختصين، وتأكيد المواعيد بالتقويم.
-            </p>
+        {moduleToggleError && (
+          <div className="p-3.5 rounded-2xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2 animate-shake">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+            <span className="font-bold leading-relaxed">{moduleToggleError}</span>
           </div>
-          {(store?.owner_enable_bookings ?? currentStore?.owner_enable_bookings) === false && (
-            <p className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 mt-3 font-medium">
-              ⚠️ ميزة الحجوزات غير مشمولة في باقة متجرك الحالية من إدارة المنصة. تواصل مع الإدارة للترقية.
-            </p>
-          )}
+        )}
+
+        {moduleToggleSuccess && (
+          <div className="p-3.5 rounded-2xl bg-emerald-950/80 border border-emerald-500/50 text-emerald-200 text-xs flex items-center gap-2 animate-fade-in">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="font-bold leading-relaxed">{moduleToggleSuccess}</span>
+          </div>
+        )}
+
+        {/* Pillar 1: المبيعات والحجوزات */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-xs font-black text-slate-300">
+            <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+            <span>الركيزة الأولى: المبيعات والحجوزات (Sales & Bookings)</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            {renderSingleModuleToggleCard(
+              'orders',
+              'الطلبات الفورية والمنيو',
+              'عرض قائمة المأكولات والمنتجات للعميل، السلة الذكية، والطلب المباشر لتناول محلي أو سفري أو توصيل.',
+              ShoppingBag,
+              { bg: 'bg-blue-500/15', border: 'border-blue-500/40', text: 'text-blue-400', accentBg: 'bg-blue-500' },
+              enableOrders,
+              ownerOrders
+            )}
+            {renderSingleModuleToggleCard(
+              'bookings',
+              'حجوزات المواعيد والخدمات',
+              'عرض خدمات الصالونات، العيادات، والاستشارات، اختيار المختصين، وتأكيد المواعيد بالتقويم.',
+              Calendar,
+              { bg: 'bg-purple-500/15', border: 'border-purple-500/40', text: 'text-purple-400', accentBg: 'bg-purple-500' },
+              enableBookings,
+              ownerBookings
+            )}
+            {renderSingleModuleToggleCard(
+              'pos',
+              'الكاشير ونقاط البيع السحابية',
+              'نظام POS كامل مع إدارة الورديات، الفواتير الحرارية، مسح الباركود، وطرق الدفع المتعددة.',
+              Monitor,
+              { bg: 'bg-amber-500/15', border: 'border-amber-500/40', text: 'text-amber-400', accentBg: 'bg-amber-500' },
+              enablePos,
+              ownerPos
+            )}
+          </div>
         </div>
 
-        {/* 3. Loyalty & Rewards Module */}
-        <div className={`p-5 rounded-2xl border transition relative overflow-hidden flex flex-col justify-between ${
-          (store?.owner_enable_loyalty ?? currentStore?.owner_enable_loyalty) === false
-            ? 'bg-slate-900/40 border-slate-800 opacity-80'
-            : enableLoyalty
-            ? 'bg-slate-900/90 border-emerald-500/40 shadow-lg shadow-emerald-500/5'
-            : 'bg-slate-900/60 border-slate-800'
-        }`}>
-          <div>
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center">
-                  <Gift className="w-4 h-4" />
-                </div>
-                <span className="text-xs sm:text-sm font-black text-white">برنامج الولاء والمكافآت</span>
-              </div>
-
-              {(store?.owner_enable_loyalty ?? currentStore?.owner_enable_loyalty) === false ? (
-                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1">
-                  <Lock className="w-2.5 h-2.5 text-rose-400" />
-                  <span>غير مشمول بالباقة 🔒</span>
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={isTogglingModule === 'loyalty'}
-                  onClick={() => handleToggleModule('loyalty', !enableLoyalty)}
-                  className={`px-3 py-1 rounded-full text-xs font-bold border transition flex items-center gap-1.5 ${
-                    enableLoyalty
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 shadow-sm'
-                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
-                  }`}
-                >
-                  <span className={`w-2 h-2 rounded-full ${enableLoyalty ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`}></span>
-                  <span>{enableLoyalty ? 'مفعل ✅' : 'معطل ✕'}</span>
-                </button>
-              )}
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              كسب النقاط والمكافآت، مستويات العضوية (Tiers)، والكوبونات الترويجية لزيادة ولاء العملاء.
-            </p>
+        {/* Pillar 2: العمليات واللوجستيات */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center gap-2 text-xs font-black text-slate-300">
+            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span>الركيزة الثانية: العمليات واللوجستيات (Operations & Logistics)</span>
           </div>
-          {(store?.owner_enable_loyalty ?? currentStore?.owner_enable_loyalty) === false && (
-            <p className="text-[11px] text-amber-400/90 bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 mt-3 font-medium">
-              ⚠️ ميزة برنامج الولاء غير مشمولة في باقة متجرك الحالية من إدارة المنصة. تواصل مع الإدارة للترقية.
-            </p>
-          )}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            {renderSingleModuleToggleCard(
+              'kds',
+              'شاشة المطبخ KDS وإدارة الطاولات',
+              'شاشة تجهيز الطلبات الحية في المطبخ، تنبيهات الطهي الصوتية، وربط الطاولات بباركود QR.',
+              Utensils,
+              { bg: 'bg-orange-500/15', border: 'border-orange-500/40', text: 'text-orange-400', accentBg: 'bg-orange-500' },
+              enableKds,
+              ownerKds
+            )}
+            {renderSingleModuleToggleCard(
+              'drivers',
+              'أسطول السائقين والتوصيل الميداني',
+              'بوابة الكباتن، إسناد الطلبات الميدانية، تتبع رحلات التوصيل الحية، وإثبات التسليم.',
+              Truck,
+              { bg: 'bg-cyan-500/15', border: 'border-cyan-500/40', text: 'text-cyan-400', accentBg: 'bg-cyan-500' },
+              enableDrivers,
+              ownerDrivers
+            )}
+            {renderSingleModuleToggleCard(
+              'inventory',
+              'المخزون وتكاليف الوصفات OCR',
+              'جرد المكونات الخام، تنبيهات النواقص، حساب هامش ربح كل وجبة، ومسح فواتير المشتريات بالذكاء الاصطناعي.',
+              Package,
+              { bg: 'bg-emerald-500/15', border: 'border-emerald-500/40', text: 'text-emerald-400', accentBg: 'bg-emerald-500' },
+              enableInventory,
+              ownerInventory
+            )}
+          </div>
+        </div>
+
+        {/* Pillar 3: النمو والولاء */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center gap-2 text-xs font-black text-slate-300">
+            <span className="w-2 h-2 rounded-full bg-rose-400"></span>
+            <span>الركيزة الثالثة: النمو والولاء (Growth & Retention)</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            {renderSingleModuleToggleCard(
+              'loyalty',
+              'برنامج الولاء والبطاقات الرقمية',
+              'كسب النقاط والمكافآت، مستويات العضوية (Tiers)، الكوبونات، وبطاقات Apple Wallet وGoogle Wallet.',
+              Gift,
+              { bg: 'bg-rose-500/15', border: 'border-rose-500/40', text: 'text-rose-400', accentBg: 'bg-rose-500' },
+              enableLoyalty,
+              ownerLoyalty
+            )}
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ==========================================
   // 🛍️ إدارة قائمة المنتجات والخدمات (Products & Services Handlers)
@@ -3050,6 +3125,89 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const serviceItemsCount = catalogItems.filter((i) => i.item_type === 'service').length;
 
   const activeStoreModules = useMemo(() => getStoreActiveModules(store || currentStore), [store, currentStore]);
+
+  const catalogTabs = useMemo(() => {
+    const list: SubTabItem<'products' | 'services' | 'modifiers' | 'fulfillment'>[] = [];
+
+    if (activeStoreModules.orders) {
+      list.push({
+        id: 'products',
+        label: 'المنيو والمنتجات',
+        description: 'أصناف المأكولات، المشروبات، الأسعار، الباركود، والصور المميزة',
+        icon: ShoppingBag,
+        badge: `${productItemsCount}`,
+        glowColor: 'bg-amber-500/20',
+        iconBg: 'bg-amber-500/15',
+        iconBorder: 'border-amber-500/30',
+        iconColor: 'text-amber-400',
+        statHighlight: `${productItemsCount} صنف ومنتج مسجل`,
+      });
+    }
+
+    if (activeStoreModules.bookings) {
+      list.push({
+        id: 'services',
+        label: activeStoreModules.orders ? 'الخدمات والحجوزات' : 'الخدمات وباقات المواعيد',
+        description: 'باقات الخدمات، مدة التنفيذ، الحجوزات المجدولة، وتعيين المختصين',
+        icon: Calendar,
+        badge: `${serviceItemsCount}`,
+        glowColor: 'bg-purple-500/20',
+        iconBg: 'bg-purple-500/15',
+        iconBorder: 'border-purple-500/30',
+        iconColor: 'text-purple-400',
+        statHighlight: `${serviceItemsCount} خدمة حجز وموعد`,
+      });
+    }
+
+    if (activeStoreModules.orders || activeStoreModules.bookings) {
+      list.push({
+        id: 'modifiers',
+        label: activeStoreModules.orders ? 'الأقسام ومجموعات الإضافات' : 'أقسام وتصنيفات الخدمات',
+        description: activeStoreModules.orders
+          ? 'تصنيفات المنيو، خيارات الأحجام، الإضافات الإجبارية والاختيارية'
+          : 'تصنيفات الخدمات، باقات الجلسات، والخيارات الإضافية',
+        icon: Tag,
+        badge: `${globalCategories.length + globalModifierGroups.length}`,
+        glowColor: 'bg-blue-500/20',
+        iconBg: 'bg-blue-500/15',
+        iconBorder: 'border-blue-500/30',
+        iconColor: 'text-blue-400',
+        statHighlight: `${globalCategories.length} أقسام • ${globalModifierGroups.length} إضافات`,
+      });
+    }
+
+    if (activeStoreModules.orders) {
+      list.push({
+        id: 'fulfillment',
+        label: 'خيارات الطلب والتجهيز والتوصيل',
+        description: 'تخصيص: سفري، محلي صالة، استلام بالسيارة، وتوصيل الكباتن',
+        icon: Car,
+        badge: 'محدث ⚡',
+        glowColor: 'bg-emerald-500/20',
+        iconBg: 'bg-emerald-500/15',
+        iconBorder: 'border-emerald-500/30',
+        iconColor: 'text-emerald-400',
+        statHighlight: 'محلي، سفري، سيارة وتوصيل',
+      });
+    }
+
+    return list;
+  }, [
+    activeStoreModules.orders,
+    activeStoreModules.bookings,
+    productItemsCount,
+    serviceItemsCount,
+    globalCategories.length,
+    globalModifierGroups.length,
+  ]);
+
+  const catalogColumns = (catalogTabs.length >= 4 ? '4' : catalogTabs.length === 3 ? '3' : '2') as '2' | '3' | '4';
+
+  useEffect(() => {
+    if (catalogSection !== 'hub' && !catalogTabs.some((t) => t.id === catalogSection)) {
+      setCatalogSection('hub');
+    }
+  }, [catalogTabs, catalogSection]);
 
   const rawTabsConfig = [
     {
@@ -5772,62 +5930,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           {catalogSection === 'hub' ? (
             /* 🔲 Executive Subtabs Grid Navigation */
             <SubTabsHubGrid<'products' | 'services' | 'modifiers' | 'fulfillment'>
-              activeTab={'products'}
+              activeTab={catalogTabs[0]?.id || 'products'}
               onSelectTab={(sec) => {
                 setCatalogSection(sec);
                 window.scrollTo({ top: 150, behavior: 'smooth' });
               }}
-              columns="4"
-              tabs={[
-                {
-                  id: 'products',
-                  label: 'المنيو والمنتجات',
-                  description: 'أصناف المأكولات، المشروبات، الأسعار، الباركود، والصور المميزة',
-                  icon: ShoppingBag,
-                  badge: `${productItemsCount}`,
-                  glowColor: 'bg-amber-500/20',
-                  iconBg: 'bg-amber-500/15',
-                  iconBorder: 'border-amber-500/30',
-                  iconColor: 'text-amber-400',
-                  statHighlight: `${productItemsCount} صنف ومنتج مسجل`,
-                },
-                {
-                  id: 'services',
-                  label: 'الخدمات والحجوزات',
-                  description: 'باقات الخدمات، مدة التنفيذ، الحجوزات المجدولة، وتعيين المختصين',
-                  icon: Calendar,
-                  badge: `${serviceItemsCount}`,
-                  glowColor: 'bg-purple-500/20',
-                  iconBg: 'bg-purple-500/15',
-                  iconBorder: 'border-purple-500/30',
-                  iconColor: 'text-purple-400',
-                  statHighlight: `${serviceItemsCount} خدمة حجز وموعد`,
-                },
-                {
-                  id: 'modifiers',
-                  label: 'الأقسام ومجموعات الإضافات',
-                  description: 'تصنيفات المنيو، خيارات الأحجام، الإضافات الإجبارية والاختيارية',
-                  icon: Tag,
-                  badge: `${globalCategories.length + globalModifierGroups.length}`,
-                  glowColor: 'bg-blue-500/20',
-                  iconBg: 'bg-blue-500/15',
-                  iconBorder: 'border-blue-500/30',
-                  iconColor: 'text-blue-400',
-                  statHighlight: `${globalCategories.length} أقسام • ${globalModifierGroups.length} إضافات`,
-                },
-                {
-                  id: 'fulfillment',
-                  label: 'خيارات الطلب والتجهيز والتوصيل',
-                  description: 'تخصيص: سفري، محلي صالة، استلام بالسيارة، وتوصيل الكباتن',
-                  icon: Car,
-                  badge: 'محدث ⚡',
-                  glowColor: 'bg-emerald-500/20',
-                  iconBg: 'bg-emerald-500/15',
-                  iconBorder: 'border-emerald-500/30',
-                  iconColor: 'text-emerald-400',
-                  statHighlight: 'محلي، سفري، سيارة وتوصيل',
-                },
-              ]}
+              columns={catalogColumns}
+              tabs={catalogTabs}
             />
           ) : (
             /* ⬅️ Focused Header when a sub-section is open */
@@ -5890,12 +5999,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               onBack={() => setCatalogSection('hub')}
               activeId={catalogSection}
               onSelectQuickJump={(id) => setCatalogSection(id as any)}
-              quickJumpOptions={[
-                { id: 'products', label: 'المنيو والمنتجات' },
-                { id: 'services', label: 'الخدمات والحجوزات' },
-                { id: 'modifiers', label: 'الأقسام ومجموعات الإضافات' },
-                { id: 'fulfillment', label: 'خيارات التجهيز والتوصيل' },
-              ]}
+              quickJumpOptions={catalogTabs.map((t) => ({ id: t.id, label: t.label }))}
               isDarkTheme={isDarkTheme}
             />
           )}
