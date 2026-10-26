@@ -53,6 +53,12 @@ import {
   Volume2,
   Send,
   Banknote,
+  Sun,
+  Moon,
+  ArrowRight,
+  ArrowLeft,
+  MoreVertical,
+  LayoutGrid,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
@@ -76,13 +82,37 @@ interface SuperAdminDashboardProps {
   onSelectStore: (store: Store, targetTab?: 'cashier' | 'customer' | 'admin') => void;
 }
 
+export type SuperAdminSubTab = 'hub' | 'stores' | 'partners' | 'billing' | 'integrations' | 'team';
+
 export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSelectStore }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'stores' | 'partners' | 'billing' | 'integrations' | 'team'>(() => {
-    if (typeof window === 'undefined') return 'stores';
+  const [activeSubTab, setActiveSubTab] = useState<SuperAdminSubTab>(() => {
+    if (typeof window === 'undefined') return 'hub';
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get('tab');
-    return tabParam === 'partners' || tabParam === 'billing' || tabParam === 'team' ? tabParam : 'stores';
+    if (tabParam === 'stores' || tabParam === 'partners' || tabParam === 'billing' || tabParam === 'team' || tabParam === 'integrations') {
+      return tabParam as SuperAdminSubTab;
+    }
+    return 'hub';
   });
+
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('radar_superadmin_theme') as 'dark' | 'light') || 'dark';
+    }
+    return 'dark';
+  });
+
+  const toggleTheme = () => {
+    const next = themeMode === 'dark' ? 'light' : 'dark';
+    setThemeMode(next);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('radar_superadmin_theme', next);
+    }
+  };
+
+  const isDark = themeMode === 'dark';
+  const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
+  const [activeStoreMenuId, setActiveStoreMenuId] = useState<string | null>(null);
 
   const [currentAdminUser, setCurrentAdminUser] = useState<SuperAdminUser | null>(null);
 
@@ -92,10 +122,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     return Boolean(currentAdminUser.permissions?.[perm]);
   };
 
-  const handleSubTabChange = (newTab: 'stores' | 'partners' | 'billing' | 'integrations' | 'team') => {
+  const handleSubTabChange = (newTab: SuperAdminSubTab) => {
     setActiveSubTab(newTab);
     const url = new URL(window.location.href);
-    if (newTab === 'partners' || newTab === 'billing' || newTab === 'team') {
+    if (newTab !== 'hub') {
       url.searchParams.set('tab', newTab);
     } else {
       url.searchParams.delete('tab');
@@ -1055,7 +1085,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   }
 
   return (
-    <div className="max-w-7xl mx-auto space-y-10">
+    <div className={`min-h-screen transition-colors p-3 sm:p-6 lg:p-8 font-sans ${isDark ? 'bg-[#080C13] text-slate-100' : 'bg-[#FAF9F5] text-slate-900'}`}>
+      <div className="max-w-7xl mx-auto space-y-8">
       {/* Toast Feedback */}
       {(successMessage || errorMessage) && (
         <div className="fixed bottom-6 right-6 z-50 animate-bounce max-w-md">
@@ -1074,153 +1105,496 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         </div>
       )}
       
-      {/* 👑 Super Admin Hero Banner */}
-      <div className="relative rounded-3xl bg-gradient-to-r from-amber-500/20 via-slate-900 to-slate-900 border-2 border-amber-500/40 p-6 sm:p-10 overflow-hidden shadow-2xl">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-x-4 rtl:space-x-reverse flex items-start">
-            <div className="w-14 h-14 rounded-2xl p-0.5 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-lg shadow-cyan-500/20 flex-shrink-0">
-              <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-[14px]" />
-            </div>
-            <div>
-              <div className="flex items-center space-x-2 rtl:space-x-reverse">
-                <h2 className="text-xl sm:text-2xl font-black text-white">
-                  بوابة المالك | {getActiveTenantConfig().brandName}
-                </h2>
-                <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
-                  Concierge SaaS
+      {/* 👑 Super Admin Executive Command Header */}
+      <div className={`relative rounded-3xl p-5 sm:p-7 border transition-all duration-300 shadow-2xl backdrop-blur-xl ${
+        isDark ? 'bg-[#0E1622]/95 border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900'
+      }`}>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+          
+          {/* Right Side: Dynamic White-Label Brand Info */}
+          <div className="flex items-center gap-4">
+            <div className="w-13 h-13 sm:w-15 sm:h-15 rounded-2xl p-0.5 bg-gradient-to-tr from-[#CCFF00] via-[#10E588] to-emerald-400 shadow-lg flex items-center justify-center overflow-hidden flex-shrink-0">
+              {getActiveTenantConfig().logoUrl ? (
+                <img
+                  src={getActiveTenantConfig().logoUrl}
+                  alt={getActiveTenantConfig().brandName}
+                  className="w-full h-full object-cover rounded-[14px]"
+                />
+              ) : (
+                <span className="w-full h-full bg-slate-950 text-[#CCFF00] rounded-[14px] flex items-center justify-center font-black text-lg">
+                  {getActiveTenantConfig().brandName.slice(0, 2)}
                 </span>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h2 className="text-lg sm:text-2xl font-black tracking-tight">
+                  لوحة القيادة التنفيذية | {getActiveTenantConfig().brandName}
+                </h2>
                 {currentAdminUser && (
-                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
-                    👤 {currentAdminUser.full_name} ({currentAdminUser.role === 'super_admin' ? 'المالك' : 'مدير'})
+                  <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                    isDark ? 'bg-[#CCFF00]/15 text-[#CCFF00] border-[#CCFF00]/30' : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  }`}>
+                    👤 {currentAdminUser.full_name} ({currentAdminUser.role === 'super_admin' ? 'مالك المنظومة' : 'مدير معتمد'})
                   </span>
                 )}
               </div>
-              <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
-                منصة تأسيس وإدارة المتاجر بنظام White-label مع رفع وضغط الصور التلقائي وعزل RLS الكامل.
+              <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                المركز الموحد لإدارة شبكة الفروع، المتاجر، الشركاء، والعمليات المالية
               </p>
             </div>
           </div>
 
-          <div className="flex items-center space-x-3 rtl:space-x-reverse">
-            <div className="bg-slate-950/80 px-4 py-2.5 rounded-2xl border border-slate-800 text-center">
-              <span className="text-[11px] text-slate-400 block">المتاجر الحقيقية النشطة</span>
-              <span className="text-xl font-black text-amber-400 font-mono">
-                {realStores.filter((s) => s.subscription_active).length} / {realStores.length}
-              </span>
+          {/* Left Side: Clean Executive Control Hub */}
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap self-end lg:self-auto">
+            
+            {/* Active Stores Status Pill */}
+            <div className={`px-3.5 py-2 rounded-2xl border flex items-center gap-2 text-xs font-bold ${
+              isDark ? 'bg-[#080C13] border-white/10 text-emerald-400' : 'bg-slate-50 border-slate-200 text-emerald-700'
+            }`}>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>المتاجر النشطة:</span>
+              <strong className="font-mono text-sm">{realStores.filter((s) => s.subscription_active).length} / {realStores.length}</strong>
             </div>
+
+            {/* 🌙 / ☀️ Theme Switcher */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className={`p-2.5 rounded-2xl border transition flex items-center gap-1.5 text-xs font-bold ${
+                isDark
+                  ? 'bg-white/5 border-white/10 text-yellow-300 hover:bg-white/10'
+                  : 'bg-slate-100 border-slate-300 text-slate-800 hover:bg-slate-200'
+              }`}
+              title={isDark ? 'التبديل إلى الوضع الفاتح' : 'التبديل إلى الوضع الداكن'}
+            >
+              {isDark ? <Sun className="w-4 h-4 text-[#CCFF00]" /> : <Moon className="w-4 h-4 text-slate-700" />}
+              <span className="hidden sm:inline">{isDark ? 'فاتح' : 'داكن'}</span>
+            </button>
+
             {/* 🔔 Notifications Center Bell */}
             <NotificationBell
               portalName="لوحة المالك (Super Admin)"
               portalFilter="super_admin"
-              className="px-3.5 py-2.5 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+              className={`p-2.5 rounded-2xl border text-xs font-bold transition flex items-center gap-1.5 ${
+                isDark ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10' : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+              }`}
             />
 
+            {/* 📢 Broadcast Notification */}
             {canPerform('can_send_notifications') && (
-            <button
-              type="button"
-              onClick={handleOpenBroadcastNotification}
-              className="px-3.5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition flex items-center gap-1.5 shadow-sm"
-              title="إرسال إشعار فوري لجميع المتاجر والشركاء"
-            >
-              <Send className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">إرسال إشعار 📢</span>
-            </button>
-          )}
-
-            {stores.length > 0 && canPerform('can_reset_platform') && currentAdminUser?.role === 'super_admin' && (
               <button
-                onClick={() => setIsResetPlatformModalOpen(true)}
-                className="px-3.5 py-2.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
-                title="حذف وتصفير جميع المتاجر والبيانات من المنصة"
+                type="button"
+                onClick={handleOpenBroadcastNotification}
+                className="px-3.5 py-2.5 rounded-2xl bg-[#CCFF00] hover:bg-[#b8e600] text-slate-950 text-xs font-black transition flex items-center gap-1.5 shadow-md shadow-[#CCFF00]/20"
+                title="إرسال إشعار فوري لجميع المتاجر والشركاء"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>تصفير المنصة</span>
+                <Send className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">إشعار عام 📢</span>
               </button>
             )}
-            <button
-              onClick={handleMasterLogout}
-              className="px-3.5 py-2.5 rounded-2xl bg-slate-950 hover:bg-slate-900 border border-slate-800 text-slate-400 hover:text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
-              title="قفل وتسجيل الخروج"
-            >
-              <Lock className="w-3.5 h-3.5 text-amber-400" />
-              <span>قفل 🔒</span>
-            </button>
+
+            {/* ⋯ Advanced Operations Menu (Safely Hides Reset Button) */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsHeaderMenuOpen(!isHeaderMenuOpen)}
+                className={`p-2.5 rounded-2xl border transition flex items-center justify-center ${
+                  isDark ? 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10' : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+                }`}
+                title="خيارات إضافية"
+              >
+                <MoreVertical className="w-4 h-4" />
+              </button>
+
+              {isHeaderMenuOpen && (
+                <div className={`absolute left-0 mt-2 w-52 rounded-2xl p-2 border shadow-2xl z-50 animate-fade-in ${
+                  isDark ? 'bg-[#0E1622] border-white/15 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                }`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHeaderMenuOpen(false);
+                      handleMasterLogout();
+                    }}
+                    className={`w-full p-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition text-right ${
+                      isDark ? 'hover:bg-white/5 text-slate-300' : 'hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <Lock className="w-3.5 h-3.5 text-amber-400" />
+                    <span>قفل وتسجيل الخروج</span>
+                  </button>
+
+                  {stores.length > 0 && canPerform('can_reset_platform') && currentAdminUser?.role === 'super_admin' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsHeaderMenuOpen(false);
+                        setIsResetPlatformModalOpen(true);
+                      }}
+                      className="w-full p-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition text-right text-rose-400 hover:bg-rose-500/10 mt-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span>تصفير المنصة بالكامل ⚠️</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
           </div>
+
         </div>
       </div>
 
-      {/* 🧭 Super Admin Sub-Navigation Tabs */}
-      <div className="flex items-center gap-3 border-b border-slate-800 pb-3 overflow-x-auto">
-        <button
-          onClick={() => handleSubTabChange('stores')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeSubTab === 'stores'
-              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <StoreIcon className="w-4 h-4" />
-          <span>متاجر وطلبات المنصة ({stores.length + unconvertedLeads.length}) 🏪</span>
-        </button>
+      {/* ==================================================================== */}
+      {/* 🧭 NAVIGATION: HUB vs FOCUSED SUB-SECTION */}
+      {/* ==================================================================== */}
+      {activeSubTab === 'hub' ? (
+        <div className="space-y-6 animate-fade-in">
+          
+          {/* Master Overview & Key Network Metrics */}
+          <div className={`rounded-3xl p-6 border shadow-2xl relative overflow-hidden transition-colors ${
+            isDark ? 'bg-[#0E1622] border-white/10' : 'bg-white border-slate-200'
+          }`}>
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#CCFF00] animate-ping" />
+                  <span className={`text-xs font-bold ${isDark ? 'text-[#CCFF00]' : 'text-emerald-700'}`}>
+                    مركز التحكم الشامل بالمنظومة (Executive Hub)
+                  </span>
+                </div>
+                <h3 className={`text-xl sm:text-2xl font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  أقسام وإدارة المنصة المركزية ⚡
+                </h3>
+                <p className={`text-xs sm:text-sm max-w-2xl leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  اختر أحد الأقسام بالأسفل لإدارته والتحكم فيه بالكامل. عند فتح أي قسم يختفي باقي الأقسام للتركيز ويمكنك العودة في أي لحظة.
+                </p>
+              </div>
 
-        {canPerform('can_manage_partners') && (
-          <button
-            onClick={() => handleSubTabChange('partners')}
-            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-              activeSubTab === 'partners'
-                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-            }`}
-          >
-            <Users className="w-4 h-4 text-amber-400" />
-            <span>شركاء المبيعات (Sales Partners) 🤝</span>
-          </button>
-        )}
+              {/* Primary Action Button */}
+              {canPerform('can_manage_stores') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveFoundingLead(null);
+                    setName('');
+                    setSlug('');
+                    setCustomDomain('');
+                    setLogoUrl('');
+                    setLogoStats(null);
+                    setManagerName('');
+                    setManagerContact('');
+                    setManagerPin('9999');
+                    setIsOnboardingModalOpen(true);
+                  }}
+                  className="px-6 py-3.5 rounded-2xl bg-[#CCFF00] hover:bg-[#b8e600] text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-[#CCFF00]/20 transition transform active:scale-95 flex items-center justify-center gap-2 self-start lg:self-auto shrink-0"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>تأسيس متجر جديد ✨</span>
+                </button>
+              )}
 
-        {(canPerform('can_view_financials') || canPerform('can_manage_billing')) && (
-          <button
-            onClick={() => handleSubTabChange('billing')}
-            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-              activeSubTab === 'billing'
-                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-            }`}
-          >
-            <CreditCard className="w-4 h-4 text-amber-400" />
-            <span>الفوترة والاشتراكات (Billing) 💳</span>
-          </button>
-        )}
+            </div>
 
-        {(currentAdminUser?.role === 'super_admin' || canPerform('can_manage_admins')) && (
-          <button
-            onClick={() => handleSubTabChange('integrations')}
-            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-              activeSubTab === 'integrations'
-                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-            }`}
-          >
-            <KeyRound className="w-4 h-4 text-amber-400" />
-            <span>التكاملات ومفاتيح الربط (APIs & Bot) ⚙️</span>
-          </button>
-        )}
+            {/* 4 Overview Metric Boxes */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-6">
+              <div className={`p-4 rounded-2xl border ${isDark ? 'bg-[#080C13] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[11px] text-slate-400 block font-bold">مبيعات شبكة المتاجر</span>
+                <span className="text-xl font-black text-emerald-400 font-mono">
+                  {totalPlatformSales.toLocaleString()} <span className="text-xs font-sans">ر.س</span>
+                </span>
+              </div>
+              <div className={`p-4 rounded-2xl border ${isDark ? 'bg-[#080C13] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[11px] text-slate-400 block font-bold">عملاء الولاء المسجلون</span>
+                <span className="text-xl font-black text-cyan-400 font-mono">
+                  {totalPlatformCustomers.toLocaleString()} <span className="text-xs font-sans">عميل</span>
+                </span>
+              </div>
+              <div className={`p-4 rounded-2xl border ${isDark ? 'bg-[#080C13] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[11px] text-slate-400 block font-bold">المتاجر والطلبات</span>
+                <span className="text-xl font-black text-amber-400 font-mono">
+                  {stores.length + unconvertedLeads.length} <span className="text-xs font-sans">متجر</span>
+                </span>
+              </div>
+              <div className={`p-4 rounded-2xl border ${isDark ? 'bg-[#080C13] border-white/5' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[11px] text-slate-400 block font-bold">طلبات جديدة معلقة</span>
+                <span className="text-xl font-black text-purple-400 font-mono">
+                  {unconvertedLeads.length} <span className="text-xs font-sans">طلب</span>
+                </span>
+              </div>
+            </div>
 
-        {(currentAdminUser?.role === 'super_admin' || canPerform('can_manage_admins')) && (
-          <button
-            onClick={() => handleSubTabChange('team')}
-            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-              activeSubTab === 'team'
-                ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-            }`}
-          >
-            <Users className="w-4 h-4 text-amber-400" />
-            <span>فريق الإدارة والصلاحيات 👥</span>
-          </button>
-        )}
-      </div>
+          </div>
 
+          {/* 🔲 THE 5 MASTER EXECUTIVE SECTION CARDS */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            
+            {/* Card 1: Stores & Leads */}
+            <div
+              onClick={() => handleSubTabChange('stores')}
+              className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-[#CCFF00]/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-emerald-500/40'
+              }`}
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+                    <StoreIcon className="w-6 h-6" />
+                  </div>
+                  <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                    isDark ? 'bg-[#080C13] border-white/10 text-amber-300' : 'bg-slate-100 border-slate-200 text-amber-800'
+                  }`}>
+                    {stores.length + unconvertedLeads.length} متجر وطلب
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <h4 className="text-lg font-black group-hover:text-[#CCFF00] transition-colors">
+                    شبكة المتاجر والطلبات
+                  </h4>
+                  <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    متابعة كافة المتاجر، الكاشيرات، بوابات الزبائن (PWA)، كاشير المبيعات (POS)، وتأسيس المتاجر الجديدة.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400">
+                  {realStores.filter((s) => s.subscription_active).length} متجر نشط
+                </span>
+                <span className="text-xs font-black text-[#CCFF00] flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                  <span>فتح القسم</span>
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </span>
+              </div>
+            </div>
+
+            {/* Card 2: Partners & Affiliates */}
+            {canPerform('can_manage_partners') && (
+              <div
+                onClick={() => handleSubTabChange('partners')}
+                className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                  isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-[#CCFF00]/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-emerald-500/40'
+                }`}
+              >
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition-transform">
+                      <Users className="w-6 h-6" />
+                    </div>
+                    <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                      isDark ? 'bg-[#080C13] border-white/10 text-cyan-300' : 'bg-slate-100 border-slate-200 text-cyan-800'
+                    }`}>
+                      برنامج الشركاء
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <h4 className="text-lg font-black group-hover:text-[#CCFF00] transition-colors">
+                      شركاء المبيعات والمسوقين
+                    </h4>
+                    <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      توليد وتتبع أكواد الإحالة (rXXXX)، مراقبة زيارات الروابط، واحتساب وتسوية العمولات المستحقة.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-400">
+                    تسوية وصرف العمولات
+                  </span>
+                  <span className="text-xs font-black text-[#CCFF00] flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                    <span>فتح القسم</span>
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Card 3: Billing & Financials */}
+            {(canPerform('can_view_financials') || canPerform('can_manage_billing')) && (
+              <div
+                onClick={() => handleSubTabChange('billing')}
+                className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                  isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-[#CCFF00]/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-emerald-500/40'
+                }`}
+              >
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                      <CreditCard className="w-6 h-6" />
+                    </div>
+                    <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                      isDark ? 'bg-[#080C13] border-white/10 text-emerald-300' : 'bg-slate-100 border-slate-200 text-emerald-800'
+                    }`}>
+                      السجل المالي العام
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <h4 className="text-lg font-black group-hover:text-[#CCFF00] transition-colors">
+                      الفوترة والاشتراكات والسيولة
+                    </h4>
+                    <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      متابعة التدفقات المالية، صافي دخل المنصة، رسوم بوابات الدفع، سندات القبض، وحاسبة الأرباح.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-400">
+                    تدفقات موثقة
+                  </span>
+                  <span className="text-xs font-black text-[#CCFF00] flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                    <span>فتح القسم</span>
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Card 4: Integrations & APIs */}
+            {(currentAdminUser?.role === 'super_admin' || canPerform('can_manage_admins')) && (
+              <div
+                onClick={() => handleSubTabChange('integrations')}
+                className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                  isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-[#CCFF00]/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-emerald-500/40'
+                }`}
+              >
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
+                      <KeyRound className="w-6 h-6" />
+                    </div>
+                    <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                      isDark ? 'bg-[#080C13] border-white/10 text-purple-300' : 'bg-slate-100 border-slate-200 text-purple-800'
+                    }`}>
+                      ربط سحابي
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <h4 className="text-lg font-black group-hover:text-[#CCFF00] transition-colors">
+                      التكاملات ومفاتيح الربط و API
+                    </h4>
+                    <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      إدارة مفاتيح الـ API، بوابات الدفع الإلكتروني، إشعارات الويب، والمساعد الذكي.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-400">
+                    مفاتيح مشفرة
+                  </span>
+                  <span className="text-xs font-black text-[#CCFF00] flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                    <span>فتح القسم</span>
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Card 5: Team & Access RBAC */}
+            {(currentAdminUser?.role === 'super_admin' || canPerform('can_manage_admins')) && (
+              <div
+                onClick={() => handleSubTabChange('team')}
+                className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                  isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-[#CCFF00]/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-emerald-500/40'
+                }`}
+              >
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
+                      <ShieldCheck className="w-6 h-6" />
+                    </div>
+                    <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                      isDark ? 'bg-[#080C13] border-white/10 text-rose-300' : 'bg-slate-100 border-slate-200 text-rose-800'
+                    }`}>
+                      صلاحيات RBAC
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <h4 className="text-lg font-black group-hover:text-[#CCFF00] transition-colors">
+                      فريق الإدارة والأدوار والصلاحيات
+                    </h4>
+                    <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                      إدارة المشرفين، تخصيص الصلاحيات الدقيقة لكل موظف، وسجلات تدقيق العمليات والأمان.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-400">
+                    أمان وعزل كامل
+                  </span>
+                  <span className="text-xs font-black text-[#CCFF00] flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                    <span>فتح القسم</span>
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                  </span>
+                </div>
+              </div>
+            )}
+
+          </div>
+
+        </div>
+      ) : (
+        /* ⬅️ FOCUSED WORKSPACE NAVIGATION BREADCRUMB HEADER (Active when a section is open) */
+        <div className={`rounded-2xl p-3.5 sm:p-4 border shadow-xl backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-2 z-30 animate-fade-in transition-colors ${
+          isDark ? 'bg-[#0E1622]/95 border-white/10 text-white' : 'bg-white/95 border-slate-200 text-slate-900'
+        }`}>
+          {/* Back to Hub Button & Section Title */}
+          <div className="flex items-center gap-3 flex-wrap min-w-0">
+            <button
+              type="button"
+              onClick={() => handleSubTabChange('hub')}
+              className="px-4 py-2.5 rounded-xl bg-[#CCFF00] hover:bg-[#b8e600] text-slate-950 font-black text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-[#CCFF00]/20 transition-all hover:scale-[1.02] active:scale-95 shrink-0"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>العودة للوحة الرئيسية (كافة الأقسام)</span>
+            </button>
+
+            <div className={`h-6 w-px hidden sm:block ${isDark ? 'bg-white/10' : 'bg-slate-200'}`} />
+
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-xs sm:text-sm font-black flex items-center gap-2 truncate">
+                {activeSubTab === 'stores' && <>🏬 دليل وشبكة المتاجر والطلبات</>}
+                {activeSubTab === 'partners' && <>🤝 شركاء المبيعات والمسوقين</>}
+                {activeSubTab === 'billing' && <>💳 المركز المالي العام والفوترة والاشتراكات</>}
+                {activeSubTab === 'integrations' && <>⚙️ التكاملات ومفاتيح الربط و API</>}
+                {activeSubTab === 'team' && <>👥 فريق الإدارة والأدوار والصلاحيات</>}
+              </span>
+            </div>
+          </div>
+
+          {/* Quick Jump Dropdown */}
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            <span className={`text-[11px] hidden lg:inline font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>انتقال سريع:</span>
+            <select
+              value={activeSubTab}
+              onChange={(e) => handleSubTabChange(e.target.value as any)}
+              className={`text-xs font-bold rounded-xl px-3 py-2 outline-none border transition cursor-pointer ${
+                isDark ? 'bg-[#080C13] border-white/10 text-white focus:border-[#CCFF00]' : 'bg-slate-50 border-slate-200 text-slate-900 focus:border-emerald-500'
+              }`}
+            >
+              <option value="hub">⬅️ لوحة الأقسام (الرئيسية)</option>
+              <option value="stores">🏬 شبكة المتاجر والطلبات</option>
+              {canPerform('can_manage_partners') && <option value="partners">🤝 شركاء المبيعات والمسوقين</option>}
+              {(canPerform('can_view_financials') || canPerform('can_manage_billing')) && <option value="billing">💳 الفوترة والمركز المالي</option>}
+              {(currentAdminUser?.role === 'super_admin' || canPerform('can_manage_admins')) && <option value="integrations">⚙️ التكاملات ومفاتيح الربط</option>}
+              {(currentAdminUser?.role === 'super_admin' || canPerform('can_manage_admins')) && <option value="team">👥 فريق الإدارة والصلاحيات</option>}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-Components Renders */}
       <div className={activeSubTab === 'partners' ? 'block' : 'hidden'}>
         <SuperAdminPartnersConsole />
       </div>
@@ -1701,57 +2075,19 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         <select
                           value={getStoreUnifiedStage(s)}
                           onChange={(e) => handleUpdateStoreStage(s, e.target.value as UnifiedLifecycleStage)}
-                          className="bg-slate-950 border border-slate-700 hover:border-amber-500/60 text-xs font-bold text-amber-300 rounded-xl px-3 py-2 outline-none cursor-pointer transition shadow-inner"
+                          className={`text-xs font-bold rounded-xl px-3 py-2 outline-none cursor-pointer transition shadow-inner border ${
+                            isDark
+                              ? 'bg-slate-950 border-slate-700 hover:border-[#CCFF00] text-amber-300'
+                              : 'bg-slate-50 border-slate-300 hover:border-emerald-500 text-slate-800'
+                          }`}
                           title="تغيير مرحلة المتجر في خط الأنابيب (يتم التحديث فورياً)"
                         >
-                          <option value="طلب جديد" className="bg-slate-900 text-white">طلب جديد 🆕</option>
-                          <option value="جاري التأسيس" className="bg-slate-900 text-white">جاري التأسيس ⚙️</option>
-                          <option value="تم التأسيس" className="bg-slate-900 text-white">تم التأسيس 🚀</option>
-                          <option value="تحت المراجعة" className="bg-slate-900 text-white">تحت المراجعة ⏳</option>
-                          <option value="مشترك مدفوع" className="bg-slate-900 text-white">مشترك مدفوع 👑</option>
+                          <option value="طلب جديد">طلب جديد 🆕</option>
+                          <option value="جاري التأسيس">جاري التأسيس ⚙️</option>
+                          <option value="تم التأسيس">تم التأسيس 🚀</option>
+                          <option value="تحت المراجعة">تحت المراجعة ⏳</option>
+                          <option value="مشترك مدفوع">مشترك مدفوع 👑</option>
                         </select>
-
-                        {/* 🔔 Send Instant Push Notification Button */}
-                        <button
-                          onClick={() => handleOpenStoreNotification(s)}
-                          className="px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-black border border-amber-500/30 transition text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse shadow-sm"
-                          title="إرسال إشعار فوري مع نغمة صوتية لمدير وكاشير هذا المتجر"
-                        >
-                          <Bell className="w-3.5 h-3.5" />
-                          <span>إشعار 🔔</span>
-                        </button>
-
-                        {/* 🎁 Manual Extension Button */}
-                        <button
-                          onClick={() => handleOpenOverrideModal(s)}
-                          className="px-3 py-2 rounded-xl bg-indigo-500/10 hover:bg-indigo-500 text-indigo-300 hover:text-white border border-indigo-500/30 transition text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse shadow-sm"
-                          title="منح أيام إضافية وتمديد يدوي مع توثيق السجل المالي"
-                        >
-                          <CalendarPlus className="w-3.5 h-3.5" />
-                          <span>تمديد 🎁</span>
-                        </button>
-
-                        {/* ✏️ Edit Store Details Button */}
-                        <button
-                          onClick={() => handleOpenEditStore(s)}
-                          className="px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-black border border-amber-500/30 transition text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse"
-                          title="تعديل بيانات وهوية المتجر والدومين"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          <span>تعديل ✏️</span>
-                        </button>
-
-                        {isDemoStore(s) && (
-                          <button
-                            onClick={handleResetDemoStore}
-                            disabled={isResettingDemo}
-                            className="px-3 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500 text-cyan-300 hover:text-slate-950 border border-cyan-500/40 transition text-xs font-bold flex items-center space-x-1 rtl:space-x-reverse"
-                            title="تصفير وحذف جميع حركات وعملاء الديمو وإعادته لنقطة الصفر الأصلية"
-                          >
-                            <RefreshCw className={`w-3.5 h-3.5 ${isResettingDemo ? 'animate-spin' : ''}`} />
-                            <span>تصفير الديمو 🔄</span>
-                          </button>
-                        )}
 
                         {/* WhatsApp Handover Quick Button */}
                         <button
@@ -1773,7 +2109,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                             const waUrl = intlPhone ? `https://wa.me/${intlPhone}?text=${encodedMsg}` : `https://wa.me/?text=${encodedMsg}`;
                             window.open(waUrl, '_blank');
                           }}
-                          className="p-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 transition text-xs font-bold"
+                          className={`p-2.5 rounded-xl border transition text-xs font-bold ${
+                            isDark
+                              ? 'bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border-emerald-500/30'
+                              : 'bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border-emerald-200'
+                          }`}
                           title="إرسال روابط المتجر واللوحة عبر واتساب"
                         >
                           <Share2 className="w-4 h-4" />
@@ -1784,8 +2124,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           onClick={() => handleToggleSubscription(s)}
                           className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse border transition ${
                             s.subscription_active
-                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30'
-                              : 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/30'
+                              ? isDark ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-red-500/10 hover:text-red-400' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : isDark ? 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-emerald-500/10 hover:text-emerald-400' : 'bg-rose-50 text-rose-700 border-rose-200'
                           }`}
                           title={s.subscription_active ? 'اضغط لإيقاف المتجر' : 'اضغط لتفعيل المتجر'}
                         >
@@ -1793,16 +2133,98 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           <span>{s.subscription_active ? 'نشط 🟢' : 'موقوف 🔴'}</span>
                         </button>
 
-                        {/* Delete Button */}
-                        {canPerform('can_delete_stores') && (
+                        {/* ⋯ Store Management Dropdown Menu */}
+                        <div className="relative">
                           <button
-                            onClick={() => setStoreToDelete(s)}
-                            className="p-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 transition text-xs font-bold"
-                            title="حذف المتجر نهائياً مع كافة بياناته"
+                            type="button"
+                            onClick={() => setActiveStoreMenuId(activeStoreMenuId === s.id ? null : s.id)}
+                            className={`p-2 rounded-xl border transition flex items-center justify-center ${
+                              isDark ? 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+                            }`}
+                            title="خيارات إضافية للمتجر"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <MoreVertical className="w-4 h-4" />
                           </button>
-                        )}
+
+                          {activeStoreMenuId === s.id && (
+                            <div className={`absolute left-0 mt-2 w-48 rounded-2xl p-1.5 border shadow-2xl z-40 animate-fade-in ${
+                              isDark ? 'bg-[#0E1622] border-white/15 text-slate-200' : 'bg-white border-slate-200 text-slate-800'
+                            }`}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveStoreMenuId(null);
+                                  handleOpenEditStore(s);
+                                }}
+                                className={`w-full p-2 rounded-xl text-xs font-bold flex items-center gap-2 transition text-right ${
+                                  isDark ? 'hover:bg-white/5 text-amber-300' : 'hover:bg-slate-100 text-amber-700'
+                                }`}
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>تعديل الهوية والدومين</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveStoreMenuId(null);
+                                  handleOpenStoreNotification(s);
+                                }}
+                                className={`w-full p-2 rounded-xl text-xs font-bold flex items-center gap-2 transition text-right ${
+                                  isDark ? 'hover:bg-white/5 text-blue-300' : 'hover:bg-slate-100 text-blue-700'
+                                }`}
+                              >
+                                <Bell className="w-3.5 h-3.5" />
+                                <span>إرسال إشعار فوري</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveStoreMenuId(null);
+                                  handleOpenOverrideModal(s);
+                                }}
+                                className={`w-full p-2 rounded-xl text-xs font-bold flex items-center gap-2 transition text-right ${
+                                  isDark ? 'hover:bg-white/5 text-indigo-300' : 'hover:bg-slate-100 text-indigo-700'
+                                }`}
+                              >
+                                <CalendarPlus className="w-3.5 h-3.5" />
+                                <span>منح أيام وتمديد يدوي</span>
+                              </button>
+
+                              {isDemoStore(s) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveStoreMenuId(null);
+                                    handleResetDemoStore();
+                                  }}
+                                  disabled={isResettingDemo}
+                                  className={`w-full p-2 rounded-xl text-xs font-bold flex items-center gap-2 transition text-right ${
+                                    isDark ? 'hover:bg-white/5 text-cyan-300' : 'hover:bg-slate-100 text-cyan-700'
+                                  }`}
+                                >
+                                  <RefreshCw className={`w-3.5 h-3.5 ${isResettingDemo ? 'animate-spin' : ''}`} />
+                                  <span>تصفير بيانات الديمو</span>
+                                </button>
+                              )}
+
+                              {canPerform('can_delete_stores') && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveStoreMenuId(null);
+                                    setStoreToDelete(s);
+                                  }}
+                                  className="w-full p-2 rounded-xl text-xs font-bold flex items-center gap-2 transition text-right text-rose-400 hover:bg-rose-500/10 mt-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                                  <span>حذف المتجر نهائياً</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -3337,6 +3759,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         }}
       />
 
+      </div>
     </div>
   );
 };
