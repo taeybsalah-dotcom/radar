@@ -28,6 +28,7 @@ import {
   getPlanPriceSuffix,
   resolveUnifiedStage,
   getStoreUnifiedStage,
+  getStoreActiveModules,
   PublicPlatformIntegrations,
 } from '../types';
 import { LoyaltyService, normalizeStore, getSupabaseClient } from '../lib/supabase';
@@ -3048,7 +3049,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const productItemsCount = catalogItems.filter((i) => i.item_type !== 'service').length;
   const serviceItemsCount = catalogItems.filter((i) => i.item_type === 'service').length;
 
-  const tabsConfig = [
+  const activeStoreModules = useMemo(() => getStoreActiveModules(store || currentStore), [store, currentStore]);
+
+  const rawTabsConfig = [
     {
       id: 'analytics' as AdminTab,
       label: 'التحليلات ومؤشرات الأداء',
@@ -3061,19 +3064,37 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       iconBorder: 'border-emerald-500/30',
       iconColor: 'text-emerald-400',
       statHighlight: `${customers.length} عميل نشط • تقارير حية`,
+      isVisible: true,
     },
     {
       id: 'catalog' as AdminTab,
-      label: 'الكتالوج والمنتجات والخدمات',
-      shortLabel: 'الكتالوج والخدمات',
-      description: 'أصناف وقوائم المنيو، الأسعار، الخدمات، ومعدات التحضير',
+      label: !activeStoreModules.orders && activeStoreModules.bookings
+        ? 'الخدمات وجدول المختصين'
+        : activeStoreModules.orders && !activeStoreModules.bookings
+        ? 'قائمة المنيو والمنتجات'
+        : 'الكتالوج والمنتجات والخدمات',
+      shortLabel: !activeStoreModules.orders && activeStoreModules.bookings
+        ? 'الخدمات والمختصين'
+        : activeStoreModules.orders && !activeStoreModules.bookings
+        ? 'المنيو والمنتجات'
+        : 'الكتالوج والخدمات',
+      description: !activeStoreModules.orders && activeStoreModules.bookings
+        ? 'قائمة الخدمات، أوقات العمل، المختصين، وتسعير الجلسات والمواعيد'
+        : activeStoreModules.orders && !activeStoreModules.bookings
+        ? 'أصناف وقوائم المنيو، الأسعار، ومعدات وإضافات التحضير'
+        : 'أصناف وقوائم المنيو، الأسعار، الخدمات، ومعدات التحضير',
       icon: ShoppingBag,
       badge: `${catalogItems.length}`,
       glowColor: 'bg-amber-500/20',
       iconBg: 'bg-amber-500/15',
       iconBorder: 'border-amber-500/30',
       iconColor: 'text-amber-400',
-      statHighlight: `${catalogItems.length} صنف (${productItemsCount} منتج • ${serviceItemsCount} خدمة)`,
+      statHighlight: !activeStoreModules.orders && activeStoreModules.bookings
+        ? `${serviceItemsCount} خدمة ومختص معتمد`
+        : activeStoreModules.orders && !activeStoreModules.bookings
+        ? `${productItemsCount} صنف ومنتج بالمنيو`
+        : `${catalogItems.length} صنف (${productItemsCount} منتج • ${serviceItemsCount} خدمة)`,
+      isVisible: activeStoreModules.orders || activeStoreModules.bookings,
     },
     {
       id: 'inventory' as AdminTab,
@@ -3087,6 +3108,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       iconBorder: 'border-orange-500/30',
       iconColor: 'text-orange-400',
       statHighlight: 'خصم تلقائي مع المبيعات • قارئ فواتير OCR',
+      isVisible: activeStoreModules.inventory && activeStoreModules.orders,
     },
     {
       id: 'loyalty' as AdminTab,
@@ -3094,12 +3116,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       shortLabel: 'برنامج الولاء',
       description: 'مستويات العضوية (Tiers)، المكافآت الترحيبية، وقسائم الخصم',
       icon: Gift,
-      badge: `${privileges.length}`,
+      badge: !activeStoreModules.loyalty ? 'ترقية 🔒' : `${privileges.length}`,
       glowColor: 'bg-purple-500/20',
       iconBg: 'bg-purple-500/15',
       iconBorder: 'border-purple-500/30',
       iconColor: 'text-purple-400',
-      statHighlight: `${tiers.length} مستويات • ${privileges.length} مكافأة نشطة`,
+      statHighlight: !activeStoreModules.loyalty
+        ? 'غير مشمول في باقة المتجر الحالية'
+        : `${tiers.length} مستويات • ${privileges.length} مكافأة نشطة`,
+      isVisible: true,
     },
     {
       id: 'customers' as AdminTab,
@@ -3113,6 +3138,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       iconBorder: 'border-blue-500/30',
       iconColor: 'text-blue-400',
       statHighlight: `${customers.length} عميل مسجل بالمتجر`,
+      isVisible: true,
     },
     {
       id: 'pos_operations' as AdminTab,
@@ -3120,12 +3146,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       shortLabel: 'الورديات والمصروفات',
       description: 'إغلاق الورديات، حركة النقدية، المصروفات والإيرادات النثرية',
       icon: Receipt,
-      badge: 'جديد ⚡',
+      badge: !activeStoreModules.pos ? 'ترقية 🔒' : 'جديد ⚡',
       glowColor: 'bg-teal-500/20',
       iconBg: 'bg-teal-500/15',
       iconBorder: 'border-teal-500/30',
       iconColor: 'text-teal-400',
-      statHighlight: 'مطابقة الصندوق والقيود النقدية',
+      statHighlight: !activeStoreModules.pos
+        ? 'غير مشمول في باقة المتجر الحالية'
+        : 'مطابقة الصندوق والقيود النقدية',
+      isVisible: activeStoreModules.pos,
     },
     {
       id: 'staff' as AdminTab,
@@ -3139,19 +3168,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       iconBorder: 'border-indigo-500/30',
       iconColor: 'text-indigo-400',
       statHighlight: `${staffList.length} موظف معتمد`,
+      isVisible: true,
     },
     {
       id: 'branches' as AdminTab,
-      label: 'الفروع والصالة وإدارة الطاولات',
-      shortLabel: 'الفروع والطاولات',
-      description: 'ساعات العمل، الفروع النشطة، طاولات الصالة، وملصقات QR الذكية',
+      label: activeStoreModules.orders
+        ? 'الفروع والصالة وإدارة الطاولات'
+        : 'الفروع والمواقع المعتمدة',
+      shortLabel: activeStoreModules.orders ? 'الفروع والطاولات' : 'الفروع والمواقع',
+      description: activeStoreModules.orders
+        ? 'ساعات العمل، الفروع النشطة، طاولات الصالة، وملصقات QR الذكية'
+        : 'ساعات العمل، الفروع النشطة، ومواقع تقديم الخدمة المعتمدة',
       icon: Building2,
       badge: 'محدث ⚡',
       glowColor: 'bg-cyan-500/20',
       iconBg: 'bg-cyan-500/15',
       iconBorder: 'border-cyan-500/30',
       iconColor: 'text-cyan-400',
-      statHighlight: `${branches.length} فرع مسجل • إدارة الصالة وQR`,
+      statHighlight: `${branches.length} فرع مسجل`,
+      isVisible: true,
     },
     {
       id: 'settings' as AdminTab,
@@ -3171,8 +3206,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       iconBorder: 'border-amber-500/30',
       iconColor: 'text-amber-400',
       statHighlight: 'بوابة الدفع الإلكتروني والاشتراك',
+      isVisible: true,
     },
   ];
+
+  const tabsConfig = rawTabsConfig.filter((t) => t.isVisible);
 
   const currentTabConfig = tabsConfig.find((t) => t.id === activeTab);
 

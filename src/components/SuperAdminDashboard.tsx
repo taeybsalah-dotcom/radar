@@ -59,6 +59,12 @@ import {
   ArrowLeft,
   MoreVertical,
   LayoutGrid,
+  Coffee,
+  Car,
+  Scissors,
+  Truck,
+  Monitor,
+  Package,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SuperAdminLeadsConsole } from './SuperAdminLeadsConsole';
@@ -259,9 +265,59 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [editOwnerEnableOrders, setEditOwnerEnableOrders] = useState(true);
   const [editOwnerEnableBookings, setEditOwnerEnableBookings] = useState(true);
   const [editOwnerEnableLoyalty, setEditOwnerEnableLoyalty] = useState(true);
+  const [editOwnerEnablePos, setEditOwnerEnablePos] = useState(true);
+  const [editOwnerEnableKds, setEditOwnerEnableKds] = useState(true);
+  const [editOwnerEnableDrivers, setEditOwnerEnableDrivers] = useState(true);
+  const [editOwnerEnableInventory, setEditOwnerEnableInventory] = useState(true);
+  const [editBusinessType, setEditBusinessType] = useState<string>('custom');
   const [editEnableOrders, setEditEnableOrders] = useState(true);
   const [editEnableBookings, setEditEnableBookings] = useState(true);
   const [editEnableLoyalty, setEditEnableLoyalty] = useState(true);
+
+  const applyIndustryPreset = (preset: 'restaurant_cafe' | 'salon_spa' | 'car_wash' | 'retail_loyalty' | 'enterprise') => {
+    setEditBusinessType(preset === 'enterprise' ? 'custom' : preset);
+    if (preset === 'restaurant_cafe') {
+      setEditOwnerEnableOrders(true);
+      setEditOwnerEnableBookings(false);
+      setEditOwnerEnableLoyalty(true);
+      setEditOwnerEnablePos(true);
+      setEditOwnerEnableKds(true);
+      setEditOwnerEnableDrivers(true);
+      setEditOwnerEnableInventory(true);
+    } else if (preset === 'salon_spa') {
+      setEditOwnerEnableOrders(false);
+      setEditOwnerEnableBookings(true);
+      setEditOwnerEnableLoyalty(true);
+      setEditOwnerEnablePos(true);
+      setEditOwnerEnableKds(false);
+      setEditOwnerEnableDrivers(false);
+      setEditOwnerEnableInventory(false);
+    } else if (preset === 'car_wash') {
+      setEditOwnerEnableOrders(false);
+      setEditOwnerEnableBookings(true);
+      setEditOwnerEnableLoyalty(true);
+      setEditOwnerEnablePos(true);
+      setEditOwnerEnableKds(false);
+      setEditOwnerEnableDrivers(true);
+      setEditOwnerEnableInventory(false);
+    } else if (preset === 'retail_loyalty') {
+      setEditOwnerEnableOrders(false);
+      setEditOwnerEnableBookings(false);
+      setEditOwnerEnableLoyalty(true);
+      setEditOwnerEnablePos(true);
+      setEditOwnerEnableKds(false);
+      setEditOwnerEnableDrivers(false);
+      setEditOwnerEnableInventory(false);
+    } else if (preset === 'enterprise') {
+      setEditOwnerEnableOrders(true);
+      setEditOwnerEnableBookings(true);
+      setEditOwnerEnableLoyalty(true);
+      setEditOwnerEnablePos(true);
+      setEditOwnerEnableKds(true);
+      setEditOwnerEnableDrivers(true);
+      setEditOwnerEnableInventory(true);
+    }
+  };
 
   // Success Onboarding Modal Card State
   const [onboardedResult, setOnboardedResult] = useState<{
@@ -512,6 +568,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     setEditOwnerEnableOrders(storeToEdit.owner_enable_orders !== false);
     setEditOwnerEnableBookings(storeToEdit.owner_enable_bookings !== false);
     setEditOwnerEnableLoyalty(storeToEdit.owner_enable_loyalty !== false);
+    setEditOwnerEnablePos(storeToEdit.owner_enable_pos !== false);
+    setEditOwnerEnableKds(storeToEdit.owner_enable_kds !== false);
+    setEditOwnerEnableDrivers(storeToEdit.owner_enable_drivers !== false);
+    setEditOwnerEnableInventory(storeToEdit.owner_enable_inventory !== false);
+    setEditBusinessType(storeToEdit.business_type || 'custom');
     setEditEnableOrders(storeToEdit.enable_orders !== false);
     setEditEnableBookings(storeToEdit.enable_bookings !== false);
     setEditEnableLoyalty(storeToEdit.enable_loyalty !== false);
@@ -570,6 +631,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         owner_enable_orders: editOwnerEnableOrders,
         owner_enable_bookings: editOwnerEnableBookings,
         owner_enable_loyalty: editOwnerEnableLoyalty,
+        owner_enable_pos: editOwnerEnablePos,
+        owner_enable_kds: editOwnerEnableKds,
+        owner_enable_drivers: editOwnerEnableDrivers,
+        owner_enable_inventory: editOwnerEnableInventory,
+        business_type: editBusinessType as any,
         enable_orders: editEnableOrders,
         enable_bookings: editEnableBookings,
         enable_loyalty: editEnableLoyalty,
@@ -3096,86 +3162,276 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               </div>
 
               {/* 🎛️ تحكم باقة وموديولات المنصة (SaaS Module Permissions - Platform Owner Control) */}
-              <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-800/80">
+              <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 flex-wrap gap-2">
                   <div className="flex items-center space-x-2 rtl:space-x-reverse">
                     <Crown className="w-4 h-4 text-amber-400" />
-                    <span className="text-xs font-bold text-white">صلاحيات باقة المتجر والموديولات (SaaS Module Control)</span>
+                    <span className="text-xs font-black text-white">صلاحيات باقة المتجر والموديولات (SaaS Module Control)</span>
                   </div>
-                  <span className="text-[10px] text-amber-300 font-mono bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30 font-bold">
+                  <span className="text-[10px] text-amber-300 font-mono bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/30 font-bold">
                     الكلمة العليا للمالك 👑
                   </span>
                 </div>
+
+                {/* 🎯 One-Click Industry Presets (تحديد باقة النشاط بنقرة واحدة) */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-300">⚡ تعيين باقة النشاط بنقرة واحدة (Industry Presets):</span>
+                    <span className="text-[10px] text-slate-500 font-mono">يحدد الموديولات آلياً</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyIndustryPreset('restaurant_cafe')}
+                      className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${
+                        editOwnerEnableOrders && !editOwnerEnableBookings && editOwnerEnableKds
+                          ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md font-black'
+                          : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-amber-500/40'
+                      }`}
+                    >
+                      <Coffee className="w-3.5 h-3.5 text-amber-400" />
+                      <span>مطعم / كافيه</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyIndustryPreset('salon_spa')}
+                      className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${
+                        !editOwnerEnableOrders && editOwnerEnableBookings && !editOwnerEnableKds && !editOwnerEnableDrivers
+                          ? 'bg-purple-500 text-white border-purple-400 shadow-md font-black'
+                          : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-purple-500/40'
+                      }`}
+                    >
+                      <Scissors className="w-3.5 h-3.5 text-purple-400" />
+                      <span>صالون وعيادة</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyIndustryPreset('car_wash')}
+                      className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${
+                        !editOwnerEnableOrders && editOwnerEnableBookings && editOwnerEnableDrivers
+                          ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md font-black'
+                          : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-cyan-500/40'
+                      }`}
+                    >
+                      <Car className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>مغسلة وميداني</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyIndustryPreset('retail_loyalty')}
+                      className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${
+                        !editOwnerEnableOrders && !editOwnerEnableBookings && editOwnerEnableLoyalty
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md font-black'
+                          : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-emerald-500/40'
+                      }`}
+                    >
+                      <Gift className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>ولاء فقط</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => applyIndustryPreset('enterprise')}
+                      className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${
+                        editOwnerEnableOrders && editOwnerEnableBookings && editOwnerEnableKds && editOwnerEnableDrivers
+                          ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 border-amber-300 shadow-md font-black'
+                          : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-amber-400'
+                      }`}
+                    >
+                      <Crown className="w-3.5 h-3.5 text-amber-300" />
+                      <span>باقة شاملة 👑</span>
+                    </button>
+                  </div>
+                </div>
+
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  التحكم المركزي في ميزات المتجر وفق باقة الاشتراك. إذا قمت بإيقاف موديول هنا، يتم قفله إجبارياً على التاجر وعملائه ولا يمكن للتاجر تفعيله:
+                  التحكم الدقيق في ميزات باقة المتجر. عند إيقاف أي موديول، يتم إخفاؤه وحظره على التاجر وعملائه ولا يمكن للتاجر تشغيله:
                 </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-                  {/* 1. Orders Module */}
-                  <div className={`p-3 rounded-xl border transition ${editOwnerEnableOrders ? 'bg-slate-950/80 border-slate-700' : 'bg-rose-950/20 border-rose-500/40'}`}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <ShoppingBag className="w-3.5 h-3.5 text-blue-400" />
-                        <span>الطلبات والمنيو</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEditOwnerEnableOrders(!editOwnerEnableOrders)}
-                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
-                          editOwnerEnableOrders
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                            : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
-                        }`}
-                      >
-                        {editOwnerEnableOrders ? 'مشمول بالباقة ✅' : 'محظور/غير مشمول 🔒'}
-                      </button>
+                {/* 🔲 Operational Modules Matrix (7 Specialized Modules) */}
+                <div className="space-y-3 pt-1">
+                  
+                  {/* Pillar 1: موديولات البيع والحركة (Sales & Bookings) */}
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider block">
+                      🛍️ موديولات البيع والحجوزات (Sales & Front-Office)
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      {/* 1. Orders Module */}
+                      <div className={`p-3 rounded-2xl border transition ${editOwnerEnableOrders ? 'bg-slate-950/80 border-blue-500/30' : 'bg-rose-950/20 border-rose-500/30 opacity-70'}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <ShoppingBag className="w-3.5 h-3.5 text-blue-400" />
+                            <span>الطلبات والمنيو</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditOwnerEnableOrders(!editOwnerEnableOrders)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                              editOwnerEnableOrders
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                            }`}
+                          >
+                            {editOwnerEnableOrders ? 'مشمول ✅' : 'محظور 🔒'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">الطلبات الفورية، السلة، محلي وسفري وتوصيل</p>
+                      </div>
+
+                      {/* 2. Bookings Module */}
+                      <div className={`p-3 rounded-2xl border transition ${editOwnerEnableBookings ? 'bg-slate-950/80 border-purple-500/30' : 'bg-rose-950/20 border-rose-500/30 opacity-70'}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                            <span>الحجوزات والخدمات</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditOwnerEnableBookings(!editOwnerEnableBookings)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                              editOwnerEnableBookings
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                            }`}
+                          >
+                            {editOwnerEnableBookings ? 'مشمول ✅' : 'محظور 🔒'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">حجوزات المواعيد، الفترات وجدولة المختصين</p>
+                      </div>
+
+                      {/* 3. POS Cashier Module */}
+                      <div className={`p-3 rounded-2xl border transition ${editOwnerEnablePos ? 'bg-slate-950/80 border-teal-500/30' : 'bg-rose-950/20 border-rose-500/30 opacity-70'}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <Receipt className="w-3.5 h-3.5 text-teal-400" />
+                            <span>الكاشير والورديات</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditOwnerEnablePos(!editOwnerEnablePos)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                              editOwnerEnablePos
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                            }`}
+                          >
+                            {editOwnerEnablePos ? 'مشمول ✅' : 'محظور 🔒'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">شاشة نقطة البيع، إغلاق الوردية، والنقدية</p>
+                      </div>
                     </div>
-                    <p className="text-[10px] text-slate-400 leading-tight">الطلبات الفورية، السلة، وتناول محلي وسفري وتوصيل</p>
                   </div>
 
-                  {/* 2. Bookings Module */}
-                  <div className={`p-3 rounded-xl border transition ${editOwnerEnableBookings ? 'bg-slate-950/80 border-slate-700' : 'bg-rose-950/20 border-rose-500/40'}`}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                        <span>الحجوزات والخدمات</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEditOwnerEnableBookings(!editOwnerEnableBookings)}
-                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
-                          editOwnerEnableBookings
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                            : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
-                        }`}
-                      >
-                        {editOwnerEnableBookings ? 'مشمول بالباقة ✅' : 'محظور/غير مشمول 🔒'}
-                      </button>
+                  {/* Pillar 2: موديولات العمليات والتشغيل اللوجستي (Operations & Kitchen & Fleet) */}
+                  <div className="space-y-2 pt-1">
+                    <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider block">
+                      ⚙️ موديولات التشغيل واللوجستيات (Operations & Fleet)
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      {/* 4. Kitchen KDS & Tables */}
+                      <div className={`p-3 rounded-2xl border transition ${editOwnerEnableKds ? 'bg-slate-950/80 border-cyan-500/30' : 'bg-rose-950/20 border-rose-500/30 opacity-70'}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <Monitor className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>شاشة المطبخ KDS</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditOwnerEnableKds(!editOwnerEnableKds)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                              editOwnerEnableKds
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                            }`}
+                          >
+                            {editOwnerEnableKds ? 'مشمول ✅' : 'محظور 🔒'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">عرض وتحديث الطلبات لحظياً وإدارة الصالة</p>
+                      </div>
+
+                      {/* 5. Driver Fleet Portal */}
+                      <div className={`p-3 rounded-2xl border transition ${editOwnerEnableDrivers ? 'bg-slate-950/80 border-orange-500/30' : 'bg-rose-950/20 border-rose-500/30 opacity-70'}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <Truck className="w-3.5 h-3.5 text-orange-400" />
+                            <span>أسطول السائقين</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditOwnerEnableDrivers(!editOwnerEnableDrivers)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                              editOwnerEnableDrivers
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                            }`}
+                          >
+                            {editOwnerEnableDrivers ? 'مشمول ✅' : 'محظور 🔒'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">بوابة السائق وتوزيع واستلام طلبات التوصيل</p>
+                      </div>
+
+                      {/* 6. Inventory & Recipe Costing */}
+                      <div className={`p-3 rounded-2xl border transition ${editOwnerEnableInventory ? 'bg-slate-950/80 border-amber-500/30' : 'bg-rose-950/20 border-rose-500/30 opacity-70'}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <Package className="w-3.5 h-3.5 text-amber-400" />
+                            <span>المخزون والوصفات</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditOwnerEnableInventory(!editOwnerEnableInventory)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                              editOwnerEnableInventory
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                            }`}
+                          >
+                            {editOwnerEnableInventory ? 'مشمول ✅' : 'محظور 🔒'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">المواد الخام، تكاليف الأطباق وقارئ الفواتير</p>
+                      </div>
                     </div>
-                    <p className="text-[10px] text-slate-400 leading-tight">حجوزات المواعيد، الفترات الزمنية، وجدولة المختصين</p>
                   </div>
 
-                  {/* 3. Loyalty Module */}
-                  <div className={`p-3 rounded-xl border transition ${editOwnerEnableLoyalty ? 'bg-slate-950/80 border-slate-700' : 'bg-rose-950/20 border-rose-500/40'}`}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                        <Gift className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>الولاء والمكافآت</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEditOwnerEnableLoyalty(!editOwnerEnableLoyalty)}
-                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
-                          editOwnerEnableLoyalty
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                            : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
-                        }`}
-                      >
-                        {editOwnerEnableLoyalty ? 'مشمول بالباقة ✅' : 'محظور/غير مشمول 🔒'}
-                      </button>
+                  {/* Pillar 3: موديولات العملاء والولاء (Growth & Loyalty) */}
+                  <div className="space-y-2 pt-1">
+                    <span className="text-[10px] font-black text-amber-400 uppercase tracking-wider block">
+                      🎁 موديولات نمو وولاء العملاء (Growth & Loyalty)
+                    </span>
+                    <div className="grid grid-cols-1 gap-2.5">
+                      {/* 7. Loyalty Module */}
+                      <div className={`p-3 rounded-2xl border transition ${editOwnerEnableLoyalty ? 'bg-slate-950/80 border-emerald-500/30' : 'bg-rose-950/20 border-rose-500/30 opacity-70'}`}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-xs font-black text-white flex items-center gap-1.5">
+                            <Gift className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>برنامج الولاء والبطاقات الرقمية (Apple Wallet & QR)</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setEditOwnerEnableLoyalty(!editOwnerEnableLoyalty)}
+                            className={`px-2.5 py-0.5 rounded-lg text-[10px] font-bold border transition ${
+                              editOwnerEnableLoyalty
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                : 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                            }`}
+                          >
+                            {editOwnerEnableLoyalty ? 'مشمول بالباقة ✅' : 'محظور/غير مشمول 🔒'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">برنامج النقاط، مستويات العضوية، البطاقات الرقمية بالمحفظة، وقسائم وكوبونات المكافآت</p>
+                      </div>
                     </div>
-                    <p className="text-[10px] text-slate-400 leading-tight">برنامج النقاط، المستويات، بطاقة الـ QR، والكوبونات</p>
                   </div>
+
                 </div>
               </div>
 

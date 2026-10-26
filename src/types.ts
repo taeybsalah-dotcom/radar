@@ -440,9 +440,18 @@ export interface Store {
   enable_orders?: boolean; // تفعيل/إيقاف الطلبات الفورية والمنيو (من قبل التاجر)
   enable_bookings?: boolean; // تفعيل/إيقاف حجوزات المواعيد والخدمات (من قبل التاجر)
   enable_loyalty?: boolean; // تفعيل/إيقاف برنامج الولاء والنقاط (من قبل التاجر)
+  enable_pos?: boolean; // تفعيل نقاط البيع والكاشير والورديات
+  enable_kds?: boolean; // تفعيل شاشة المطبخ وإدارة الطاولات
+  enable_drivers?: boolean; // تفعيل أسطول السائقين وتطبيق المندوب
+  enable_inventory?: boolean; // تفعيل المخزون وتكاليف المواد وقارئ الفواتير
   owner_enable_orders?: boolean; // صلاحية باقة المنصة للطلبات (من قبل المالك)
   owner_enable_bookings?: boolean; // صلاحية باقة المنصة للحجوزات (من قبل المالك)
   owner_enable_loyalty?: boolean; // صلاحية باقة المنصة للولاء (من قبل المالك)
+  owner_enable_pos?: boolean; // باقة المالك للكاشير ونقاط البيع
+  owner_enable_kds?: boolean; // باقة المالك لشاشة المطبخ والطاولات
+  owner_enable_drivers?: boolean; // باقة المالك لأسطول السائقين
+  owner_enable_inventory?: boolean; // باقة المالك للمخزون
+  business_type?: 'restaurant_cafe' | 'salon_spa' | 'car_wash' | 'retail_loyalty' | 'custom';
   enable_pos_whatsapp_receipt?: boolean; // تفعيل إرسال الفاتورة عبر الواتساب في الكاشير
   fulfillment_settings?: StoreFulfillmentSettings; // إعدادات طرق الاستلام والتوصيل والحجز
   wallet?: StoreWallet; // محفظة باقات المتجر وحدود العمليات
@@ -467,10 +476,26 @@ export function getStoreActiveModules(store?: Partial<Store> | null) {
       orders: true,
       bookings: true,
       loyalty: true,
+      pos: true,
+      kds: true,
+      drivers: true,
+      inventory: true,
       ownerOrders: true,
       ownerBookings: true,
       ownerLoyalty: true,
+      ownerPos: true,
+      ownerKds: true,
+      ownerDrivers: true,
+      ownerInventory: true,
+      merchantOrders: true,
+      merchantBookings: true,
+      merchantLoyalty: true,
+      merchantPos: true,
+      merchantKds: true,
+      merchantDrivers: true,
+      merchantInventory: true,
       hasAtLeastOneActive: true,
+      businessType: 'custom' as const,
     };
   }
 
@@ -478,23 +503,44 @@ export function getStoreActiveModules(store?: Partial<Store> | null) {
   const ownerOrders = store.owner_enable_orders !== false;
   const ownerBookings = store.owner_enable_bookings !== false;
   const ownerLoyalty = store.owner_enable_loyalty !== false;
+  const ownerPos = store.owner_enable_pos !== false;
+  const ownerKds = store.owner_enable_kds !== false && ownerOrders;
+  const ownerDrivers = store.owner_enable_drivers !== false;
+  const ownerInventory = store.owner_enable_inventory !== false;
 
   // 2. حالة المتجر الفعلية (Effective Module State)
   const orders = ownerOrders && store.enable_orders !== false;
   const bookings = ownerBookings && store.enable_bookings !== false;
   const loyalty = ownerLoyalty && store.enable_loyalty !== false;
+  const pos = ownerPos && store.enable_pos !== false;
+  const kds = ownerKds && store.enable_kds !== false && orders;
+  const drivers = ownerDrivers && store.enable_drivers !== false;
+  const inventory = ownerInventory && store.enable_inventory !== false;
 
   return {
     orders,
     bookings,
     loyalty,
+    pos,
+    kds,
+    drivers,
+    inventory,
     ownerOrders,
     ownerBookings,
     ownerLoyalty,
+    ownerPos,
+    ownerKds,
+    ownerDrivers,
+    ownerInventory,
     merchantOrders: store.enable_orders !== false,
     merchantBookings: store.enable_bookings !== false,
     merchantLoyalty: store.enable_loyalty !== false,
-    hasAtLeastOneActive: orders || bookings || loyalty,
+    merchantPos: store.enable_pos !== false,
+    merchantKds: store.enable_kds !== false,
+    merchantDrivers: store.enable_drivers !== false,
+    merchantInventory: store.enable_inventory !== false,
+    hasAtLeastOneActive: orders || bookings || loyalty || pos,
+    businessType: store.business_type || 'custom',
   };
 }
 
