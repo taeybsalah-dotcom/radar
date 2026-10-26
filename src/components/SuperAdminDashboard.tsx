@@ -1112,28 +1112,28 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
           
           {/* Right Side: Dynamic White-Label Brand Info */}
-          <div className="flex items-center gap-4">
-            <div className="w-13 h-13 sm:w-15 sm:h-15 rounded-2xl p-0.5 bg-gradient-to-tr from-[#CCFF00] via-[#10E588] to-emerald-400 shadow-lg flex items-center justify-center overflow-hidden flex-shrink-0">
+          <div className="flex items-center gap-3.5 sm:gap-4 min-w-0 flex-1">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 min-w-[56px] max-w-[56px] sm:min-w-[64px] sm:max-w-[64px] h-[56px] min-h-[56px] max-h-[56px] sm:h-[64px] sm:min-h-[64px] sm:max-h-[64px] rounded-2xl p-1 bg-slate-950/80 border border-white/15 shadow-lg flex items-center justify-center overflow-hidden shrink-0">
               {getActiveTenantConfig().logoUrl ? (
                 <img
                   src={getActiveTenantConfig().logoUrl}
                   alt={getActiveTenantConfig().brandName}
-                  className="w-full h-full object-cover rounded-[14px]"
+                  className="w-full h-full max-w-full max-h-full object-contain rounded-xl"
                 />
               ) : (
-                <span className="w-full h-full bg-slate-950 text-[#CCFF00] rounded-[14px] flex items-center justify-center font-black text-lg">
+                <span className="w-full h-full bg-slate-950 text-[#CCFF00] rounded-xl flex items-center justify-center font-black text-lg">
                   {getActiveTenantConfig().brandName.slice(0, 2)}
                 </span>
               )}
             </div>
 
-            <div className="space-y-1">
+            <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h2 className="text-lg sm:text-2xl font-black tracking-tight">
                   لوحة القيادة التنفيذية | {getActiveTenantConfig().brandName}
                 </h2>
                 {currentAdminUser && (
-                  <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                  <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border shrink-0 ${
                     isDark ? 'bg-[#CCFF00]/15 text-[#CCFF00] border-[#CCFF00]/30' : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                   }`}>
                     👤 {currentAdminUser.full_name} ({currentAdminUser.role === 'super_admin' ? 'مالك المنظومة' : 'مدير معتمد'})
@@ -1147,7 +1147,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
           </div>
 
           {/* Left Side: Clean Executive Control Hub */}
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap self-end lg:self-auto">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0 self-end lg:self-auto">
             
             {/* Active Stores Status Pill */}
             <div className={`px-3.5 py-2 rounded-2xl border flex items-center gap-2 text-xs font-bold ${

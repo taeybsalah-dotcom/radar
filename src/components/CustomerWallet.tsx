@@ -4219,12 +4219,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                     <img
                                       src={srv.image_url}
                                       alt={srv.name}
-                                      className="w-13 h-13 sm:w-14 sm:h-14 rounded-full object-cover border shadow-md"
+                                      className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover border shadow-md"
                                       style={{ borderColor: `${safeAccentFill}40` }}
                                     />
                                   ) : (
                                     <div
-                                      className="w-13 h-13 sm:w-14 sm:h-14 rounded-full border flex items-center justify-center text-2xl shadow-inner"
+                                      className="w-12 h-12 sm:w-14 sm:h-14 rounded-full border flex items-center justify-center text-2xl shadow-inner"
                                       style={{
                                         background: isDarkTheme
                                           ? `linear-gradient(135deg, ${brandSecondary}20 0%, #0f172a 100%)`
