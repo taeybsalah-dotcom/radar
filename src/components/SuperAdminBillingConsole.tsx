@@ -26,6 +26,10 @@ import {
   Search,
   ArrowUpRight,
   ArrowDownRight,
+  ArrowRight,
+  ArrowLeft,
+  LayoutGrid,
+  TrendingUp,
   ShieldCheck,
   Scale,
   Send,
@@ -71,8 +75,8 @@ interface SuperAdminBillingConsoleProps {
 }
 
 export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> = ({ isDark = true }) => {
-  // Navigation Subtabs
-  const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payouts' | 'refunds' | 'plans' | 'gateways'>('overview');
+  // Navigation Subtabs (Hub & Spoke Pattern)
+  const [activeTab, setActiveTab] = useState<'hub' | 'overview' | 'ledger' | 'payouts' | 'refunds' | 'plans' | 'gateways'>('hub');
 
   // Data States
   const [ledgerEntries, setLedgerEntries] = useState<FinancialLedgerEntry[]>(() => {
@@ -722,80 +726,338 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
         </div>
       </div>
 
-      {/* 🧭 Navigation Subtabs */}
-      <div className="flex items-center gap-3 border-b border-slate-800 pb-3 overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('overview')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeTab === 'overview'
-              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <Building className="w-4 h-4" />
-          <span>المؤشرات والتحليلات المالية 📊</span>
-        </button>
+      {/* ========================================================================= */}
+      {/* 🧭 NAVIGATION: SUB-HUB (CARDS) vs FOCUSED WORKSPACE */}
+      {/* ========================================================================= */}
+      {activeTab === 'hub' ? (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Sub-Hub Master Section Header */}
+          <div className={`rounded-3xl p-6 border shadow-xl relative overflow-hidden transition-colors ${
+            isDark ? 'bg-[#0E1622] border-white/10' : 'bg-white border-slate-200'
+          }`}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                  <span className={`text-xs font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>
+                    أقسام إدارة الفوترة والسجل المالي (Financial Hub)
+                  </span>
+                </div>
+                <h3 className={`text-xl sm:text-2xl font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  العمليات والقيود المالية المعتمدة 💳
+                </h3>
+                <p className={`text-xs sm:text-sm max-w-2xl leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  اختر أحد الأقسام بالأسفل للتحكم في قيود اليومية، صرف العمولات، باقات الاشتراك، وبوابات الدفع.
+                </p>
+              </div>
 
-        <button
-          onClick={() => setActiveTab('ledger')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeTab === 'ledger'
-              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <Receipt className="w-4 h-4" />
-          <span>سجل القيود المالية العام ({ledgerEntries.length}) 📜</span>
-        </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('overview')}
+                  className="px-5 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs transition flex items-center gap-1.5 shadow-lg shadow-emerald-500/20"
+                >
+                  <TrendingUp className="w-4 h-4" />
+                  <span>المؤشرات العامة المباشرة 📊</span>
+                </button>
+              </div>
+            </div>
+          </div>
 
-        <button
-          onClick={() => setActiveTab('payouts')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeTab === 'payouts'
-              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <Send className="w-4 h-4" />
-          <span>صرف مستحقات المسوقين ({pendingPayoutPartnersCount > 0 ? pendingPayoutPartnersCount : payouts.length}) 💸</span>
-        </button>
+          {/* 6 Master Financial Sections Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {/* 1. المؤشرات والتحليلات */}
+            <div
+              onClick={() => setActiveTab('overview')}
+              className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-emerald-500/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-emerald-500/40'
+              }`}
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                    <TrendingUp className="w-6 h-6" />
+                  </div>
+                  <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                    isDark ? 'bg-[#080C13] border-white/10 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  }`}>
+                    {financialConfig.vat_enabled ? 'ZATCA 15%' : 'عمل حر 0%'}
+                  </span>
+                </div>
 
-        <button
-          onClick={() => setActiveTab('refunds')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeTab === 'refunds'
-              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <RotateCcw className="w-4 h-4" />
-          <span>المستردات والإشعارات الدائنة ({creditNotes.length}) 🔄</span>
-        </button>
+                <div className="space-y-1.5">
+                  <h4 className="text-lg font-black group-hover:text-emerald-400 transition-colors">
+                    المؤشرات والتحليلات وتوزيع الأرباح
+                  </h4>
+                  <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    التدفقات النقدية الإجمالية، صافي إيراد المنصة، رسوم البوابات، وحاسبة التفكيك المالي للمبيعات والمسوقين.
+                  </p>
+                </div>
+              </div>
 
-        <button
-          onClick={() => setActiveTab('plans')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeTab === 'plans'
-              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <Layers className="w-4 h-4" />
-          <span>باقات الاشتراك ({plans.length}) 💳</span>
-        </button>
+              <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400">
+                  {(metrics?.totalGrossVolume || 0).toLocaleString()} ر.س تدفقات
+                </span>
+                <span className="text-xs font-black text-emerald-400 flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                  <span>فتح القسم</span>
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </span>
+              </div>
+            </div>
 
-        <button
-          onClick={() => setActiveTab('gateways')}
-          className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold text-xs sm:text-sm transition whitespace-nowrap ${
-            activeTab === 'gateways'
-              ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/20'
-              : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
-          }`}
-        >
-          <CreditCard className="w-4 h-4" />
-          <span>بوابات وطرق الدفع ({platformPaymentConfig.provider === 'sandbox' ? 'تجريبي' : platformPaymentConfig.provider.toUpperCase()}) ⚡</span>
-        </button>
-      </div>
+            {/* 2. سجل القيود المالية العام */}
+            <div
+              onClick={() => setActiveTab('ledger')}
+              className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-amber-500/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-amber-500/40'
+              }`}
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+                    <Receipt className="w-6 h-6" />
+                  </div>
+                  <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                    isDark ? 'bg-[#080C13] border-white/10 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800'
+                  }`}>
+                    {ledgerEntries.length} قيد محاسبي
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <h4 className="text-lg font-black group-hover:text-amber-400 transition-colors">
+                    سجل القيود المحاسبية العام (Ledger)
+                  </h4>
+                  <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    دفتر الأستاذ الدائم، فواتير الاشتراكات، سندات التحصيل الموثقة، والتسويات اليدوية مع إمكانية التصدير.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400">
+                  سجل غير قابل للتعديل 🔒
+                </span>
+                <span className="text-xs font-black text-amber-400 flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                  <span>فتح القسم</span>
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </span>
+              </div>
+            </div>
+
+            {/* 3. صرف مستحقات المسوقين */}
+            <div
+              onClick={() => setActiveTab('payouts')}
+              className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-cyan-500/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-cyan-500/40'
+              }`}
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition-transform">
+                    <Send className="w-6 h-6" />
+                  </div>
+                  <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                    isDark ? 'bg-[#080C13] border-white/10 text-cyan-300' : 'bg-cyan-50 border-cyan-200 text-cyan-800'
+                  }`}>
+                    {pendingPayoutPartnersCount > 0 ? `${pendingPayoutPartnersCount} بانتظار الصرف 💸` : 'كافة العمولات مسواة'}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <h4 className="text-lg font-black group-hover:text-cyan-400 transition-colors">
+                    صرف مستحقات وعمولات المسوقين
+                  </h4>
+                  <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    متابعة أرصدة وعمولات شركاء الإحالة، إصدار أوامر الصرف الفورية والتحويل البنكي وتوثيق أرقام المرجع.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400">
+                  {(metrics?.totalAffiliatePayable || 0).toLocaleString()} ر.س عمولات
+                </span>
+                <span className="text-xs font-black text-cyan-400 flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                  <span>فتح القسم</span>
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </span>
+              </div>
+            </div>
+
+            {/* 4. المستردات والإشعارات الدائنة */}
+            <div
+              onClick={() => setActiveTab('refunds')}
+              className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-rose-500/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-rose-500/40'
+              }`}
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 group-hover:scale-110 transition-transform">
+                    <RotateCcw className="w-6 h-6" />
+                  </div>
+                  <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                    isDark ? 'bg-[#080C13] border-white/10 text-rose-300' : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}>
+                    {creditNotes.length} إشعار دائن
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <h4 className="text-lg font-black group-hover:text-rose-400 transition-colors">
+                    المستردات والإشعارات الدائنة (Credit Notes)
+                  </h4>
+                  <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    معالجة طلبات إلغاء الاشتراكات، استرداد المبالغ للعملاء، وإصدار إشعارات دائنة رسمية متوافقة محاسبياً.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400">
+                  {(metrics?.totalRefundsVolume || 0).toLocaleString()} ر.س مستردات
+                </span>
+                <span className="text-xs font-black text-rose-400 flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                  <span>فتح القسم</span>
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </span>
+              </div>
+            </div>
+
+            {/* 5. باقات الاشتراك */}
+            <div
+              onClick={() => setActiveTab('plans')}
+              className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-purple-500/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-purple-500/40'
+              }`}
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
+                    <Layers className="w-6 h-6" />
+                  </div>
+                  <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                    isDark ? 'bg-[#080C13] border-white/10 text-purple-300' : 'bg-purple-50 border-purple-200 text-purple-800'
+                  }`}>
+                    {plans.length} باقات معتمدة
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <h4 className="text-lg font-black group-hover:text-purple-400 transition-colors">
+                    باقات وخطط الاشتراكات (SaaS Plans)
+                  </h4>
+                  <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    تخصيص أسعار الاشتراكات الشهرية والسنوية، حدود الفروع، مميزات المنظومة، وإدارة العروض الترويجية.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400">
+                  خطط اشتراك ديناميكية
+                </span>
+                <span className="text-xs font-black text-purple-400 flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                  <span>فتح القسم</span>
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </span>
+              </div>
+            </div>
+
+            {/* 6. بوابات وطرق الدفع */}
+            <div
+              onClick={() => setActiveTab('gateways')}
+              className={`rounded-3xl p-6 border transition-all duration-300 text-right flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-1 cursor-pointer group ${
+                isDark ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-blue-500/40' : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-blue-500/40'
+              }`}
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+                    <CreditCard className="w-6 h-6" />
+                  </div>
+                  <span className={`text-[11px] font-mono font-bold px-3 py-1 rounded-full border ${
+                    isDark ? 'bg-[#080C13] border-white/10 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-800'
+                  }`}>
+                    {platformPaymentConfig.provider === 'sandbox' ? 'الوضع التجريبي' : platformPaymentConfig.provider.toUpperCase()}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <h4 className="text-lg font-black group-hover:text-blue-400 transition-colors">
+                    بوابات وطرق الدفع الإلكتروني
+                  </h4>
+                  <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                    إدارة مفاتيح بوابات الدفع الرسمية (Tap، Moyasar)، ربط الـ Webhooks، أو تفعيل المحاكي التجريبي (Sandbox).
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-4 mt-6 border-t border-white/5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400">
+                  ربط آمن ومشفر 🔐
+                </span>
+                <span className="text-xs font-black text-blue-400 flex items-center gap-1 group-hover:-translate-x-1 transition-transform">
+                  <span>فتح القسم</span>
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      ) : (
+        /* ⬅️ FOCUSED WORKSPACE NAVIGATION BREADCRUMB BAR FOR FINANCIAL SUB-SECTIONS */
+        <div className={`rounded-2xl p-3.5 sm:p-4 border shadow-md backdrop-blur-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-16 z-20 animate-fade-in transition-colors ${
+          isDark ? 'bg-[#0E1622]/95 border-white/10 text-white' : 'bg-white/95 border-slate-200 text-slate-900'
+        }`}>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setActiveTab('hub')}
+              className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs transition flex items-center gap-2 shadow-md shadow-emerald-500/20 shrink-0"
+            >
+              <ArrowRight className="w-3.5 h-3.5" />
+              <span>العودة لأقسام المالية (كافة الأقسام)</span>
+            </button>
+
+            <span className="text-slate-500 hidden sm:inline">|</span>
+
+            <div className="flex items-center gap-2 text-xs font-bold truncate">
+              <span className={isDark ? 'text-slate-400' : 'text-slate-500'}>القسم المفتوح:</span>
+              <span className="text-emerald-500 font-black">
+                {activeTab === 'overview' && '📊 المؤشرات والتحليلات وتوزيع الأرباح'}
+                {activeTab === 'ledger' && `📜 سجل القيود المالية العام (${ledgerEntries.length})`}
+                {activeTab === 'payouts' && `💸 صرف مستحقات المسوقين (${pendingPayoutPartnersCount})`}
+                {activeTab === 'refunds' && `🔄 المستردات والإشعارات الدائنة (${creditNotes.length})`}
+                {activeTab === 'plans' && `💳 باقات واشتراكات المنصة (${plans.length})`}
+                {activeTab === 'gateways' && '⚡ بوابات وطرق الدفع'}
+              </span>
+            </div>
+          </div>
+
+          {/* Quick jump dropdown */}
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            <span className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>انتقال سريع:</span>
+            <select
+              value={activeTab}
+              onChange={(e) => setActiveTab(e.target.value as any)}
+              className={`text-xs font-bold rounded-xl px-3 py-1.5 outline-none cursor-pointer border ${
+                isDark ? 'bg-[#080C13] border-white/10 text-slate-200' : 'bg-slate-50 border-slate-300 text-slate-800'
+              }`}
+            >
+              <option value="overview">📊 المؤشرات والتحليلات المالية</option>
+              <option value="ledger">📜 سجل القيود المالية العام</option>
+              <option value="payouts">💸 صرف مستحقات المسوقين</option>
+              <option value="refunds">🔄 المستردات والإشعارات الدائنة</option>
+              <option value="plans">💳 باقات واشتراكات المنصة</option>
+              <option value="gateways">⚡ بوابات وطرق الدفع</option>
+            </select>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* TAB 1: OVERVIEW & REDESIGNED FINANCIAL METRICS */}
