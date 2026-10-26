@@ -33,6 +33,11 @@ import {
   Sliders,
   Bell,
   Trash2,
+  Eye,
+  EyeOff,
+  Search,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 import { SendNotificationModal } from './SendNotificationModal';
 
@@ -90,6 +95,34 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
 
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
   const [copiedAction, setCopiedAction] = useState<{ id: string; type: 'affiliate' | 'merchant' } | null>(null);
+
+  // 🎴 View Modes & Filter States
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+  const [revealedPins, setRevealedPins] = useState<Record<string, boolean>>({});
+
+  const togglePinVisibility = (partnerId: string) => {
+    setRevealedPins((prev) => ({ ...prev, [partnerId]: !prev[partnerId] }));
+  };
+
+  const filteredPartners = partners.filter((p) => {
+    const matchesStatus =
+      statusFilter === 'ALL' ||
+      (statusFilter === 'ACTIVE' && p.active) ||
+      (statusFilter === 'INACTIVE' && !p.active);
+
+    if (!matchesStatus) return false;
+
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase().trim();
+    const name = (p.display_name || p.name || '').toLowerCase();
+    const phone = (p.affiliates?.phone || '').toLowerCase();
+    const refCode = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase();
+    const region = (p.region || '').toLowerCase();
+
+    return name.includes(q) || phone.includes(q) || refCode.includes(q) || region.includes(q);
+  });
 
   // 🔔 Send Notification Modal State for Partner
   const [notificationModalData, setNotificationModalData] = useState<{
@@ -467,7 +500,9 @@ ${origin}/join?ref=${refCode}`;
   return (
     <div className="space-y-6">
       {/* Header Toolbar */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className={`border rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors ${
+        isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+      }`}>
         <div>
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
@@ -475,13 +510,17 @@ ${origin}/join?ref=${refCode}`;
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-xl sm:text-2xl font-black text-white">إدارة المسوقين والشركاء (Partners & Affiliates)</h2>
-                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                <h2 className={`text-xl sm:text-2xl font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  إدارة المسوقين والشركاء (Partners & Affiliates)
+                </h2>
+                <span className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full font-bold border ${
+                  isDark ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-amber-50 text-amber-800 border-amber-300'
+                }`}>
                   {partners.length} مسوق
                 </span>
               </div>
-              <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                أضف مسوقين جدد بالاسم ورقم الجوال والرمز السري (PIN) لتوليد كود الإحالة (مثل r1042) ومشاركة الروابط بسهولة.
+              <p className={`text-xs sm:text-sm mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                إدارة شبكة المسوقين والشركاء، توليد أكواد الإحالة، ضبط نسب العمولات، وتسوية الأرباح فورياً.
               </p>
             </div>
           </div>
@@ -490,7 +529,7 @@ ${origin}/join?ref=${refCode}`;
         <div className="flex items-center gap-3">
           <button
             onClick={openNewPartnerModal}
-            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2.5 rounded-2xl text-xs transition shadow-lg shadow-amber-500/20"
+            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-5 py-3 rounded-2xl text-xs transition shadow-lg shadow-amber-500/20 hover:scale-[1.02] active:scale-[0.98]"
           >
             <PlusCircle className="w-4 h-4" />
             <span>+ إضافة مسوق جديد</span>
@@ -499,11 +538,107 @@ ${origin}/join?ref=${refCode}`;
           <button
             onClick={fetchPartners}
             disabled={loading}
-            className="p-2.5 rounded-2xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 hover:text-white transition"
-            title="تحديث"
+            className={`p-3 rounded-2xl border transition ${
+              isDark
+                ? 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-white'
+                : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
+            }`}
+            title="تحديث البيانات"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-amber-400' : ''}`} />
           </button>
+        </div>
+      </div>
+
+      {/* Filter and Search Bar with View Mode Toggle */}
+      <div className={`p-4 rounded-2xl border flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shadow-sm transition-colors ${
+        isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'
+      }`}>
+        {/* Search Input */}
+        <div className="flex-1 relative">
+          <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="البحث باسم المسوق، الجوال، كود الإحالة (مثل r6710)، أو المنطقة..."
+            className={`w-full pr-10 pl-4 py-2.5 rounded-xl text-xs border outline-none transition ${
+              isDark
+                ? 'bg-slate-950 border-slate-800 text-white placeholder-slate-500 focus:border-amber-500/50'
+                : 'bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400 focus:border-amber-500'
+            }`}
+          />
+        </div>
+
+        {/* Status Filters & View Mode */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Status Pills */}
+          <div className={`p-1 rounded-xl border flex items-center gap-1 ${
+            isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
+          }`}>
+            <button
+              onClick={() => setStatusFilter('ALL')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                statusFilter === 'ALL'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
+                  : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              الكل ({partners.length})
+            </button>
+            <button
+              onClick={() => setStatusFilter('ACTIVE')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                statusFilter === 'ACTIVE'
+                  ? 'bg-emerald-500 text-slate-950 shadow-sm font-black'
+                  : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+              <span>النشطين ({partners.filter((p) => p.active).length})</span>
+            </button>
+            <button
+              onClick={() => setStatusFilter('INACTIVE')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                statusFilter === 'INACTIVE'
+                  ? 'bg-rose-500 text-white shadow-sm font-black'
+                  : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+              <span>الموقوفين ({partners.filter((p) => !p.active).length})</span>
+            </button>
+          </div>
+
+          {/* View Mode Toggle: Cards vs Table */}
+          <div className={`p-1 rounded-xl border flex items-center gap-1 ${
+            isDark ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
+          }`}>
+            <button
+              onClick={() => setViewMode('cards')}
+              className={`p-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                viewMode === 'cards'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
+                  : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="عرض الكروت التنفيذية الفخمة"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>كروت</span>
+            </button>
+            <button
+              onClick={() => setViewMode('table')}
+              className={`p-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                viewMode === 'table'
+                  ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
+                  : isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="عرض جدول مضغوط"
+            >
+              <List className="w-3.5 h-3.5" />
+              <span>جدول</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -522,53 +657,451 @@ ${origin}/join?ref=${refCode}`;
         </div>
       )}
 
-      {/* Partners List Table */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
-        {loading ? (
-          <div className="py-20 text-center space-y-3">
-            <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto" />
-            <p className="text-xs text-slate-400">جاري استرجاع قائمة المسوقين...</p>
+      {/* Main Content Area: Loading / Empty / Cards / Table */}
+      {loading ? (
+        <div className={`py-20 text-center space-y-3 rounded-3xl border ${
+          isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'
+        }`}>
+          <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto" />
+          <p className="text-xs text-slate-400 font-bold">جاري استرجاع قائمة المسوقين والشركاء...</p>
+        </div>
+      ) : filteredPartners.length === 0 ? (
+        <div className={`py-16 text-center space-y-4 rounded-3xl border shadow-xl ${
+          isDark ? 'bg-slate-900/60 border-slate-800' : 'bg-white border-slate-200'
+        }`}>
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-2xl mx-auto">
+            🤝
           </div>
-        ) : partners.length === 0 ? (
-          <div className="py-16 text-center space-y-3">
-            <div className="w-14 h-14 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-500 mx-auto text-xl">
-              🤝
-            </div>
-            <h4 className="text-base font-bold text-white">لا يوجد مسوقين مسجلين حتى الآن</h4>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              اضغط على "+ إضافة مسوق جديد" لإدخال الاسم ورقم الجوال لتوليد كوده ورابطه فوراً.
+          <div className="space-y-1">
+            <h4 className={`text-base font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
+              {partners.length === 0 ? 'لا يوجد مسوقين مسجلين حتى الآن' : 'لا توجد نتائج مطابقة لبحثك'}
+            </h4>
+            <p className="text-xs text-slate-400 max-w-sm mx-auto">
+              {partners.length === 0
+                ? 'اضغط على "+ إضافة مسوق جديد" لإدخال الاسم ورقم الجوال لتوليد كوده ورابطه فوراً.'
+                : 'جرب البحث بكلمة أخرى أو قم بإلغاء الفلاتر لإظهار كافة الشركاء.'}
             </p>
           </div>
-        ) : (
+          {partners.length === 0 && (
+            <button
+              onClick={openNewPartnerModal}
+              className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black px-4 py-2 rounded-xl text-xs transition"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>إضافة مسوق الآن</span>
+            </button>
+          )}
+        </div>
+      ) : viewMode === 'cards' ? (
+        /* 🎴 1. EXECUTIVE CARDS GRID VIEW */
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          {filteredPartners.map((p) => {
+            const refCode = p.affiliates?.referral_code || p.referral_code || '—';
+            const phone = p.affiliates?.phone || '—';
+            const partnerPin = p.pin_code || '1234';
+            const commRatePct = Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100);
+            const recurringRatePct = Math.round((typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : 0.10) * 100);
+            const isPinRevealed = !!revealedPins[p.id];
+
+            return (
+              <div
+                key={p.id}
+                className={`rounded-3xl p-6 border transition-all duration-300 flex flex-col justify-between shadow-xl hover:shadow-2xl hover:-translate-y-0.5 group ${
+                  isDark
+                    ? 'bg-[#0E1622] hover:bg-[#121B2A] border-white/10 hover:border-amber-500/40'
+                    : 'bg-white hover:bg-slate-50/80 border-slate-200 hover:border-amber-500/40'
+                }`}
+              >
+                <div className="space-y-4">
+                  {/* Card Top: Avatar, Name, Phone, Status & Notification */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg border shrink-0 transition-transform group-hover:scale-105 ${
+                        p.active
+                          ? isDark
+                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                            : 'bg-amber-50 border-amber-200 text-amber-700'
+                          : isDark
+                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                            : 'bg-rose-50 border-rose-200 text-rose-700'
+                      }`}>
+                        {(p.display_name || 'م')[0]}
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className={`text-base font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                            {p.display_name}
+                          </h4>
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                              p.active
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${p.active ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`}></span>
+                            <span>{p.active ? 'نشط' : 'موقوف'}</span>
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 text-xs">
+                          <a
+                            href={`tel:${phone}`}
+                            dir="ltr"
+                            className={`font-mono transition ${isDark ? 'text-slate-400 hover:text-amber-400' : 'text-slate-500 hover:text-amber-600'}`}
+                          >
+                            📞 {phone}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenPartnerNotification(p)}
+                      className={`p-2 rounded-xl transition text-[11px] font-bold flex items-center gap-1 border shadow-sm shrink-0 ${
+                        isDark
+                          ? 'bg-amber-500/10 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border-amber-500/30'
+                          : 'bg-amber-50 hover:bg-amber-400 text-amber-800 hover:text-slate-950 border-amber-300'
+                      }`}
+                      title="إرسال إشعار فوري مع نغمة صوتية لهذا المسوق"
+                    >
+                      <Bell className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">إشعار 🔔</span>
+                    </button>
+                  </div>
+
+                  {/* Section 1: Referral Code & Secret PIN (Masked with Eye Toggle) */}
+                  <div className={`p-3.5 rounded-2xl border grid grid-cols-1 sm:grid-cols-2 gap-3 ${
+                    isDark ? 'bg-[#080C13] border-white/5' : 'bg-slate-50 border-slate-200/80'
+                  }`}>
+                    {/* Referral Code */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Tag className="w-3.5 h-3.5 text-amber-400" />
+                        <span className={`text-[11px] font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>كود الإحالة:</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono font-black text-xs">
+                          {refCode}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(refCode);
+                            setCopiedSlug(`code_${p.id}`);
+                            setTimeout(() => setCopiedSlug(null), 2000);
+                          }}
+                          className={`p-1.5 rounded-lg border transition ${
+                            isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-500 hover:text-slate-900'
+                          }`}
+                          title="نسخ كود الإحالة"
+                        >
+                          {copiedSlug === `code_${p.id}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Secret PIN - Masked by default with Eye button 🔒 */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                        <span className={`text-[11px] font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>الرمز السري (PIN):</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className={`px-2.5 py-1 rounded-xl border font-mono font-black text-xs tracking-widest ${
+                          isDark ? 'bg-slate-950 border-slate-800 text-amber-400' : 'bg-white border-slate-200 text-amber-700'
+                        }`}>
+                          {isPinRevealed ? partnerPin : '••••'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => togglePinVisibility(p.id)}
+                          className={`p-1.5 rounded-lg border transition ${
+                            isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-amber-400' : 'bg-white border-slate-200 text-slate-500 hover:text-amber-600'
+                          }`}
+                          title={isPinRevealed ? 'إخفاء الرمز السري' : 'كشف الرمز السري'}
+                        >
+                          {isPinRevealed ? <EyeOff className="w-3.5 h-3.5 text-amber-400" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openPinModal(p)}
+                          className={`p-1.5 rounded-lg border transition ${
+                            isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-amber-400' : 'bg-white border-slate-200 text-slate-500 hover:text-amber-600'
+                          }`}
+                          title="تعديل الرمز السري للمسوق"
+                        >
+                          <KeyRound className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 2: Commission Rates & Target */}
+                  <div className={`p-3.5 rounded-2xl border grid grid-cols-1 sm:grid-cols-2 gap-3 ${
+                    isDark ? 'bg-[#080C13] border-white/5' : 'bg-slate-50 border-slate-200/80'
+                  }`}>
+                    {/* Commission Rates with Quick Edit */}
+                    <div className="flex items-center justify-between">
+                      <span className={`text-[11px] font-bold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>العمولات:</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-bold text-[11px]" title="عمولة أول اشتراك">
+                          جديد: {commRatePct}%
+                        </span>
+                        <span className="px-2 py-0.5 rounded-lg bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-mono font-bold text-[11px]" title="عمولة التجديد">
+                          تجديد: {recurringRatePct}%
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openRateModal(p)}
+                          className={`p-1.5 rounded-lg border transition ${
+                            isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-amber-400' : 'bg-white border-slate-200 text-slate-500 hover:text-amber-600'
+                          }`}
+                          title="تعديل نسب العمولة"
+                        >
+                          <Sliders className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Region & Target */}
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1 text-[11px]">
+                        <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>{p.region || 'عام'}</span>
+                      </div>
+                      <div className="flex items-center gap-1 text-[11px]">
+                        <Target className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                        <span className={isDark ? 'text-slate-400' : 'text-slate-500'}>
+                          {p.target_value ? `${p.target_value} متجر/شهر` : 'بدون هدف'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Section 3: Direct Referral URL Bar */}
+                  <div className={`p-3 rounded-2xl border flex items-center justify-between gap-2 ${
+                    isDark ? 'bg-[#080C13] border-white/5' : 'bg-slate-50 border-slate-200/80'
+                  }`}>
+                    <div className="flex items-center gap-1.5 overflow-hidden">
+                      <ExternalLink className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className={`text-[11px] font-mono font-bold truncate ${isDark ? 'text-amber-300' : 'text-amber-700'}`} dir="ltr">
+                        /join?ref={refCode}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const full = `${window.location.origin}/join?ref=${refCode}`;
+                          navigator.clipboard.writeText(full);
+                          setCopiedSlug(`ref_${p.id}`);
+                          setTimeout(() => setCopiedSlug(null), 2000);
+                        }}
+                        className={`p-1.5 px-2 rounded-lg border text-[11px] font-bold flex items-center gap-1 transition ${
+                          isDark ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white' : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900'
+                        }`}
+                        title="نسخ رابط الإحالة المباشر"
+                      >
+                        {copiedSlug === `ref_${p.id}` ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span className="text-emerald-400">تم</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>نسخ</span>
+                          </>
+                        )}
+                      </button>
+                      <a
+                        href={`/join?ref=${refCode}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`p-1.5 rounded-lg border transition ${
+                          isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white' : 'bg-white border-slate-200 text-slate-500 hover:text-slate-900'
+                        }`}
+                        title="معاينة صفحة الهبوط للإحالة"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* Section 4: WhatsApp & Dispatch Cards (Action A & Action B) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    {/* Box A: Affiliate Portal Credentials */}
+                    <div className={`p-3 rounded-2xl border flex flex-col justify-between gap-2.5 ${
+                      isDark ? 'bg-slate-950/70 border-emerald-500/20' : 'bg-emerald-50/50 border-emerald-200'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                          <span className={`text-[11px] font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>بيانات المسوق</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">لوحة الأرباح</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <a
+                          href={getAffiliateWhatsAppUrl(p)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 transition text-[11px] font-bold flex items-center justify-center gap-1"
+                          title="إرسال رابط لوحة المسوق والرمز السري (PIN) عبر واتساب"
+                        >
+                          <Send className="w-3 h-3" />
+                          <span>واتساب</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyAffiliateMessage(p)}
+                          className={`p-1.5 rounded-xl border transition text-[11px] font-bold flex items-center justify-center gap-1 ${
+                            isDark ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white' : 'bg-white border-slate-200 text-slate-700 hover:text-slate-900'
+                          }`}
+                          title="نسخ بيانات الدخول للمسوق"
+                        >
+                          {copiedAction?.id === p.id && copiedAction?.type === 'affiliate' ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span className="text-emerald-400">تم النسخ</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>نسخ</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Box B: Store Official Promo Invitation */}
+                    <div className={`p-3 rounded-2xl border flex flex-col justify-between gap-2.5 ${
+                      isDark ? 'bg-slate-950/70 border-amber-500/20' : 'bg-amber-50/50 border-amber-200'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                          <span className={`text-[11px] font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>دعوة المتجر</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono">رسالة رسمية</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <a
+                          href={getMerchantPromoWhatsAppUrl(p)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 transition text-[11px] font-bold flex items-center justify-center gap-1"
+                          title="نشر رسالة المتجر الرسمية عبر واتساب"
+                        >
+                          <MessageSquare className="w-3 h-3" />
+                          <span>واتساب</span>
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyMerchantPromoMessage(p)}
+                          className={`p-1.5 rounded-xl border transition text-[11px] font-bold flex items-center justify-center gap-1 ${
+                            isDark ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white' : 'bg-white border-slate-200 text-slate-700 hover:text-slate-900'
+                          }`}
+                          title="نسخ نص الدعوة الرسمية للمتجر"
+                        >
+                          {copiedAction?.id === p.id && copiedAction?.type === 'merchant' ? (
+                            <>
+                              <Check className="w-3 h-3 text-amber-400" />
+                              <span className="text-amber-400">تم النسخ</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>نسخ</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card Bottom: Settlement & Account Actions */}
+                <div className="pt-4 mt-5 border-t border-white/5 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openSettlementModal(p)}
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border border-amber-500/30 text-xs font-black transition flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98]"
+                    title="صرف وتسوية العمولات والمكافآت"
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>تسوية المستحقات</span>
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleStatus(p.id, p.affiliate_id, p.active)}
+                      className={`p-2.5 rounded-xl text-xs font-bold transition flex items-center gap-1 border ${
+                        p.active
+                          ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border-rose-500/30'
+                          : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      }`}
+                      title={p.active ? 'إيقاف الحساب' : 'تنشيط الحساب'}
+                    >
+                      {p.active ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePartner(p.id, p.affiliate_id, p.display_name)}
+                      className="p-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition"
+                      title="حذف حساب المسوق نهائياً"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* 📋 2. COMPACT TABLE VIEW (WITH SECURE PIN MASKING) */
+        <div className={`border rounded-3xl overflow-hidden shadow-2xl ${
+          isDark ? 'bg-slate-900/80 border-slate-800' : 'bg-white border-slate-200'
+        }`}>
           <div className="overflow-x-auto">
             <table className="w-full text-right border-collapse text-xs">
               <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-bold text-slate-400">
+                <tr className={`border-b text-[11px] font-bold ${
+                  isDark ? 'border-slate-800 bg-slate-950/60 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-600'
+                }`}>
                   <th className="py-3.5 px-4">اسم المسوق والجوال</th>
-                  <th className="py-3.5 px-4">كود الإحالة (Referral)</th>
-                  <th className="py-3.5 px-4">نسبة العمولة (%)</th>
+                  <th className="py-3.5 px-4">كود الإحالة</th>
+                  <th className="py-3.5 px-4">النسب (%)</th>
                   <th className="py-3.5 px-4">الرمز السري (PIN)</th>
-                  <th className="py-3.5 px-4">رابط الإحالة المباشر</th>
-                  <th className="py-3.5 px-4 min-w-[240px]">إرسال ونشر (WhatsApp & Copy)</th>
+                  <th className="py-3.5 px-4">رابط الإحالة</th>
+                  <th className="py-3.5 px-4 min-w-[220px]">إرسال ونشر (WhatsApp & Copy)</th>
                   <th className="py-3.5 px-4">المنطقة والهدف</th>
-                  <th className="py-3.5 px-4">حالة الحساب</th>
-                  <th className="py-3.5 px-4 text-center">الإجراءات والتسوية</th>
+                  <th className="py-3.5 px-4">الحالة</th>
+                  <th className="py-3.5 px-4 text-center">الإجراءات</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60">
-                {partners.map((p) => {
-                  const refCode = p.affiliates?.referral_code || '—';
+              <tbody className={`divide-y ${isDark ? 'divide-slate-800/60' : 'divide-slate-100'}`}>
+                {filteredPartners.map((p) => {
+                  const refCode = p.affiliates?.referral_code || p.referral_code || '—';
                   const phone = p.affiliates?.phone || '—';
                   const partnerPin = p.pin_code || '1234';
                   const commRatePct = Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100);
                   const recurringRatePct = Math.round((typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : 0.10) * 100);
+                  const isPinRevealed = !!revealedPins[p.id];
 
                   return (
-                    <tr key={p.id} className="hover:bg-slate-800/40 transition">
+                    <tr key={p.id} className={`transition ${isDark ? 'hover:bg-slate-800/40' : 'hover:bg-slate-50'}`}>
                       <td className="py-4 px-4">
                         <div className="flex items-center justify-between gap-2">
                           <div>
-                            <strong className="text-white block text-sm">{p.display_name}</strong>
+                            <strong className={`block text-sm ${isDark ? 'text-white' : 'text-slate-900'}`}>{p.display_name}</strong>
                             <span className="text-[11px] text-slate-400 font-mono" dir="ltr">
                               📞 {phone}
                             </span>
@@ -576,11 +1109,11 @@ ${origin}/join?ref=${refCode}`;
                           <button
                             type="button"
                             onClick={() => handleOpenPartnerNotification(p)}
-                            className="p-1.5 px-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-black border border-amber-500/30 transition text-[10px] font-bold flex items-center gap-1 shrink-0 shadow-sm"
-                            title="إرسال إشعار فوري مع نغمة صوتية لهذا المسوق"
+                            className="p-1.5 px-2 rounded-xl bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-black border border-amber-500/30 transition text-[10px] font-bold flex items-center gap-1 shrink-0 shadow-sm"
+                            title="إرسال إشعار فوري مع نغمة صوتية"
                           >
                             <Bell className="w-3.5 h-3.5" />
-                            <span>إشعار 🔔</span>
+                            <span>إشعار</span>
                           </button>
                         </div>
                       </td>
@@ -591,215 +1124,182 @@ ${origin}/join?ref=${refCode}`;
                         </span>
                       </td>
 
-                      {/* 💰 Custom Commission % (Acquisition & Renewal) with Quick Edit */}
                       <td className="py-4 px-4">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           <div className="space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] text-slate-400">جديد:</span>
-                              <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-black text-xs">
-                                {commRatePct}%
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] text-slate-400">تجديد:</span>
-                              <span className="px-2 py-0.5 rounded-lg bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 font-mono font-black text-xs">
-                                {recurringRatePct}%
-                              </span>
-                            </div>
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-mono font-bold text-[10px] block">
+                              جديد: {commRatePct}%
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-400 font-mono font-bold text-[10px] block">
+                              تجديد: {recurringRatePct}%
+                            </span>
                           </div>
                           <button
+                            type="button"
                             onClick={() => openRateModal(p)}
-                            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 transition shadow-inner"
-                            title="تعديل نسب العمولة (جديد وتجديد)"
+                            className={`p-1.5 rounded-xl border transition ${
+                              isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-amber-600 border-slate-200'
+                            }`}
+                            title="تعديل نسب العمولة"
                           >
                             <Sliders className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
 
-                      <td className="py-4 px-4 font-mono text-slate-300">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-bold text-amber-400">
-                            🔑 {partnerPin}
+                      {/* Secure Masked PIN in Table */}
+                      <td className="py-4 px-4 font-mono">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-2 py-0.5 rounded-lg border text-[11px] font-black tracking-widest ${
+                            isDark ? 'bg-slate-950 border-slate-800 text-amber-400' : 'bg-slate-100 border-slate-200 text-amber-700'
+                          }`}>
+                            {isPinRevealed ? partnerPin : '••••'}
                           </span>
                           <button
-                            onClick={() => openPinModal(p)}
-                            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 transition shadow-inner"
-                            title="تعديل الرمز السري للمسوق"
+                            type="button"
+                            onClick={() => togglePinVisibility(p.id)}
+                            className={`p-1 rounded-lg border transition ${
+                              isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                            }`}
+                            title={isPinRevealed ? 'إخفاء الرمز' : 'كشف الرمز'}
                           >
-                            <KeyRound className="w-3.5 h-3.5" />
+                            {isPinRevealed ? <EyeOff className="w-3 h-3 text-amber-400" /> : <Eye className="w-3 h-3" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openPinModal(p)}
+                            className={`p-1 rounded-lg border transition ${
+                              isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                            }`}
+                            title="تعديل الرمز السري"
+                          >
+                            <KeyRound className="w-3 h-3" />
                           </button>
                         </div>
                       </td>
 
                       <td className="py-4 px-4 font-mono">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-1.5 text-amber-400 font-bold text-[11px]">
-                            <span>/join?ref={refCode}</span>
-                            <button
-                              onClick={() => {
-                                const full = `${window.location.origin}/join?ref=${refCode}`;
-                                navigator.clipboard.writeText(full);
-                                setCopiedSlug(`ref_${p.id}`);
-                                setTimeout(() => setCopiedSlug(null), 2000);
-                              }}
-                              className="p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-white transition"
-                              title="نسخ رابط الإحالة المباشر"
-                            >
-                              {copiedSlug === `ref_${p.id}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                            </button>
-                          </div>
-                          {p.slug && (
-                            <div className="text-[10px] text-slate-500 flex items-center gap-1">
-                              <span>المسار البديل:</span>
-                              <span className="text-slate-400">/{p.slug}</span>
-                            </div>
-                          )}
+                        <div className="flex items-center gap-1.5 text-amber-400 font-bold text-[11px]">
+                          <span>/join?ref={refCode}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const full = `${window.location.origin}/join?ref=${refCode}`;
+                              navigator.clipboard.writeText(full);
+                              setCopiedSlug(`ref_${p.id}`);
+                              setTimeout(() => setCopiedSlug(null), 2000);
+                            }}
+                            className="p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-white transition"
+                            title="نسخ الرابط"
+                          >
+                            {copiedSlug === `ref_${p.id}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          </button>
                         </div>
                       </td>
 
-                      {/* 📲 WhatsApp & Share Actions (Action A & Action B) */}
                       <td className="py-4 px-4">
-                        <div className="flex flex-col gap-2 min-w-[230px]">
-                          
-                          {/* Action A: Send to Affiliate (إرسال بيانات الدخول للمسوق) */}
-                          <div className="flex items-center justify-between bg-slate-950/80 border border-slate-800 rounded-xl p-1.5 px-2.5 shadow-sm">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
-                              <span className="text-[11px] font-bold text-slate-200">بيانات المسوق</span>
-                            </div>
+                        <div className="flex flex-col gap-1.5">
+                          {/* Affiliate Portal Credentials */}
+                          <div className={`flex items-center justify-between border rounded-lg p-1 px-2 ${
+                            isDark ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'
+                          }`}>
+                            <span className="text-[10px] font-bold">بيانات المسوق:</span>
                             <div className="flex items-center gap-1">
                               <a
                                 href={getAffiliateWhatsAppUrl(p)}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="p-1 px-2 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 transition text-[10px] font-bold flex items-center gap-1"
-                                title="إرسال رابط لوحة المسوق والرمز السري (PIN) عبر واتساب"
+                                className="p-0.5 px-1.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-bold"
                               >
-                                <Send className="w-3 h-3" />
-                                <span>واتساب</span>
+                                واتساب
                               </a>
                               <button
+                                type="button"
                                 onClick={() => handleCopyAffiliateMessage(p)}
-                                className="p-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition text-[10px] font-bold flex items-center gap-1"
-                                title="نسخ رسالة بيانات الدخول للمسوق"
+                                className="p-0.5 px-1.5 rounded bg-slate-800 text-slate-300 text-[10px] font-bold"
                               >
-                                {copiedAction?.id === p.id && copiedAction?.type === 'affiliate' ? (
-                                  <>
-                                    <Check className="w-3 h-3 text-emerald-400" />
-                                    <span className="text-emerald-400">تم النسخ</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-3 h-3" />
-                                    <span>نسخ</span>
-                                  </>
-                                )}
+                                {copiedAction?.id === p.id && copiedAction?.type === 'affiliate' ? 'تم' : 'نسخ'}
                               </button>
                             </div>
                           </div>
 
-                          {/* Action B: Promo Message for Merchant (دعوة رسمية تسويقية للمتجر) */}
-                          <div className="flex items-center justify-between bg-slate-950/80 border border-slate-800 rounded-xl p-1.5 px-2.5 shadow-sm">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
-                              <span className="text-[11px] font-bold text-slate-200">دعوة المتجر</span>
-                            </div>
+                          {/* Merchant Promo Message */}
+                          <div className={`flex items-center justify-between border rounded-lg p-1 px-2 ${
+                            isDark ? 'bg-slate-950/80 border-slate-800' : 'bg-slate-50 border-slate-200'
+                          }`}>
+                            <span className="text-[10px] font-bold">دعوة المتجر:</span>
                             <div className="flex items-center gap-1">
                               <a
                                 href={getMerchantPromoWhatsAppUrl(p)}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="p-1 px-2 rounded-lg bg-amber-500/15 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 transition text-[10px] font-bold flex items-center gap-1"
-                                title="نشر رسالة المتجر الرسمية عبر واتساب"
+                                className="p-0.5 px-1.5 rounded bg-amber-500/15 text-amber-400 text-[10px] font-bold"
                               >
-                                <MessageSquare className="w-3 h-3" />
-                                <span>واتساب</span>
+                                واتساب
                               </a>
                               <button
+                                type="button"
                                 onClick={() => handleCopyMerchantPromoMessage(p)}
-                                className="p-1 px-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition text-[10px] font-bold flex items-center gap-1"
-                                title="نسخ نص الدعوة الرسمية للمتجر"
+                                className="p-0.5 px-1.5 rounded bg-slate-800 text-slate-300 text-[10px] font-bold"
                               >
-                                {copiedAction?.id === p.id && copiedAction?.type === 'merchant' ? (
-                                  <>
-                                    <Check className="w-3 h-3 text-amber-400" />
-                                    <span className="text-amber-400">تم النسخ</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-3 h-3" />
-                                    <span>نسخ</span>
-                                  </>
-                                )}
+                                {copiedAction?.id === p.id && copiedAction?.type === 'merchant' ? 'تم' : 'نسخ'}
                               </button>
                             </div>
                           </div>
-
                         </div>
                       </td>
 
                       <td className="py-4 px-4">
-                        <span className="text-slate-300 block">{p.region ? `📍 ${p.region}` : '—'}</span>
-                        <span className="text-[10px] text-slate-500">{p.target_value ? `الهدف: ${p.target_value} متجر/شهر` : 'بدون هدف محدد'}</span>
+                        <span className="block text-[11px]">{p.region ? `📍 ${p.region}` : '—'}</span>
+                        <span className="text-[10px] text-slate-400">{p.target_value ? `الهدف: ${p.target_value}` : 'بدون هدف'}</span>
                       </td>
 
                       <td className="py-4 px-4">
                         <span
-                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                             p.active
                               ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                               : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
                           }`}
                         >
                           <span className={`w-1.5 h-1.5 rounded-full ${p.active ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                          <span>{p.active ? 'نشط (مفعل)' : 'موقوف'}</span>
+                          <span>{p.active ? 'نشط' : 'موقوف'}</span>
                         </span>
                       </td>
 
-                      {/* Actions & Settlement */}
                       <td className="py-4 px-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          {/* Settle Button */}
+                        <div className="flex items-center justify-center gap-1">
                           <button
+                            type="button"
                             onClick={() => openSettlementModal(p)}
-                            className="px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1"
-                            title="صرف وتسوية العمولات والمكافآت"
+                            className="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/30 text-xs font-bold"
+                            title="تسوية"
                           >
-                            <CreditCard className="w-3.5 h-3.5" />
-                            <span>تسوية</span>
+                            تسوية
                           </button>
-
-                          {/* Toggle Active Status */}
                           <button
+                            type="button"
                             onClick={() => handleToggleStatus(p.id, p.affiliate_id, p.active)}
-                            className={`p-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
-                              p.active
-                                ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                                : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            className={`p-1.5 rounded-lg border text-xs ${
+                              p.active ? 'text-rose-400 border-rose-500/30 bg-rose-500/10' : 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
                             }`}
-                            title={p.active ? 'إيقاف الحساب' : 'تنشيط الحساب'}
                           >
                             {p.active ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
                           </button>
-
-                          {/* Preview Link */}
                           <a
                             href={`/join?ref=${refCode}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
-                            title="معاينة صفحة الهبوط الرسمية للإحالة"
+                            className={`p-1.5 rounded-lg border transition ${
+                              isDark ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white' : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
+                            }`}
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>
-
-                          {/* Delete Partner */}
                           <button
+                            type="button"
                             onClick={() => handleDeletePartner(p.id, p.affiliate_id, p.display_name)}
-                            className="p-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition"
-                            title="حذف حساب المسوق نهائياً"
+                            className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/30"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -811,8 +1311,8 @@ ${origin}/join?ref=${refCode}`;
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Modal: Simple 1-Step Add New Marketer */}
       {isModalOpen && (
