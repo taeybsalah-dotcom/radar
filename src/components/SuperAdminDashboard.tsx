@@ -273,6 +273,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [editEnableOrders, setEditEnableOrders] = useState(true);
   const [editEnableBookings, setEditEnableBookings] = useState(true);
   const [editEnableLoyalty, setEditEnableLoyalty] = useState(true);
+  const [editWaQuota, setEditWaQuota] = useState<number>(100);
+  const [editWaUsed, setEditWaUsed] = useState<number>(0);
 
   const applyIndustryPreset = (preset: 'restaurant_cafe' | 'salon_spa' | 'car_wash' | 'retail_loyalty' | 'enterprise') => {
     setEditBusinessType(preset === 'enterprise' ? 'custom' : preset);
@@ -576,6 +578,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     setEditEnableOrders(storeToEdit.enable_orders !== false);
     setEditEnableBookings(storeToEdit.enable_bookings !== false);
     setEditEnableLoyalty(storeToEdit.enable_loyalty !== false);
+    setEditWaQuota(100);
+    setEditWaUsed(0);
+    LoyaltyService.getStoreWallet(storeToEdit.id).then((w) => {
+      setEditWaQuota(w.wa_quota ?? 100);
+      setEditWaUsed(w.wa_used ?? 0);
+    }).catch(() => {});
     setEditErrorMessage(null);
     setEditSuccessMessage(null);
     setIsEditModalOpen(true);
@@ -640,6 +648,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         enable_bookings: editEnableBookings,
         enable_loyalty: editEnableLoyalty,
       });
+
+      // Update store wallet WhatsApp quota in DB
+      try {
+        await LoyaltyService.updateStoreWallet(editingStore.id, {
+          wa_quota: editWaQuota,
+        });
+      } catch (walletErr) {
+        console.warn('Could not update store wallet quota:', walletErr);
+      }
 
       if (updated) {
         setStores(stores.map((s) => (s.id === editingStore.id ? updated : s)));
@@ -3428,6 +3445,70 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           </button>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-tight">برنامج النقاط، مستويات العضوية، البطاقات الرقمية بالمحفظة، وقسائم وكوبونات المكافآت</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* WhatsApp Messages Quota Management */}
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        <span>رصيد رسائل الواتساب للمتجر (WhatsApp Quota)</span>
+                      </span>
+                      <span className="text-[11px] font-mono text-slate-300">
+                        المستهلك: <strong className="text-amber-400">{editWaUsed}</strong> / المتاح: <strong className="text-emerald-400">{Math.max(0, editWaQuota - editWaUsed)}</strong> رسالة
+                      </span>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <label className="text-xs font-bold text-slate-200 block">
+                            إجمالي رصيد الرسائل المعتمد للمتجر:
+                          </label>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            الرصيد الافتتاحي المجاني للمتاجر الجديدة هو 100 رسالة OTP.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <input
+                            type="number"
+                            min="0"
+                            step="50"
+                            value={editWaQuota}
+                            onChange={(e) => setEditWaQuota(Number(e.target.value) || 0)}
+                            className="w-24 bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-white text-center outline-none"
+                          />
+                          <span className="text-xs text-slate-400 font-bold">رسالة</span>
+                        </div>
+                      </div>
+
+                      {/* Quick Quota Buttons */}
+                      <div className="flex items-center gap-2 pt-1 flex-wrap border-t border-slate-850">
+                        <span className="text-[11px] text-slate-400 font-bold">شحن فوري:</span>
+                        <button
+                          type="button"
+                          onClick={() => setEditWaQuota(prev => (prev || 0) + 1000)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-mono text-xs font-bold transition active:scale-95"
+                        >
+                          +1,000 رسالة
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditWaQuota(prev => (prev || 0) + 2000)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-mono text-xs font-bold transition active:scale-95"
+                        >
+                          +2,000 رسالة
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditWaQuota(100)}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs transition active:scale-95"
+                          title="إعادة ضبط لهدية المنصة الترحيبية"
+                        >
+                          الافتتاحي (100 رسالة)
+                        </button>
                       </div>
                     </div>
                   </div>

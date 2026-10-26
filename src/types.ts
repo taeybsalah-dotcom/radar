@@ -32,9 +32,9 @@ export interface StoreBanner {
 export interface StoreWallet {
   id?: string;
   store_id: string;
-  sms_quota: number; // الحد الشهري للرسائل القصيرة (الافتراضي 500)
+  sms_quota: number; // رصيد الرسائل القصيرة القديم (مؤرشف)
   sms_used: number; // المستخدم
-  wa_quota: number; // الحد الشهري للواتساب (الافتراضي 200)
+  wa_quota: number; // رصيد رسائل الواتساب (الافتتاحي 100 رسالة OTP مجانية)
   wa_used: number; // المستخدم
   cashier_limit: number; // الحد الأقصى الافتراضي لحسابات الكاشير (2)
   extra_cashiers_purchased: number; // عدد الكاشيرات الإضافية المشتراة (200 ريال لكل كاشير)
@@ -61,6 +61,7 @@ export interface PlatformIntegrationsConfig {
   whatsapp_access_token?: string;
   whatsapp_instance_id?: string;
   whatsapp_enabled: boolean;
+  whatsapp_tier_1000_price?: number; // سعر باقة 1000 رسالة واتساب للتاجر بالريال السعودي (الافتراضي 150 ر.س)
   updated_at?: string;
 }
 
@@ -69,6 +70,7 @@ export interface PublicPlatformIntegrations {
   telegram_bot_username?: string | null;
   gemini_enabled: boolean;
   whatsapp_enabled: boolean;
+  whatsapp_tier_1000_price?: number; // سعر باقة 1000 رسالة المعروض للتاجر
 }
 
 export type StoreSubscriptionStatus = 'trial' | 'active' | 'past_due' | 'suspended' | 'cancelled';

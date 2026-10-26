@@ -1852,6 +1852,7 @@ export const LoyaltyService = {
       whatsapp_access_token: '',
       whatsapp_instance_id: '',
       whatsapp_enabled: false,
+      whatsapp_tier_1000_price: 150,
     };
     const supabase = getSupabaseClient();
     if (!supabase) return defaultCfg;
@@ -1870,10 +1871,26 @@ export const LoyaltyService = {
       telegram_bot_username: null,
       gemini_enabled: false,
       whatsapp_enabled: false,
+      whatsapp_tier_1000_price: 150,
     };
     const supabase = getSupabaseClient();
     if (!supabase) return defaultPublic;
     try {
+      const { data: directData } = await (supabase.from as any)('platform_integrations')
+        .select('whatsapp_tier_1000_price, whatsapp_enabled, telegram_enabled, gemini_enabled, telegram_bot_username')
+        .limit(1)
+        .maybeSingle();
+
+      if (directData) {
+        return {
+          telegram_enabled: Boolean(directData.telegram_enabled),
+          telegram_bot_username: directData.telegram_bot_username || null,
+          gemini_enabled: Boolean(directData.gemini_enabled),
+          whatsapp_enabled: Boolean(directData.whatsapp_enabled),
+          whatsapp_tier_1000_price: directData.whatsapp_tier_1000_price ? Number(directData.whatsapp_tier_1000_price) : 150,
+        };
+      }
+
       const { data, error } = await (supabase.rpc as any)('get_platform_integrations_public');
       if (error || !data) return defaultPublic;
       return {
@@ -1881,6 +1898,7 @@ export const LoyaltyService = {
         telegram_bot_username: data.telegram_bot_username || null,
         gemini_enabled: Boolean(data.gemini_enabled),
         whatsapp_enabled: Boolean(data.whatsapp_enabled),
+        whatsapp_tier_1000_price: data.whatsapp_tier_1000_price ? Number(data.whatsapp_tier_1000_price) : 150,
       };
     } catch {
       return defaultPublic;
@@ -2534,13 +2552,13 @@ export const LoyaltyService = {
     if (localWallets[resolvedStoreId]) return localWallets[resolvedStoreId];
     if (localWallets[storeId]) return localWallets[storeId];
 
-    // Default wallet for newly created store
+    // Default wallet for newly created store (100 free OTP messages gift from platform)
     const defaultWallet: StoreWallet = {
       id: 'wallet-' + (resolvedStoreId || storeId),
       store_id: resolvedStoreId || storeId,
-      sms_quota: 500,
+      sms_quota: 0,
       sms_used: 0,
-      wa_quota: 200,
+      wa_quota: 100,
       wa_used: 0,
       cashier_limit: 2,
       extra_cashiers_purchased: 0,
@@ -2580,9 +2598,9 @@ export const LoyaltyService = {
     const current = localWallets[resolvedStoreId] || localWallets[storeId] || {
       id: 'wallet-' + (resolvedStoreId || storeId),
       store_id: resolvedStoreId || storeId,
-      sms_quota: 500,
+      sms_quota: 0,
       sms_used: 0,
-      wa_quota: 200,
+      wa_quota: 100,
       wa_used: 0,
       cashier_limit: 2,
       extra_cashiers_purchased: 0,
@@ -2600,6 +2618,12 @@ export const LoyaltyService = {
     saveLocalData(STORAGE_KEYS.LOCAL_WALLETS, localWallets);
     LoyaltyEvents.emit({ type: 'WALLET_UPDATED', storeId: resolvedStoreId || storeId });
     return merged;
+  },
+
+  async rechargeWhatsAppQuota(storeId: string, count: number = 1000): Promise<StoreWallet> {
+    const currentWallet = await this.getStoreWallet(storeId);
+    const newQuota = (currentWallet.wa_quota || 0) + count;
+    return await this.updateStoreWallet(storeId, { wa_quota: newQuota });
   },
 
   async purchaseExtraCashier(storeId: string, count: number = 1): Promise<StoreWallet> {

@@ -36,6 +36,7 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
     whatsapp_access_token: '',
     whatsapp_instance_id: '',
     whatsapp_enabled: false,
+    whatsapp_tier_1000_price: 150,
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -492,6 +493,31 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
                   <option value="ultramsg">UltraMsg / Instance Gateway (سريع بدون توثيق)</option>
                   <option value="custom">بوابة خاصة مخصصة (Custom Gateway)</option>
                 </select>
+              </div>
+
+              {/* WhatsApp Quota Pricing for Merchants */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-white block">
+                      سعر باقة 1,000 رسالة واتساب للتاجر (ر.س) 💳
+                    </label>
+                    <p className="text-[11px] text-slate-400">
+                      التسعير المعروض في لوحة التاجر عند طلب شحن رصيد رسائل إضافي عبر سيرفر المنصة.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={config.whatsapp_tier_1000_price ?? 150}
+                      onChange={(e) => setConfig({ ...config, whatsapp_tier_1000_price: Number(e.target.value) || 150 })}
+                      className="w-24 bg-slate-900 border border-slate-700 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-emerald-400 text-center outline-none"
+                    />
+                    <span className="text-xs font-bold text-slate-400">ر.س</span>
+                  </div>
+                </div>
               </div>
 
               {config.whatsapp_provider === 'meta' ? (

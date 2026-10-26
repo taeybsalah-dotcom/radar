@@ -3006,10 +3006,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   // 3️⃣ رادار الإنقاذ مع فحص وخصم رصيد رسائل الواتساب
   const handleRescueWhatsApp = async (cust: Customer) => {
-    const currentWaRemaining = (storeWallet?.wa_quota ?? 200) - (storeWallet?.wa_used ?? 0);
+    const currentWaRemaining = (storeWallet?.wa_quota ?? 100) - (storeWallet?.wa_used ?? 0);
     if (currentWaRemaining <= 0) {
       setQuotaExhaustedMessage(
-        'لقد استنفدت كامل رصيد رسائل الواتساب لهذا الشهر (0/200 رسالة). يرجى شحن أو ترقية باقة الرسائل لمتابعة إرسال حملات رادار الإنقاذ.'
+        `لقد استنفدت كامل رصيد رسائل الواتساب المتاحة لمتجرك (0/${storeWallet?.wa_quota ?? 100} رسالة). يرجى شحن باقة 1,000 رسالة جديدة أو ربط حساب واتساب ميتا الخاص لمتابعة الإرسال.`
       );
       setIsQuotaExhaustedModalOpen(true);
       return;
@@ -10049,39 +10049,79 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </div>
 
               {/* Wallets & Quota Quick Badges */}
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 {storeWallet?.meta_access_token && storeWallet?.meta_phone_number_id ? (
-                  <div className="px-3.5 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <div className="px-4 py-2 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2 shadow-sm">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
                     <span>حساب واتساب ميتا الخاص: متصل (إرسال غير محدود) ✅</span>
                   </div>
                 ) : (
-                  <div className="px-3.5 py-1.5 rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-300 text-xs font-bold flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
-                    <span>رصيد رسائل الدخول الافتتاحي (OTP):</span>
-                    <strong className="font-mono text-white">
+                  <div className="px-4 py-2 rounded-2xl bg-sky-500/15 border border-sky-500/30 text-sky-300 text-xs font-bold flex items-center gap-2 shadow-sm flex-wrap">
+                    <span className="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
+                    <span>رصيد رسائل الواتساب المتاحة:</span>
+                    <strong className="font-mono text-white text-sm bg-sky-950/80 px-2.5 py-0.5 rounded-xl border border-sky-500/40">
                       {Math.max(0, (storeWallet?.wa_quota ?? 100) - (storeWallet?.wa_used ?? 0))} / {storeWallet?.wa_quota ?? 100} رسالة
                     </strong>
+                    {(storeWallet?.wa_quota ?? 100) <= 100 ? (
+                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+                        هدية المنصة الترحيبية (OTP) 🎁
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+                        باقة معتمدة مشحونة ✅
+                      </span>
+                    )}
                   </div>
                 )}
-                <div className="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 font-mono flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                  <span>رصيد SMS:</span>
-                  <strong className="text-blue-400">{storeWallet?.sms_quota ?? 500} رسالة</strong>
-                </div>
+
+                {/* زر شحن باقة 1,000 رسالة واتساب */}
+                <a
+                  href={`https://wa.me/966577371780?text=${encodeURIComponent(
+                    `السلام عليكم، أرغب في شحن باقة 1,000 رسالة واتساب لمتجري (${store.name}) بسعر (${publicIntegrations?.whatsapp_tier_1000_price ?? 150} ر.س). كود المتجر: ${store.id}`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/20 hover:scale-105 active:scale-95 transition"
+                >
+                  <Coins className="w-4 h-4 text-amber-300" />
+                  <span>شحن باقة 1,000 رسالة ({publicIntegrations?.whatsapp_tier_1000_price ?? 150} ر.س) ⚡</span>
+                </a>
               </div>
             </div>
 
             {/* Informative Platform vs Merchant Meta Quota Card */}
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-300 space-y-1.5">
-              <div className="flex items-center gap-2 font-bold text-white">
-                <span className="text-emerald-400">⚡</span>
-                <span>سياسة رسائل الواتساب وحساب المتجر:</span>
+            <div className="p-4 sm:p-5 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-300 space-y-3 shadow-md">
+              <div className="flex items-center gap-2 font-black text-white text-sm">
+                <span className="text-emerald-400 text-base">⚡</span>
+                <span>سياسة رسائل الواتساب وخيارات التشغيل المتاحة لمتجرك:</span>
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed">
-                يمنحك النظام رصيداً افتتاحياً مجانياً (100 رسالة OTP) مخصصة حصرياً لبث رموز الدخول وكلمات مرور المستخدمين حتى لا يتعطل عملك من اليوم الأول.
-                لإرسال الفواتير الإلكترونية لعملائك وإطلاق حملات إعادة استهداف الزبائن (Radar Retention) بشكل غير محدود وباسم متجرك، قم بربط حساب واتساب ميتا (Meta Cloud API) الخاص بك أدناه وتكون تكلفة الرسائل على حسابك في ميتا مباشرة.
+                يمنحك النظام رصيداً افتتاحياً مجانياً (100 رسالة OTP) كهدية ترحيبية مخصصة حصرياً لبث رموز الدخول وكلمات المرور لعملائك لضمان انطلاق عملك فوراً.
               </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                {/* مسار ميتا المجاني */}
+                <div className="p-3.5 rounded-xl bg-blue-950/30 border border-blue-800/40 space-y-1.5">
+                  <div className="flex items-center gap-2 text-blue-300 font-bold text-xs">
+                    <Zap className="w-3.5 h-3.5 text-blue-400" />
+                    <span>الخيار 1: ربط حساب ميتا الخاص بك (مجاناً وبدون حدود)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    قم بربط حساب فيسبوك/ميتا الخاص بمتجرك أدناه خلال دقيقة واحدة. تخرج الرسائل برقمك الرسمي الموثق وتكون التكلفة على حسابك في ميتا مباشرة دون أي رسوم للمنصة.
+                  </p>
+                </div>
+
+                {/* مسار باقة المنصة */}
+                <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-800/40 space-y-1.5">
+                  <div className="flex items-center gap-2 text-emerald-300 font-bold text-xs">
+                    <Coins className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>الخيار 2: شراء باقة 1,000 رسالة عبر سيرفر المنصة</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    اشحن باقة 1,000 رسالة مباشرة بسعر ({publicIntegrations?.whatsapp_tier_1000_price ?? 150} ر.س) لإرسال الفواتير الإلكترونية وحملات الاسترداد دون الحاجة لربط ميتا أو إعدادات تقنية.
+                  </p>
+                </div>
+              </div>
             </div>
 
             <form onSubmit={handleSaveMetaWhatsAppSettings} className="space-y-6">
