@@ -36,7 +36,11 @@ import {
 } from 'lucide-react';
 import { SendNotificationModal } from './SendNotificationModal';
 
-export const SuperAdminPartnersConsole: React.FC = () => {
+interface SuperAdminPartnersConsoleProps {
+  isDark?: boolean;
+}
+
+export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps> = ({ isDark = true }) => {
   const [partners, setPartners] = useState<any[]>(() => {
     if (typeof window === 'undefined') return [];
     try {

@@ -489,4 +489,121 @@
   animation: floatSubtle 3.5s ease-in-out infinite;
 }
 
+/* ==========================================================================
+   🏢 SUPER ADMIN DYNAMIC EXECUTIVE THEME SYSTEM (Light & Dark Obsidian)
+   ========================================================================== */
+
+/* ☀️ LIGHT THEME SCOPE */
+[data-superadmin-theme="light"] .bg-slate-900\/90,
+[data-superadmin-theme="light"] .bg-slate-900\/80,
+[data-superadmin-theme="light"] .bg-slate-900\/70,
+[data-superadmin-theme="light"] .bg-slate-900\/60,
+[data-superadmin-theme="light"] .bg-slate-900\/50,
+[data-superadmin-theme="light"] .bg-slate-900\/40,
+[data-superadmin-theme="light"] .bg-slate-900 {
+  background-color: #FFFFFF !important;
+  border-color: #E2E8F0 !important;
+  color: #0F172A !important;
+  box-shadow: 0 4px 14px -2px rgba(15, 23, 42, 0.05) !important;
+}
+
+[data-superadmin-theme="light"] .bg-slate-950\/90,
+[data-superadmin-theme="light"] .bg-slate-950\/80,
+[data-superadmin-theme="light"] .bg-slate-950\/70,
+[data-superadmin-theme="light"] .bg-slate-950\/60,
+[data-superadmin-theme="light"] .bg-slate-950 {
+  background-color: #F8FAFC !important;
+  border-color: #E2E8F0 !important;
+  color: #0F172A !important;
+}
+
+[data-superadmin-theme="light"] .bg-slate-800\/80,
+[data-superadmin-theme="light"] .bg-slate-800 {
+  background-color: #F1F5F9 !important;
+  border-color: #E2E8F0 !important;
+  color: #334155 !important;
+}
+
+[data-superadmin-theme="light"] .border-slate-800,
+[data-superadmin-theme="light"] .border-slate-700 {
+  border-color: #E2E8F0 !important;
+}
+
+[data-superadmin-theme="light"] h1.text-white,
+[data-superadmin-theme="light"] h2.text-white,
+[data-superadmin-theme="light"] h3.text-white,
+[data-superadmin-theme="light"] h4.text-white,
+[data-superadmin-theme="light"] h5.text-white,
+[data-superadmin-theme="light"] h6.text-white,
+[data-superadmin-theme="light"] p.text-white,
+[data-superadmin-theme="light"] span.text-white:not([class*="bg-"]),
+[data-superadmin-theme="light"] strong.text-white {
+  color: #0F172A !important;
+}
+
+[data-superadmin-theme="light"] .text-slate-400,
+[data-superadmin-theme="light"] .text-slate-300 {
+  color: #64748B !important;
+}
+
+[data-superadmin-theme="light"] input:not([type="checkbox"]):not([type="radio"]),
+[data-superadmin-theme="light"] select,
+[data-superadmin-theme="light"] textarea {
+  background-color: #F8FAFC !important;
+  border-color: #CBD5E1 !important;
+  color: #0F172A !important;
+}
+
+[data-superadmin-theme="light"] input::placeholder,
+[data-superadmin-theme="light"] textarea::placeholder {
+  color: #94A3B8 !important;
+}
+
+[data-superadmin-theme="light"] table thead {
+  background-color: #F8FAFC !important;
+  color: #475569 !important;
+}
+
+[data-superadmin-theme="light"] table tr {
+  border-color: #E2E8F0 !important;
+}
+
+[data-superadmin-theme="light"] table tr:hover {
+  background-color: #F1F5F9 !important;
+}
+
+[data-superadmin-theme="light"] .glass-card {
+  background: #FFFFFF !important;
+  border-color: #E2E8F0 !important;
+  color: #0F172A !important;
+  box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* 🌙 DARK OBSIDIAN THEME SCOPE */
+[data-superadmin-theme="dark"] .bg-slate-900\/90,
+[data-superadmin-theme="dark"] .bg-slate-900\/80,
+[data-superadmin-theme="dark"] .bg-slate-900\/70,
+[data-superadmin-theme="dark"] .bg-slate-900\/60,
+[data-superadmin-theme="dark"] .bg-slate-900\/50,
+[data-superadmin-theme="dark"] .bg-slate-900\/40,
+[data-superadmin-theme="dark"] .bg-slate-900 {
+  background-color: #0E1622 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+[data-superadmin-theme="dark"] .bg-slate-950\/90,
+[data-superadmin-theme="dark"] .bg-slate-950\/80,
+[data-superadmin-theme="dark"] .bg-slate-950\/70,
+[data-superadmin-theme="dark"] .bg-slate-950\/60,
+[data-superadmin-theme="dark"] .bg-slate-950 {
+  background-color: #080C13 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-superadmin-theme="dark"] .border-slate-800,
+[data-superadmin-theme="dark"] .border-slate-700 {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+
 

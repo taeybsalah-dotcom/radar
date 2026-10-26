@@ -40,6 +40,7 @@ import {
 
 interface SuperAdminTeamConsoleProps {
   currentUser?: SuperAdminUser | null;
+  isDark?: boolean;
 }
 
 const ROLE_LABELS: Record<AdminRole, { name: string; badge: string; icon: any }> = {
@@ -125,7 +126,7 @@ const PERMISSION_CONFIG: {
   },
 ];
 
-export const SuperAdminTeamConsole: React.FC<SuperAdminTeamConsoleProps> = ({ currentUser }) => {
+export const SuperAdminTeamConsole: React.FC<SuperAdminTeamConsoleProps> = ({ currentUser, isDark = true }) => {
   const [team, setTeam] = useState<SuperAdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

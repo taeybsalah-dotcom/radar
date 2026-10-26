@@ -66,7 +66,11 @@ import { LoyaltyService } from '../lib/supabase';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 import { ManualSubscriptionModal } from './ManualSubscriptionModal';
 
-export const SuperAdminBillingConsole: React.FC = () => {
+interface SuperAdminBillingConsoleProps {
+  isDark?: boolean;
+}
+
+export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> = ({ isDark = true }) => {
   // Navigation Subtabs
   const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'payouts' | 'refunds' | 'plans' | 'gateways'>('overview');
 

@@ -18,7 +18,11 @@ import {
 import { LoyaltyService } from '../lib/supabase';
 import { PlatformIntegrationsConfig } from '../types';
 
-export const SuperAdminIntegrationsHub: React.FC = () => {
+interface SuperAdminIntegrationsHubProps {
+  isDark?: boolean;
+}
+
+export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps> = ({ isDark = true }) => {
   const [config, setConfig] = useState<PlatformIntegrationsConfig>({
     telegram_bot_token: '',
     telegram_admin_chat_id: '',

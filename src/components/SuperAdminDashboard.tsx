@@ -1085,7 +1085,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   }
 
   return (
-    <div className={`min-h-screen transition-colors p-3 sm:p-6 lg:p-8 font-sans ${isDark ? 'bg-[#080C13] text-slate-100' : 'bg-[#FAF9F5] text-slate-900'}`}>
+    <div
+      data-superadmin-theme={themeMode}
+      className={`min-h-screen transition-colors p-3 sm:p-6 lg:p-8 font-sans ${
+        isDark ? 'superadmin-dark bg-[#080C13] text-slate-100' : 'superadmin-light bg-[#FAF9F5] text-slate-900'
+      }`}
+    >
       <div className="max-w-7xl mx-auto space-y-8">
       {/* Toast Feedback */}
       {(successMessage || errorMessage) && (
@@ -1596,33 +1601,37 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
       {/* Sub-Components Renders */}
       <div className={activeSubTab === 'partners' ? 'block' : 'hidden'}>
-        <SuperAdminPartnersConsole />
+        <SuperAdminPartnersConsole isDark={isDark} />
       </div>
 
       <div className={activeSubTab === 'integrations' ? 'block' : 'hidden'}>
-        <SuperAdminIntegrationsHub />
+        <SuperAdminIntegrationsHub isDark={isDark} />
       </div>
 
       <div className={activeSubTab === 'billing' ? 'block' : 'hidden'}>
-        <SuperAdminBillingConsole />
+        <SuperAdminBillingConsole isDark={isDark} />
       </div>
 
       <div className={activeSubTab === 'team' ? 'block' : 'hidden'}>
-        <SuperAdminTeamConsole currentUser={currentAdminUser} />
+        <SuperAdminTeamConsole currentUser={currentAdminUser} isDark={isDark} />
       </div>
 
       <div className={activeSubTab === 'stores' ? 'block space-y-8' : 'hidden'}>
         {/* 🌟 Header Action Bar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/60 p-5 sm:p-6 rounded-3xl border border-slate-800 shadow-xl backdrop-blur-xl">
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 sm:p-6 rounded-3xl border shadow-xl backdrop-blur-xl transition-colors ${
+          isDark ? 'bg-[#0E1622] border-white/10 text-white' : 'bg-white border-slate-200 text-slate-900 shadow-md'
+        }`}>
           <div className="space-y-1">
             <div className="flex items-center gap-2.5">
-              <StoreIcon className="w-6 h-6 text-amber-400" />
-              <h3 className="text-xl font-black text-white">دليل ومتابعة المتاجر والطلبات</h3>
-              <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+              <StoreIcon className="w-6 h-6 text-amber-500" />
+              <h3 className={`text-xl font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>دليل ومتابعة المتاجر والطلبات</h3>
+              <span className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border ${
+                isDark ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-amber-50 text-amber-800 border-amber-200'
+              }`}>
                 {stores.length + unconvertedLeads.length} متجر وطلب
               </span>
             </div>
-            <p className="text-xs text-slate-400">
+            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
               إدارة شاملة وموحدة لجميع المتاجر النشطة، طلبات الانضمام، المراحل، والفوترة في شاشة واحدة.
             </p>
           </div>
@@ -1631,10 +1640,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
             <button
               onClick={() => loadStores(true)}
               disabled={isRefreshingData}
-              className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-2 border border-slate-700 shadow-sm"
+              className={`px-4 py-3 rounded-2xl text-xs font-bold transition flex items-center gap-2 border shadow-sm ${
+                isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border-slate-200'
+              }`}
               title="تحديث البيانات من السيرفر"
             >
-              <RefreshCw className={`w-4 h-4 text-amber-400 ${isRefreshingData ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 text-amber-500 ${isRefreshingData ? 'animate-spin' : ''}`} />
               <span>{isRefreshingData ? 'جاري التحديث...' : 'تحديث البيانات'}</span>
             </button>
 
@@ -1664,117 +1675,139 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         {/* 📊 Top Global Platform Metrics Row (Image 2 + Platform Totals) */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
           {/* 1. طلب جديد */}
-          <div className="p-4 rounded-2xl bg-slate-900/80 border border-blue-500/30 hover:border-blue-500/60 transition space-y-1.5 shadow-lg relative overflow-hidden group">
+          <div className={`p-4 rounded-2xl border transition space-y-1.5 shadow-lg relative overflow-hidden group ${
+            isDark ? 'bg-[#0E1622] border-blue-500/30 hover:border-blue-500/60' : 'bg-white border-blue-200 hover:border-blue-400'
+          }`}>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-blue-400">طلب جديد 🆕</span>
+              <span className={`text-[11px] font-bold ${isDark ? 'text-blue-400' : 'text-blue-600'}`}>طلب جديد 🆕</span>
               <span className="text-base">📥</span>
             </div>
-            <span className="text-2xl font-black text-white font-mono block">
+            <span className={`text-2xl font-black font-mono block ${isDark ? 'text-white' : 'text-slate-900'}`}>
               {pipelineCounts['طلب جديد'] || 0}
             </span>
-            <span className="text-[10px] text-slate-400 block truncate">بانتظار البدء والتأسيس</span>
+            <span className={`text-[10px] block truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>بانتظار البدء والتأسيس</span>
           </div>
 
           {/* 2. جاري التأسيس */}
-          <div className="p-4 rounded-2xl bg-slate-900/80 border border-amber-500/30 hover:border-amber-500/60 transition space-y-1.5 shadow-lg relative overflow-hidden group">
+          <div className={`p-4 rounded-2xl border transition space-y-1.5 shadow-lg relative overflow-hidden group ${
+            isDark ? 'bg-[#0E1622] border-amber-500/30 hover:border-amber-500/60' : 'bg-white border-amber-200 hover:border-amber-400'
+          }`}>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-amber-400">جاري التأسيس ⚙️</span>
+              <span className={`text-[11px] font-bold ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>جاري التأسيس ⚙️</span>
               <span className="text-base">🛠️</span>
             </div>
-            <span className="text-2xl font-black text-amber-400 font-mono block">
+            <span className={`text-2xl font-black font-mono block ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
               {pipelineCounts['جاري التأسيس'] || 0}
             </span>
-            <span className="text-[10px] text-slate-400 block truncate">جاري إعداد الهوية والبوابات</span>
+            <span className={`text-[10px] block truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>جاري إعداد الهوية والبوابات</span>
           </div>
 
           {/* 3. تم التأسيس */}
-          <div className="p-4 rounded-2xl bg-slate-900/80 border border-teal-500/30 hover:border-teal-500/60 transition space-y-1.5 shadow-lg relative overflow-hidden group">
+          <div className={`p-4 rounded-2xl border transition space-y-1.5 shadow-lg relative overflow-hidden group ${
+            isDark ? 'bg-[#0E1622] border-teal-500/30 hover:border-teal-500/60' : 'bg-white border-teal-200 hover:border-teal-400'
+          }`}>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-teal-400">تم التأسيس 🚀</span>
+              <span className={`text-[11px] font-bold ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>تم التأسيس 🚀</span>
               <span className="text-base">⚡</span>
             </div>
-            <span className="text-2xl font-black text-teal-300 font-mono block">
+            <span className={`text-2xl font-black font-mono block ${isDark ? 'text-teal-300' : 'text-teal-700'}`}>
               {pipelineCounts['تم التأسيس'] || 0}
             </span>
-            <span className="text-[10px] text-slate-400 block truncate">بوابات جاهزة / فترة تجربة</span>
+            <span className={`text-[10px] block truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>بوابات جاهزة / فترة تجربة</span>
           </div>
 
           {/* 4. تحت المراجعة */}
-          <div className="p-4 rounded-2xl bg-slate-900/80 border border-purple-500/30 hover:border-purple-500/60 transition space-y-1.5 shadow-lg relative overflow-hidden group">
+          <div className={`p-4 rounded-2xl border transition space-y-1.5 shadow-lg relative overflow-hidden group ${
+            isDark ? 'bg-[#0E1622] border-purple-500/30 hover:border-purple-500/60' : 'bg-white border-purple-200 hover:border-purple-400'
+          }`}>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-purple-400">تحت المراجعة ⏳</span>
+              <span className={`text-[11px] font-bold ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>تحت المراجعة ⏳</span>
               <span className="text-base">📋</span>
             </div>
-            <span className="text-2xl font-black text-purple-300 font-mono block">
+            <span className={`text-2xl font-black font-mono block ${isDark ? 'text-purple-300' : 'text-purple-700'}`}>
               {pipelineCounts['تحت المراجعة'] || 0}
             </span>
-            <span className="text-[10px] text-slate-400 block truncate">موقوف أو بانتظار الاعتماد</span>
+            <span className={`text-[10px] block truncate ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>موقوف أو بانتظار الاعتماد</span>
           </div>
 
           {/* 5. مشترك مدفوع */}
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-950/50 to-slate-900/90 border-2 border-emerald-500/50 hover:border-emerald-400 transition space-y-1.5 shadow-xl relative overflow-hidden group">
+          <div className={`p-4 rounded-2xl border-2 transition space-y-1.5 shadow-xl relative overflow-hidden group ${
+            isDark ? 'bg-gradient-to-br from-emerald-950/50 to-[#0E1622] border-emerald-500/50 hover:border-emerald-400' : 'bg-gradient-to-br from-emerald-50 to-white border-emerald-300 hover:border-emerald-500'
+          }`}>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-emerald-300 flex items-center gap-1">
+              <span className={`text-[11px] font-bold flex items-center gap-1 ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>
                 <span>مشترك مدفوع</span>
-                <Crown className="w-3.5 h-3.5 text-amber-400" />
+                <Crown className="w-3.5 h-3.5 text-amber-500" />
               </span>
               <span className="text-base">👑</span>
             </div>
-            <span className="text-2xl font-black text-emerald-400 font-mono block">
+            <span className={`text-2xl font-black font-mono block ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
               {pipelineCounts['مشترك مدفوع'] || 0}
             </span>
-            <span className="text-[10px] text-emerald-400/80 block truncate font-medium">اشتراكات مفعلة ومسددة</span>
+            <span className={`text-[10px] block truncate font-medium ${isDark ? 'text-emerald-400/80' : 'text-emerald-700/80'}`}>اشتراكات مفعلة ومسددة</span>
           </div>
 
           {/* 6. إجمالي زبائن المتاجر (مطلب إضافي من المستخدم) */}
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-sky-950/50 to-slate-900/90 border border-sky-500/40 hover:border-sky-400 transition space-y-1.5 shadow-xl relative overflow-hidden group">
+          <div className={`p-4 rounded-2xl border transition space-y-1.5 shadow-xl relative overflow-hidden group ${
+            isDark ? 'bg-gradient-to-br from-sky-950/50 to-[#0E1622] border-sky-500/40 hover:border-sky-400' : 'bg-gradient-to-br from-sky-50 to-white border-sky-200 hover:border-sky-400'
+          }`}>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-sky-400 flex items-center gap-1">
-                <Users className="w-3.5 h-3.5 text-sky-400" />
+              <span className={`text-[11px] font-bold flex items-center gap-1 ${isDark ? 'text-sky-400' : 'text-sky-700'}`}>
+                <Users className="w-3.5 h-3.5 text-sky-500" />
                 <span>زبائن المتاجر</span>
               </span>
               <span className="text-base">👥</span>
             </div>
-            <span className="text-2xl font-black text-sky-300 font-mono block">
+            <span className={`text-2xl font-black font-mono block ${isDark ? 'text-sky-300' : 'text-sky-700'}`}>
               {totalPlatformCustomers.toLocaleString()}
             </span>
-            <span className="text-[10px] text-sky-400/80 block truncate">إجمالي الزبائن والعملاء</span>
+            <span className={`text-[10px] block truncate ${isDark ? 'text-sky-400/80' : 'text-sky-600'}`}>إجمالي الزبائن والعملاء</span>
           </div>
 
           {/* 7. إجمالي مبيعات المتاجر النشطة */}
-          <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-950/40 to-slate-900/90 border border-amber-500/40 hover:border-amber-400 transition space-y-1.5 shadow-xl relative overflow-hidden group">
+          <div className={`p-4 rounded-2xl border transition space-y-1.5 shadow-xl relative overflow-hidden group ${
+            isDark ? 'bg-gradient-to-br from-amber-950/40 to-[#0E1622] border-amber-500/40 hover:border-amber-400' : 'bg-gradient-to-br from-amber-50 to-white border-amber-200 hover:border-amber-400'
+          }`}>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
-                <DollarSign className="w-3.5 h-3.5 text-amber-400" />
+              <span className={`text-[11px] font-bold flex items-center gap-1 ${isDark ? 'text-amber-400' : 'text-amber-700'}`}>
+                <DollarSign className="w-3.5 h-3.5 text-amber-500" />
                 <span>إجمالي مبيعات المتاجر</span>
               </span>
               <span className="text-base">💰</span>
             </div>
-            <span className="text-xl sm:text-2xl font-black text-amber-300 font-mono block truncate">
-              {totalPlatformSales.toLocaleString()} <span className="text-xs text-amber-400/80 font-normal">ر.س</span>
+            <span className={`text-xl sm:text-2xl font-black font-mono block truncate ${isDark ? 'text-amber-300' : 'text-amber-700'}`}>
+              {totalPlatformSales.toLocaleString()} <span className="text-xs font-normal">ر.س</span>
             </span>
-            <span className="text-[10px] text-amber-400/80 block truncate">إجمالي إيرادات المتاجر النشطة</span>
+            <span className={`text-[10px] block truncate ${isDark ? 'text-amber-400/80' : 'text-amber-600'}`}>إجمالي إيرادات المتاجر النشطة</span>
           </div>
         </div>
 
         {/* ☕ بيئة العرض والتجربة التفاعلية المعزولة (Demo Cafe Showcase & Instant Reset) */}
-        <div className="relative rounded-3xl bg-gradient-to-r from-cyan-950/40 via-slate-900 to-indigo-950/40 border-2 border-cyan-500/30 p-5 sm:p-6 shadow-xl overflow-hidden">
+        <div className={`relative rounded-3xl border-2 p-5 sm:p-6 shadow-xl overflow-hidden transition-colors ${
+          isDark ? 'bg-gradient-to-r from-cyan-950/40 via-[#0E1622] to-indigo-950/40 border-cyan-500/30' : 'bg-gradient-to-r from-cyan-50/80 via-white to-indigo-50/80 border-cyan-200 text-slate-900 shadow-md'
+        }`}>
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
             <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-2xl shrink-0 shadow-inner">
+              <div className={`w-12 h-12 rounded-2xl border flex items-center justify-center text-2xl shrink-0 shadow-inner ${
+                isDark ? 'bg-cyan-500/20 border-cyan-500/40' : 'bg-cyan-100 border-cyan-300'
+              }`}>
                 ☕
               </div>
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="text-base sm:text-lg font-black text-white">متجر التجربة التفاعلي (Demo Cafe)</h4>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold">
+                  <h4 className={`text-base sm:text-lg font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>متجر التجربة التفاعلي (Demo Cafe)</h4>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border font-bold ${
+                    isDark ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-cyan-100 text-cyan-800 border-cyan-200'
+                  }`}>
                     معزول تماماً عن أرقام البزنس 🛡️
                   </span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                    isDark ? 'bg-slate-800 text-slate-300 border-slate-700' : 'bg-slate-100 text-slate-700 border-slate-300'
+                  }`}>
                     /demo-cafe
                   </span>
                 </div>
-                <p className="text-xs text-slate-300 max-w-2xl leading-relaxed">
+                <p className={`text-xs max-w-2xl leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
                   متجر تجريبي متكامل وجاهز للاختبار والعرض (منيو، موظفين، خدمات، عملاء، ونقاط). يمكنك تجربته أو تصفير بياناته في أي لحظة.
                 </p>
               </div>
@@ -1785,7 +1818,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 href="/?store=demo-cafe&portal=customer"
                 target="_blank"
                 rel="noreferrer"
-                className="px-3.5 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-cyan-300 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                className={`px-3.5 py-2.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+                  isDark ? 'bg-[#080C13] hover:bg-slate-800 border-white/10 text-cyan-300' : 'bg-white hover:bg-cyan-50 border-cyan-200 text-cyan-800'
+                }`}
                 title="فتح محفظة العميل لمتجر الديمو"
               >
                 <Smartphone className="w-3.5 h-3.5" />
@@ -1796,7 +1831,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 href="/?store=demo-cafe&portal=cashier"
                 target="_blank"
                 rel="noreferrer"
-                className="px-3.5 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-amber-300 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                className={`px-3.5 py-2.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+                  isDark ? 'bg-[#080C13] hover:bg-slate-800 border-white/10 text-amber-300' : 'bg-white hover:bg-amber-50 border-amber-200 text-amber-800'
+                }`}
                 title="فتح نقطة البيع (PIN: 1234)"
               >
                 <CreditCard className="w-3.5 h-3.5" />
@@ -1807,7 +1844,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 href="/?store=demo-cafe&portal=admin"
                 target="_blank"
                 rel="noreferrer"
-                className="px-3.5 py-2.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-emerald-300 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                className={`px-3.5 py-2.5 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+                  isDark ? 'bg-[#080C13] hover:bg-slate-800 border-white/10 text-emerald-300' : 'bg-white hover:bg-emerald-50 border-emerald-200 text-emerald-800'
+                }`}
                 title="فتح لوحة إدارة المتجر (PIN: 9999)"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
@@ -1817,7 +1856,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               <button
                 onClick={handleResetDemoStore}
                 disabled={isResettingDemo}
-                className="px-4 py-2.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500 text-cyan-300 hover:text-slate-950 border border-cyan-500/40 text-xs font-black transition flex items-center gap-1.5 shadow-md active:scale-95 disabled:opacity-50"
+                className={`px-4 py-2.5 rounded-xl border text-xs font-black transition flex items-center gap-1.5 shadow-md active:scale-95 disabled:opacity-50 ${
+                  isDark ? 'bg-cyan-500/20 hover:bg-cyan-500 text-cyan-300 hover:text-slate-950 border-cyan-500/40' : 'bg-cyan-600 hover:bg-cyan-700 text-white border-cyan-600'
+                }`}
                 title="تصفير وحذف جميع حركات وعملاء الديمو وإعادته لنقطة الصفر الأصلية"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isResettingDemo ? 'animate-spin' : ''}`} />
@@ -1828,18 +1869,22 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         </div>
 
         {/* 🔍 Search & 5-Stage Filter Bar */}
-        <div className="bg-slate-900/70 p-4 rounded-3xl border border-slate-800 space-y-3 shadow-lg">
-          <div className="flex items-center gap-2 bg-slate-950/80 p-2.5 rounded-2xl border border-slate-800">
+        <div className={`p-4 rounded-3xl border space-y-3 shadow-lg transition-colors ${
+          isDark ? 'bg-[#0E1622] border-white/10' : 'bg-white border-slate-200 shadow-sm'
+        }`}>
+          <div className={`flex items-center gap-2 p-2.5 rounded-2xl border ${
+            isDark ? 'bg-[#080C13] border-white/10' : 'bg-slate-50 border-slate-200'
+          }`}>
             <Search className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
             <input
               type="text"
               value={storeSearchQuery}
               onChange={(e) => setStoreSearchQuery(e.target.value)}
               placeholder="ابحث باسم المتجر، الرابط المخصص (/slug)، جوال المدير، أو اسم المسؤول..."
-              className="bg-transparent text-xs sm:text-sm text-white placeholder-slate-500 outline-none w-full"
+              className={`bg-transparent text-xs sm:text-sm outline-none w-full ${isDark ? 'text-white placeholder-slate-500' : 'text-slate-900 placeholder-slate-400'}`}
             />
             {storeSearchQuery && (
-              <button onClick={() => setStoreSearchQuery('')} className="text-slate-500 hover:text-white p-1">
+              <button onClick={() => setStoreSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-1">
                 <X className="w-4 h-4" />
               </button>
             )}
@@ -1864,12 +1909,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   className={`px-3.5 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1.5 ${
                     storeStageFilter === tab.id
                       ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/20'
-                      : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                      : isDark
+                        ? 'bg-[#080C13] text-slate-400 hover:text-white border border-white/10'
+                        : 'bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200'
                   }`}
                 >
                   <span>{tab.label}</span>
                   <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md ${
-                    storeStageFilter === tab.id ? 'bg-black/20 text-slate-950' : 'bg-slate-900 text-slate-400'
+                    storeStageFilter === tab.id
+                      ? 'bg-black/20 text-slate-950'
+                      : isDark ? 'bg-slate-900 text-slate-400' : 'bg-slate-200 text-slate-700'
                   }`}>
                     {count}
                   </span>
@@ -1926,7 +1975,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 return (
                   <div
                     key={s.id}
-                    className="p-6 sm:p-7 rounded-3xl bg-slate-900/90 border border-slate-800 hover:border-amber-500/40 transition space-y-5 relative overflow-hidden shadow-2xl backdrop-blur-xl"
+                    className={`p-6 sm:p-7 rounded-3xl border transition space-y-5 relative overflow-hidden shadow-2xl backdrop-blur-xl ${
+                      isDark
+                        ? 'bg-[#0E1622] border-white/10 hover:border-amber-500/40 text-white'
+                        : 'bg-white border-slate-200 hover:border-amber-500/40 text-slate-900 shadow-md'
+                    }`}
                   >
                     <div
                       className="absolute top-0 right-0 left-0 h-1.5"
@@ -1940,7 +1993,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           <img
                             src={s.logo_url}
                             alt={s.name}
-                            className="w-16 h-16 rounded-2xl object-cover border border-slate-700 shadow-md flex-shrink-0"
+                            className={`w-16 h-16 rounded-2xl object-cover border shadow-md flex-shrink-0 ${
+                              isDark ? 'border-slate-700' : 'border-slate-200'
+                            }`}
                           />
                         ) : (
                           <div
@@ -1956,13 +2011,17 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         )}
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="font-bold text-white text-base sm:text-lg">{s.name}</h4>
-                            <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-slate-800 text-amber-400 border border-slate-700 font-bold">
+                            <h4 className={`font-bold text-base sm:text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>{s.name}</h4>
+                            <span className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full border font-bold ${
+                              isDark ? 'bg-slate-800 text-amber-400 border-slate-700' : 'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}>
                               /{s.slug}
                             </span>
 
                             {isDemoStore(s) && (
-                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold flex items-center gap-1">
+                              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border font-bold flex items-center gap-1 ${
+                                isDark ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-cyan-50 text-cyan-800 border-cyan-200'
+                              }`}>
                                 <span>🎯 متجر تجريبي (DEMO)</span>
                               </span>
                             )}
@@ -1980,12 +2039,16 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                             ) : null}
 
                             {stageInfo.isPaidActive ? (
-                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${
+                                isDark ? 'bg-purple-500/15 text-purple-300 border-purple-500/30' : 'bg-purple-50 text-purple-800 border-purple-200'
+                              }`}>
                                 <Sparkles className="w-3 h-3 text-purple-400" />
                                 <span>{s.subscription_plan || 'الباقة الأساسية'}</span>
                               </span>
                             ) : (
-                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-teal-500/15 text-teal-300 border border-teal-500/30 flex items-center gap-1">
+                              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${
+                                isDark ? 'bg-teal-500/15 text-teal-300 border-teal-500/30' : 'bg-teal-50 text-teal-800 border-teal-200'
+                              }`}>
                                 <Clock className="w-3 h-3 text-teal-400" />
                                 <span>فترة تجربة مجانية (14 يوم)</span>
                               </span>
@@ -2003,7 +2066,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                               </span>
                             ) : null}
                             {s.custom_domain && (
-                              <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/30 flex items-center gap-1 font-bold">
+                              <span className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full border flex items-center gap-1 font-bold ${
+                                isDark ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' : 'bg-blue-50 text-blue-800 border-blue-200'
+                              }`}>
                                 <Globe className="w-3 h-3 text-blue-400" />
                                 <span>{s.custom_domain}</span>
                               </span>
@@ -2011,15 +2076,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           </div>
                           
                           {/* Manager Contact & Phone */}
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 mt-1.5">
-                            <span>المدير: <strong className="text-white">{s.manager_name || 'المدير العام'}</strong></span>
+                          <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-xs mt-1.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                            <span>المدير: <strong className={isDark ? 'text-white' : 'text-slate-900'}>{s.manager_name || 'المدير العام'}</strong></span>
                             <span>•</span>
-                            <span className="flex items-center space-x-1 rtl:space-x-reverse text-amber-300 font-mono font-bold" dir="ltr">
-                              <Phone className="w-3 h-3 text-amber-400" />
+                            <span className="flex items-center space-x-1 rtl:space-x-reverse text-amber-500 font-mono font-bold" dir="ltr">
+                              <Phone className="w-3 h-3 text-amber-500" />
                               <span>{s.manager_contact || '05xxxxxxxx'}</span>
                             </span>
                             <span>•</span>
-                            <span className="text-slate-400">المعامل: <strong className="text-emerald-400">{s.points_per_riyal}x</strong></span>
+                            <span>المعامل: <strong className="text-emerald-500">{s.points_per_riyal}x</strong></span>
                           </div>
 
                           {/* 🎛️ Active Modules SaaS Status Chips */}
@@ -2231,65 +2296,79 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                     {/* 📊 4 Mini-KPI boxes (Image 1 features) */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 text-xs">
                       {/* 1. العملاء والزوار */}
-                      <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+                      <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+                        isDark ? 'bg-[#080C13] border-white/10' : 'bg-slate-50 border-slate-200'
+                      }`}>
                         <div>
-                          <span className="text-[11px] text-slate-400 block font-sans">العملاء والزوار</span>
-                          <span className="text-lg font-black text-white font-mono">{stats.customerCount.toLocaleString()}</span>
+                          <span className={`text-[11px] block font-sans ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>العملاء والزوار</span>
+                          <span className={`text-lg font-black font-mono ${isDark ? 'text-white' : 'text-slate-900'}`}>{stats.customerCount.toLocaleString()}</span>
                         </div>
-                        <Users className="w-4 h-4 text-blue-400" />
+                        <Users className="w-4 h-4 text-blue-500" />
                       </div>
 
                       {/* 2. إجمالي المبيعات */}
-                      <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+                      <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+                        isDark ? 'bg-[#080C13] border-white/10' : 'bg-slate-50 border-slate-200'
+                      }`}>
                         <div>
-                          <span className="text-[11px] text-slate-400 block font-sans">إجمالي المبيعات</span>
-                          <span className="text-lg font-black text-emerald-400 font-mono">
-                            {stats.totalSales.toLocaleString()} <span className="text-[10px] text-emerald-300 font-normal">ر.س</span>
+                          <span className={`text-[11px] block font-sans ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>إجمالي المبيعات</span>
+                          <span className={`text-lg font-black font-mono ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                            {stats.totalSales.toLocaleString()} <span className="text-[10px] font-normal">ر.س</span>
                           </span>
                         </div>
-                        <DollarSign className="w-4 h-4 text-emerald-400" />
+                        <DollarSign className="w-4 h-4 text-emerald-500" />
                       </div>
 
                       {/* 3. النقاط الممنوحة */}
-                      <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+                      <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+                        isDark ? 'bg-[#080C13] border-white/10' : 'bg-slate-50 border-slate-200'
+                      }`}>
                         <div>
-                          <span className="text-[11px] text-slate-400 block font-sans">النقاط الممنوحة للعملاء</span>
-                          <span className="text-lg font-black text-amber-400 font-mono">
-                            +{stats.totalPoints.toLocaleString()} <span className="text-[10px] text-amber-300 font-normal">XP</span>
+                          <span className={`text-[11px] block font-sans ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>النقاط الممنوحة للعملاء</span>
+                          <span className={`text-lg font-black font-mono ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>
+                            +{stats.totalPoints.toLocaleString()} <span className="text-[10px] font-normal">XP</span>
                           </span>
                         </div>
-                        <Coins className="w-4 h-4 text-amber-400" />
+                        <Coins className="w-4 h-4 text-amber-500" />
                       </div>
 
                       {/* 4. طاقم العمل */}
-                      <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
+                      <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${
+                        isDark ? 'bg-[#080C13] border-white/10' : 'bg-slate-50 border-slate-200'
+                      }`}>
                         <div>
-                          <span className="text-[11px] text-slate-400 block font-sans">طاقم العمل</span>
-                          <span className="text-lg font-black text-purple-400 font-mono">{stats.staffCount.toLocaleString()}</span>
+                          <span className={`text-[11px] block font-sans ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>طاقم العمل</span>
+                          <span className={`text-lg font-black font-mono ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>{stats.staffCount.toLocaleString()}</span>
                         </div>
-                        <Users className="w-4 h-4 text-purple-400" />
+                        <Users className="w-4 h-4 text-purple-500" />
                       </div>
                     </div>
 
                     {/* 💳 Dedicated Financial Log Quick Summary & Action Bar */}
-                    <div className="p-3.5 rounded-2xl bg-slate-950/90 border border-amber-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div className={`p-3.5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                      isDark ? 'bg-[#080C13] border-amber-500/20 text-white' : 'bg-amber-50/50 border-amber-200 text-slate-900'
+                    }`}>
                       <div className="flex items-center space-x-3 rtl:space-x-reverse">
-                        <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                        <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${
+                          isDark ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-amber-100 border-amber-300 text-amber-700'
+                        }`}>
                           <Receipt className="w-4.5 h-4.5" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-bold text-white">
+                            <span className={`text-xs font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>
                               {stageInfo.isPaidActive ? (s.subscription_plan || 'الباقة الأساسية') : 'فترة تجربة مجانية (14 يوم)'}
                             </span>
                             <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
-                              stageInfo.isPaidActive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                              stageInfo.isPaidActive
+                                ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : isDark ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30' : 'bg-teal-100 text-teal-800 border border-teal-200'
                             }`}>
                               {stageInfo.isPaidActive ? 'مدفوع ومثبت 👑' : 'فترة تجربة مجانية 🚀'}
                             </span>
                           </div>
-                          <span className="text-[11px] text-slate-400 block font-mono mt-0.5">
-                            المحصل: <strong className="text-emerald-400 font-bold">{totalPaid.toLocaleString()} ر.س</strong> ({storeInvs.length} فواتير مسجلة)
+                          <span className={`text-[11px] block font-mono mt-0.5 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                            المحصل: <strong className={`font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-700'}`}>{totalPaid.toLocaleString()} ر.س</strong> ({storeInvs.length} فواتير مسجلة)
                           </span>
                         </div>
                       </div>
@@ -2301,7 +2380,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                             setSelectedStoreForManualSub(s);
                             setIsManualSubModalOpen(true);
                           }}
-                          className="px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 transition text-xs font-bold flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-sm"
+                          className={`px-3 py-2 rounded-xl border transition text-xs font-bold flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-sm ${
+                            isDark
+                              ? 'bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border-emerald-500/30'
+                              : 'bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border-emerald-200'
+                          }`}
                           title="تفعيل أو تجديد الاشتراك كاش / تحويل"
                         >
                           <Banknote className="w-4 h-4" />
@@ -2311,7 +2394,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         <button
                           type="button"
                           onClick={() => setSelectedStoreForFinancials(s)}
-                          className="px-3.5 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border border-amber-500/30 transition text-xs font-bold flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-sm"
+                          className={`px-3.5 py-2 rounded-xl border transition text-xs font-bold flex items-center justify-center space-x-1.5 rtl:space-x-reverse shadow-sm ${
+                            isDark
+                              ? 'bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-slate-950 border-amber-500/30'
+                              : 'bg-amber-50 hover:bg-amber-500 text-amber-700 hover:text-white border-amber-200'
+                          }`}
                         >
                           <CreditCard className="w-4 h-4" />
                           <span>كشف الحساب ({storeInvs.length})</span>
@@ -2320,31 +2407,39 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                     </div>
 
                     {/* Portal Quick Access Buttons */}
-                    <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-                      <span className="text-slate-500 text-[11px]">معاينة البوابات كـ:</span>
+                    <div className={`pt-3 border-t flex flex-wrap items-center justify-between gap-2 text-xs ${
+                      isDark ? 'border-slate-800/80' : 'border-slate-200'
+                    }`}>
+                      <span className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>معاينة البوابات كـ:</span>
 
                       <div className="flex items-center space-x-2 rtl:space-x-reverse">
                         <button
                           onClick={() => onSelectStore(s, 'customer')}
-                          className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition"
+                          className={`px-3.5 py-2 rounded-xl font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition ${
+                            isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200'
+                          }`}
                         >
-                          <Smartphone className="w-4 h-4 text-amber-400" />
+                          <Smartphone className="w-4 h-4 text-amber-500" />
                           <span>بوابة الزبون (PWA)</span>
                         </button>
 
                         <button
                           onClick={() => onSelectStore(s, 'cashier')}
-                          className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition"
+                          className={`px-3.5 py-2 rounded-xl font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition ${
+                            isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200'
+                          }`}
                         >
-                          <Globe className="w-4 h-4 text-blue-400" />
+                          <Globe className="w-4 h-4 text-blue-500" />
                           <span>بوابة الكاشير (POS)</span>
                         </button>
 
                         <button
                           onClick={() => onSelectStore(s, 'admin')}
-                          className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition"
+                          className={`px-3.5 py-2 rounded-xl font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition ${
+                            isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200'
+                          }`}
                         >
-                          <StoreIcon className="w-4 h-4 text-emerald-400" />
+                          <StoreIcon className="w-4 h-4 text-emerald-500" />
                           <span>لوحة التاجر</span>
                         </button>
                       </div>
@@ -2360,28 +2455,36 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 return (
                   <div
                     key={l.id}
-                    className="p-5 sm:p-6 rounded-3xl bg-slate-900/60 border border-dashed border-slate-700 hover:border-amber-500/50 transition space-y-4 relative overflow-hidden shadow-xl"
+                    className={`p-5 sm:p-6 rounded-3xl border border-dashed transition space-y-4 relative overflow-hidden shadow-lg ${
+                      isDark
+                        ? 'bg-[#0E1622]/60 border-slate-700 hover:border-amber-500/50 text-white'
+                        : 'bg-white border-slate-300 hover:border-amber-500/50 text-slate-900 shadow-sm'
+                    }`}
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 text-[10px] font-bold">
+                          <span className={`px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${
+                            isDark ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' : 'bg-blue-50 text-blue-800 border-blue-200'
+                          }`}>
                             طلب تاجر جديد 📥
                           </span>
-                          <h4 className="font-bold text-white text-base">{l.store_name}</h4>
+                          <h4 className={`font-bold text-base ${isDark ? 'text-white' : 'text-slate-900'}`}>{l.store_name}</h4>
                           <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${stageInfo.badgeClass}`}>
                             <span>{stageInfo.icon}</span>
                             <span>{stageInfo.label}</span>
                           </span>
                         </div>
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400 mt-1">
-                          <span>المسؤول: <strong className="text-white">{l.manager_name}</strong></span>
+                        <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-xs mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                          <span>المسؤول: <strong className={isDark ? 'text-white' : 'text-slate-900'}>{l.manager_name}</strong></span>
                           <span>•</span>
-                          <span className="font-mono text-amber-400 font-bold" dir="ltr">{l.phone}</span>
+                          <span className="font-mono text-amber-500 font-bold" dir="ltr">{l.phone}</span>
                           {l.city && <span>• المدينة: {l.city}</span>}
                           {l.business_type && <span>• النشاط: {l.business_type}</span>}
                           {l.referral_code && (
-                            <span className="text-purple-300 font-mono font-bold bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
+                            <span className={`font-mono font-bold px-2 py-0.5 rounded-md border ${
+                              isDark ? 'bg-purple-500/10 text-purple-300 border-purple-500/20' : 'bg-purple-50 text-purple-800 border-purple-200'
+                            }`}>
                               🤝 كود الشريك: {l.referral_code}
                             </span>
                           )}
@@ -2393,7 +2496,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         <select
                           value={stageInfo.label}
                           onChange={(e) => handleUpdateLeadStage(l, e.target.value as UnifiedLifecycleStage)}
-                          className="bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 rounded-xl px-3 py-2 outline-none cursor-pointer"
+                          className={`text-xs font-bold rounded-xl px-3 py-2 outline-none cursor-pointer border ${
+                            isDark
+                              ? 'bg-[#080C13] border-slate-700 text-amber-300'
+                              : 'bg-slate-50 border-slate-300 text-slate-800'
+                          }`}
                         >
                           <option value="طلب جديد">طلب جديد 🆕</option>
                           <option value="جاري التأسيس">جاري التأسيس ⚙️</option>
