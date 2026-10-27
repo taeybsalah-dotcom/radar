@@ -80,6 +80,11 @@ import {
   Image as ImageIcon,
   Tag,
   Scissors,
+  Coffee,
+  Crown,
+  Gamepad2,
+  Trophy,
+  Star,
   UserCheck,
   BookmarkCheck,
   ListOrdered,
@@ -9416,6 +9421,21 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         const currentWalletConfig = WalletPassService.getWalletConfig(store);
         const registeredDevices = WalletPassService.getStoreRegistrations(store.id);
 
+        const updateWalletSettings = (partial: Partial<typeof currentWalletConfig>) => {
+          const updated = WalletPassService.saveWalletConfig(store.id, partial);
+          // Sync to component state
+          setStore((prev: any) => ({
+            ...prev,
+            fulfillment_settings: {
+              ...(prev?.fulfillment_settings || {}),
+              wallet_pass_config: updated,
+            },
+          }));
+        };
+
+        const currentMode = currentWalletConfig.loyalty_mode || 'points';
+        const isStamps = currentMode === 'stamps';
+
         return (
           <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 space-y-6 animate-fade-in shadow-xl">
             {/* Header */}
@@ -9443,7 +9463,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               {/* Status Badge */}
               <div className="flex items-center gap-2 bg-slate-950 px-4 py-2 rounded-2xl border border-slate-800 self-start sm:self-auto">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-xs font-bold text-white">البطاقات الرقمية: نشطة وجاهزة</span>
+                <span className="text-xs font-bold text-white">السحابة: نشطة ومتزامنة ✓</span>
               </div>
             </div>
 
@@ -9474,48 +9494,434 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center">
-                <span className="text-[11px] text-slate-400 block font-bold">تحديث النقاط الفوري</span>
-                <span className="text-xl font-black text-purple-400 font-mono mt-1 block">
-                  تلقائي 100%
+                <span className="text-[11px] text-slate-400 block font-bold">آلية البطاقة المعتمدة</span>
+                <span className="text-base font-black text-purple-400 mt-1 block">
+                  {isStamps ? 'أختام رقمية ☕' : currentMode === 'tiers' ? 'مستويات VIP 👑' : currentMode === 'cashback' ? 'كاش باك 💳' : 'نقاط ومكافآت 🪙'}
                 </span>
-                <span className="text-[10px] text-slate-500">مع كل عملية بيع بالكاشير</span>
+                <span className="text-[10px] text-slate-500">تحديث لحظي بالكاشير</span>
               </div>
             </div>
 
-            {/* Configuration Form */}
+            {/* Configuration Form & Live Pass Preview */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
-              <div className="lg:col-span-7 space-y-4">
-                {/* 1. Lockscreen Message Template */}
+              <div className="lg:col-span-7 space-y-5">
+                
+                {/* 🎮 1. Primary Loyalty Mode Selector */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-xs font-black text-white flex items-center gap-2">
+                        <Gamepad2 className="w-4 h-4 text-amber-400" />
+                        <span>1. اختيار آلية ونمط بطاقة الولاء (Loyalty Mode)</span>
+                      </label>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        حدد نوع التجربة التي ستظهر لعملائك في محفظة أبل وقوقل:
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {/* Stamps Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateWalletSettings({
+                          loyalty_mode: 'stamps',
+                          lockscreen_message_template: 'أهلاً بك بالقرب من {store}! تفضل بزيارتنا ولديك {stamps} أختام ومكافأة بانتظارك ☕🎁',
+                        });
+                      }}
+                      className={`p-3 rounded-2xl border text-right transition flex flex-col justify-between space-y-2 ${
+                        isStamps
+                          ? 'bg-amber-500/15 border-amber-500/50 shadow-lg shadow-amber-500/10'
+                          : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="w-7 h-7 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-sm font-bold">
+                          ☕
+                        </span>
+                        {isStamps && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/30 text-amber-300 text-[10px] font-bold">
+                            نشط الآن ✓
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-white">بطاقة الأختام التراكمية</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          اشترِ X واحصل على 1 مجاناً (الخيار المفضل للكافيهات والمغاسل والصالونات)
+                        </p>
+                      </div>
+                    </button>
+
+                    {/* Points Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateWalletSettings({
+                          loyalty_mode: 'points',
+                          lockscreen_message_template: 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك 🎁',
+                        });
+                      }}
+                      className={`p-3 rounded-2xl border text-right transition flex flex-col justify-between space-y-2 ${
+                        currentMode === 'points'
+                          ? 'bg-purple-500/15 border-purple-500/50 shadow-lg shadow-purple-500/10'
+                          : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="w-7 h-7 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center text-sm font-bold">
+                          🪙
+                        </span>
+                        {currentMode === 'points' && (
+                          <span className="px-2 py-0.5 rounded-full bg-purple-500/30 text-purple-300 text-[10px] font-bold">
+                            نشط الآن ✓
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-white">نقاط ومكافآت الاسترداد</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          كل ريال = نقاط تتيح خصومات فورية أو استبدال بمنتجات (للمطاعم والتجزئة)
+                        </p>
+                      </div>
+                    </button>
+
+                    {/* Tiers Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateWalletSettings({ loyalty_mode: 'tiers' });
+                      }}
+                      className={`p-3 rounded-2xl border text-right transition flex flex-col justify-between space-y-2 ${
+                        currentMode === 'tiers'
+                          ? 'bg-emerald-500/15 border-emerald-500/50 shadow-lg shadow-emerald-500/10'
+                          : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="w-7 h-7 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-sm font-bold">
+                          👑
+                        </span>
+                        {currentMode === 'tiers' && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/30 text-emerald-300 text-[10px] font-bold">
+                            نشط الآن ✓
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-white">مستويات وفئات الـ VIP</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          تدرج فئات العضوية (برونزي، ذهبي، بلاتيني) مع مزايا دائمة (للعيادات والبراندات)
+                        </p>
+                      </div>
+                    </button>
+
+                    {/* Cashback Option */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateWalletSettings({ loyalty_mode: 'cashback' });
+                      }}
+                      className={`p-3 rounded-2xl border text-right transition flex flex-col justify-between space-y-2 ${
+                        currentMode === 'cashback'
+                          ? 'bg-blue-500/15 border-blue-500/50 shadow-lg shadow-blue-500/10'
+                          : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="w-7 h-7 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center text-sm font-bold">
+                          💳
+                        </span>
+                        {currentMode === 'cashback' && (
+                          <span className="px-2 py-0.5 rounded-full bg-blue-500/30 text-blue-300 text-[10px] font-bold">
+                            نشط الآن ✓
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-white">الرصيد المشحون مسبقاً</h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          شحن رصيد نقدي بالبطاقة مع استرداد مالي فوري (Cashback)
+                        </p>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* Stamps Customizer Sub-panel */}
+                  {isStamps && (
+                    <div className="mt-3 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-3 animate-fade-in">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                          <span>⚙️</span> تخصيص أختام البطاقة:
+                        </span>
+                        <span className="text-[11px] text-amber-400 font-mono font-bold">
+                          {currentWalletConfig.stamps_target || 6} أختام مطلوبة
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <span className="text-[10px] text-slate-300 block mb-1 font-bold">
+                            عدد الأختام للهدية:
+                          </span>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {[5, 6, 8, 10].map((num) => (
+                              <button
+                                key={num}
+                                type="button"
+                                onClick={() => updateWalletSettings({ stamps_target: num })}
+                                className={`py-1.5 rounded-lg text-xs font-bold transition border ${
+                                  (currentWalletConfig.stamps_target || 6) === num
+                                    ? 'bg-amber-500 text-slate-950 border-amber-400 font-black'
+                                    : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                                }`}
+                              >
+                                {num} أختام
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-300 block mb-1 font-bold">
+                            رمز وأيقونة الختم:
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {['☕', '✂️', '🚗', '🍔', '⭐', '🎁'].map((icon) => (
+                              <button
+                                key={icon}
+                                type="button"
+                                onClick={() => updateWalletSettings({ stamps_icon: icon })}
+                                className={`w-8 h-8 rounded-lg text-sm flex items-center justify-center transition border ${
+                                  (currentWalletConfig.stamps_icon || '☕') === icon
+                                    ? 'bg-amber-500 text-slate-950 border-amber-400 scale-105'
+                                    : 'bg-slate-900 text-slate-300 border-slate-800'
+                                }`}
+                              >
+                                {icon}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-slate-300 block mb-1 font-bold">
+                          مسمى الهدية المجانية عند اكتمال الأختام:
+                        </span>
+                        <input
+                          type="text"
+                          defaultValue={currentWalletConfig.stamps_reward_title || 'قهوة مجانية من اختيارك ☕'}
+                          onBlur={(e) => updateWalletSettings({ stamps_reward_title: e.target.value })}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none focus:border-amber-500 font-medium"
+                          placeholder="مثال: قهوة مجانية من اختيارك ☕"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 🎡 2. Gamification Add-ons Engine */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-xs font-black text-white flex items-center gap-2">
+                        <Trophy className="w-4 h-4 text-emerald-400" />
+                        <span>2. محرك الألعاب التفاعلية المصاحب (Gamification)</span>
+                      </label>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        ألعاب ذكية تزيد تفاعل العملاء وتكرار الزيارة وترتبط مباشرة بالبطاقة:
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    {/* Spin The Wheel */}
+                    <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-lg">🎡</span>
+                          <div>
+                            <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                              <span>عجلة الحظ التفاعلية (Spin the Wheel)</span>
+                              <span className="px-2 py-0.2 rounded-full bg-amber-500/20 text-amber-400 text-[9px] font-bold">
+                                فورية بالكاشير
+                              </span>
+                            </h4>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              تفتح للعميل بعد الشراء لربح جوائز وخصومات فورية تُحفظ ببطاقة أبل وقوقل.
+                            </p>
+                          </div>
+                        </div>
+
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(currentWalletConfig.enable_spin_wheel)}
+                            onChange={(e) => updateWalletSettings({ enable_spin_wheel: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                        </label>
+                      </div>
+
+                      {currentWalletConfig.enable_spin_wheel && (
+                        <div className="pt-2 border-t border-slate-800 flex items-center gap-1.5 overflow-x-auto text-[10px] text-slate-300 animate-fade-in">
+                          <span className="text-slate-500 shrink-0 font-bold">الجوائز المدمجة:</span>
+                          <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                            خصم 15% (35%)
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                            حلى مجاني 🍩 (20%)
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
+                            50 نقطة ⭐ (25%)
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 shrink-0">
+                            حظ أوفر 🎯 (20%)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Scratch & Win */}
+                    <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-lg">🎁</span>
+                          <div>
+                            <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                              <span>بطاقة اكشط واربح (Scratch & Win)</span>
+                              <span className="px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 text-[9px] font-bold">
+                                للمناسبات والأعياد
+                              </span>
+                            </h4>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              بطاقة حك رقمية باللمس تظهر للعملاء في المناسبات وتُسجل قسيمتها تلقائياً.
+                            </p>
+                          </div>
+                        </div>
+
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(currentWalletConfig.enable_scratch_card)}
+                            onChange={(e) => updateWalletSettings({ enable_scratch_card: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                        </label>
+                      </div>
+
+                      {currentWalletConfig.enable_scratch_card && (
+                        <div className="pt-2 border-t border-slate-800 animate-fade-in">
+                          <input
+                            type="text"
+                            defaultValue={currentWalletConfig.scratch_card_reward_title || 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦'}
+                            onBlur={(e) => updateWalletSettings({ scratch_card_reward_title: e.target.value })}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-emerald-500"
+                            placeholder="مسمى جائزة اكشط واربح"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Streaks */}
+                    <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-lg">🔥</span>
+                          <div>
+                            <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                              <span>تحدي سلسلة الزيارات (Visit Streaks)</span>
+                              <span className="px-2 py-0.2 rounded-full bg-blue-500/20 text-blue-400 text-[9px] font-bold">
+                                مضاعفة التكرار
+                              </span>
+                            </h4>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              تحفيز العميل لزيارة متكررة خلال الأسبوع للحصول على ترقية ومكافأة خاصة.
+                            </p>
+                          </div>
+                        </div>
+
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(currentWalletConfig.enable_streaks)}
+                            onChange={(e) => updateWalletSettings({ enable_streaks: e.target.checked })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Lockscreen Message Template */}
                 <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                  <label className="text-xs font-black text-white block">
-                    نص إشعار شاشة القفل التلقائي عند اقتراب العميل من الفرع 🔔
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-white block">
+                      3. نص إشعار شاشة القفل التلقائي عند اقتراب العميل من الفرع 🔔
+                    </label>
+                  </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    هذا النص سيظهر على شاشة قفل الآيفون تلقائياً عندما يقترب العميل من أي فرع من فروعك.
-                    يمكنك استخدام المتغيرات <code className="text-amber-400 bg-slate-900 px-1 py-0.5 rounded">{'{store}'}</code> و <code className="text-amber-400 bg-slate-900 px-1 py-0.5 rounded">{'{points}'}</code>.
+                    يظهر تلقائياً على شاشة قفل هاتف العميل عند اقترابه من أي فرع لك. يدعم المتغيرات <code className="text-amber-400 bg-slate-900 px-1 py-0.5 rounded">{'{store}'}</code> و <code className="text-amber-400 bg-slate-900 px-1 py-0.5 rounded">{'{points}'}</code> و <code className="text-amber-400 bg-slate-900 px-1 py-0.5 rounded">{'{stamps}'}</code>.
                   </p>
+
+                  {/* Preset Quick Chips */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const t = 'أهلاً بك بالقرب من {store}! لديك {stamps} أختام ومكافأتك بانتظارك ☕🎁';
+                        updateWalletSettings({ lockscreen_message_template: t });
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-300 border border-slate-800 shrink-0 font-bold"
+                    >
+                      ☕ نص الأختام
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const t = 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك 🎁';
+                        updateWalletSettings({ lockscreen_message_template: t });
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-300 border border-slate-800 shrink-0 font-bold"
+                    >
+                      🪙 نص النقاط
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const t = 'أهلاً بك بالقرب من {store}! تفضل بالزيارة ودوّر عجلة الحظ لربح جوائز فورية 🎡';
+                        updateWalletSettings({ lockscreen_message_template: t });
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-300 border border-slate-800 shrink-0 font-bold"
+                    >
+                      🎡 نص عجلة الحظ
+                    </button>
+                  </div>
+
                   <textarea
                     rows={2}
-                    defaultValue={currentWalletConfig.lockscreen_message_template}
-                    onBlur={(e) => {
-                      WalletPassService.saveWalletConfig(store.id, {
-                        lockscreen_message_template: e.target.value,
-                      });
-                    }}
+                    value={currentWalletConfig.lockscreen_message_template}
+                    onChange={(e) => updateWalletSettings({ lockscreen_message_template: e.target.value })}
                     className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-white outline-none focus:border-teal-500 font-medium"
-                    placeholder="مثال: أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁"
+                    placeholder="مثال: أهلاً بك بالقرب من {store}! تفضل بالزيارة ولديك مكافآت بانتظارك ☕🎁"
                   />
                 </div>
 
-                {/* 2. Proximity Radius Setting */}
+                {/* 4. Proximity Radius Setting */}
                 <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
                       <label className="text-xs font-black text-white block">
-                        مسافة استشعار القرب الجغرافي (Geofence Trigger Radius)
+                        4. مسافة استشعار القرب الجغرافي (Geofence Trigger Radius)
                       </label>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        المسافة التي يبدأ عندها الهاتف بإظهار البطاقة للعميل على شاشة القفل.
+                        المسافة المحيطة بالفرع التي يطلق الهاتف عندها تنبيه البطاقة لشاشة القفل.
                       </p>
                     </div>
                     <span className="text-xs font-mono font-black text-teal-400 bg-teal-500/10 px-2.5 py-1 rounded-xl border border-teal-500/30">
@@ -9528,12 +9934,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       <button
                         key={meters}
                         type="button"
-                        onClick={() => {
-                          WalletPassService.saveWalletConfig(store.id, {
-                            proximity_radius_meters: meters,
-                          });
-                          setStore({ ...store });
-                        }}
+                        onClick={() => updateWalletSettings({ proximity_radius_meters: meters })}
                         className={`py-2 rounded-xl text-xs font-bold border transition ${
                           (currentWalletConfig.proximity_radius_meters || 300) === meters
                             ? 'bg-teal-500 text-slate-950 border-teal-400 font-black'
@@ -9546,43 +9947,55 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </div>
                 </div>
 
-                {/* 3. Card Styling & Colors */}
+                {/* 5. Card Styling & Colors */}
                 <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-                  <label className="text-xs font-black text-white block">
-                    ألوان وهوية بطاقة المحفظة (Apple & Google Pass)
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-white block">
+                      5. ألوان وهوية بطاقة المحفظة (Apple & Google Pass)
+                    </label>
+                    <div className="flex items-center gap-1 text-[10px]">
+                      <span className="text-slate-400">قوالب سريعة:</span>
+                      <button
+                        type="button"
+                        onClick={() => updateWalletSettings({ background_color: '#110E05', label_color: '#E3B94A', foreground_color: '#FFFFFF' })}
+                        className="px-2 py-0.5 rounded bg-slate-900 text-amber-300 border border-slate-800 hover:border-amber-500/40"
+                      >
+                        👑 ذهبي فاخر
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateWalletSettings({ background_color: '#06281E', label_color: '#10B981', foreground_color: '#FFFFFF' })}
+                        className="px-2 py-0.5 rounded bg-slate-900 text-emerald-300 border border-slate-800 hover:border-emerald-500/40"
+                      >
+                        ☕ كافيه زمردي
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <span className="text-[10px] text-slate-400 block mb-1">خلفية البطاقة</span>
                       <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800">
                         <input
                           type="color"
-                          defaultValue={currentWalletConfig.background_color || '#110E05'}
-                          onChange={(e) => {
-                            WalletPassService.saveWalletConfig(store.id, {
-                              background_color: e.target.value,
-                            });
-                          }}
+                          value={currentWalletConfig.background_color || '#110E05'}
+                          onChange={(e) => updateWalletSettings({ background_color: e.target.value })}
                           className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent"
                         />
-                        <span className="text-[11px] font-mono text-slate-300">داكن فاخر</span>
+                        <span className="text-[11px] font-mono text-slate-300">{currentWalletConfig.background_color || '#110E05'}</span>
                       </div>
                     </div>
 
                     <div>
-                      <span className="text-[10px] text-slate-400 block mb-1">لون النقاط والشعارات</span>
+                      <span className="text-[10px] text-slate-400 block mb-1">لون الأختام والشعارات</span>
                       <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800">
                         <input
                           type="color"
-                          defaultValue={currentWalletConfig.label_color || '#E3B94A'}
-                          onChange={(e) => {
-                            WalletPassService.saveWalletConfig(store.id, {
-                              label_color: e.target.value,
-                            });
-                          }}
+                          value={currentWalletConfig.label_color || '#E3B94A'}
+                          onChange={(e) => updateWalletSettings({ label_color: e.target.value })}
                           className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent"
                         />
-                        <span className="text-[11px] font-mono text-amber-400">ذهبي ملكي</span>
+                        <span className="text-[11px] font-mono text-amber-400">{currentWalletConfig.label_color || '#E3B94A'}</span>
                       </div>
                     </div>
 
@@ -9591,29 +10004,31 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800">
                         <input
                           type="color"
-                          defaultValue={currentWalletConfig.foreground_color || '#FFFFFF'}
-                          onChange={(e) => {
-                            WalletPassService.saveWalletConfig(store.id, {
-                              foreground_color: e.target.value,
-                            });
-                          }}
+                          value={currentWalletConfig.foreground_color || '#FFFFFF'}
+                          onChange={(e) => updateWalletSettings({ foreground_color: e.target.value })}
                           className="w-6 h-6 rounded cursor-pointer border-0 bg-transparent"
                         />
-                        <span className="text-[11px] font-mono text-white">أبيض ناصع</span>
+                        <span className="text-[11px] font-mono text-white">{currentWalletConfig.foreground_color || '#FFFFFF'}</span>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Right Column: Live Mockup Preview */}
+              {/* Right Column: Dynamic Live Apple & Google Pass Mockup */}
               <div className="lg:col-span-5 space-y-4">
-                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-3">
-                  <span className="text-xs font-black text-slate-400 block">
-                    معاينة بطاقة Apple Wallet لمتجرك 
-                  </span>
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-3 sticky top-6">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-slate-300 flex items-center gap-1.5">
+                      <span></span>
+                      <span>معاينة حية لبطاقة محفظة الآيفون</span>
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                      مباشر ومحدث
+                    </span>
+                  </div>
 
-                  {/* Card Silhouette */}
+                  {/* Card Silhouette Container */}
                   <div
                     className="w-full rounded-2xl p-4 text-right shadow-2xl border transition relative overflow-hidden"
                     style={{
@@ -9621,6 +10036,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       borderColor: `${currentWalletConfig.label_color || '#E3B94A'}40`,
                     }}
                   >
+                    {/* Header Strip */}
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 rounded-full bg-black/60 border border-white/20 flex items-center justify-center text-xs font-black text-amber-400">
@@ -9628,32 +10044,107 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         </div>
                         <div>
                           <h4 className="text-xs font-black text-white">{store.name}</h4>
-                          <span className="text-[9px] text-white/60">بطاقة الولاء والمكافآت</span>
+                          <span className="text-[9px] text-white/60">
+                            {isStamps ? 'بطاقة الأختام والمكافآت ☕' : 'بطاقة الولاء والمكافآت'}
+                          </span>
                         </div>
                       </div>
-                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                        VIP GOLD
+                      <span
+                        className="text-[9px] font-bold px-2 py-0.5 rounded-full border"
+                        style={{
+                          backgroundColor: `${currentWalletConfig.label_color || '#E3B94A'}25`,
+                          color: currentWalletConfig.label_color || '#E3B94A',
+                          borderColor: `${currentWalletConfig.label_color || '#E3B94A'}50`,
+                        }}
+                      >
+                        {isStamps ? `${currentWalletConfig.stamps_target || 6} أختام` : 'VIP GOLD'}
                       </span>
                     </div>
 
-                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 mb-3 flex items-center justify-between">
-                      <div>
-                        <span className="text-[9px] text-white/70 block">رصيد النقاط</span>
-                        <span className="text-xl font-black font-mono text-amber-400">180 نقطة</span>
+                    {/* Dynamic Pass Body depending on mode */}
+                    {isStamps ? (
+                      /* ☕ Stamps Matrix View */
+                      <div className="p-3 rounded-xl bg-black/45 border border-white/10 mb-3 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-white/80">
+                            الأختام المجمعة: <strong className="text-amber-400">4 من {currentWalletConfig.stamps_target || 6}</strong>
+                          </span>
+                          <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/20 px-2 py-0.5 rounded-full">
+                            باقي 2 للهدية!
+                          </span>
+                        </div>
+
+                        {/* Stamp Cups Grid */}
+                        <div className="grid grid-cols-6 gap-1.5 py-1">
+                          {Array.from({ length: currentWalletConfig.stamps_target || 6 }).map((_, idx) => {
+                            const isStamped = idx < 4; // Simulated 4 stamps
+                            return (
+                              <div
+                                key={idx}
+                                className={`h-9 rounded-lg flex items-center justify-center text-sm font-bold border transition ${
+                                  isStamped
+                                    ? 'bg-amber-500/25 border-amber-400/60 shadow-sm scale-105'
+                                    : 'bg-white/5 border-white/10 text-white/20'
+                                }`}
+                              >
+                                {isStamped ? (currentWalletConfig.stamps_icon || '☕') : idx + 1}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="text-[9px] text-white/70 pt-1 border-t border-white/10 flex items-center justify-between">
+                          <span>الهدية القادمة:</span>
+                          <span className="font-bold text-amber-300">
+                            {currentWalletConfig.stamps_reward_title || 'قهوة مجانية من اختيارك ☕'}
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-left">
-                        <span className="text-[9px] text-white/70 block">اسم العميل</span>
-                        <span className="text-xs font-bold text-white">عبدالله الشمري</span>
+                    ) : (
+                      /* 🪙 Standard Points View */
+                      <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 mb-3 flex items-center justify-between">
+                        <div>
+                          <span className="text-[9px] text-white/70 block">
+                            {currentMode === 'cashback' ? 'الرصيد المالي' : 'رصيد النقاط'}
+                          </span>
+                          <span className="text-xl font-black font-mono text-amber-400">
+                            {currentMode === 'cashback' ? '50.00 ر.س' : '180 نقطة'}
+                          </span>
+                        </div>
+                        <div className="text-left">
+                          <span className="text-[9px] text-white/70 block">اسم العميل</span>
+                          <span className="text-xs font-bold text-white">عبدالله الشمري</span>
+                        </div>
                       </div>
+                    )}
+
+                    {/* Gamification Pills on Pass */}
+                    <div className="flex flex-wrap items-center gap-1 mb-2">
+                      {currentWalletConfig.enable_spin_wheel && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[8px] font-bold border border-amber-500/30">
+                          🎡 عجلة الحظ متاحة
+                        </span>
+                      )}
+                      {currentWalletConfig.enable_scratch_card && (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[8px] font-bold border border-emerald-500/30">
+                          🎁 اكشط واربح مفعلة
+                        </span>
+                      )}
+                      {currentWalletConfig.enable_streaks && (
+                        <span className="px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-300 text-[8px] font-bold border border-blue-500/30">
+                          🔥 سلسلة 3 زيارات
+                        </span>
+                      )}
                     </div>
 
+                    {/* Pass Footer */}
                     <div className="flex items-center justify-between text-[9px] text-white/60 pt-1 border-t border-white/10">
-                      <span>📍 إشعار شاشة القفل نشط</span>
-                      <span className="font-mono">VIP-966050</span>
+                      <span>📍 مستشعر شاشة القفل نشط</span>
+                      <span className="font-mono">RADAR-{store.id.slice(0, 4)}-966</span>
                     </div>
                   </div>
 
-                  {/* Lockscreen Preview Simulation */}
+                  {/* Lockscreen Notification Simulation */}
                   <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-right space-y-1">
                     <div className="flex items-center justify-between text-[10px] text-slate-400">
                       <span className="font-bold text-white flex items-center gap-1">
@@ -9665,9 +10156,34 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     <p className="text-[11px] text-slate-300 font-medium">
                       {currentWalletConfig.lockscreen_message_template
                         .replace('{store}', store.name)
-                        .replace('{points}', '180')}
+                        .replace('{points}', '180')
+                        .replace('{stamps}', '4')}
                     </p>
                   </div>
+
+                  {/* Test Download Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const demoCustomer: any = {
+                        id: 'demo_cust_1',
+                        store_id: store.id,
+                        phone: '0500000000',
+                        name: 'عميل تجريبي',
+                        wallet_balance: 4,
+                      };
+                      WalletPassService.downloadPassFile(store, demoCustomer, null, branches);
+                      confetti({
+                        particleCount: 80,
+                        spread: 60,
+                        origin: { y: 0.7 },
+                      });
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/10 flex items-center justify-center gap-2 transition"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>تحميل واختبار ملف البطاقة الرقمية (.pkpass) 📲</span>
+                  </button>
                 </div>
               </div>
             </div>

@@ -253,22 +253,83 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Main Points Block */}
-                  <div className="my-2 p-3.5 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] text-white/70 block font-bold">رصيد النقاط الحالي</span>
-                      <div className="text-3xl font-black font-mono text-white flex items-baseline gap-1 mt-0.5">
-                        <span style={{ color: brandColor }}>{customerPoints.toLocaleString()}</span>
-                        <span className="text-xs font-bold text-white/80">نقطة</span>
+                  {/* Main Points / Stamps Block */}
+                  {config.loyalty_mode === 'stamps' ? (
+                    <div className="my-2 p-3.5 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-white/70 block font-bold">
+                          الأختام المجمعة: <strong className="text-amber-400 font-mono">{(customerPoints || 0) % (config.stamps_target || 6)} من {config.stamps_target || 6}</strong>
+                        </span>
+                        <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full">
+                          {((config.stamps_target || 6) - ((customerPoints || 0) % (config.stamps_target || 6))) === 0 ? 'مكتملة! 🎉' : `باقي ${(config.stamps_target || 6) - ((customerPoints || 0) % (config.stamps_target || 6))} أختام للهدية`}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-6 gap-1.5 py-1">
+                        {Array.from({ length: config.stamps_target || 6 }).map((_, idx) => {
+                          const isStamped = idx < ((customerPoints || 0) % (config.stamps_target || 6));
+                          return (
+                            <div
+                              key={idx}
+                              className={`h-8 rounded-lg flex items-center justify-center text-sm font-bold border transition ${
+                                isStamped
+                                  ? 'bg-amber-500/25 border-amber-400/60 shadow-sm'
+                                  : 'bg-white/5 border-white/10 text-white/20'
+                              }`}
+                            >
+                              {isStamped ? (config.stamps_icon || '☕') : idx + 1}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="text-[9px] text-white/70 pt-1 border-t border-white/10 flex items-center justify-between">
+                        <span>الهدية القادمة:</span>
+                        <span className="font-bold text-amber-300 truncate max-w-[170px]">
+                          {config.stamps_reward_title || 'قهوة مجانية ☕'}
+                        </span>
                       </div>
                     </div>
+                  ) : (
+                    <div className="my-2 p-3.5 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] text-white/70 block font-bold">
+                          {config.loyalty_mode === 'cashback' ? 'الرصيد المالي المتاح' : 'رصيد النقاط الحالي'}
+                        </span>
+                        <div className="text-3xl font-black font-mono text-white flex items-baseline gap-1 mt-0.5">
+                          <span style={{ color: brandColor }}>
+                            {config.loyalty_mode === 'cashback' ? `${customerPoints.toLocaleString()} ر.س` : customerPoints.toLocaleString()}
+                          </span>
+                          {config.loyalty_mode !== 'cashback' && <span className="text-xs font-bold text-white/80">نقطة</span>}
+                        </div>
+                      </div>
 
-                    <div className="text-left">
-                      <span className="text-[10px] text-white/70 block font-bold">اسم العضو</span>
-                      <span className="text-xs font-black text-white block mt-0.5 truncate max-w-[120px]">
-                        {customer?.name || 'عميل مميز'}
-                      </span>
+                      <div className="text-left">
+                        <span className="text-[10px] text-white/70 block font-bold">اسم العضو</span>
+                        <span className="text-xs font-black text-white block mt-0.5 truncate max-w-[120px]">
+                          {customer?.name || 'عميل مميز'}
+                        </span>
+                      </div>
                     </div>
+                  )}
+
+                  {/* Active Gamification Badges */}
+                  <div className="flex flex-wrap items-center gap-1">
+                    {config.enable_spin_wheel && (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[8px] font-bold border border-amber-500/30">
+                        🎡 عجلة الحظ متاحة
+                      </span>
+                    )}
+                    {config.enable_scratch_card && (
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[8px] font-bold border border-emerald-500/30">
+                        🎁 اكشط واربح مفعلة
+                      </span>
+                    )}
+                    {config.enable_streaks && (
+                      <span className="px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-300 text-[8px] font-bold border border-blue-500/30">
+                        🔥 سلسلة 3 زيارات
+                      </span>
+                    )}
                   </div>
 
                   {/* High Contrast Barcode / QR Section for Cashier */}

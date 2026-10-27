@@ -1463,8 +1463,39 @@ export interface FinancialPlatformConfig {
 // 📱 بطاقات المحفظة الرقمية وإشعارات القرب الجغرافي
 // (Apple Wallet & Google Wallet Passes & Proximity Radar)
 // ==========================================
+export type PassLoyaltyMode = 'stamps' | 'points' | 'tiers' | 'cashback';
+
+export interface SpinWheelPrize {
+  id: string;
+  label: string;
+  reward_type: 'discount_percent' | 'free_item' | 'points' | 'no_luck';
+  reward_value: number | string;
+  probability_weight: number;
+  color?: string;
+}
+
 export interface StoreWalletPassConfig {
   enabled: boolean;
+  loyalty_mode?: PassLoyaltyMode; // Default: 'points' or 'stamps'
+
+  // Stamps Configuration (Buy X Get 1 Free)
+  stamps_target?: number; // e.g. 6 (6th is free)
+  stamps_reward_title?: string; // e.g. 'قهوة مجانية من اختيارك ☕'
+  stamps_icon?: string; // '☕', '✂️', '🚗', '🍔', '⭐', '🎁'
+
+  // Gamification Add-ons
+  enable_spin_wheel?: boolean; // عجلة الحظ
+  spin_wheel_prizes?: SpinWheelPrize[];
+  spin_wheel_trigger_min_spend?: number; // e.g. 30 SAR
+
+  enable_scratch_card?: boolean; // اكشط واربح
+  scratch_card_reward_title?: string; // e.g. 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦'
+
+  enable_streaks?: boolean; // سلسلة الزيارات المتتالية
+  streak_target_days?: number; // e.g. 3 days
+  streak_reward_title?: string; // e.g. 'مشروب مجاني لإكمال السلسلة 🔥'
+
+  // Styling & Geofence
   background_color: string; // e.g. '#110e05' or '#1e293b'
   foreground_color: string; // e.g. '#ffffff'
   label_color: string; // e.g. '#e3b94a'

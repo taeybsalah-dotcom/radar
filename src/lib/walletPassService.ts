@@ -1,4 +1,5 @@
-import { Store, Customer, Tier, StoreBranch, StoreWalletPassConfig, ProximityDistanceResult, WalletDeviceRegistration } from '../types';
+import { Store, Customer, Tier, StoreBranch, StoreWalletPassConfig, ProximityDistanceResult, WalletDeviceRegistration, SpinWheelPrize } from '../types';
+import { getSupabaseClient, LoyaltyService } from './supabase';
 
 const WALLET_CONFIG_STORAGE_KEY_PREFIX = 'radar_wallet_pass_config_';
 const WALLET_DEVICES_STORAGE_KEY_PREFIX = 'radar_wallet_device_registrations_';
@@ -10,22 +11,97 @@ const DEFAULT_FALLBACK_BRANCHES: { name: string; lat: number; lng: number }[] = 
   { name: 'فرع بوليفارد سيتي', lat: 24.770853, lng: 46.602511 }, // Boulevard Riyadh
 ];
 
+export const DEFAULT_SPIN_WHEEL_PRIZES: SpinWheelPrize[] = [
+  { id: 'p1', label: 'خصم 15% على طلبك القادم', reward_type: 'discount_percent', reward_value: 15, probability_weight: 35, color: '#F59E0B' },
+  { id: 'p2', label: 'مشروب أو حلى مجاني 🍩', reward_type: 'free_item', reward_value: 'حلى مجاني', probability_weight: 20, color: '#10B981' },
+  { id: 'p3', label: '50 نقطة مكافأة إضافية ⭐', reward_type: 'points', reward_value: 50, probability_weight: 25, color: '#6366F1' },
+  { id: 'p4', label: 'حظ أوفر في زيارتك القادمة 🎯', reward_type: 'no_luck', reward_value: 0, probability_weight: 20, color: '#64748B' },
+];
+
 export class WalletPassService {
   /**
-   * جلب إعدادات بطاقة المحفظة للمتجر
+   * جلب إعدادات بطاقة المحفظة للمتجر (سحابياً ومحلياً مع القيم الافتراضية الذكية)
    */
   static getWalletConfig(store: Store): StoreWalletPassConfig {
     const defaultColor = store.secondary_color || '#E3B94A';
     const bg = store.primary_color || '#110E05';
 
+    // Auto-detect if store is a Cafe or Restaurant
+    const isCafe = /كافيه|مقهى|قهوة|هاف مليون|half million|cafe|coffee|مطعم|restaurant/i.test(store.name || '');
+
+    // 1. Check embedded store fulfillment settings
+    const embedded = (store as any)?.fulfillment_settings?.wallet_pass_config;
+    if (embedded && typeof embedded === 'object') {
+      return {
+        enabled: embedded.enabled ?? true,
+        loyalty_mode: embedded.loyalty_mode || (isCafe ? 'stamps' : 'points'),
+        stamps_target: embedded.stamps_target || 6,
+        stamps_reward_title: embedded.stamps_reward_title || 'قهوة مجانية من اختيارك ☕',
+        stamps_icon: embedded.stamps_icon || '☕',
+        enable_spin_wheel: Boolean(embedded.enable_spin_wheel),
+        spin_wheel_prizes: embedded.spin_wheel_prizes?.length ? embedded.spin_wheel_prizes : DEFAULT_SPIN_WHEEL_PRIZES,
+        spin_wheel_trigger_min_spend: embedded.spin_wheel_trigger_min_spend || 0,
+        enable_scratch_card: Boolean(embedded.enable_scratch_card),
+        scratch_card_reward_title: embedded.scratch_card_reward_title || 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦',
+        enable_streaks: Boolean(embedded.enable_streaks),
+        streak_target_days: embedded.streak_target_days || 3,
+        streak_reward_title: embedded.streak_reward_title || 'مشروب مجاني لإكمال السلسلة 🔥',
+        background_color: embedded.background_color || bg,
+        foreground_color: embedded.foreground_color || '#FFFFFF',
+        label_color: embedded.label_color || defaultColor,
+        lockscreen_message_template: embedded.lockscreen_message_template || 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁',
+        proximity_radius_meters: embedded.proximity_radius_meters || 300,
+        apple_pass_type_id: embedded.apple_pass_type_id || `pass.com.radar.${store.slug || store.id}`,
+        google_issuer_id: embedded.google_issuer_id || `radar_${store.slug || store.id}`,
+      };
+    }
+
+    // 2. Check localStorage cache
     try {
       const key = `${WALLET_CONFIG_STORAGE_KEY_PREFIX}${store.id}`;
       const raw = localStorage.getItem(key);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return {
+          enabled: parsed.enabled ?? true,
+          loyalty_mode: parsed.loyalty_mode || (isCafe ? 'stamps' : 'points'),
+          stamps_target: parsed.stamps_target || 6,
+          stamps_reward_title: parsed.stamps_reward_title || 'قهوة مجانية من اختيارك ☕',
+          stamps_icon: parsed.stamps_icon || '☕',
+          enable_spin_wheel: Boolean(parsed.enable_spin_wheel),
+          spin_wheel_prizes: parsed.spin_wheel_prizes?.length ? parsed.spin_wheel_prizes : DEFAULT_SPIN_WHEEL_PRIZES,
+          spin_wheel_trigger_min_spend: parsed.spin_wheel_trigger_min_spend || 0,
+          enable_scratch_card: Boolean(parsed.enable_scratch_card),
+          scratch_card_reward_title: parsed.scratch_card_reward_title || 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦',
+          enable_streaks: Boolean(parsed.enable_streaks),
+          streak_target_days: parsed.streak_target_days || 3,
+          streak_reward_title: parsed.streak_reward_title || 'مشروب مجاني لإكمال السلسلة 🔥',
+          background_color: parsed.background_color || bg,
+          foreground_color: parsed.foreground_color || '#FFFFFF',
+          label_color: parsed.label_color || defaultColor,
+          lockscreen_message_template: parsed.lockscreen_message_template || 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁',
+          proximity_radius_meters: parsed.proximity_radius_meters || 300,
+          apple_pass_type_id: parsed.apple_pass_type_id || `pass.com.radar.${store.slug || store.id}`,
+          google_issuer_id: parsed.google_issuer_id || `radar_${store.slug || store.id}`,
+        };
+      }
     } catch {}
 
+    // 3. Fallback defaults
     return {
       enabled: true,
+      loyalty_mode: isCafe ? 'stamps' : 'points',
+      stamps_target: 6,
+      stamps_reward_title: 'قهوة مجانية من اختيارك ☕',
+      stamps_icon: '☕',
+      enable_spin_wheel: false,
+      spin_wheel_prizes: DEFAULT_SPIN_WHEEL_PRIZES,
+      spin_wheel_trigger_min_spend: 0,
+      enable_scratch_card: false,
+      scratch_card_reward_title: 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦',
+      enable_streaks: false,
+      streak_target_days: 3,
+      streak_reward_title: 'مشروب مجاني لإكمال السلسلة 🔥',
       background_color: bg.startsWith('#') ? bg : '#110E05',
       foreground_color: '#FFFFFF',
       label_color: defaultColor.startsWith('#') ? defaultColor : '#E3B94A',
@@ -37,21 +113,78 @@ export class WalletPassService {
   }
 
   /**
-   * حفظ وتحديث إعدادات بطاقة المحفظة
+   * حفظ وتحديث إعدادات بطاقة المحفظة (حفظ محلي فوري + مزامنة سحابية في Supabase)
    */
   static saveWalletConfig(storeId: string, partial: Partial<StoreWalletPassConfig>): StoreWalletPassConfig {
-    const current = this.getWalletConfig({ id: storeId } as any);
+    const current = this.getWalletConfig({ id: storeId, name: '' } as any);
     const updated: StoreWalletPassConfig = {
       ...current,
       ...partial,
       updated_at: new Date().toISOString(),
     };
+
+    // 1. Fast synchronous local storage update
     try {
       localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(updated));
     } catch (e) {
-      console.warn('Failed to save wallet pass config:', e);
+      console.warn('Failed to save wallet pass config locally:', e);
     }
+
+    // 2. Asynchronous Cloud Sync with Supabase (Dual-write redundancy)
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      // A. Write to dedicated store_wallet_pass_configs table
+      (supabase.from as any)('store_wallet_pass_configs')
+        .upsert({
+          store_id: storeId,
+          ...updated,
+          updated_at: new Date().toISOString(),
+        })
+        .then(({ error }: any) => {
+          if (error) {
+            console.warn('store_wallet_pass_configs sync notice:', error.message);
+          }
+        })
+        .catch(() => {});
+
+      // B. Write to stores.fulfillment_settings.wallet_pass_config as backup
+      LoyaltyService.getStoreById(storeId).then((storeData) => {
+        if (storeData) {
+          const prevFulfillment = (storeData as any).fulfillment_settings || {};
+          LoyaltyService.updateStoreSettings(storeId, {
+            fulfillment_settings: {
+              ...prevFulfillment,
+              wallet_pass_config: updated,
+            },
+          } as any).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
     return updated;
+  }
+
+  /**
+   * جلب الإعدادات من السحابة مباشرة (Supabase)
+   */
+  static async fetchCloudWalletConfig(storeId: string): Promise<StoreWalletPassConfig | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    try {
+      const { data, error } = await (supabase.from as any)('store_wallet_pass_configs')
+        .select('*')
+        .eq('store_id', storeId)
+        .limit(1)
+        .maybeSingle();
+
+      if (data && !error) {
+        localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(data));
+        return data as StoreWalletPassConfig;
+      }
+    } catch (e) {
+      console.warn('Failed to fetch store_wallet_pass_configs from cloud:', e);
+    }
+    return null;
   }
 
   /**
@@ -173,6 +306,120 @@ export class WalletPassService {
         .replace('{points}', String(customer.wallet_balance || 0)),
     }));
 
+    // Calculate primary & header fields depending on loyalty mode
+    const isStamps = config.loyalty_mode === 'stamps';
+    const stampsTarget = config.stamps_target || 6;
+    const currentStamps = (customer.wallet_balance || 0) % stampsTarget;
+    const stampsIcon = config.stamps_icon || '☕';
+
+    const headerFields = isStamps
+      ? [
+          {
+            key: 'reward',
+            label: 'الهدية القادمة',
+            value: config.stamps_reward_title || 'قهوة مجانية ☕',
+          },
+        ]
+      : [
+          {
+            key: 'tier',
+            label: 'الفئة',
+            value: tier?.tier_name ? `VIP ${tier.tier_name}` : 'عضوية VIP',
+          },
+        ];
+
+    const primaryFields = isStamps
+      ? [
+          {
+            key: 'stamps',
+            label: 'الأختام المجمعة',
+            value: `${currentStamps} من ${stampsTarget} ${stampsIcon}`,
+            changeMessage: 'تم إضافة ختم جديد إلى بطاقتك! %@ 🎉',
+          },
+        ]
+      : [
+          {
+            key: 'balance',
+            label: config.loyalty_mode === 'cashback' ? 'الرصيد المالي' : 'رصيد النقاط',
+            value: config.loyalty_mode === 'cashback' ? `${customer.wallet_balance || 0} ر.س` : (customer.wallet_balance || 0),
+            changeMessage: 'تم تحديث رصيدك إلى %@ 🎉',
+          },
+        ];
+
+    const auxiliaryFields = [
+      {
+        key: 'status',
+        label: 'حالة الحساب',
+        value: 'نشط ومفعل ✓',
+      },
+      isStamps
+        ? {
+            key: 'stampsLeft',
+            label: 'المتبقي للهدية',
+            value: `${stampsTarget - currentStamps} زيارات`,
+          }
+        : {
+            key: 'pointsPerRiyal',
+            label: 'معدل الكسب',
+            value: `${store.points_per_riyal || 1} نقطة / ﷼`,
+          },
+    ];
+
+    const backFields: any[] = [
+      {
+        key: 'storeName',
+        label: 'اسم المتجر',
+        value: store.name,
+      },
+      {
+        key: 'phone',
+        label: 'رقم التواصل والدعم',
+        value: store.phone || '+966577371780',
+      },
+    ];
+
+    if (config.enable_spin_wheel) {
+      backFields.push({
+        key: 'spinWheel',
+        label: '🎡 عجلة الحظ التفاعلية',
+        value: 'متاحة للتدوير في محفظتك الرقمية بعد كل عملية شراء للكاشير لربح جوائز وخصومات فورية!',
+      });
+    }
+
+    if (config.enable_scratch_card) {
+      backFields.push({
+        key: 'scratchCard',
+        label: '🎁 بطاقة اكشط واربح',
+        value: config.scratch_card_reward_title || 'مكافآت المناسبات والأعياد متاحة في محفظتك الرقمية.',
+      });
+    }
+
+    if (config.enable_streaks) {
+      backFields.push({
+        key: 'streaks',
+        label: '🔥 تحدي سلسلة الزيارات',
+        value: `قم بزيارتنا ${config.streak_target_days || 3} مرات متتالية لكسب: ${config.streak_reward_title || 'مكافأة خاصة'}!`,
+      });
+    }
+
+    backFields.push(
+      {
+        key: 'geofenceInfo',
+        label: 'تنبيهات القرب الجغرافي',
+        value: 'تظهر هذه البطاقة تلقائياً على شاشة القفل عند اقترابك من أي من فروعنا لسرعة كسب واستبدال النقاط دون فتح الهاتف.',
+      },
+      {
+        key: 'terms',
+        label: 'الشروط والأحكام',
+        value: 'النقاط والأختام مخصصة للاستخدام الشخصي وغير قابلة للتحويل النقدي. تطبق شروط برنامج الولاء.',
+      },
+      {
+        key: 'poweredBy',
+        label: 'النظام المشغل',
+        value: 'منصة الولاء والمدفوعات السحابية • radar.taeybsalah.workers.dev',
+      }
+    );
+
     return {
       formatVersion: 1,
       passTypeIdentifier: config.apple_pass_type_id || `pass.com.radar.${store.slug || store.id}`,
@@ -185,21 +432,8 @@ export class WalletPassService {
       backgroundColor: config.background_color || 'rgb(17, 14, 5)',
       labelColor: config.label_color || 'rgb(227, 185, 74)',
       storeCard: {
-        headerFields: [
-          {
-            key: 'tier',
-            label: 'الفئة',
-            value: tier?.tier_name ? `VIP ${tier.tier_name}` : 'عضوية VIP',
-          },
-        ],
-        primaryFields: [
-          {
-            key: 'balance',
-            label: 'رصيد النقاط',
-            value: customer.wallet_balance || 0,
-            changeMessage: 'تم تحديث رصيدك إلى %@ نقطة 🎉',
-          },
-        ],
+        headerFields,
+        primaryFields,
         secondaryFields: [
           {
             key: 'customerName',
@@ -212,45 +446,8 @@ export class WalletPassService {
             value: customer.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-0001',
           },
         ],
-        auxiliaryFields: [
-          {
-            key: 'pointsPerRiyal',
-            label: 'معدل الكسب',
-            value: `${store.points_per_riyal || 1} نقطة / ﷼`,
-          },
-          {
-            key: 'status',
-            label: 'حالة الحساب',
-            value: 'نشط ومفعل ✓',
-          },
-        ],
-        backFields: [
-          {
-            key: 'storeName',
-            label: 'اسم المتجر',
-            value: store.name,
-          },
-          {
-            key: 'phone',
-            label: 'رقم التواصل والدعم',
-            value: store.phone || '+966577371780',
-          },
-          {
-            key: 'geofenceInfo',
-            label: 'تنبيهات القرب الجغرافي',
-            value: 'تظهر هذه البطاقة تلقائياً على شاشة القفل عند اقترابك من أي من فروعنا لسرعة كسب واستبدال النقاط دون فتح الهاتف.',
-          },
-          {
-            key: 'terms',
-            label: 'الشروط والأحكام',
-            value: 'النقاط مخصصة للاستخدام الشخصي وغير قابلة للتحويل النقدي. تطبق شروط برنامج الولاء.',
-          },
-          {
-            key: 'poweredBy',
-            label: 'النظام المشغل',
-            value: 'منصة الولاء والمدفوعات السحابية • radar.taeybsalah.workers.dev',
-          },
-        ],
+        auxiliaryFields,
+        backFields,
       },
       barcodes: [
         {
