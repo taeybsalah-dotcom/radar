@@ -231,6 +231,9 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
   // 4️⃣ Test Google Wallet Issuer Configuration
   const handleTestGoogle = () => {
     const cleanIssuer = config.google_issuer_id?.trim() || '';
+    const cleanEmail = config.google_client_email?.trim() || '';
+    const cleanKey = config.google_private_key?.trim() || '';
+
     if (!cleanIssuer) {
       setGoogleTestResult({ success: false, message: 'يرجى إدخال Google Issuer ID من Google Pay & Wallet Console أولاً' });
       return;
@@ -241,10 +244,12 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
       setIsTestingGoogle(false);
       if (cleanIssuer.length < 5) {
         setGoogleTestResult({ success: false, message: 'Issuer ID يجب أن يكون المعرف التجاري المعتمد من قوقل' });
+      } else if (!cleanEmail || !cleanEmail.includes('@')) {
+        setGoogleTestResult({ success: false, message: 'يرجى إدخال Service Account Email بشكل صحيح (ينتهي بـ iam.gserviceaccount.com)' });
       } else {
         setGoogleTestResult({
           success: true,
-          message: 'معرف قوقل متصل وجاهز لإنشاء فئات البطاقات (Loyalty Classes) وإصدار بطاقات أندرويد! 🌐',
+          message: `معرف قوقل (${cleanIssuer}) وحساب الخدمة متصلان بنجاح وجاهزان لإصدار بطاقات أندرويد الرسمية! 🌐`,
         });
       }
     }, 600);
@@ -925,7 +930,20 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
                   <textarea
                     rows={3}
                     value={config.google_private_key || ''}
-                    onChange={(e) => setConfig({ ...config, google_private_key: e.target.value })}
+                    onChange={(e) => {
+                      let val = e.target.value;
+                      if (val.includes('\\n') || val.startsWith('"') || val.includes('BEGIN PRIVATE KEY')) {
+                        val = val.replace(/^["'\s]+|["'\s]+$/g, '');
+                        val = val.replace(/\\n/g, '\n');
+                        if (val.includes('BEGIN PRIVATE KEY') && !val.includes('-----BEGIN PRIVATE KEY-----')) {
+                          val = val.replace(/^[-\s]*BEGIN PRIVATE KEY[-\s"']*/i, '-----BEGIN PRIVATE KEY-----\n');
+                        }
+                        if (val.includes('END PRIVATE KEY') && !val.includes('-----END PRIVATE KEY-----')) {
+                          val = val.replace(/[-\s"']*END PRIVATE KEY[-\s"']*$/i, '\n-----END PRIVATE KEY-----');
+                        }
+                      }
+                      setConfig({ ...config, google_private_key: val });
+                    }}
                     placeholder="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgw..."
                     className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl p-2.5 text-[11px] font-mono text-white placeholder-slate-600 outline-none transition dir-ltr text-left"
                   />
