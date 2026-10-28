@@ -29,6 +29,16 @@ export class WalletPassService {
     // Auto-detect if store is a Cafe or Restaurant
     const isCafe = /كافيه|مقهى|قهوة|هاف مليون|half million|cafe|coffee|مطعم|restaurant/i.test(store.name || '');
 
+    // 0. Check Master Platform Credentials configured by Super Admin
+    let platformWallet: any = {};
+    try {
+      const cached = localStorage.getItem('radar_platform_wallet_credentials');
+      if (cached) platformWallet = JSON.parse(cached);
+    } catch {}
+
+    const masterApplePassId = platformWallet.apple_pass_type_id || `pass.com.radar.${store.slug || store.id}`;
+    const masterGoogleIssuerId = platformWallet.google_issuer_id || `radar_${store.slug || store.id}`;
+
     // 1. Check embedded store fulfillment settings
     const embedded = (store as any)?.fulfillment_settings?.wallet_pass_config;
     if (embedded && typeof embedded === 'object') {
@@ -51,8 +61,8 @@ export class WalletPassService {
         label_color: embedded.label_color || defaultColor,
         lockscreen_message_template: embedded.lockscreen_message_template || 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁',
         proximity_radius_meters: embedded.proximity_radius_meters || 300,
-        apple_pass_type_id: embedded.apple_pass_type_id || `pass.com.radar.${store.slug || store.id}`,
-        google_issuer_id: embedded.google_issuer_id || `radar_${store.slug || store.id}`,
+        apple_pass_type_id: embedded.apple_pass_type_id || masterApplePassId,
+        google_issuer_id: embedded.google_issuer_id || masterGoogleIssuerId,
       };
     }
 
@@ -81,8 +91,8 @@ export class WalletPassService {
           label_color: parsed.label_color || defaultColor,
           lockscreen_message_template: parsed.lockscreen_message_template || 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁',
           proximity_radius_meters: parsed.proximity_radius_meters || 300,
-          apple_pass_type_id: parsed.apple_pass_type_id || `pass.com.radar.${store.slug || store.id}`,
-          google_issuer_id: parsed.google_issuer_id || `radar_${store.slug || store.id}`,
+          apple_pass_type_id: parsed.apple_pass_type_id || masterApplePassId,
+          google_issuer_id: parsed.google_issuer_id || masterGoogleIssuerId,
         };
       }
     } catch {}
@@ -107,8 +117,8 @@ export class WalletPassService {
       label_color: defaultColor.startsWith('#') ? defaultColor : '#E3B94A',
       lockscreen_message_template: 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁',
       proximity_radius_meters: 300,
-      apple_pass_type_id: `pass.com.radar.${store.slug || store.id}`,
-      google_issuer_id: `radar_${store.slug || store.id}`,
+      apple_pass_type_id: masterApplePassId,
+      google_issuer_id: masterGoogleIssuerId,
     };
   }
 

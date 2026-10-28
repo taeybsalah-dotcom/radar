@@ -62,6 +62,20 @@ export interface PlatformIntegrationsConfig {
   whatsapp_instance_id?: string;
   whatsapp_enabled: boolean;
   whatsapp_tier_1000_price?: number; // سعر باقة 1000 رسالة واتساب للتاجر بالريال السعودي (الافتراضي 150 ر.س)
+
+  //  Apple Wallet Gateway Credentials
+  apple_wallet_enabled?: boolean;
+  apple_pass_type_id?: string; // e.g. pass.com.radar.loyalty
+  apple_team_id?: string; // e.g. 9B7K82MNPQ
+  apple_cert_p12_base64?: string;
+  apple_cert_password?: string;
+
+  // 🌐 Google Wallet API Gateway Credentials
+  google_wallet_enabled?: boolean;
+  google_issuer_id?: string; // e.g. 3388000000022394821
+  google_client_email?: string; // Google Cloud Service Account Email
+  google_private_key?: string; // RSA Private Key for JWT Signing
+
   updated_at?: string;
 }
 
@@ -71,6 +85,10 @@ export interface PublicPlatformIntegrations {
   gemini_enabled: boolean;
   whatsapp_enabled: boolean;
   whatsapp_tier_1000_price?: number; // سعر باقة 1000 رسالة المعروض للتاجر
+  apple_wallet_enabled?: boolean;
+  apple_pass_type_id?: string | null;
+  google_wallet_enabled?: boolean;
+  google_issuer_id?: string | null;
 }
 
 export type StoreSubscriptionStatus = 'trial' | 'active' | 'past_due' | 'suspended' | 'cancelled';

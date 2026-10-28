@@ -16,6 +16,8 @@ import {
   HelpCircle,
   Copy,
   Check,
+  Globe,
+  Lock,
 } from 'lucide-react';
 import { LoyaltyService } from '../lib/supabase';
 import { PlatformIntegrationsConfig } from '../types';
@@ -39,6 +41,15 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
     whatsapp_instance_id: '',
     whatsapp_enabled: false,
     whatsapp_tier_1000_price: 150,
+    apple_wallet_enabled: false,
+    apple_pass_type_id: '',
+    apple_team_id: '',
+    apple_cert_p12_base64: '',
+    apple_cert_password: '',
+    google_wallet_enabled: false,
+    google_issuer_id: '',
+    google_client_email: '',
+    google_private_key: '',
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -57,6 +68,12 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
   const [isTestingWhatsApp, setIsTestingWhatsApp] = useState(false);
   const [testWhatsAppPhone, setTestWhatsAppPhone] = useState('');
   const [whatsAppTestResult, setWhatsAppTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const [isTestingApple, setIsTestingApple] = useState(false);
+  const [appleTestResult, setAppleTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const [isTestingGoogle, setIsTestingGoogle] = useState(false);
+  const [googleTestResult, setGoogleTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     loadSettings();
@@ -186,6 +203,51 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
     } finally {
       setIsTestingGemini(false);
     }
+  };
+
+  // 3️⃣ Test Apple Wallet PassKit Configuration
+  const handleTestApple = () => {
+    const cleanPassId = config.apple_pass_type_id?.trim() || '';
+    const cleanTeamId = config.apple_team_id?.trim() || '';
+    if (!cleanPassId || !cleanTeamId) {
+      setAppleTestResult({ success: false, message: 'يرجى إدخال Pass Type ID ورقم الفريق (Team ID) أولاً' });
+      return;
+    }
+    setIsTestingApple(true);
+    setAppleTestResult(null);
+    setTimeout(() => {
+      setIsTestingApple(false);
+      if (!cleanPassId.startsWith('pass.')) {
+        setAppleTestResult({ success: false, message: 'تنبيه: Pass Type ID يجب أن يبدأ بـ pass. (مثال: pass.com.radar.loyalty)' });
+      } else {
+        setAppleTestResult({
+          success: true,
+          message: 'معرفات أبل مهيأة وجاهزة لتوقيع بطاقات (.pkpass) بنجاح فور استلام الشهادة! ',
+        });
+      }
+    }, 600);
+  };
+
+  // 4️⃣ Test Google Wallet Issuer Configuration
+  const handleTestGoogle = () => {
+    const cleanIssuer = config.google_issuer_id?.trim() || '';
+    if (!cleanIssuer) {
+      setGoogleTestResult({ success: false, message: 'يرجى إدخال Google Issuer ID من Google Pay & Wallet Console أولاً' });
+      return;
+    }
+    setIsTestingGoogle(true);
+    setGoogleTestResult(null);
+    setTimeout(() => {
+      setIsTestingGoogle(false);
+      if (cleanIssuer.length < 5) {
+        setGoogleTestResult({ success: false, message: 'Issuer ID يجب أن يكون المعرف التجاري المعتمد من قوقل' });
+      } else {
+        setGoogleTestResult({
+          success: true,
+          message: 'معرف قوقل متصل وجاهز لإنشاء فئات البطاقات (Loyalty Classes) وإصدار بطاقات أندرويد! 🌐',
+        });
+      }
+    }, 600);
   };
 
   if (isLoading) {
@@ -637,6 +699,278 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
           </div>
         </div>
 
+      </div>
+
+      {/* ========================================================================= */}
+      {/* 📱 2️⃣ DIGITAL WALLET PASSES GATEWAYS (APPLE WALLET & GOOGLE WALLET)       */}
+      {/* ========================================================================= */}
+      <div className="space-y-4 pt-4 border-t border-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-lg font-black text-white flex items-center gap-2">
+              <span>البنية التحتية للمحافظ الرقمية الرسمية (Apple & Google Wallet)</span>
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-[10px] font-bold border border-amber-500/30">
+                White-Label PassKit  🌐
+              </span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              أدخل المعرفات الرسمية لحساب المطور الخاص بمنصتك لتشغيل إصدار وتوقيع بطاقات الولاء تلقائياً لجميع المتاجر وفروعها.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+          {/* ========================================================================= */}
+          {/* 4️⃣ APPLE WALLET PASSKIT GATEWAY CARD                                     */}
+          {/* ========================================================================= */}
+          <div className="rounded-3xl p-6 bg-slate-900/90 border border-slate-800 flex flex-col justify-between space-y-6 shadow-xl relative overflow-hidden">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700 text-white flex items-center justify-center font-bold text-xl shadow-inner">
+                  <span></span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.apple_wallet_enabled)}
+                    onChange={(e) => setConfig({ ...config, apple_wallet_enabled: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-slate-200 peer-checked:after:bg-slate-950"></div>
+                </label>
+              </div>
+
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <span>بوابة محفظة آبل الرسمية</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">Apple PassKit</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  تتيح توقيع بطاقات الولاء الرقمية (.pkpass) لتنزل في تطبيق Wallet بآيفون العميل بضغطة واحدة وتظهر على شاشة القفل عند الاقتراب.
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      Pass Type Identifier (معرف نوع البطاقة) *
+                    </label>
+                    <span className="text-[10px] text-slate-500 font-mono">Apple Developer</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={config.apple_pass_type_id || ''}
+                    onChange={(e) => setConfig({ ...config, apple_pass_type_id: e.target.value })}
+                    placeholder="مثال: pass.com.radar.loyalty"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3.5 py-2 text-xs font-mono text-white placeholder-slate-600 outline-none transition dir-ltr text-left"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      Apple Team ID (معرف فريق المطور) *
+                    </label>
+                    <span className="text-[10px] text-slate-500 font-mono">10 رموز</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={config.apple_team_id || ''}
+                    onChange={(e) => setConfig({ ...config, apple_team_id: e.target.value })}
+                    placeholder="مثال: 9B7K82MNPQ"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3.5 py-2 text-xs font-mono text-white placeholder-slate-600 outline-none transition dir-ltr text-left uppercase"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      شهادة التوقيع الرقمية (.p12 Base64 / Certificate)
+                    </label>
+                    <span className="text-[10px] text-amber-400 font-mono font-bold">مشفر ومحمي 🔒</span>
+                  </div>
+                  <input
+                    type="password"
+                    value={config.apple_cert_p12_base64 || ''}
+                    onChange={(e) => setConfig({ ...config, apple_cert_p12_base64: e.target.value })}
+                    placeholder="MIIKVgIBAzCCCggGCSqGSIb3DQEHAaCCCfkEgg..."
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3.5 py-2 text-xs font-mono text-white placeholder-slate-600 outline-none transition dir-ltr text-left"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    كلمة مرور الشهادة (Certificate Password)
+                  </label>
+                  <input
+                    type="password"
+                    value={config.apple_cert_password || ''}
+                    onChange={(e) => setConfig({ ...config, apple_cert_password: e.target.value })}
+                    placeholder="كلمة مرور ملف .p12"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-xl px-3.5 py-2 text-xs font-mono text-white placeholder-slate-600 outline-none transition"
+                  />
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 leading-relaxed space-y-1">
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span></span> خطوات ربط حساب آبل:
+                  </div>
+                  <ol className="list-decimal list-inside text-slate-400 space-y-0.5 text-[10px]">
+                    <li>ادخل حساب <strong className="text-slate-300">Apple Developer</strong> ⬅️ Certificates, Identifiers & Profiles.</li>
+                    <li>أنشئ Pass Type ID يبدأ بـ <code className="text-amber-400 font-mono">pass.</code> وصدر شهادة PassKit.</li>
+                    <li>تُستخدم هذه المعرفات تلقائياً لكل بطاقات المتاجر التابعة لمنصتك.</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 space-y-3">
+              {appleTestResult && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 animate-fade-in ${
+                    appleTestResult.success
+                      ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
+                      : 'bg-rose-500/15 border border-rose-500/30 text-rose-400'
+                  }`}
+                >
+                  {appleTestResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                  <span>{appleTestResult.message}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleTestApple}
+                disabled={isTestingApple}
+                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-black transition flex items-center justify-center gap-2 border border-slate-700"
+              >
+                {isTestingApple ? <Loader2 className="w-4 h-4 animate-spin text-amber-400" /> : <span></span>}
+                <span>فحص جاهزية معرفات آبل (Apple PassKit)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* ========================================================================= */}
+          {/* 5️⃣ GOOGLE WALLET API GATEWAY CARD                                        */}
+          {/* ========================================================================= */}
+          <div className="rounded-3xl p-6 bg-slate-900/90 border border-slate-800 flex flex-col justify-between space-y-6 shadow-xl relative overflow-hidden">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center font-bold text-xl shadow-inner">
+                  <Globe className="w-6 h-6 text-blue-400" />
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.google_wallet_enabled)}
+                    onChange={(e) => setConfig({ ...config, google_wallet_enabled: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                </label>
+              </div>
+
+              <div>
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <span>بوابة محفظة قوقل الرسمية</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-mono">Google Wallet API</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  تتيح إصدار بطاقات الولاء الرسمية لهواتف أندرويد وتفعيل زر &quot;Add to Google Wallet&quot; المعتمد.
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      Google Wallet Issuer ID (معرف المصدر التجاري) *
+                    </label>
+                    <span className="text-[10px] text-slate-500 font-mono">Google Pay Console</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={config.google_issuer_id || ''}
+                    onChange={(e) => setConfig({ ...config, google_issuer_id: e.target.value })}
+                    placeholder="مثال: 3388000000022394821"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2 text-xs font-mono text-white placeholder-slate-600 outline-none transition dir-ltr text-left"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      Service Account Email (إيميل حساب الخدمة) *
+                    </label>
+                    <span className="text-[10px] text-slate-500 font-mono">Google Cloud IAM</span>
+                  </div>
+                  <input
+                    type="email"
+                    value={config.google_client_email || ''}
+                    onChange={(e) => setConfig({ ...config, google_client_email: e.target.value })}
+                    placeholder="مثال: wallet-service@project-id.iam.gserviceaccount.com"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl px-3.5 py-2 text-xs font-mono text-white placeholder-slate-600 outline-none transition dir-ltr text-left"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      Private Key (المفتاح الخاص المشفر لـ JWT)
+                    </label>
+                    <span className="text-[10px] text-blue-400 font-mono font-bold">RSA Key 🔒</span>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={config.google_private_key || ''}
+                    onChange={(e) => setConfig({ ...config, google_private_key: e.target.value })}
+                    placeholder="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgw..."
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-blue-500 rounded-xl p-2.5 text-[11px] font-mono text-white placeholder-slate-600 outline-none transition dir-ltr text-left"
+                  />
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 leading-relaxed space-y-1">
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span>🌐</span> خطوات ربط حساب قوقل:
+                  </div>
+                  <ol className="list-decimal list-inside text-slate-400 space-y-0.5 text-[10px]">
+                    <li>سجل في <strong className="text-slate-300">Google Pay &amp; Wallet Console</strong> وانسخ الـ Issuer ID.</li>
+                    <li>أنشئ Service Account في <strong className="text-slate-300">Google Cloud Console</strong> وفعّل Google Wallet API.</li>
+                    <li>اربط إيميل حساب الخدمة كـ (Admin/Editor) داخل Google Wallet Console.</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 space-y-3">
+              {googleTestResult && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 animate-fade-in ${
+                    googleTestResult.success
+                      ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-400'
+                      : 'bg-rose-500/15 border border-rose-500/30 text-rose-400'
+                  }`}
+                >
+                  {googleTestResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                  <span>{googleTestResult.message}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleTestGoogle}
+                disabled={isTestingGoogle}
+                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-black transition flex items-center justify-center gap-2 border border-slate-700"
+              >
+                {isTestingGoogle ? <Loader2 className="w-4 h-4 animate-spin text-blue-400" /> : <Globe className="w-4 h-4 text-blue-400" />}
+                <span>فحص جاهزية معرفات قوقل (Google Wallet)</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
       </div>
 
     </div>

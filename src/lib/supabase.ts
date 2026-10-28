@@ -1844,6 +1844,13 @@ export const LoyaltyService = {
       if (cached) localPrice = Number(cached);
     } catch {}
 
+    // Load any local fallback wallet credentials
+    let localWalletCfg: any = {};
+    try {
+      const cachedWallet = localStorage.getItem('radar_platform_wallet_credentials');
+      if (cachedWallet) localWalletCfg = JSON.parse(cachedWallet);
+    } catch {}
+
     const defaultCfg: PlatformIntegrationsConfig = {
       telegram_bot_token: '',
       telegram_bot_username: '',
@@ -1859,6 +1866,15 @@ export const LoyaltyService = {
       whatsapp_instance_id: '',
       whatsapp_enabled: false,
       whatsapp_tier_1000_price: localPrice,
+      apple_wallet_enabled: Boolean(localWalletCfg.apple_wallet_enabled),
+      apple_pass_type_id: localWalletCfg.apple_pass_type_id || '',
+      apple_team_id: localWalletCfg.apple_team_id || '',
+      apple_cert_p12_base64: localWalletCfg.apple_cert_p12_base64 || '',
+      apple_cert_password: localWalletCfg.apple_cert_password || '',
+      google_wallet_enabled: Boolean(localWalletCfg.google_wallet_enabled),
+      google_issuer_id: localWalletCfg.google_issuer_id || '',
+      google_client_email: localWalletCfg.google_client_email || '',
+      google_private_key: localWalletCfg.google_private_key || '',
     };
     const supabase = getSupabaseClient();
     if (!supabase) return defaultCfg;
@@ -1870,7 +1886,11 @@ export const LoyaltyService = {
         ...data,
         whatsapp_tier_1000_price: data.whatsapp_tier_1000_price !== undefined && data.whatsapp_tier_1000_price !== null 
           ? Number(data.whatsapp_tier_1000_price) 
-          : localPrice
+          : localPrice,
+        apple_pass_type_id: data.apple_pass_type_id || defaultCfg.apple_pass_type_id,
+        apple_team_id: data.apple_team_id || defaultCfg.apple_team_id,
+        google_issuer_id: data.google_issuer_id || defaultCfg.google_issuer_id,
+        google_client_email: data.google_client_email || defaultCfg.google_client_email,
       };
     } catch {
       return defaultCfg;
@@ -1890,6 +1910,10 @@ export const LoyaltyService = {
       gemini_enabled: false,
       whatsapp_enabled: false,
       whatsapp_tier_1000_price: localPrice,
+      apple_wallet_enabled: false,
+      apple_pass_type_id: null,
+      google_wallet_enabled: false,
+      google_issuer_id: null,
     };
     const supabase = getSupabaseClient();
     if (!supabase) return defaultPublic;
@@ -1908,6 +1932,10 @@ export const LoyaltyService = {
           whatsapp_tier_1000_price: directData.whatsapp_tier_1000_price !== undefined && directData.whatsapp_tier_1000_price !== null
             ? Number(directData.whatsapp_tier_1000_price)
             : localPrice,
+          apple_wallet_enabled: Boolean(directData.apple_wallet_enabled),
+          apple_pass_type_id: directData.apple_pass_type_id || null,
+          google_wallet_enabled: Boolean(directData.google_wallet_enabled),
+          google_issuer_id: directData.google_issuer_id || null,
         };
       }
 
@@ -1921,6 +1949,10 @@ export const LoyaltyService = {
         whatsapp_tier_1000_price: data.whatsapp_tier_1000_price !== undefined && data.whatsapp_tier_1000_price !== null
           ? Number(data.whatsapp_tier_1000_price)
           : localPrice,
+        apple_wallet_enabled: Boolean(data.apple_wallet_enabled),
+        apple_pass_type_id: data.apple_pass_type_id || null,
+        google_wallet_enabled: Boolean(data.google_wallet_enabled),
+        google_issuer_id: data.google_issuer_id || null,
       };
     } catch {
       return defaultPublic;
@@ -1983,19 +2015,44 @@ export const LoyaltyService = {
         } catch {}
       }
 
+      // Persist wallet credentials locally as fallback
+      try {
+        const walletFields = {
+          apple_wallet_enabled: updated.apple_wallet_enabled,
+          apple_pass_type_id: updated.apple_pass_type_id,
+          apple_team_id: updated.apple_team_id,
+          apple_cert_p12_base64: updated.apple_cert_p12_base64,
+          apple_cert_password: updated.apple_cert_password,
+          google_wallet_enabled: updated.google_wallet_enabled,
+          google_issuer_id: updated.google_issuer_id,
+          google_client_email: updated.google_client_email,
+          google_private_key: updated.google_private_key,
+        };
+        localStorage.setItem('radar_platform_wallet_credentials', JSON.stringify(walletFields));
+      } catch {}
+
       const { error } = await (supabase.from as any)('platform_integrations').upsert(updated);
 
       if (error) {
-        // Check if error is due to missing whatsapp_tier_1000_price column in DB schema
-        const isMissingPriceColumn = 
-          (error.message && error.message.includes('whatsapp_tier_1000_price')) ||
-          (error.details && error.details.includes('whatsapp_tier_1000_price')) ||
-          ((error.message && error.message.includes('schema cache')) && (error.message.includes('whatsapp_tier_1000_price') || error.message.includes('column')));
+        // Check if error is due to missing columns in DB schema cache
+        const isMissingColumns = 
+          (error.message && error.message.includes('schema cache')) ||
+          (error.message && error.message.includes('column')) ||
+          (error.details && error.details.includes('column'));
 
-        if (isMissingPriceColumn) {
-          console.warn('Column whatsapp_tier_1000_price missing from Supabase schema. Retrying upsert without it to save other keys.');
+        if (isMissingColumns) {
+          console.warn('Columns missing from Supabase platform_integrations schema. Retrying upsert without extended columns...');
           const sanitized = { ...updated };
           delete sanitized.whatsapp_tier_1000_price;
+          delete sanitized.apple_wallet_enabled;
+          delete sanitized.apple_pass_type_id;
+          delete sanitized.apple_team_id;
+          delete sanitized.apple_cert_p12_base64;
+          delete sanitized.apple_cert_password;
+          delete sanitized.google_wallet_enabled;
+          delete sanitized.google_issuer_id;
+          delete sanitized.google_client_email;
+          delete sanitized.google_private_key;
 
           const retryRes = await (supabase.from as any)('platform_integrations').upsert(sanitized);
           if (retryRes.error) {
@@ -2005,7 +2062,17 @@ export const LoyaltyService = {
           return { 
             success: true, 
             bot_username: updated.telegram_bot_username,
-            sqlNotice: 'ALTER TABLE public.platform_integrations ADD COLUMN IF NOT EXISTS whatsapp_tier_1000_price NUMERIC DEFAULT 150;'
+            sqlNotice: `ALTER TABLE public.platform_integrations 
+ADD COLUMN IF NOT EXISTS whatsapp_tier_1000_price NUMERIC DEFAULT 150,
+ADD COLUMN IF NOT EXISTS apple_wallet_enabled BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS apple_pass_type_id TEXT,
+ADD COLUMN IF NOT EXISTS apple_team_id TEXT,
+ADD COLUMN IF NOT EXISTS apple_cert_p12_base64 TEXT,
+ADD COLUMN IF NOT EXISTS apple_cert_password TEXT,
+ADD COLUMN IF NOT EXISTS google_wallet_enabled BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS google_issuer_id TEXT,
+ADD COLUMN IF NOT EXISTS google_client_email TEXT,
+ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           };
         }
 
