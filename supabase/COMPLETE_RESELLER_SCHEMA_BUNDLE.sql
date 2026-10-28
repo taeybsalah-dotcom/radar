@@ -13576,3 +13576,18 @@ END $$;
 ROLLBACK;
 
 
+
+
+-- =========================================================================
+-- 🔒 SUPABASE SECURITY ADVISOR FIX: ENABLE RLS ON public.staff_sessions
+-- =========================================================================
+ALTER TABLE IF EXISTS public.staff_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.staff_sessions FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON public.staff_sessions FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.staff_sessions TO service_role;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'staff_sessions' AND policyname = 'staff_sessions_service_role') THEN
+        CREATE POLICY "staff_sessions_service_role" ON public.staff_sessions FOR ALL TO service_role USING (true) WITH CHECK (true);
+    END IF;
+END $$;
