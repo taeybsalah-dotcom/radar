@@ -50,6 +50,7 @@ import handlerReactivationCustomers from '../src/api-handlers/reactivation/custo
 import handlerReactivationSegments from '../src/api-handlers/reactivation/segments';
 import handlerReactivationSend from '../src/api-handlers/reactivation/send';
 import handlerReactivationTemplates from '../src/api-handlers/reactivation/templates';
+import handlerWalletTestGoogle from '../src/api-handlers/wallet/test-google';
 
 declare const process: any;
 
@@ -59,6 +60,7 @@ const routes: Record<string, (req: any, res: any) => any> = {
   '/api/manifest': handlerManifest,
   '/manifest.json': handlerManifest,
   '/api/track': handlerTrack,
+  '/api/wallet/test-google': handlerWalletTestGoogle,
   '/api/admin/leads': handlerAdminLeads,
   '/api/admin/partners': handlerAdminPartners,
   '/api/admin/stores-summary': handlerAdminStoresSummary,
