@@ -51,6 +51,7 @@ import handlerReactivationSegments from '../src/api-handlers/reactivation/segmen
 import handlerReactivationSend from '../src/api-handlers/reactivation/send';
 import handlerReactivationTemplates from '../src/api-handlers/reactivation/templates';
 import handlerWalletTestGoogle from '../src/api-handlers/wallet/test-google';
+import handlerWalletGoogleSave from '../src/api-handlers/wallet/google-save';
 
 declare const process: any;
 
@@ -61,6 +62,7 @@ const routes: Record<string, (req: any, res: any) => any> = {
   '/manifest.json': handlerManifest,
   '/api/track': handlerTrack,
   '/api/wallet/test-google': handlerWalletTestGoogle,
+  '/api/wallet/google-save': handlerWalletGoogleSave,
   '/api/admin/leads': handlerAdminLeads,
   '/api/admin/partners': handlerAdminPartners,
   '/api/admin/stores-summary': handlerAdminStoresSummary,
