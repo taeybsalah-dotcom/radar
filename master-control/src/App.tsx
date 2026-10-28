@@ -67,6 +67,7 @@ export const App: React.FC = () => {
   const [brandingTarget, setBrandingTarget] = useState<ResellerInstance | null>(null);
   const [brandingData, setBrandingData] = useState({
     brand_name: '',
+    custom_domain: '',
     logo_url: '',
     support_phone: '',
     support_whatsapp: '',
@@ -277,6 +278,7 @@ export const App: React.FC = () => {
     setBrandingTarget(inst);
     setBrandingData({
       brand_name: inst.name,
+      custom_domain: inst.custom_domain || '',
       logo_url: inst.brand_logo_url || '',
       support_phone: inst.support_phone || '',
       support_whatsapp: inst.support_whatsapp || '',
@@ -626,6 +628,23 @@ export const App: React.FC = () => {
                     onChange={(e) => setBrandingData({ ...brandingData, brand_name: e.target.value })}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+                    <span>الدومين الرسمي المخصص (Custom Domain)</span>
+                    <span className="text-[10px] text-indigo-400 font-normal">اختياري</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={brandingData.custom_domain}
+                    onChange={(e) => setBrandingData({ ...brandingData, custom_domain: e.target.value })}
+                    placeholder="مثال: app.sadim.com أو sadim-alathir.com"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    🌐 عند حفظ الدومين، سيصبح هو الرابط المعتمد للمنصة وبطاقات المتاجر بدون اسم pages.dev
+                  </p>
                 </div>
 
                 {/* Upload Logo Box */}

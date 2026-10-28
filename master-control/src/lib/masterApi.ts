@@ -103,6 +103,7 @@ export async function executeUpdateResellerBranding(
   instance: ResellerInstance,
   branding: {
     brand_name: string;
+    custom_domain?: string;
     logo_url?: string;
     support_phone?: string;
     support_whatsapp?: string;
@@ -137,10 +138,15 @@ export async function executeUpdateResellerBranding(
   }
 
   // 2. Update local record in Master DB
+  const cleanDomain = branding.custom_domain
+    ? branding.custom_domain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '')
+    : null;
+
   await masterSupabase
     .from('reseller_instances')
     .update({
       name: branding.brand_name,
+      custom_domain: cleanDomain,
       brand_logo_url: branding.logo_url || null,
       support_phone: branding.support_phone || null,
       support_whatsapp: branding.support_whatsapp || null,
