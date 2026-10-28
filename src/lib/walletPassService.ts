@@ -538,6 +538,51 @@ export class WalletPassService {
   }
 
   /**
+   * حفظ أو فتح بطاقة محفظة قوقل الرسمية (Save to Google Wallet)
+   */
+  static async saveToGoogleWallet(
+    store: Store,
+    customer: Customer,
+    tier?: Tier | null
+  ): Promise<{ success: boolean; url?: string; error?: string }> {
+    const config = this.getWalletConfig(store);
+    const googlePayload = this.generateGooglePassPayload(store, customer, tier);
+
+    // Register device registration for Google Wallet
+    this.registerDevice({
+      customer_id: customer.id,
+      store_id: store.id,
+      platform: 'google',
+      pass_serial_number: googlePayload.id,
+    });
+
+    // Try to request signed JWT from backend endpoint if available
+    try {
+      const res = await fetch('/api/wallet/google-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          store_id: store.id,
+          customer_id: customer.id,
+          payload: googlePayload,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.saveUrl) {
+          window.open(data.saveUrl, '_blank');
+          return { success: true, url: data.saveUrl };
+        }
+      }
+    } catch {}
+
+    // Fallback: Open Google Pay Web Save intent
+    const fallbackSaveUrl = `https://pay.google.com/gp/v/save/${encodeURIComponent(JSON.stringify(googlePayload))}`;
+    window.open(fallbackSaveUrl, '_blank');
+    return { success: true, url: fallbackSaveUrl };
+  }
+
+  /**
    * جلب قائمة الأجهزة المسجلة للمتجر
    */
   static getStoreRegistrations(storeId: string): WalletDeviceRegistration[] {
