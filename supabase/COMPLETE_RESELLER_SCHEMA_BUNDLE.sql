@@ -1,11 +1,31 @@
--- ==========================================================================
--- RADAR PLATFORM - COMPLETE RESELLER / MULTI-TENANT SCHEMA BUNDLE
--- Generated at: 2026-10-25T12:50:11.175Z
--- ==========================================================================
+-- ==============================================================================
+-- 🚀 RADAR WHITE-LABEL COMPLETE RESELLER DATABASE BUNDLE
+-- Generated At: 2026-10-28T23:15:50.667Z
+-- Total Migrations: 52
+-- ==============================================================================
 
--- ==========================================================================
--- FILE: 20260930_stage2_affiliate_foundation.sql
--- ==========================================================================
+-- 0. Ensure pgcrypto extension exists for password hashing and tokens
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 0.1 Sovereign Master Auth Table for Remote Administration
+CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_token_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.reseller_master_auth ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.reseller_master_auth FROM anon, authenticated;
+
+-- NOTE: The sovereign token hash is NOT seeded here (secrets never live in the repo).
+-- After running this bundle on a new reseller DB, paste the "Sovereign Token Seed"
+-- SQL copied from Master Control (localhost) into that reseller's SQL Editor.
+
+
+
+-- ==============================================================================
+-- >>> FILE: 20260930_stage2_affiliate_foundation.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🚀 RADAR LOYALTY ENGINE - STAGE 2.5 PATCHED MIGRATION
@@ -796,9 +816,9 @@ USING (true)
 WITH CHECK (true);
 
 
--- ==========================================================================
--- FILE: 20261001_stage12c_super_admin_summary.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261001_stage12c_super_admin_summary.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — STAGE 12C-HOTFIX MIGRATION
@@ -911,9 +931,9 @@ REVOKE EXECUTE ON FUNCTION public.get_super_admin_stores_summary() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_super_admin_stores_summary() TO authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261001_stage6_partner_foundation.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261001_stage6_partner_foundation.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- RADAR LOYALTY ENGINE
@@ -1283,9 +1303,9 @@ $$;
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261001_stage7_billing_foundation.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261001_stage7_billing_foundation.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- RADAR LOYALTY ENGINE
@@ -1480,9 +1500,9 @@ $$;
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261001_stage8_merchant_onboarding.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261001_stage8_merchant_onboarding.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — STAGE 8 MIGRATION
@@ -1572,9 +1592,9 @@ REVOKE ALL ON FUNCTION public.get_or_create_merchant_onboarding(UUID) FROM anon,
 GRANT EXECUTE ON FUNCTION public.get_or_create_merchant_onboarding(UUID) TO service_role;
 
 
--- ==========================================================================
--- FILE: 20261002_stage13_affiliate_financial_ledger.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261002_stage13_affiliate_financial_ledger.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🚀 RADAR LOYALTY ENGINE - STAGE 13
@@ -1816,9 +1836,9 @@ GRANT EXECUTE ON FUNCTION public.admin_settle_partner_commissions TO service_rol
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261002_stage14_master_financial_ledger.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261002_stage14_master_financial_ledger.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🏛️ RADAR LOYALTY ENGINE - STAGE 14
@@ -2159,9 +2179,9 @@ GRANT EXECUTE ON FUNCTION public.process_zatca_refund_credit_note TO service_rol
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261002_stage15_dual_commissions_grace_proration.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261002_stage15_dual_commissions_grace_proration.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🚀 RADAR LOYALTY ENGINE - STAGE 15
@@ -2300,9 +2320,9 @@ GRANT EXECUTE ON FUNCTION public.admin_grant_complimentary_days TO service_role;
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261005_trial_14_days.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261005_trial_14_days.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- Trial period: 7 days -> 14 days (NEW STORES ONLY)
@@ -2477,9 +2497,9 @@ $$;
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261006_egress_store_assets_bucket.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261006_egress_store_assets_bucket.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 20261006_egress_store_assets_bucket.sql
@@ -2524,9 +2544,9 @@ create policy "store_assets_update"
   with check (bucket_id = 'store-assets');
 
 
--- ==========================================================================
--- FILE: 20261008_fin01_financial_hardening.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261008_fin01_financial_hardening.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🏛️ RADAR LOYALTY ENGINE — PHASE 3: FINANCIAL HARDENING [FIN-01, FIN-02, FIN-03]
@@ -3499,9 +3519,9 @@ GRANT EXECUTE ON FUNCTION public.get_all_store_invoices_batch TO authenticated;
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261008_fin02_grant_payment_rpc.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261008_fin02_grant_payment_rpc.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- RADAR PLATFORM - MIGRATION: 20261008_fin02_grant_payment_rpc.sql
@@ -3961,9 +3981,9 @@ GRANT EXECUTE ON FUNCTION public.get_all_store_invoices_batch() TO anon, authent
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261008_fin03_fix_leads_rls_and_linkage.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261008_fin03_fix_leads_rls_and_linkage.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- RADAR PLATFORM - MIGRATION: 20261008_fin03_fix_leads_rls_and_linkage.sql
@@ -4558,9 +4578,9 @@ END $$;
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261008_perf01_partner_financial_aggregate.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261008_perf01_partner_financial_aggregate.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🚀 RADAR LOYALTY ENGINE — MIGRATION 20261008_PERF01 (V2 - BULLETPROOF)
@@ -4741,9 +4761,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_all_partner_financial_summaries(UUID) TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261008_sec01_super_admin_auth.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261008_sec01_super_admin_auth.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MIGRATION 20261008_SEC01
@@ -4924,9 +4944,9 @@ BEGIN
 END $$;
 
 
--- ==========================================================================
--- FILE: 20261008_sec02_staff_pin_security.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261008_sec02_staff_pin_security.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MIGRATION 20261008_SEC02
@@ -5284,9 +5304,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.update_staff_pin(UUID, TEXT, TEXT) TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261009_fin04_fix_plan_id_type_casting.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261009_fin04_fix_plan_id_type_casting.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🚀 [FIN-04] FIX PLAN ID TYPE CASTING IN ATOMIC RPC (COALESCE text and uuid)
@@ -5741,9 +5761,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.process_store_payment_atomic TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261009_fin05_payouts_and_commissions_rls.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261009_fin05_payouts_and_commissions_rls.sql <<<
+-- ==============================================================================
 
 -- =========================================================================
 -- Atomic RPC to process Affiliate/Partner Payouts and bypass RLS
@@ -5893,9 +5913,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.process_affiliate_payout_atomic TO authenticated;
 
 
--- ==========================================================================
--- FILE: 20261009_fin06_allow_negative_clawback.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261009_fin06_allow_negative_clawback.sql <<<
+-- ==============================================================================
 
 -- السماح بالمبالغ السالبة في حالة المرتجعات (CLAWBACK_RECOVERY)
 ALTER TABLE public.partner_commissions DROP CONSTRAINT IF EXISTS partner_commissions_commission_amount_check;
@@ -5904,9 +5924,9 @@ ALTER TABLE public.partner_commissions ADD CONSTRAINT partner_commissions_commis
 );
 
 
--- ==========================================================================
--- FILE: 20261009_sec02_grant_salah_admin.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261009_sec02_grant_salah_admin.sql <<<
+-- ==============================================================================
 
 -- إعطاء صلاحيات المالك للحساب الخاص بك
 INSERT INTO public.super_admin_users (user_id, email, full_name, is_active)
@@ -5923,9 +5943,9 @@ WHERE email = 'admin@myradar.sarl'
 ON CONFLICT (email) DO NOTHING;
 
 
--- ==========================================================================
--- FILE: 20261009_stage16_orders_and_bookings.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261009_stage16_orders_and_bookings.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- Migration: Stage 16 - Orders and Bookings Master Plan
@@ -6000,7 +6020,7 @@ CREATE OR REPLACE FUNCTION public.book_service_safely(
     p_notes TEXT,
     p_points_to_earn INT,
     p_selected_modifiers JSONB DEFAULT '[]'::jsonb
-) RETURNS jsonb AS $$$
+) RETURNS jsonb AS $$
 DECLARE
     v_overlap_exists BOOLEAN;
     v_booking_id UUID;
@@ -6063,7 +6083,7 @@ BEGIN
         'booking_number', v_booking_number
     );
 END;
-$$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
 -- 3. Enable Realtime
@@ -6071,41 +6091,38 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.store_orders;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.service_bookings;
 
 
+-- ==============================================================================
+-- >>> FILE: 20261009_stage17_catalog_items_columns.sql <<<
+-- ==============================================================================
 
--- ==========================================================================
--- FILE: 20261009_stage17_catalog_items_columns.sql
--- ==========================================================================
+ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS item_type text DEFAULT 'product';
+ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS duration_minutes integer;
+ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS sort_order integer;
+ALTER TABLE catalog_items ADD COLUMN IF NOT EXISTS modifier_groups jsonb;
 
-��
- A L T E R   T A B L E   c a t a l o g _ i t e m s   A D D   C O L U M N   I F   N O T   E X I S T S   i t e m _ t y p e   t e x t   D E F A U L T   ' p r o d u c t ' ; 
- A L T E R   T A B L E   c a t a l o g _ i t e m s   A D D   C O L U M N   I F   N O T   E X I S T S   d u r a t i o n _ m i n u t e s   i n t e g e r ; 
- A L T E R   T A B L E   c a t a l o g _ i t e m s   A D D   C O L U M N   I F   N O T   E X I S T S   s o r t _ o r d e r   i n t e g e r ; 
- A L T E R   T A B L E   c a t a l o g _ i t e m s   A D D   C O L U M N   I F   N O T   E X I S T S   m o d i f i e r _ g r o u p s   j s o n b ; 
-  
- 
 
--- ==========================================================================
--- FILE: 20261009_stage18_order_updates.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261009_stage18_order_updates.sql <<<
+-- ==============================================================================
 
-﻿CREATE POLICY "Public can update orders"
+CREATE POLICY "Public can update orders"
     ON public.store_orders
     FOR UPDATE
     USING (true);
 
 
--- ==========================================================================
--- FILE: 20261009_stage19_bookings_rls.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261009_stage19_bookings_rls.sql <<<
+-- ==============================================================================
 
-﻿CREATE POLICY "Public can insert bookings" ON public.service_bookings FOR INSERT WITH CHECK (true);
+CREATE POLICY "Public can insert bookings" ON public.service_bookings FOR INSERT WITH CHECK (true);
 CREATE POLICY "Public can update bookings" ON public.service_bookings FOR UPDATE USING (true);
 CREATE POLICY "Public can read bookings" ON public.service_bookings FOR SELECT USING (true);
 
 
--- ==========================================================================
--- FILE: 20261012_sec03_fix_all_rls_advisor.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261012_sec03_fix_all_rls_advisor.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MIGRATION 20261012_SEC03 (ENTERPRISE HARDENING)
@@ -6531,9 +6548,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_partner_commissions_secure(uuid) TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261012_sec04_pin_limits_secure_writes.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261012_sec04_pin_limits_secure_writes.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- RADAR — MIGRATION 20261012_SEC04
@@ -7711,9 +7728,9 @@ BEGIN
 END $$;
 
 
--- ==========================================================================
--- FILE: 20261016_fix_branches_cashier_multi_branch_and_bookings.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261016_fix_branches_cashier_multi_branch_and_bookings.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- Migration: 20261016_fix_branches_cashier_multi_branch_and_bookings.sql
@@ -8045,10 +8062,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.book_service_safely TO anon, authenticated;
 
 
-
--- ==========================================================================
--- FILE: 20261017_fix_booking_source_and_safe_rpc.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261017_fix_booking_source_and_safe_rpc.sql <<<
+-- ==============================================================================
 
 -- Migration: Add booking_source column and update book_service_safely RPC
 ALTER TABLE public.service_bookings
@@ -8206,9 +8222,9 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions;
 GRANT EXECUTE ON FUNCTION public.book_service_safely TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261018_add_cashier_fields_to_store_orders.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261018_add_cashier_fields_to_store_orders.sql <<<
+-- ==============================================================================
 
 -- Migration: Add cashier_id, cashier_name, and order_source to store_orders table
 ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS cashier_id TEXT;
@@ -8216,9 +8232,9 @@ ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS cashier_name TEXT;
 ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS order_source TEXT;
 
 
--- ==========================================================================
--- FILE: 20261018_support_in_progress_booking_status.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261018_support_in_progress_booking_status.sql <<<
+-- ==============================================================================
 
 -- Migration: Support 'in_progress' status in service_bookings RPCs
 -- Date: 2026-10-18
@@ -8299,9 +8315,9 @@ END;
 $$;
 
 
--- ==========================================================================
--- FILE: 20261021_master_rls_hardening_zero_vulnerabilities.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261021_master_rls_hardening_zero_vulnerabilities.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR LOYALTY ENGINE — MASTER RLS SECURITY HARDENING (ZERO VULNERABILITIES)
@@ -8864,9 +8880,9 @@ BEGIN
 END $$;
 
 
--- ==========================================================================
--- FILE: 20261022_inventory_and_drivers_cloud_sync.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261022_inventory_and_drivers_cloud_sync.sql <<<
+-- ==============================================================================
 
 -- =================================================================================
 -- 📦🛵 RADAR CLOUD DATABASE SYNC: INVENTORY, RECIPES, INVOICES & DELIVERY FLEET
@@ -9099,9 +9115,9 @@ NOTIFY pgrst, 'reload schema';
 COMMIT;
 
 
--- ==========================================================================
--- FILE: 20261023_security_hardening_pins_and_writes.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261023_security_hardening_pins_and_writes.sql <<<
+-- ==============================================================================
 
 -- =============================================================================
 -- Security hardening: PIN hashing, secret-column lockdown, staff-token RLS writes
@@ -9329,9 +9345,9 @@ BEGIN
 END $$;
 
 
--- ==========================================================================
--- FILE: 20261024_secure_coupon_purchase_and_staff_insert.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261024_secure_coupon_purchase_and_staff_insert.sql <<<
+-- ==============================================================================
 
 -- Secure coupon purchase (server decides balance/stock) + lock store_staff INSERT behind admin token
 
@@ -9415,9 +9431,9 @@ BEGIN
 END $$;
 
 
--- ==========================================================================
--- FILE: 20261025_link_specialists_to_branches_and_booking_modes.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261025_link_specialists_to_branches_and_booking_modes.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- Migration: 20261025_link_specialists_to_branches_and_booking_modes.sql
@@ -9640,9 +9656,9 @@ BEGIN
 END $$;
 
 
--- ==========================================================================
--- FILE: 20261026_platform_integrations_hub.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261026_platform_integrations_hub.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- ⚙️ PLATFORM INTEGRATIONS & API HUB (TELEGRAM, GEMINI AI, WHATSAPP)
@@ -9705,9 +9721,9 @@ VALUES (false, false, false)
 ON CONFLICT DO NOTHING;
 
 
--- ==========================================================================
--- FILE: 20261028_reseller_instance_killswitch_receiver.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261028_reseller_instance_killswitch_receiver.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 20261028_reseller_instance_killswitch_receiver.sql
@@ -9776,9 +9792,9 @@ GRANT EXECUTE ON FUNCTION public.is_platform_active() TO anon, authenticated, se
 ALTER PUBLICATION supabase_realtime ADD TABLE public.platform_system_config;
 
 
--- ==========================================================================
--- FILE: 20261029_tenant_branding_system.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261029_tenant_branding_system.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 20261029_tenant_branding_system.sql
@@ -9945,9 +9961,9 @@ BEGIN
 END $$;
 
 
--- ==========================================================================
--- FILE: 20261030_reseller_master_sql_executor.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261030_reseller_master_sql_executor.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 20261030_reseller_master_sql_executor.sql
@@ -10022,9 +10038,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261031_super_admin_roles_and_permissions.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261031_super_admin_roles_and_permissions.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR PLATFORM ENGINE — MIGRATION 20261031_SUPER_ADMIN_ROLES_AND_PERMISSIONS (V2)
@@ -10526,9 +10542,9 @@ GRANT EXECUTE ON FUNCTION public.delete_super_admin_manager(TEXT) TO anon, authe
 NOTIFY pgrst, 'reload schema';
 
 
--- ==========================================================================
--- FILE: 20261101_security_hardening_master.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261101_security_hardening_master.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR SOVEREIGN SECURITY HARDENING MASTER MIGRATION
@@ -11001,9 +11017,9 @@ END $$;
 NOTIFY pgrst, 'reload schema';
 
 
--- ==========================================================================
--- FILE: 20261102_bulletproof_wallet_and_points_security.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261102_bulletproof_wallet_and_points_security.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🛡️ RADAR BULLETPROOF RLS LOCKDOWN & SECURE RPC SUITE
@@ -11876,9 +11892,9 @@ GRANT EXECUTE ON FUNCTION public.redeem_coupon_secure(UUID, TEXT, TEXT, TEXT, TE
 NOTIFY pgrst, 'reload schema';
 
 
--- ==========================================================================
--- FILE: 20261103_cashier_points_and_audit_fix.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261103_cashier_points_and_audit_fix.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 🚀 MIGRATION: 20261103_cashier_points_and_audit_fix.sql
@@ -12494,9 +12510,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.redeem_coupon_secure(UUID, TEXT, TEXT, TEXT, TEXT, UUID, TEXT) TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261104_fix_partner_and_subscription_rpcs.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261104_fix_partner_and_subscription_rpcs.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 20261104_fix_partner_and_subscription_rpcs.sql
@@ -12769,9 +12785,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.check_and_update_store_subscription(UUID) TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261105_platform_payment_gateways_and_manual_activation.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261105_platform_payment_gateways_and_manual_activation.sql <<<
+-- ==============================================================================
 
 -- ==============================================================================
 -- 20261105_platform_payment_gateways_and_manual_activation.sql
@@ -12907,9 +12923,9 @@ $$;
 GRANT EXECUTE ON FUNCTION public.super_admin_manual_activate_subscription(UUID, INTEGER, NUMERIC, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 
 
--- ==========================================================================
--- FILE: 20261106_telegram_store_link_rpc.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261106_telegram_store_link_rpc.sql <<<
+-- ==============================================================================
 
 -- =========================================================================
 -- 🤖 RPC: Secure Telegram Store Linking (Zero-Trust Compliant)
@@ -12981,9 +12997,9 @@ GRANT EXECUTE ON FUNCTION public.link_store_telegram(TEXT, TEXT) TO anon, authen
 COMMENT ON FUNCTION public.link_store_telegram(TEXT, TEXT) IS 'Atomic RPC for linking Telegram Bot Chat ID to a merchant store securely';
 
 
--- ==========================================================================
--- FILE: 20261107_wholesale_integrations_and_merchant_quota.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261107_wholesale_integrations_and_merchant_quota.sql <<<
+-- ==============================================================================
 
 -- =========================================================================
 -- 🌐 WHOLESALE INTEGRATIONS & MERCHANT QUOTA ARCHITECTURE
@@ -13150,444 +13166,288 @@ GRANT EXECUTE ON FUNCTION public.consume_merchant_whatsapp_otp(TEXT) TO anon, au
 COMMENT ON FUNCTION public.consume_merchant_whatsapp_otp(TEXT) IS 'Manages merchant 100 free OTP quota vs merchant-owned Meta WhatsApp';
 
 
--- ==========================================================================
--- FILE: add_admins.sql
--- ==========================================================================
+-- ==============================================================================
+-- >>> FILE: 20261108_platform_integrations_whatsapp_pricing.sql <<<
+-- ==============================================================================
+
+-- =========================================================================
+-- ⚡ ADD WHATSAPP TIER 1000 PRICING COLUMN TO PLATFORM INTEGRATIONS
+-- Allows Super Admin to dynamically customize the 1,000-message pack price.
+-- =========================================================================
+
+-- 1. Add whatsapp_tier_1000_price column with default 150 SAR
+ALTER TABLE public.platform_integrations 
+ADD COLUMN IF NOT EXISTS whatsapp_tier_1000_price NUMERIC DEFAULT 150;
+
+-- 2. Update get_platform_integrations_public RPC to return the custom price safely
+CREATE OR REPLACE FUNCTION public.get_platform_integrations_public()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_rec RECORD;
+BEGIN
+    SELECT 
+        COALESCE(telegram_enabled, false) AS telegram_enabled,
+        telegram_bot_username,
+        COALESCE(gemini_enabled, false) AS gemini_enabled,
+        COALESCE(whatsapp_enabled, false) AS whatsapp_enabled,
+        COALESCE(whatsapp_tier_1000_price, 150) AS whatsapp_tier_1000_price
+    INTO v_rec
+    FROM public.platform_integrations
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    IF v_rec IS NULL THEN
+        RETURN jsonb_build_object(
+            'telegram_enabled', false,
+            'telegram_bot_username', null,
+            'gemini_enabled', false,
+            'whatsapp_enabled', false,
+            'whatsapp_tier_1000_price', 150
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'telegram_enabled', v_rec.telegram_enabled,
+        'telegram_bot_username', v_rec.telegram_bot_username,
+        'gemini_enabled', v_rec.gemini_enabled,
+        'whatsapp_enabled', v_rec.whatsapp_enabled,
+        'whatsapp_tier_1000_price', v_rec.whatsapp_tier_1000_price
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_platform_integrations_public() TO anon, authenticated, service_role;
+COMMENT ON FUNCTION public.get_platform_integrations_public() IS 'Returns non-sensitive platform integration settings for client apps including whatsapp pack price';
+
+-- 3. Notify PostgREST to reload schema cache immediately
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261109_store_wallet_pass_configs_and_gamification.sql <<<
+-- ==============================================================================
+
+-- =========================================================================
+-- 📱 STORE WALLET PASS CONFIGS & INTERACTIVE GAMIFICATION ENGINE
+-- Supports Apple Wallet, Google Wallet, Digital Stamp Cards, 
+-- Spin the Wheel, Scratch & Win, and Visit Streaks with Full RLS Security.
+-- =========================================================================
+
+-- 1. Create store_wallet_pass_configs table
+CREATE TABLE IF NOT EXISTS public.store_wallet_pass_configs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE UNIQUE,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    
+    -- Primary Loyalty Mode: 'stamps', 'points', 'tiers', 'cashback'
+    loyalty_mode TEXT NOT NULL DEFAULT 'points',
+    
+    -- Digital Stamp Card Settings (Buy X Get 1 Free)
+    stamps_target INTEGER NOT NULL DEFAULT 6,
+    stamps_reward_title TEXT NOT NULL DEFAULT 'قهوة مجانية من اختيارك ☕',
+    stamps_icon TEXT NOT NULL DEFAULT '☕',
+    
+    -- Gamification Add-ons
+    enable_spin_wheel BOOLEAN NOT NULL DEFAULT false,
+    spin_wheel_prizes JSONB DEFAULT '[
+        {"id": "p1", "label": "خصم 15% على طلبك القادم", "reward_type": "discount_percent", "reward_value": 15, "probability_weight": 35, "color": "#F59E0B"},
+        {"id": "p2", "label": "مشروب أو حلى مجاني 🍩", "reward_type": "free_item", "reward_value": "حلى مجاني", "probability_weight": 20, "color": "#10B981"},
+        {"id": "p3", "label": "50 نقطة مكافأة إضافية ⭐", "reward_type": "points", "reward_value": 50, "probability_weight": 25, "color": "#6366F1"},
+        {"id": "p4", "label": "حظ أوفر في زيارتك القادمة 🎯", "reward_type": "no_luck", "reward_value": 0, "probability_weight": 20, "color": "#64748B"}
+    ]'::jsonb,
+    spin_wheel_trigger_min_spend NUMERIC DEFAULT 0,
+    
+    enable_scratch_card BOOLEAN NOT NULL DEFAULT false,
+    scratch_card_reward_title TEXT DEFAULT 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦',
+    
+    enable_streaks BOOLEAN NOT NULL DEFAULT false,
+    streak_target_days INTEGER DEFAULT 3,
+    streak_reward_title TEXT DEFAULT 'مشروب مجاني لإكمال السلسلة 🔥',
+
+    -- Styling & Geofence
+    background_color TEXT NOT NULL DEFAULT '#110E05',
+    foreground_color TEXT NOT NULL DEFAULT '#FFFFFF',
+    label_color TEXT NOT NULL DEFAULT '#E3B94A',
+    lockscreen_message_template TEXT NOT NULL DEFAULT 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁',
+    proximity_radius_meters INTEGER NOT NULL DEFAULT 300,
+    
+    -- Platform Identifiers
+    apple_pass_type_id TEXT,
+    google_issuer_id TEXT,
+    
+    -- Metadata
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 2. Indexes for high performance lookup
+CREATE INDEX IF NOT EXISTS idx_store_wallet_pass_configs_store_id 
+ON public.store_wallet_pass_configs(store_id);
+
+-- 3. Row Level Security (RLS)
+ALTER TABLE public.store_wallet_pass_configs ENABLE ROW LEVEL SECURITY;
+
+-- Allow public read so customer wallet and lockscreen notifications can read pass style
+DROP POLICY IF EXISTS "Public Read Pass Config" ON public.store_wallet_pass_configs;
+CREATE POLICY "Public Read Pass Config" 
+ON public.store_wallet_pass_configs
+FOR SELECT 
+USING (true);
+
+-- Allow authenticated merchants, staff and super admins to insert and update
+DROP POLICY IF EXISTS "Store Staff Manage Pass Config" ON public.store_wallet_pass_configs;
+CREATE POLICY "Store Staff Manage Pass Config" 
+ON public.store_wallet_pass_configs
+FOR ALL 
+USING (true)
+WITH CHECK (true);
+
+-- 4. Notify PostgREST to reload schema cache
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261110_platform_wallet_credentials.sql <<<
+-- ==============================================================================
+
+-- =========================================================================
+-- 📱 PLATFORM APPLE WALLET & GOOGLE WALLET CREDENTIALS INFRASTRUCTURE
+-- Enables platform owner to configure official Apple PassKit and Google Wallet
+-- credentials for white-label multi-tenant pass generation.
+-- =========================================================================
+
+-- 1. Apple Wallet Gateway Credentials
+ALTER TABLE public.platform_integrations 
+ADD COLUMN IF NOT EXISTS apple_wallet_enabled BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS apple_pass_type_id TEXT,
+ADD COLUMN IF NOT EXISTS apple_team_id TEXT,
+ADD COLUMN IF NOT EXISTS apple_cert_p12_base64 TEXT,
+ADD COLUMN IF NOT EXISTS apple_cert_password TEXT;
+
+-- 2. Google Wallet Gateway Credentials
+ALTER TABLE public.platform_integrations 
+ADD COLUMN IF NOT EXISTS google_wallet_enabled BOOLEAN DEFAULT false,
+ADD COLUMN IF NOT EXISTS google_issuer_id TEXT,
+ADD COLUMN IF NOT EXISTS google_client_email TEXT,
+ADD COLUMN IF NOT EXISTS google_private_key TEXT;
+
+-- 3. Update get_platform_integrations_public RPC (Zero-Trust Compliant: ONLY non-sensitive flags & public IDs)
+CREATE OR REPLACE FUNCTION public.get_platform_integrations_public()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_rec RECORD;
+BEGIN
+    SELECT 
+        COALESCE(telegram_enabled, false) AS telegram_enabled,
+        telegram_bot_username,
+        COALESCE(gemini_enabled, false) AS gemini_enabled,
+        COALESCE(whatsapp_enabled, false) AS whatsapp_enabled,
+        COALESCE(whatsapp_tier_1000_price, 150) AS whatsapp_tier_1000_price,
+        COALESCE(apple_wallet_enabled, false) AS apple_wallet_enabled,
+        apple_pass_type_id,
+        COALESCE(google_wallet_enabled, false) AS google_wallet_enabled,
+        google_issuer_id
+    INTO v_rec
+    FROM public.platform_integrations
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    IF v_rec IS NULL THEN
+        RETURN jsonb_build_object(
+            'telegram_enabled', false,
+            'telegram_bot_username', null,
+            'gemini_enabled', false,
+            'whatsapp_enabled', false,
+            'whatsapp_tier_1000_price', 150,
+            'apple_wallet_enabled', false,
+            'apple_pass_type_id', null,
+            'google_wallet_enabled', false,
+            'google_issuer_id', null
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'telegram_enabled', v_rec.telegram_enabled,
+        'telegram_bot_username', v_rec.telegram_bot_username,
+        'gemini_enabled', v_rec.gemini_enabled,
+        'whatsapp_enabled', v_rec.whatsapp_enabled,
+        'whatsapp_tier_1000_price', v_rec.whatsapp_tier_1000_price,
+        'apple_wallet_enabled', v_rec.apple_wallet_enabled,
+        'apple_pass_type_id', v_rec.apple_pass_type_id,
+        'google_wallet_enabled', v_rec.google_wallet_enabled,
+        'google_issuer_id', v_rec.google_issuer_id
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_platform_integrations_public() TO anon, authenticated, service_role;
+COMMENT ON FUNCTION public.get_platform_integrations_public() IS 'Returns non-sensitive platform integration settings for client apps';
+
+-- 4. Notify PostgREST to reload schema cache
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261111_fix_staff_sessions_rls.sql <<<
+-- ==============================================================================
+
+-- =========================================================================
+-- 🔒 SUPABASE SECURITY ADVISOR FIX: ENABLE RLS ON public.staff_sessions
+-- Eliminates the "RLS Disabled in Public" Error in Supabase Security Advisor.
+-- =========================================================================
+
+-- 1. Ensure table exists with proper schema
+CREATE TABLE IF NOT EXISTS public.staff_sessions (
+    token_hash TEXT PRIMARY KEY,
+    store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
+    staff_id UUID NOT NULL,
+    role TEXT NOT NULL DEFAULT 'staff',
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 2. Create index on expires_at for fast session eviction
+CREATE INDEX IF NOT EXISTS idx_staff_sessions_expires ON public.staff_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_staff_sessions_store_staff ON public.staff_sessions(store_id, staff_id);
+
+-- 3. ENABLE and FORCE Row Level Security (RLS)
+ALTER TABLE public.staff_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.staff_sessions FORCE ROW LEVEL SECURITY;
+
+-- 4. Revoke direct table access from untrusted roles (Zero-Trust Security)
+REVOKE ALL ON public.staff_sessions FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.staff_sessions TO service_role;
+
+-- 5. Strict RLS Policies: ONLY service_role can directly access
+DROP POLICY IF EXISTS "staff_sessions_service_role" ON public.staff_sessions;
+CREATE POLICY "staff_sessions_service_role" ON public.staff_sessions
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+-- Explicitly ensure anon/authenticated have zero read/write access via PostgREST
+DROP POLICY IF EXISTS "staff_sessions_no_anon_read" ON public.staff_sessions;
+DROP POLICY IF EXISTS "staff_sessions_no_anon_write" ON public.staff_sessions;
+
+-- 6. Reload PostgREST schema cache
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: add_admins.sql <<<
+-- ==============================================================================
 
 INSERT INTO public.super_admin_users (user_id, email, full_name, is_active)
 SELECT id, email, 'Platform Owner', true
 FROM auth.users
 WHERE email ILIKE '%myradar.sarl'
 ON CONFLICT (email) DO NOTHING;
-
-
--- ==========================================================================
--- FILE: rollback_20261012_sec03.sql
--- ==========================================================================
-
--- ==============================================================================
--- 🔄 ROLLBACK SCRIPT FOR MIGRATION 20261012_SEC03
--- Purpose:
---   Disables RLS on the 11 tables and restores previous state if needed.
--- ==============================================================================
-
--- 1. Disable RLS on all 11 tables
-ALTER TABLE IF EXISTS public.billing_plans DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.catalog_items DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.store_specialists DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.service_bookings DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.affiliates DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.partner_accounts DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.partner_commissions DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.partner_bonus_rules DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.partner_bonus_awards DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.partner_targets DISABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.partner_audit_logs DISABLE ROW LEVEL SECURITY;
-
--- 2. Drop any added helper RPC functions
-DROP FUNCTION IF EXISTS public.check_referral_code(text);
-DROP FUNCTION IF EXISTS public.change_partner_pin(uuid, text, text);
-DROP FUNCTION IF EXISTS public.verify_partner_login(text, text);
-
-
--- ==========================================================================
--- FILE: test_rls_security_verification.sql
--- ==========================================================================
-
--- ==============================================================================
--- 🧪 RLS + PIN SECURITY TEST (يعمل بدون لصق يدوي، ولا يترك أي أثر في قاعدة البيانات)
--- كل شيء داخل transaction وينتهي بـ ROLLBACK.
--- تشغيله:  node scripts/db-run.mjs test supabase/migrations/test_rls_security_verification.sql
--- ==============================================================================
-BEGIN;
-
-CREATE OR REPLACE FUNCTION public._t_assert(p_ok BOOLEAN, p_msg TEXT)
-RETURNS VOID
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF p_ok THEN
-        RAISE NOTICE '✅ %', p_msg;
-    ELSE
-        RAISE NOTICE '❌ %', p_msg;
-        PERFORM set_config('radar.test_fails',
-            (COALESCE(NULLIF(current_setting('radar.test_fails', true), ''), '0')::int + 1)::text, true);
-    END IF;
-END;
-$$;
-GRANT EXECUTE ON FUNCTION public._t_assert(BOOLEAN, TEXT) TO anon, authenticated;
-
-DO $$
-BEGIN
-    RAISE NOTICE '==================================================';
-    RAISE NOTICE '🛡️ بدء فحص سياسات الأمان وتخمين PIN';
-    RAISE NOTICE '==================================================';
-END $$;
-
--- بيانات الاختبار (تُقرأ بصلاحية المدير قبل التحويل إلى anon)
-SELECT set_config('radar.store_id',
-    COALESCE((SELECT id::text FROM public.stores ORDER BY created_at LIMIT 1), ''), true);
-SELECT set_config('radar.n_cat',  (SELECT count(*) FROM public.catalog_items)::text, true);
-SELECT set_config('radar.n_spec', (SELECT count(*) FROM public.store_specialists)::text, true);
-SELECT set_config('radar.n_book', (SELECT count(*) FROM public.service_bookings)::text, true);
-
--- ------------------------------------------------------------------------------
--- A) زائر عام (anon)
--- ------------------------------------------------------------------------------
-SET LOCAL ROLE anon;
-
-DO $$
-DECLARE
-    n INT;
-    v JSONB;
-    v_store UUID := NULLIF(current_setting('radar.store_id', true), '')::uuid;
-    v_book JSONB;
-    v_code TEXT;
-BEGIN
-    SELECT count(*) INTO n FROM public.affiliates;
-    PERFORM public._t_assert(n = 0, 'A1 affiliates مغلق على الزوار');
-    SELECT count(*) INTO n FROM public.partner_commissions;
-    PERFORM public._t_assert(n = 0, 'A2 partner_commissions مغلق على الزوار');
-    SELECT count(*) INTO n FROM public.partner_accounts;
-    PERFORM public._t_assert(n = 0, 'A3 partner_accounts مغلق على الزوار');
-
-    SELECT count(*) INTO n FROM public.billing_plans WHERE active = true;
-    PERFORM public._t_assert(true, 'A4 صفحة الأسعار تقرأ الباقات (عدد: ' || n || ')');
-
-    v := public.check_referral_code('r1001');
-    PERFORM public._t_assert(v ? 'valid', 'A5 check_referral_code تعمل عبر RPC: ' || v::text);
-
-    -- المنيو: القراءة العامة تبقى
-    SELECT count(*) INTO n FROM public.catalog_items;
-    PERFORM public._t_assert(n = current_setting('radar.n_cat')::int, 'A6 الزائر يقرأ المنيو (' || n || ' صنف)');
-    SELECT count(*) INTO n FROM public.store_specialists;
-    PERFORM public._t_assert(n = current_setting('radar.n_spec')::int, 'A7 الزائر يقرأ الأخصائيين (' || n || ')');
-
-    -- الزائر لا يعدّل ولا يحذف المنيو
-    BEGIN
-        INSERT INTO public.catalog_items DEFAULT VALUES;
-        PERFORM public._t_assert(false, 'A8 إضافة صنف من زائر يجب أن تُرفض');
-    EXCEPTION WHEN insufficient_privilege THEN
-        PERFORM public._t_assert(true, 'A8 إضافة صنف من زائر مرفوضة');
-    WHEN OTHERS THEN
-        PERFORM public._t_assert(false, 'A8 رُفضت لسبب غير متوقع: ' || SQLSTATE || ' ' || SQLERRM);
-    END;
-
-    BEGIN
-        UPDATE public.catalog_items SET store_id = store_id;
-        GET DIAGNOSTICS n = ROW_COUNT;
-        PERFORM public._t_assert(n = 0, 'A9 تعديل المنيو من زائر لا يغيّر أي صف (' || n || ')');
-    EXCEPTION WHEN insufficient_privilege THEN
-        PERFORM public._t_assert(true, 'A9 تعديل المنيو من زائر مرفوض');
-    END;
-
-    BEGIN
-        DELETE FROM public.catalog_items;
-        GET DIAGNOSTICS n = ROW_COUNT;
-        PERFORM public._t_assert(n = 0, 'A10 حذف المنيو من زائر لا يحذف أي صف (' || n || ')');
-    EXCEPTION WHEN insufficient_privilege THEN
-        PERFORM public._t_assert(true, 'A10 حذف المنيو من زائر مرفوض');
-    END;
-
-    BEGIN
-        DELETE FROM public.store_specialists;
-        GET DIAGNOSTICS n = ROW_COUNT;
-        PERFORM public._t_assert(n = 0, 'A11 حذف الأخصائيين من زائر لا يحذف أي صف (' || n || ')');
-    EXCEPTION WHEN insufficient_privilege THEN
-        PERFORM public._t_assert(true, 'A11 حذف الأخصائيين من زائر مرفوض');
-    END;
-
-    -- دوال التاجر ترفض بدون تذكرة صحيحة
-    v := public.merchant_save_catalog_item(repeat('a', 40), NULL, '{"name":"hack"}'::jsonb);
-    PERFORM public._t_assert(v->>'error' = 'UNAUTHORIZED', 'A12 دالة حفظ المنيو ترفض التذكرة الوهمية');
-    v := public.merchant_delete_catalog_item(repeat('a', 40), gen_random_uuid()::text);
-    PERFORM public._t_assert(v->>'error' = 'UNAUTHORIZED', 'A13 دالة حذف المنيو ترفض التذكرة الوهمية');
-    v := public.merchant_save_specialist(repeat('a', 40), NULL, '{"name":"hack"}'::jsonb);
-    PERFORM public._t_assert(v->>'error' = 'UNAUTHORIZED', 'A14 دالة حفظ الأخصائي ترفض التذكرة الوهمية');
-    v := public.get_store_bookings_secure(repeat('a', 40), false);
-    PERFORM public._t_assert(v->>'error' = 'UNAUTHORIZED', 'A15 قراءة حجوزات المتجر ترفض التذكرة الوهمية');
-
-    -- الدوال الداخلية مغلقة
-    BEGIN
-        PERFORM public._staff_session_create(gen_random_uuid(), 'x', 'admin');
-        PERFORM public._t_assert(false, 'A16 الدالة الداخلية يجب أن تكون مغلقة');
-    EXCEPTION WHEN insufficient_privilege THEN
-        PERFORM public._t_assert(true, 'A16 الدوال الداخلية مغلقة على الزوار');
-    END;
-
-    -- الحجوزات: لا قراءة ولا كتابة مباشرة
-    SELECT count(*) INTO n FROM public.service_bookings;
-    PERFORM public._t_assert(n = 0, 'A17 الزائر لا يقرأ جدول الحجوزات مباشرة (موجود فعلياً: ' || current_setting('radar.n_book') || ')');
-    BEGIN
-        INSERT INTO public.service_bookings DEFAULT VALUES;
-        PERFORM public._t_assert(false, 'A18 إدخال حجز مباشر من زائر يجب أن يُرفض');
-    EXCEPTION WHEN insufficient_privilege THEN
-        PERFORM public._t_assert(true, 'A18 إدخال حجز مباشر من زائر مرفوض');
-    WHEN OTHERS THEN
-        PERFORM public._t_assert(false, 'A18 رُفض لسبب غير متوقع: ' || SQLSTATE || ' ' || SQLERRM);
-    END;
-    BEGIN
-        UPDATE public.service_bookings SET status = 'cancelled';
-        GET DIAGNOSTICS n = ROW_COUNT;
-        PERFORM public._t_assert(n = 0, 'A19 تعديل الحجوزات من زائر لا يغيّر أي صف (' || n || ')');
-    EXCEPTION WHEN insufficient_privilege THEN
-        PERFORM public._t_assert(true, 'A19 تعديل الحجوزات من زائر مرفوض');
-    END;
-
-    -- الحجز عبر book_service_safely + الرمز الطويل العشوائي
-    IF v_store IS NULL THEN
-        RAISE NOTICE '⚠️ لا يوجد متجر لاختبار الحجز';
-    ELSE
-        v_book := public.book_service_safely(
-            v_store, NULL, 'عميل اختبار', '0555000111', gen_random_uuid()::text, 'خدمة اختبار',
-            50, 30, NULL, NULL, '2030-01-01', '10:00', 'اختبار', 5, '[]'::jsonb);
-        PERFORM public._t_assert((v_book->>'success')::boolean, 'A20 الزائر يحجز عبر book_service_safely: ' || left(v_book::text, 160));
-        v_code := v_book->>'booking_number';
-        PERFORM public._t_assert(v_code ~ '^BKG-[0-9A-F]{20}$', 'A21 رمز الحجز عشوائي وطويل: ' || COALESCE(v_code, 'NULL'));
-        PERFORM public._t_assert(position('555000111' IN COALESCE(v_code, '')) = 0, 'A22 رمز الحجز لا يحتوي رقم الجوال');
-        SELECT count(*) INTO n FROM public.service_bookings WHERE id::text = v_book->>'booking_id';
-        PERFORM public._t_assert(n = 0, 'A23 الزائر لا يستطيع قراءة الحجز مباشرة بعد إنشائه');
-
-        v := public.get_customer_bookings(v_store, '0555000111');
-        PERFORM public._t_assert(jsonb_array_length(v) >= 1, 'A24 العميل يرى حجوزات جواله فقط عبر RPC');
-        v := public.get_customer_bookings(v_store, '0555999999');
-        PERFORM public._t_assert(jsonb_array_length(v) = 0, 'A25 رقم آخر لا يرى هذه الحجوزات');
-
-        v := public.book_service_safely(v_store, NULL, 'عميل', '12', gen_random_uuid()::text, 'خدمة', 50, 30, NULL, NULL, '2030-01-01', '10:00', NULL, 0, '[]'::jsonb);
-        PERFORM public._t_assert(NOT (v->>'success')::boolean, 'A26 الحجز برقم جوال غير صالح يُرفض');
-        v := public.book_service_safely(v_store, NULL, 'عميل', '0555000111', gen_random_uuid()::text, 'خدمة', 50, 30, NULL, NULL, 'غلط', '10:00', NULL, 0, '[]'::jsonb);
-        PERFORM public._t_assert(NOT (v->>'success')::boolean, 'A27 الحجز بتاريخ غير صالح يُرفض');
-    END IF;
-END $$;
-
--- ------------------------------------------------------------------------------
--- B) اختبار تخمين PIN (5 خاطئة = قفل 15 دقيقة) + تسجيل في partner_audit_logs
--- ------------------------------------------------------------------------------
-DO $$
-DECLARE
-    v JSONB;
-    i INT;
-    r TEXT[] := ARRAY[]::TEXT[];
-BEGIN
-    -- دخول شريك (حساب غير موجود يُحسب أيضاً)
-    FOR i IN 1..6 LOOP
-        v := public.verify_partner_login('zz_pin_guess_test', 'wrong' || i);
-        r := r || COALESCE(v->>'error', 'ok');
-    END LOOP;
-    PERFORM public._t_assert(r[1] <> 'LOCKED' AND r[4] <> 'LOCKED', 'B1 المحاولات 1-4 الخاطئة لا تقفل (شريك)');
-    PERFORM public._t_assert(r[5] = 'LOCKED' AND r[6] = 'LOCKED', 'B2 المحاولة الخامسة الخاطئة تقفل الدخول ومحاولة 6 مرفوضة (شريك)');
-END $$;
-
-DO $$
-DECLARE
-    v JSONB;
-    i INT;
-    r TEXT[] := ARRAY[]::TEXT[];
-    v_store UUID;
-    v_phone TEXT;
-BEGIN
-    SELECT st.store_id, st.phone INTO v_store, v_phone
-    FROM public.store_staff st
-    WHERE st.is_active = true AND public.normalize_phone(st.phone) <> ''
-    LIMIT 1;
-
-    IF v_store IS NULL THEN
-        SELECT s.id, s.manager_contact INTO v_store, v_phone
-        FROM public.stores s
-        WHERE s.manager_contact IS NOT NULL AND public.normalize_phone(s.manager_contact) <> ''
-        LIMIT 1;
-    END IF;
-
-    IF v_store IS NULL THEN
-        RAISE NOTICE '⚠️ لا يوجد موظف أو مدير لاختبار تخمين PIN للتاجر والكاشير';
-        RETURN;
-    END IF;
-
-    FOR i IN 1..6 LOOP
-        v := public.verify_staff_pin(v_phone, 'wrong-pin-' || i, v_store, NULL, NULL);
-        r := r || COALESCE(v->>'error', 'ok');
-    END LOOP;
-    PERFORM public._t_assert(r[1] = 'INVALID_CREDENTIALS' AND r[4] = 'INVALID_CREDENTIALS', 'B3 المحاولات 1-4 الخاطئة ترجع خطأ عادي (تاجر/كاشير)');
-    PERFORM public._t_assert(r[5] = 'LOCKED' AND r[6] = 'LOCKED', 'B4 المحاولة الخامسة تقفل ومحاولة 6 مرفوضة (تاجر/كاشير)');
-END $$;
-
-RESET ROLE;
-
-DO $$
-DECLARE
-    n_partner INT;
-    n_staff INT;
-    n_locked INT;
-BEGIN
-    SELECT count(*) INTO n_partner FROM public.partner_audit_logs
-    WHERE action IN ('PIN_FAILED', 'PIN_LOCKED') AND details->>'scope' = 'partner' AND created_at = now();
-    SELECT count(*) INTO n_staff FROM public.partner_audit_logs
-    WHERE action IN ('PIN_FAILED', 'PIN_LOCKED') AND details->>'scope' = 'staff' AND created_at = now();
-    SELECT count(*) INTO n_locked FROM public.partner_audit_logs
-    WHERE action = 'PIN_LOCKED' AND created_at = now();
-
-    PERFORM public._t_assert(n_partner >= 5, 'B5 المحاولات الفاشلة للشريك سُجلت في partner_audit_logs (' || n_partner || ')');
-    PERFORM public._t_assert(n_staff >= 5 OR NOT EXISTS (SELECT 1 FROM public.store_staff) AND n_staff = 0,
-        'B6 المحاولات الفاشلة للتاجر/الكاشير سُجلت (' || n_staff || ')');
-    PERFORM public._t_assert(n_locked >= 1, 'B7 حدث القفل سُجل PIN_LOCKED (' || n_locked || ')');
-END $$;
-
--- حد محاولات كود الإحالة: 20 خاطئة في الدقيقة
-SET LOCAL ROLE anon;
-DO $$
-DECLARE
-    v JSONB;
-    i INT;
-    v_limited INT := NULL;
-BEGIN
-    FOR i IN 1..25 LOOP
-        v := public.check_referral_code('nocode' || i);
-        IF COALESCE((v->>'rate_limited')::boolean, false) AND v_limited IS NULL THEN
-            v_limited := i;
-        END IF;
-    END LOOP;
-    PERFORM public._t_assert(v_limited IS NOT NULL AND v_limited <= 21,
-        'B8 check_referral_code تُحدّ بعد 20 محاولة خاطئة (بدأ الحد عند المحاولة ' || COALESCE(v_limited::text, 'لم يبدأ') || ')');
-END $$;
-RESET ROLE;
-
--- ------------------------------------------------------------------------------
--- C) التذكرة المؤقتة: التاجر يعدّل المنيو، الكاشير يغيّر حالة الحجز
--- ------------------------------------------------------------------------------
-DO $$
-DECLARE
-    v_item JSONB;
-    v_store UUID;
-    v_other UUID;
-    v_admin TEXT;
-    v_cashier TEXT;
-    v_other_admin TEXT;
-    v JSONB;
-    v_new_id TEXT;
-    v_book_id TEXT;
-BEGIN
-    SELECT to_jsonb(c) - 'id' - 'created_at', c.store_id INTO v_item, v_store
-    FROM public.catalog_items c LIMIT 1;
-
-    IF v_store IS NULL THEN
-        RAISE NOTICE '⚠️ لا يوجد أصناف منيو لاختبار تعديل التاجر';
-    ELSE
-        v_admin := public._staff_session_create(v_store, 'manager-' || v_store::text, 'admin');
-        v_cashier := public._staff_session_create(v_store, 'manager-' || v_store::text, 'cashier');
-        SELECT id INTO v_other FROM public.stores WHERE id <> v_store LIMIT 1;
-
-        v := public.merchant_save_catalog_item(v_admin, NULL, v_item);
-        PERFORM public._t_assert((v->>'success')::boolean, 'C1 التاجر يضيف صنفاً بالتذكرة: ' || left(v::text, 120));
-        v_new_id := v->'item'->>'id';
-        PERFORM public._t_assert((v->'item'->>'store_id')::uuid = v_store, 'C2 الصنف يُربط بمتجر التاجر من التذكرة لا من الطلب');
-
-        v := public.merchant_save_catalog_item(v_admin, v_new_id, v_item);
-        PERFORM public._t_assert((v->>'success')::boolean AND v->'item'->>'id' = v_new_id, 'C3 التاجر يعدّل الصنف بالتذكرة');
-
-        v := public.merchant_save_catalog_item(v_cashier, v_new_id, v_item);
-        PERFORM public._t_assert(v->>'error' = 'UNAUTHORIZED', 'C4 الكاشير لا يعدّل المنيو');
-
-        IF v_other IS NOT NULL THEN
-            v_other_admin := public._staff_session_create(v_other, 'manager-' || v_other::text, 'admin');
-            v := public.merchant_save_catalog_item(v_other_admin, v_new_id, v_item);
-            PERFORM public._t_assert(v->>'error' = 'NOT_FOUND', 'C5 تاجر متجر آخر لا يعدّل صنف غيره');
-            v := public.merchant_delete_catalog_item(v_other_admin, v_new_id);
-            PERFORM public._t_assert((v->>'deleted')::int = 0, 'C6 تاجر متجر آخر لا يحذف صنف غيره');
-        END IF;
-
-        v := public.merchant_delete_catalog_item(v_admin, v_new_id);
-        PERFORM public._t_assert((v->>'success')::boolean AND (v->>'deleted')::int = 1, 'C7 التاجر يحذف الصنف بالتذكرة');
-    END IF;
-
-    -- الحجوزات بتذكرة الكاشير
-    SELECT id::text, store_id INTO v_book_id, v_store FROM public.service_bookings ORDER BY created_at DESC LIMIT 1;
-    IF v_book_id IS NULL THEN
-        RAISE NOTICE '⚠️ لا توجد حجوزات لاختبار الكاشير';
-    ELSE
-        v_cashier := public._staff_session_create(v_store, 'manager-' || v_store::text, 'cashier');
-        v := public.get_store_bookings_secure(v_cashier, true);
-        PERFORM public._t_assert((v->>'success')::boolean, 'C8 الكاشير يقرأ حجوزات متجره: ' || left(v::text, 100));
-        v := public.update_booking_status_secure(v_cashier, v_book_id, 'confirmed');
-        PERFORM public._t_assert((v->>'success')::boolean AND v->'booking'->>'status' = 'confirmed', 'C9 الكاشير يغيّر حالة الحجز');
-        v := public.update_booking_status_secure(v_cashier, v_book_id, 'hacked');
-        PERFORM public._t_assert(NOT (v->>'success')::boolean, 'C10 حالة غير مسموحة تُرفض');
-
-        SELECT id INTO v_other FROM public.stores WHERE id <> v_store LIMIT 1;
-        IF v_other IS NOT NULL THEN
-            v_other_admin := public._staff_session_create(v_other, 'manager-' || v_other::text, 'admin');
-            v := public.update_booking_status_secure(v_other_admin, v_book_id, 'cancelled');
-            PERFORM public._t_assert(v->>'error' = 'NOT_FOUND', 'C11 كاشير متجر آخر لا يغيّر حجز غيره');
-        END IF;
-
-        v := public.end_staff_session(v_cashier);
-        v := public.get_store_bookings_secure(v_cashier, true);
-        PERFORM public._t_assert(v->>'error' = 'UNAUTHORIZED', 'C12 بعد تسجيل الخروج التذكرة لا تعمل');
-
-        v_cashier := public._staff_session_create(v_store, 'manager-' || v_store::text, 'cashier');
-        UPDATE public.staff_sessions SET expires_at = now() - interval '1 minute';
-        v := public.get_store_bookings_secure(v_cashier, true);
-        PERFORM public._t_assert(v->>'error' = 'UNAUTHORIZED', 'C13 التذكرة المنتهية لا تعمل');
-    END IF;
-END $$;
-
--- ------------------------------------------------------------------------------
--- D) الفحص الإنشائي
--- ------------------------------------------------------------------------------
-DO $$
-DECLARE
-    n INT;
-    names TEXT;
-BEGIN
-    SELECT count(*), string_agg(p.proname, ', ') INTO n, names
-    FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
-    WHERE ns.nspname = 'public' AND p.prosecdef AND p.prokind = 'f'
-      AND NOT EXISTS (SELECT 1 FROM unnest(COALESCE(p.proconfig, ARRAY[]::text[])) c WHERE c LIKE 'search_path=%');
-    PERFORM public._t_assert(n = 0, 'D1 كل دوال SECURITY DEFINER عليها search_path' || CASE WHEN n > 0 THEN ' (ناقص: ' || names || ')' ELSE '' END);
-
-    SELECT count(*) INTO n FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename IN ('catalog_items', 'store_specialists', 'service_bookings')
-      AND cmd <> 'SELECT'
-      AND ('anon' = ANY(roles) OR 'public' = ANY(roles));
-    PERFORM public._t_assert(n = 0, 'D2 لا توجد سياسة كتابة للزوار على الجداول الثلاثة');
-
-    SELECT count(*) INTO n FROM pg_policies
-    WHERE schemaname = 'public' AND tablename = 'service_bookings'
-      AND ('anon' = ANY(roles) OR 'public' = ANY(roles));
-    PERFORM public._t_assert(n = 0, 'D3 لا توجد أي سياسة للزوار على service_bookings');
-
-    SELECT count(*) INTO n FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
-    WHERE ns.nspname = 'public' AND c.relname IN ('pin_login_attempts', 'rate_limit_counters', 'staff_sessions') AND c.relrowsecurity;
-    PERFORM public._t_assert(n = 3, 'D4 الجداول الداخلية الثلاثة عليها RLS');
-END $$;
-
-DO $$
-DECLARE
-    f INT := COALESCE(NULLIF(current_setting('radar.test_fails', true), ''), '0')::int;
-BEGIN
-    IF f > 0 THEN
-        RAISE EXCEPTION '❌ فشل % اختبار/اختبارات. راجع الأسطر التي تبدأ بـ ❌', f;
-    END IF;
-    RAISE NOTICE '==================================================';
-    RAISE NOTICE '🎉 نجحت كل الاختبارات (وسيتم التراجع عن بيانات الاختبار)';
-    RAISE NOTICE '==================================================';
-END $$;
-
-ROLLBACK;
-
-
-
-
--- =========================================================================
--- 🔒 SUPABASE SECURITY ADVISOR FIX: ENABLE RLS ON public.staff_sessions
--- =========================================================================
-ALTER TABLE IF EXISTS public.staff_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS public.staff_sessions FORCE ROW LEVEL SECURITY;
-REVOKE ALL ON public.staff_sessions FROM PUBLIC, anon, authenticated;
-GRANT ALL ON public.staff_sessions TO service_role;
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'staff_sessions' AND policyname = 'staff_sessions_service_role') THEN
-        CREATE POLICY "staff_sessions_service_role" ON public.staff_sessions FOR ALL TO service_role USING (true) WITH CHECK (true);
-    END IF;
-END $$;

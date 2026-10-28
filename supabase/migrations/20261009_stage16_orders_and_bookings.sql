@@ -71,7 +71,7 @@ CREATE OR REPLACE FUNCTION public.book_service_safely(
     p_notes TEXT,
     p_points_to_earn INT,
     p_selected_modifiers JSONB DEFAULT '[]'::jsonb
-) RETURNS jsonb AS $$$
+) RETURNS jsonb AS $$
 DECLARE
     v_overlap_exists BOOLEAN;
     v_booking_id UUID;
@@ -134,7 +134,7 @@ BEGIN
         'booking_number', v_booking_number
     );
 END;
-$$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
 -- 3. Enable Realtime
