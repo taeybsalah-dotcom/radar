@@ -75,6 +75,12 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
   const [recurringCommissionRate, setRecurringCommissionRate] = useState<number>(10);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Referral code live check & auto-generation state
+  const [codeStatus, setCodeStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
+  const [codeStatusMsg, setCodeStatusMsg] = useState<string | null>(null);
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const codeCheckTimerRef = React.useRef<any>(null);
+
   // Commission Rate Edit Modal
   const [rateModalPartner, setRateModalPartner] = useState<any | null>(null);
   const [editingRate, setEditingRate] = useState<number>(20);
@@ -163,24 +169,94 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
     fetchPartners();
   }, [fetchPartners]);
 
-  // Generate random 4-digit code prefixed with lowercase 'r' (e.g. r4819)
-  const generateNewReferralCode = () => {
-    const randomDigits = Math.floor(1000 + Math.random() * 9000);
-    return `r${randomDigits}`;
+  // Referral code live check & unique code generation
+  const verifyCodeUniqueness = useCallback(async (codeToTest: string) => {
+    const clean = codeToTest.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!clean || clean.length < 2) {
+      setCodeStatus('taken');
+      setCodeStatusMsg('الكود يجب أن يتكون من حرفين أو رقمين على الأقل');
+      return false;
+    }
+
+    setCodeStatus('checking');
+    setCodeStatusMsg('جاري التحقق من توفر الكود في قاعدة البيانات... ⏳');
+
+    try {
+      const res = await LoyaltyService.checkReferralCodeAvailability(clean);
+      if (res.available) {
+        setCodeStatus('available');
+        setCodeStatusMsg('الكود متاح وفريد ويمكن اعتماده ✅');
+        return true;
+      } else {
+        setCodeStatus('taken');
+        setCodeStatusMsg(res.reason || 'الكود مستخدم مسبقاً لشريك آخر ❌');
+        return false;
+      }
+    } catch {
+      setCodeStatus('available');
+      setCodeStatusMsg(null);
+      return true;
+    }
+  }, []);
+
+  const handleCustomCodeChange = (raw: string) => {
+    const clean = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    setReferralCode(clean);
+    setModalError(null);
+
+    if (codeCheckTimerRef.current) {
+      clearTimeout(codeCheckTimerRef.current);
+    }
+
+    if (!clean) {
+      setCodeStatus('idle');
+      setCodeStatusMsg(null);
+      return;
+    }
+
+    codeCheckTimerRef.current = setTimeout(() => {
+      verifyCodeUniqueness(clean);
+    }, 350);
   };
 
-  const openNewPartnerModal = () => {
+  const handleAutoGenerateCode = async () => {
+    setIsGeneratingCode(true);
+    try {
+      const generated = await LoyaltyService.generateUniqueReferralCode(partnerName);
+      setReferralCode(generated);
+      setCodeStatus('available');
+      setCodeStatusMsg('تم توليد كود تلقائي فريد ومتاح بنجاح 🎲');
+    } catch (e) {
+      console.warn('Auto generate code failed:', e);
+    } finally {
+      setIsGeneratingCode(false);
+    }
+  };
+
+  const openNewPartnerModal = async () => {
     setModalError(null);
     setPartnerName('');
     setPartnerPhone('');
-    setReferralCode(generateNewReferralCode());
     setPinCode('1234');
     setPartnerSlug('');
     setRegion('');
     setMonthlyTarget('');
     setCommissionRate(20);
     setRecurringCommissionRate(10);
+    setCodeStatus('checking');
+    setCodeStatusMsg('جاري تحضير كود فريد...');
     setIsModalOpen(true);
+
+    try {
+      const initialCode = await LoyaltyService.generateUniqueReferralCode();
+      setReferralCode(initialCode);
+      setCodeStatus('available');
+      setCodeStatusMsg('كود تلقائي مبدئي متاح (يمكنك تعديله أو كتابة كود مخصص)');
+    } catch {
+      const fallback = `r${Math.floor(1000 + Math.random() * 9000)}`;
+      setReferralCode(fallback);
+      setCodeStatus('available');
+    }
   };
 
   // Open Rate Edit Modal
@@ -320,15 +396,7 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
 
     const cleanName = partnerName.trim();
     const cleanPhone = normalizeSaudiPhone(partnerPhone.trim());
-    let cleanCode = referralCode.trim() || generateNewReferralCode();
-    // Ensure code has lowercase r prefix
-    if (!cleanCode.startsWith('r') && !cleanCode.startsWith('R')) {
-      cleanCode = `r${cleanCode}`;
-    }
-    cleanCode = cleanCode.toLowerCase();
-
-    let cleanSlug = partnerSlug.trim() ? generateSafeSlug(partnerSlug.trim()) : generateSafeSlug(cleanName);
-    if (!cleanSlug) cleanSlug = `partner-${Math.floor(1000 + Math.random() * 9000)}`;
+    let cleanCode = referralCode.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
 
     if (!cleanName || cleanName.length < 2) {
       setModalError('يرجى كتابة اسم المسوق (حرفين على الأقل)');
@@ -339,6 +407,23 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
       setModalError('يرجى إدخال رقم جوال صحيح للمسوق (05XXXXXXXX)');
       return;
     }
+
+    if (!cleanCode || cleanCode.length < 2) {
+      setModalError('يرجى كتابة كود إحالة متاح أو الضغط على زر التوليد التلقائي');
+      return;
+    }
+
+    // Strict uniqueness verification before submitting
+    const codeCheck = await LoyaltyService.checkReferralCodeAvailability(cleanCode);
+    if (!codeCheck.available) {
+      setCodeStatus('taken');
+      setCodeStatusMsg(codeCheck.reason || 'الكود مستخدم مسبقاً لشريك آخر ❌');
+      setModalError(codeCheck.reason || 'كود الإحالة مستخدم مسبقاً، يرجى كتابة رمز آخر');
+      return;
+    }
+
+    let cleanSlug = partnerSlug.trim() ? generateSafeSlug(partnerSlug.trim()) : generateSafeSlug(cleanName);
+    if (!cleanSlug) cleanSlug = cleanCode;
 
     setIsSubmitting(true);
 
@@ -1413,19 +1498,77 @@ ${origin}/join?ref=${refCode}`;
                 </div>
               </div>
 
-              {/* Field 4: Referral Code */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 flex items-center gap-1">
-                  <Tag className="w-3.5 h-3.5 text-amber-400" />
-                  <span>كود الإحالة</span>
-                </label>
-                <input
-                  type="text"
-                  value={referralCode}
-                  onChange={(e) => setReferralCode(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                  placeholder="r4819"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-2.5 text-xs font-mono text-amber-400 font-bold outline-none transition"
-                />
+              {/* Field 4: Referral Code with Auto-Gen & Real-Time Availability Check */}
+              <div className="space-y-2 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-amber-400" />
+                    <span>كود الإحالة ورابط الشريك *</span>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={isGeneratingCode}
+                    onClick={handleAutoGenerateCode}
+                    className="px-2.5 py-1 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[11px] font-bold flex items-center gap-1 transition active:scale-95 disabled:opacity-50"
+                  >
+                    {isGeneratingCode ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                    ) : (
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                    )}
+                    <span>توليد كود تلقائي 🎲</span>
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    dir="ltr"
+                    value={referralCode}
+                    onChange={(e) => handleCustomCodeChange(e.target.value)}
+                    placeholder="مثال: r4820 أو salah أو alhaj"
+                    className={`w-full bg-slate-900 border rounded-xl px-4 py-2.5 text-xs font-mono font-bold outline-none transition ${
+                      codeStatus === 'taken'
+                        ? 'border-rose-500/80 text-rose-400 focus:border-rose-500'
+                        : codeStatus === 'available'
+                        ? 'border-emerald-500/80 text-emerald-400 focus:border-emerald-500'
+                        : 'border-slate-800 text-amber-400 focus:border-amber-500'
+                    }`}
+                  />
+                  <div className="absolute left-3 top-2.5 flex items-center">
+                    {codeStatus === 'checking' && (
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                    )}
+                    {codeStatus === 'available' && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    )}
+                    {codeStatus === 'taken' && (
+                      <AlertCircle className="w-4 h-4 text-rose-400" />
+                    )}
+                  </div>
+                </div>
+
+                {/* Status Message */}
+                {codeStatusMsg && (
+                  <p
+                    className={`text-[11px] font-bold flex items-center gap-1 mt-1 ${
+                      codeStatus === 'taken'
+                        ? 'text-rose-400'
+                        : codeStatus === 'available'
+                        ? 'text-emerald-400'
+                        : 'text-slate-400'
+                    }`}
+                  >
+                    {codeStatus === 'available' && <Check className="w-3 h-3 text-emerald-400 shrink-0" />}
+                    {codeStatus === 'taken' && <X className="w-3 h-3 text-rose-400 shrink-0" />}
+                    <span>{codeStatusMsg}</span>
+                  </p>
+                )}
+
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  💡 يمكنك كتابة كود مخصص بالاسم أو الرمز (مثل: salah أو alhaj أو r5000) أو الضغط على "توليد كود تلقائي". يقوم النظام بفحص الكود فورياً في قاعدة البيانات لمنع تكراره لأي شريك آخر.
+                </p>
               </div>
 
               {/* Field 4: PIN Code (Default 1234) */}
@@ -1481,7 +1624,7 @@ ${origin}/join?ref=${refCode}`;
               <div className="pt-2 flex items-center gap-3">
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || codeStatus === 'taken' || codeStatus === 'checking'}
                   className="flex-1 py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition shadow-lg shadow-amber-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isSubmitting ? (

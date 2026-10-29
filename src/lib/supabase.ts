@@ -9691,6 +9691,66 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     return sanitizedLocal;
   },
 
+  async checkReferralCodeAvailability(code: string, currentPartnerId?: string): Promise<{ available: boolean; reason?: string }> {
+    const clean = (code || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!clean || clean.length < 2) {
+      return { available: false, reason: 'كود الإحالة يجب أن يتكون من حرفين أو رقمين على الأقل' };
+    }
+    const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', 'api', 'auth', 'login']);
+    if (RESERVED_SLUGS.has(clean)) {
+      return { available: false, reason: 'هذا الرمز محجوز للنظام، يرجى اختيار رمز آخر' };
+    }
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const [pRes, aRes] = await Promise.all([
+          supabase.from('partner_accounts').select('id, referral_code, slug').or(`referral_code.ilike.${clean},slug.ilike.${clean}`).limit(1).maybeSingle(),
+          supabase.from('affiliates').select('id, referral_code').ilike('referral_code', clean).limit(1).maybeSingle(),
+        ]);
+
+        if (pRes.data && (!currentPartnerId || pRes.data.id !== currentPartnerId)) {
+          return { available: false, reason: 'الكود مستخدم مسبقاً لشريك آخر' };
+        }
+        if (aRes.data && (!currentPartnerId || aRes.data.id !== currentPartnerId)) {
+          return { available: false, reason: 'الكود مستخدم مسبقاً لشريك آخر' };
+        }
+      } catch (err) {
+        console.warn('[checkReferralCodeAvailability] error checking Supabase:', err);
+      }
+    }
+
+    const existingPartners = await this.getAllPartners(true);
+    const duplicate = existingPartners.find((p: any) => {
+      const pCode = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim();
+      const pSlug = (p.slug || '').toLowerCase().trim();
+      return (pCode === clean || pSlug === clean) && (!currentPartnerId || p.id !== currentPartnerId);
+    });
+    if (duplicate) {
+      return { available: false, reason: 'الكود مستخدم مسبقاً لشريك آخر' };
+    }
+
+    return { available: true };
+  },
+
+  async generateUniqueReferralCode(baseHint?: string): Promise<string> {
+    if (baseHint && baseHint.trim()) {
+      const cleanHint = baseHint.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 20);
+      if (cleanHint.length >= 2) {
+        const check = await this.checkReferralCodeAvailability(cleanHint);
+        if (check.available) return cleanHint;
+      }
+    }
+
+    for (let i = 0; i < 20; i++) {
+      const candidate = `r${Math.floor(1000 + Math.random() * 9000)}`;
+      const check = await this.checkReferralCodeAvailability(candidate);
+      if (check.available) return candidate;
+    }
+
+    return `r${Date.now().toString().slice(-4)}`;
+  },
+
   async addPartner(payload: {
     name: string;
     phone: string;
@@ -9708,36 +9768,31 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const commRate = typeof payload.commission_rate === 'number' ? Math.max(0.01, Math.min(1.0, payload.commission_rate)) : 0.20;
     const recurringRate = typeof payload.recurring_commission_rate === 'number' ? Math.max(0.01, Math.min(1.0, payload.recurring_commission_rate)) : 0.10;
     
-    // Normalization: r + digits
-    let cleanCode = (payload.referral_code || '').trim().toLowerCase();
-    if (cleanCode.startsWith('radar-')) {
-      cleanCode = 'r' + (cleanCode.replace(/\D/g, '') || Math.floor(1000 + Math.random() * 9000));
-    } else if (!cleanCode.startsWith('r')) {
-      const digits = cleanCode.replace(/\D/g, '') || Math.floor(1000 + Math.random() * 9000);
-      cleanCode = `r${digits}`;
+    // Normalization: allow custom code or generate unique if omitted
+    let cleanCode = (payload.referral_code || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!cleanCode) {
+      cleanCode = await this.generateUniqueReferralCode(cleanName);
     }
 
     const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', '']);
-    let cleanSlug = (payload.slug || '').toLowerCase().trim().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+    let cleanSlug = (payload.slug || cleanCode).toLowerCase().trim().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-');
     if (!cleanSlug || RESERVED_SLUGS.has(cleanSlug) || cleanSlug.length < 2) {
       cleanSlug = cleanCode;
     }
     const pinCode = (payload.pin_code || '1234').trim();
 
-    // 🛡️ Pre-validation & Phone duplicate prevention:
+    // 🛡️ Pre-validation & Uniqueness check
+    const codeCheck = await this.checkReferralCodeAvailability(cleanCode);
+    if (!codeCheck.available) {
+      throw new Error(`كود الإحالة (${cleanCode}) مستخدم مسبقاً أو غير متاح: ${codeCheck.reason || 'يرجى اختيار كود آخر'}`);
+    }
+
     const existingPartners = await this.getAllPartners(true);
     const duplicatePhone = existingPartners.find(
       (p: any) => normalizePhone(p.affiliates?.phone || p.phone) === normP
     );
     if (duplicatePhone) {
       throw new Error(`رقم الجوال (${cleanPhone}) مسجل مسبقاً للشريك [${duplicatePhone.display_name || duplicatePhone.name}]، يرجى استخدام رقم آخر.`);
-    }
-
-    const duplicateCode = existingPartners.find(
-      (p: any) => (p.affiliates?.referral_code || p.referral_code || '').toLowerCase().trim() === cleanCode
-    );
-    if (duplicateCode) {
-      throw new Error(`كود الإحالة (${cleanCode}) مستخدم مسبقاً للشريك [${duplicateCode.display_name || duplicateCode.name}]، يرجى اختيار كود آخر.`);
     }
 
     let realAffId = 'aff-' + Date.now();
@@ -9770,13 +9825,18 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           realAffId = affData.id;
         }
 
-        const { data: paData, error: paErr } = await supabase
+        const { data: paData, error: paErr } = await (supabase as any)
           .from('partner_accounts')
           .insert([{
             affiliate_id: realAffId,
             display_name: cleanName,
             slug: cleanSlug,
+            referral_code: cleanCode,
+            phone: cleanPhone,
+            pin_code: pinCode,
             region: payload.region || null,
+            commission_rate: commRate,
+            recurring_commission_rate: recurringRate,
             active: true
           }])
           .select('id')
