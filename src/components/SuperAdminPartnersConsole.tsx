@@ -545,8 +545,14 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
       return;
     }
 
-    let cleanSlug = partnerSlug.trim() ? generateSafeSlug(partnerSlug.trim()) : generateSafeSlug(cleanName);
-    if (!cleanSlug) cleanSlug = cleanCode.toLowerCase();
+    // Ensure cleanSlug is strictly valid ascii alphanumeric between 3 and 60 chars
+    let cleanSlug = cleanCode.toLowerCase();
+    if (partnerSlug && partnerSlug.trim()) {
+      const customCandidate = generateSafeSlug(partnerSlug.trim());
+      if (customCandidate && customCandidate.length >= 3) {
+        cleanSlug = customCandidate;
+      }
+    }
 
     const decimalRate = (Number(commissionRate) || 20) / 100;
     const decimalRecurring = (Number(recurringCommissionRate) || 10) / 100;
