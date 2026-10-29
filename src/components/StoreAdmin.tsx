@@ -887,10 +887,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     loadAdminData();
 
     const unsubscribe = LoyaltyEvents.listen((event) => {
-      if (event.storeId === currentStore.id || event.storeId === currentStore.slug) {
+      if (event.storeId === currentStore.id || event.storeId === currentStore.slug || event.storeId === 'global') {
         // 🎯 Targeted refetching only:
         if (event.type === 'SUBSCRIPTION_UPDATED' || event.type === 'PAYMENT_COMPLETED' || event.type === 'STORE_UPDATED') {
           debouncedSyncStoreAndSubscription(currentStore.id);
+          LoyaltyService.getAllSubscriptionPlans().then((freshPlans) => {
+            if (freshPlans && freshPlans.length > 0) setAllPlans(freshPlans);
+          }).catch(() => {});
           return;
         }
 
@@ -928,6 +931,15 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       debouncedSyncPointsAndCustomers.cancel();
     };
   }, [currentStore?.id, debouncedSyncStoreAndSubscription, debouncedSyncCoupons, debouncedSyncPointsAndCustomers]);
+
+  // 🔄 Live Plan Sync: Fetch latest billing plans directly from DB when visiting billing tab
+  useEffect(() => {
+    if (activeTab === 'settings' && settingsSection === 'billing') {
+      LoyaltyService.getAllSubscriptionPlans().then((freshPlans) => {
+        if (freshPlans && freshPlans.length > 0) setAllPlans(freshPlans);
+      }).catch(() => {});
+    }
+  }, [activeTab, settingsSection]);
 
   // 🔗 Keep Browser URL cleanly in sync with ?store=...&portal=admin to preserve session on refresh
   useEffect(() => {
