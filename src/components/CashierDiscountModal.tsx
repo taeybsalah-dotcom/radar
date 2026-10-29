@@ -41,8 +41,6 @@ export const CashierDiscountModal: React.FC<CashierDiscountModalProps> = ({
   onApplyDiscount,
   onRemoveDiscount,
 }) => {
-  if (!isOpen) return null;
-
   const [discountType, setDiscountType] = useState<'percentage' | 'fixed' | 'complimentary' | 'coupon'>(
     currentDiscount?.type || 'percentage'
   );
@@ -112,6 +110,8 @@ export const CashierDiscountModal: React.FC<CashierDiscountModalProps> = ({
     });
     onClose();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-fade-in text-right" dir="rtl">

@@ -3106,19 +3106,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     return true;
   });
 
-  if (!authenticatedAdmin) {
-    return (
-      <StaffLoginGate
-        store={store}
-        requiredRole="admin"
-        onAuthenticated={(staff) => {
-          setAuthenticatedAdmin(staff);
-          loadAdminData();
-        }}
-      />
-    );
-  }
-
   const baseDomain = store.custom_domain
     ? `https://${store.custom_domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}`
     : `${window.location.origin}/?store=${store.slug}`;
@@ -3213,6 +3200,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setCatalogSection('hub');
     }
   }, [catalogTabs, catalogSection]);
+
+  if (!authenticatedAdmin) {
+    return (
+      <StaffLoginGate
+        store={store}
+        requiredRole="admin"
+        onAuthenticated={(staff) => {
+          setAuthenticatedAdmin(staff);
+          loadAdminData();
+        }}
+      />
+    );
+  }
 
   const rawTabsConfig = [
     {

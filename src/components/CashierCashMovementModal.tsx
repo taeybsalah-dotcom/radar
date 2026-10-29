@@ -65,8 +65,6 @@ export const CashierCashMovementModal: React.FC<CashierCashMovementModalProps> =
   initialType = 'cash_out',
   onMovementRecorded,
 }) => {
-  if (!isOpen) return null;
-
   const [movementType, setMovementType] = useState<'cash_in' | 'cash_out'>(initialType);
   const [amount, setAmount] = useState<number | ''>('');
   
@@ -115,8 +113,9 @@ export const CashierCashMovementModal: React.FC<CashierCashMovementModalProps> =
   };
 
   useEffect(() => {
+    if (!isOpen) return;
     loadMovements();
-  }, [movementType, store.id]);
+  }, [isOpen, movementType, store.id]);
 
   const effectiveReason =
     movementType === 'cash_in'
@@ -216,6 +215,8 @@ export const CashierCashMovementModal: React.FC<CashierCashMovementModalProps> =
   const handlePrintVoucher = () => {
     window.print();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in text-right" dir="rtl">

@@ -39,8 +39,6 @@ export const CashierRecentReceiptsModal: React.FC<CashierRecentReceiptsModalProp
   onReprintReceipt,
   onOpenRefundForOrder,
 }) => {
-  if (!isOpen) return null;
-
   const [searchQuery, setSearchQuery] = useState('');
 
   // Filter orders by search query and sort newest first
@@ -69,6 +67,8 @@ export const CashierRecentReceiptsModal: React.FC<CashierRecentReceiptsModalProp
     const url = LoyaltyService.generateCustomerOrderWhatsAppUrl(store, order, phone);
     window.open(url, '_blank');
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-fade-in text-right" dir="rtl">

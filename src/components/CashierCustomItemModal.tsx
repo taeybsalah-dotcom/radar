@@ -31,8 +31,6 @@ export const CashierCustomItemModal: React.FC<CashierCustomItemModalProps> = ({
   onClose,
   onAddCustomItem,
 }) => {
-  if (!isOpen) return null;
-
   const [name, setName] = useState('');
   const [price, setPrice] = useState<number | ''>('');
   const [quantity, setQuantity] = useState(1);
@@ -68,6 +66,8 @@ export const CashierCustomItemModal: React.FC<CashierCustomItemModalProps> = ({
     onAddCustomItem(customCatalogItem, quantity, notes.trim() || undefined);
     onClose();
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-fade-in text-right" dir="rtl">
