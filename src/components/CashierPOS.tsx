@@ -669,26 +669,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
         fulfillment_details: updatedFulfillmentDetails,
       });
 
-      if (!wasPointsAwarded && order.customer_phone) {
-        const orderTotal = Number(order.total_price || order.total_amount || 0);
-        const pointsToAward =
-          Number(order.loyalty_points_earned) > 0
-            ? Number(order.loyalty_points_earned)
-            : Math.max(1, Math.floor(orderTotal * (store.points_per_riyal || 1)));
-
-        LoyaltyService.rewardPointsForCompletedTransaction(
-          order.store_id || store.id,
-          order.customer_phone,
-          pointsToAward,
-          `تحصيل واستلام الطلب #${order.order_number || order.id} (${method === 'cash' ? 'كاش' : 'شبكة'})`,
-          order.customer_name,
-          staffName,
-          effectiveBranchId,
-          effectiveBranchName,
-          orderTotal,
-          'PURCHASE'
-        ).catch((err) => console.warn('Failed to reward loyalty points upon cashier collection:', err));
-      }
+      // 🔒 منح نقاط الولاء يتم الآن ذرياً داخل السيرفر (update_store_order_status_secure) مرة واحدة عند الاكتمال.
 
       setLiveOrders((prev) =>
         prev.map((o) =>

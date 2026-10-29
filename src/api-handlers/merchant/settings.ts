@@ -140,11 +140,11 @@ export default async function handler(req: any, res: any) {
 
       if (body.points_per_riyal !== undefined) {
         const ppr = Number(body.points_per_riyal);
-        if (isNaN(ppr) || ppr <= 0 || ppr > 100) {
+        if (isNaN(ppr) || ppr < 1 || ppr > 100) {
           return res.status(400).json({
             success: false,
             code: 'INVALID_POINTS_RATE',
-            error: 'معدل احتساب النقاط لكل ريال يجب أن يكون رقماً موجباً بين 0.1 و 100',
+            error: 'معدل احتساب النقاط لكل ريال يجب أن يكون رقماً بين 1 و 100',
           });
         }
         updates.points_per_riyal = ppr;

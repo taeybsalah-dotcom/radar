@@ -911,6 +911,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             isOfflineOrder = true;
           }
         } catch (netErr) {
+          if ((netErr as any)?.isServerRejection) throw netErr; // 🔒 رفض السيرفر لا يُحوَّل لطابور الأوفلاين ولا يُعرض كنجاح وهمي
           console.warn('Network checkout failed, switching to offline queue:', netErr);
           isOfflineOrder = true;
         }
@@ -996,7 +997,16 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         (isTransferredBooking && (transferredMetadata?.isAppPrepaid || (transferredOrder as any)?.points_awarded))
       );
 
-      if (!isOfflineOrder && customer && customer.phone && !isAlreadyAwarded) {
+      const serverAwardedPoints = Boolean(savedOrder?.points_awarded);
+      if (serverAwardedPoints && customer && customer.phone) {
+        // 🔒 النقاط مُنحت ذرياً داخل السيرفر عند إنشاء الطلب المدفوع
+        pointsEarned = Number(savedOrder?.loyalty_points_earned) || 0;
+        if (pointsEarned > 0) {
+          LoyaltyEvents.emit({ type: 'POINTS_ADDED', storeId: store.id, phone: customer.phone, points: pointsEarned });
+          LoyaltyEvents.emit({ type: 'CUSTOMER_UPDATED', storeId: store.id, phone: customer.phone });
+          LoyaltyEvents.emit({ type: 'WALLET_UPDATED', storeId: store.id });
+        }
+      } else if (!isOfflineOrder && customer && customer.phone && !isAlreadyAwarded && !isTransferredAppOrder && !isTransferredBooking) {
         try {
           const purchaseRes = await LoyaltyService.processPurchase(
             store.id,

@@ -1477,7 +1477,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   const handleSaveLoyaltySettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pointsPerRiyal <= 0 || !storeName.trim()) return;
+    if (pointsPerRiyal < 1) {
+      alert('معامل النقاط يجب أن يكون 1 أو أكثر (لا يمكن أن يقل عن 1)');
+      return;
+    }
+    if (!storeName.trim()) return;
 
     setUpdatingSettings(true);
     setSettingsSavedMessage(null);
@@ -10315,10 +10319,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </label>
               <input
                 type="number"
-                step="0.1"
-                min="0.1"
+                step="1"
+                min="1"
                 value={pointsPerRiyal}
-                onChange={(e) => setPointsPerRiyal(Number(e.target.value))}
+                onChange={(e) => setPointsPerRiyal(Math.max(1, Number(e.target.value)))}
                 placeholder="1.0"
                 className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-3 text-sm font-mono font-bold text-white outline-none transition"
                 required

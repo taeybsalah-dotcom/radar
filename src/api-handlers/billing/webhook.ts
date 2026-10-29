@@ -1,5 +1,5 @@
 // ==============================================================================
-// 🛡️ RADAR LOYALTY ENGINE — STAGE 13: WEBHOOK HARDENING & BILLING SYNC
+// 🛡️ RADAR LOYALTY ENGINE — STAGE 2: ATOMIC WEBHOOK HANDLER & ROLLBACK LOGGER
 // Server-Authoritative State Synchronization, Signature Verification, Idempotency
 // ==============================================================================
 
@@ -8,11 +8,7 @@ import { getBillingProvider } from './_adapter.ts';
 
 declare const process: any;
 
-// Memory cache for duplicate webhook protection
-const processedWebhookEvents = new Set<string>();
-
 export default async function handler(req: any, res: any) {
-  // 1. Strict Method Guard
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({
@@ -35,7 +31,7 @@ export default async function handler(req: any, res: any) {
     const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {});
     const headers = req.headers || {};
 
-    // 2. Webhook Signature & Authenticity Verification
+    // 1. Cryptographic Signature Verification
     const isAuthentic = await provider.verifyWebhook(headers, rawBody);
     if (!isAuthentic) {
       return res.status(401).json({
@@ -45,10 +41,12 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // 3. Payload Normalization & Validation
+    // 2. Payload Normalization
     let event: any = null;
     try {
-      event = await provider.normalizeWebhookEvent(req.body);
+      event = await provider.normalizeWebhookEvent(
+        typeof req.body === 'string' ? JSON.parse(req.body) : req.body
+      );
     } catch {
       return res.status(400).json({
         success: false,
@@ -57,238 +55,94 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    if (!event || !event.eventId) {
+    if (!event || !event.eventId || !event.storeId) {
       return res.status(400).json({
         success: false,
         code: 'MALFORMED_PAYLOAD',
-        error: 'بيانات الإشعار غير مكتملة أو مجهولة المصدر',
+        error: 'بيانات الإشعار غير مكتملة (eventId / storeId مفقود)',
       });
     }
 
-    // 4. Duplicate Webhook Protection (Idempotency)
-    if (processedWebhookEvents.has(event.eventId)) {
-      return res.status(200).json({
-        success: true,
-        idempotent: true,
-        duplicate: true,
+    const supabaseUrl =
+      process.env.SUPABASE_URL ||
+      process.env.VITE_SUPABASE_URL ||
+      'https://kspfiijorengpckdlymx.supabase.co';
+    const activeKey =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.VITE_SUPABASE_ANON_KEY;
+    const masterToken =
+      process.env.SOVEREIGN_MASTER_TOKEN || process.env.VITE_SOVEREIGN_MASTER_TOKEN || null;
+
+    if (!activeKey) {
+      return res.status(500).json({
+        success: false,
+        code: 'SERVER_MISCONFIGURED',
+        error: 'مفاتيح الاتصال بقاعدة البيانات غير متوفرة في السيرفر',
+      });
+    }
+
+    const supabase = createClient(supabaseUrl, activeKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    const paymentId = event.transactionId || event.eventId;
+
+    // 3. Execute Single Atomic Postgres Transaction (process_store_payment_atomic)
+    const { data: rpcData, error: rpcError } = await supabase.rpc('process_store_payment_atomic', {
+      p_store_id: event.storeId,
+      p_invoice_type: event.eventType === 'SUBSCRIPTION_RENEWED' ? 'renewal' : 'setup',
+      p_amount: event.amount,
+      p_payment_method: 'mada',
+      p_gateway: event.provider.toLowerCase(),
+      p_gateway_payment_id: paymentId,
+      p_plan_id: event.rawPayload?.plan_id || null,
+      p_plan_code: event.rawPayload?.plan_code || null,
+      p_plan_name: event.rawPayload?.plan_name || null,
+      p_duration_months: Number(event.rawPayload?.duration_months || 1),
+      p_vat_rate: Number(event.rawPayload?.vat_rate ?? 0.0),
+      p_gateway_fee: null,
+      p_webhook_event_id: event.eventId,
+      p_master_token: masterToken,
+    });
+
+    // 4. Log Webhook Failure if Atomic RPC Rolled Back
+    if (rpcError || !rpcData || rpcData.success !== true) {
+      const errMsg =
+        rpcError?.message || rpcData?.error || 'Atomic payment transaction rolled back';
+
+      await supabase.rpc('log_billing_webhook_failure', {
+        p_provider: event.provider.toUpperCase(),
+        p_event_id: event.eventId,
+        p_event_type: event.eventType,
+        p_store_id: event.storeId,
+        p_error_message: errMsg,
+        p_payload: event.rawPayload || {},
+        p_master_token: masterToken,
+      });
+
+      return res.status(422).json({
+        success: false,
+        code: 'ATOMIC_PAYMENT_ROLLBACK',
+        error: errMsg,
         event_id: event.eventId,
-        message: 'تمت معالجة هذا الإشعار مسبقاً (Duplicate Webhook Suppressed)',
+        webhook_failure_logged: true,
       });
     }
-
-    // 5. Server-Authoritative Database Synchronization
-    const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zagpvflyizbmzsbmhnts.supabase.co';
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    let dbUpdated = false;
-    if (serviceRoleKey && event.storeId) {
-      try {
-        const supabase = createClient(supabaseUrl, serviceRoleKey, {
-          auth: { persistSession: false, autoRefreshToken: false },
-        });
-
-        // Check if event already in DB
-        const { data: existingEvent } = await supabase
-          .from('billing_webhook_events')
-          .select('id')
-          .eq('provider_event_id', event.eventId)
-          .maybeSingle();
-
-        if (existingEvent) {
-          processedWebhookEvents.add(event.eventId);
-          return res.status(200).json({
-            success: true,
-            idempotent: true,
-            duplicate: true,
-            event_id: event.eventId,
-            message: 'تمت معالجة هذا الإشعار مسبقاً في قاعدة البيانات',
-          });
-        }
-
-        // Apply Server-Authoritative State Transitions
-        const now = new Date();
-        const periodEnd = new Date(now.getTime() + 30 * 86400000).toISOString();
-
-        if (event.eventType === 'PAYMENT_SUCCESS' || event.eventType === 'SUBSCRIPTION_RENEWED') {
-          // Update merchant_subscriptions
-          await supabase
-            .from('merchant_subscriptions')
-            .update({
-              status: 'ACTIVE',
-              current_period_start: now.toISOString(),
-              current_period_end: periodEnd,
-              updated_at: now.toISOString(),
-            })
-            .eq('store_id', event.storeId);
-
-          // Update stores table
-          await supabase
-            .from('stores')
-            .update({
-              subscription_status: 'active',
-              subscription_active: true,
-              setup_fee_paid: true,
-              updated_at: now.toISOString(),
-            })
-            .eq('id', event.storeId);
-
-          // Insert billing_transactions
-          await supabase.from('billing_transactions').insert({
-            store_id: event.storeId,
-            provider: event.provider,
-            amount: event.amount,
-            currency: event.currency,
-            status: 'SUCCEEDED',
-            provider_payment_id: event.transactionId || event.eventId,
-            created_at: now.toISOString(),
-          });
-
-          // 💰 Check and convert linked merchant lead + record affiliate commission
-          try {
-            const { data: matchedLeads } = await supabase
-              .from('merchant_leads')
-              .select('id, referral_code, status')
-              .eq('converted_store_id', event.storeId)
-              .neq('status', 'CONVERTED')
-              .limit(5);
-
-            if (matchedLeads && matchedLeads.length > 0) {
-              for (const lead of matchedLeads) {
-                await supabase
-                  .from('merchant_leads')
-                  .update({ status: 'CONVERTED', updated_at: now.toISOString() })
-                  .eq('id', lead.id);
-
-                await supabase.rpc('record_lead_conversion_commission', {
-                  p_lead_id: lead.id,
-                  p_store_id: event.storeId,
-                  p_basis_amount: event.amount || 195.0,
-                });
-              }
-            }
-
-            // 💰 Unlock pending commissions to EARNED upon successful payment
-            const { data: updatedComms } = await supabase
-              .from('partner_commissions')
-              .update({
-                status: 'EARNED',
-                qualifying_event: 'تم سداد الاشتراك وتثبيت المتجر بنجاح',
-                basis_amount: event.amount || 195.0,
-                updated_at: now.toISOString(),
-              })
-              .eq('store_id', event.storeId)
-              .eq('status', 'PENDING')
-              .select('partner_account_id');
-
-            // 🏆 Evaluate milestone bonuses for the partner based on paid stores
-            if (updatedComms && updatedComms.length > 0) {
-              for (const comm of updatedComms) {
-                if (comm.partner_account_id) {
-                  const { data: paidComms } = await supabase
-                    .from('partner_commissions')
-                    .select('store_id')
-                    .eq('partner_account_id', comm.partner_account_id)
-                    .in('status', ['EARNED', 'PAID']);
-
-                  const paidStoreCount = new Set((paidComms || []).map((c: any) => c.store_id).filter(Boolean)).size;
-
-                  const defaultMilestones = [
-                    { id: 'rule-3', milestone: 3, bonus_amount: 100 },
-                    { id: 'rule-5', milestone: 5, bonus_amount: 250 },
-                    { id: 'rule-10', milestone: 10, bonus_amount: 500 },
-                    { id: 'rule-20', milestone: 20, bonus_amount: 1000 },
-                  ];
-
-                  for (const rule of defaultMilestones) {
-                    if (paidStoreCount >= rule.milestone) {
-                      const awardKey = `bonus_${comm.partner_account_id}_${rule.milestone}`;
-                      await supabase.from('partner_bonus_awards').upsert(
-                        {
-                          partner_account_id: comm.partner_account_id,
-                          bonus_rule_id: rule.id,
-                          milestone: rule.milestone,
-                          bonus_amount: rule.bonus_amount,
-                          status: 'ACHIEVED',
-                          idempotency_key: awardKey,
-                          awarded_at: now.toISOString(),
-                        },
-                        { onConflict: 'idempotency_key' }
-                      );
-                    }
-                  }
-                }
-              }
-            }
-          } catch (leadErr) {
-            console.warn('[api/billing/webhook] Lead commission auto-record non-blocking warning:', leadErr);
-          }
-        } else if (event.eventType === 'PAYMENT_FAILED') {
-          await supabase
-            .from('merchant_subscriptions')
-            .update({ status: 'PAST_DUE', updated_at: now.toISOString() })
-            .eq('store_id', event.storeId);
-
-          await supabase
-            .from('stores')
-            .update({ subscription_status: 'past_due', updated_at: now.toISOString() })
-            .eq('id', event.storeId);
-
-          await supabase.from('billing_transactions').insert({
-            store_id: event.storeId,
-            provider: event.provider,
-            amount: event.amount,
-            currency: event.currency,
-            status: 'FAILED',
-            provider_payment_id: event.transactionId || event.eventId,
-            created_at: now.toISOString(),
-          });
-        } else if (event.eventType === 'SUBSCRIPTION_CANCELED') {
-          await supabase
-            .from('merchant_subscriptions')
-            .update({ status: 'CANCELED', canceled_at: now.toISOString(), updated_at: now.toISOString() })
-            .eq('store_id', event.storeId);
-
-          await supabase
-            .from('stores')
-            .update({ subscription_status: 'suspended', subscription_active: false, updated_at: now.toISOString() })
-            .eq('id', event.storeId);
-        }
-
-        // Record in billing_webhook_events
-        await supabase.from('billing_webhook_events').insert({
-          provider: event.provider,
-          event_type: event.eventType,
-          provider_event_id: event.eventId,
-          store_id: event.storeId,
-          payload: { amount: event.amount, currency: event.currency, eventType: event.eventType },
-          created_at: now.toISOString(),
-        });
-
-        dbUpdated = true;
-      } catch (dbErr) {
-        console.warn('[api/billing/webhook] DB update failed, event processed in-memory:', dbErr);
-      }
-    }
-
-    // Record in memory idempotency set
-    processedWebhookEvents.add(event.eventId);
 
     return res.status(200).json({
       success: true,
-      processed: true,
+      idempotent: Boolean(rpcData.idempotent),
+      is_sandbox: Boolean(rpcData.is_sandbox),
       event_id: event.eventId,
-      event_type: event.eventType,
-      store_id: event.storeId,
-      db_synchronized: dbUpdated,
+      payment_id: rpcData.gateway_payment_id || paymentId,
+      transaction_id: rpcData.transaction_id,
+      invoice_id: rpcData.invoice_id,
+      invoice_number: rpcData.invoice_number,
+      ledger_id: rpcData.ledger_id,
+      store_id: rpcData.store_id,
     });
   } catch (err: any) {
-    if (err.message === 'MALFORMED_PAYLOAD') {
-      return res.status(400).json({
-        success: false,
-        code: 'MALFORMED_PAYLOAD',
-        error: 'بيانات الإشعار غير صالحة',
-      });
-    }
     console.error('[api/billing/webhook] Exception:', err);
     return res.status(500).json({
       success: false,

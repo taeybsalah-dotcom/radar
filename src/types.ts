@@ -1176,6 +1176,7 @@ export interface PartnerAccount {
   region?: string | null;
   active: boolean;
   referral_code: string;
+  aliases?: string[];
   commission_rate?: number; // General / default rate (e.g. 0.20 = 20%)
   acquisition_commission_rate?: number; // عمولة أول اشتراك/تأسيس (مثال: 20%)
   recurring_commission_rate?: number; // عمولة التجديدات المتكررة (مثال: 10%)

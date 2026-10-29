@@ -613,6 +613,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       setEditErrorMessage('اسم المتجر والرابط مطلوبان');
       return;
     }
+    if (Number(editPointsPerRiyal) < 1) {
+      setEditErrorMessage('معامل النقاط يجب أن يكون 1 أو أكثر (لا يمكن أن يقل عن 1)');
+      return;
+    }
 
     setEditIsSaving(true);
     setEditErrorMessage(null);
@@ -982,6 +986,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     e.preventDefault();
     if (!name.trim() || !managerName.trim()) {
       setErrorMessage('يرجى تعبئة الحقول الأساسية (اسم المتجر واسم المدير)');
+      return;
+    }
+    if (Number(pointsPerRiyal) < 1) {
+      setErrorMessage('معامل النقاط يجب أن يكون 1 أو أكثر (لا يمكن أن يقل عن 1)');
       return;
     }
 
@@ -2904,9 +2912,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 </label>
                 <input
                   type="number"
-                  step="0.1"
+                  step="1"
+                  min="1"
                   value={pointsPerRiyal}
-                  onChange={(e) => setPointsPerRiyal(Number(e.target.value))}
+                  onChange={(e) => setPointsPerRiyal(Math.max(1, Number(e.target.value)))}
                   className="w-full bg-slate-900 border border-slate-700 focus:border-amber-500 rounded-2xl px-4 py-2.5 text-sm font-mono text-amber-400 font-bold outline-none"
                   required
                 />
@@ -3147,9 +3156,10 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                     <label className="text-[11px] text-slate-400 block mb-1">النقاط لكل ريال</label>
                     <input
                       type="number"
-                      step="0.1"
+                      step="1"
+                      min="1"
                       value={editPointsPerRiyal}
-                      onChange={(e) => setEditPointsPerRiyal(Number(e.target.value))}
+                      onChange={(e) => setEditPointsPerRiyal(Math.max(1, Number(e.target.value)))}
                       className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-emerald-400 font-bold text-center outline-none"
                     />
                   </div>

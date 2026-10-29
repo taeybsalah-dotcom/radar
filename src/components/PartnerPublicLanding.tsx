@@ -40,7 +40,7 @@ export const PartnerPublicLanding: React.FC<PartnerPublicLandingProps> = ({ slug
         );
 
         if (found) {
-          const refCode = found.affiliates?.referral_code || found.referral_code || 'r1001';
+          const refCode = found.affiliates?.referral_code || found.referral_code || (found.slug ? found.slug.toUpperCase() : 'ALHAJ');
           setPartner({
             display_name: found.display_name,
             slug: found.slug || refCode,

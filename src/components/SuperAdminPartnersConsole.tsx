@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, getSupabaseClient, getSovereignMasterToken, invalidatePartnersCache } from '../lib/supabase';
 import { generateSafeSlug } from '../lib/slugUtils';
 import confetti from 'canvas-confetti';
 import {
@@ -38,6 +38,7 @@ import {
   Search,
   LayoutGrid,
   List,
+  Edit3,
 } from 'lucide-react';
 import { SendNotificationModal } from './SendNotificationModal';
 
@@ -46,17 +47,7 @@ interface SuperAdminPartnersConsoleProps {
 }
 
 export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps> = ({ isDark = true }) => {
-  const [partners, setPartners] = useState<any[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const raw = localStorage.getItem('radar_local_partners') || localStorage.getItem('radar_partners');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [];
-  });
+  const [partners, setPartners] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -92,6 +83,19 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
   const [editingPinValue, setEditingPinValue] = useState<string>('1234');
   const [isUpdatingPartnerPin, setIsUpdatingPartnerPin] = useState(false);
 
+  // ✏️ Edit Partner Details & Referral Code Modal State
+  const [editModalPartner, setEditModalPartner] = useState<any | null>(null);
+  const [editPartnerName, setEditPartnerName] = useState('');
+  const [editPartnerPhone, setEditPartnerPhone] = useState('');
+  const [editPartnerCode, setEditPartnerCode] = useState('');
+  const [editPartnerRegion, setEditPartnerRegion] = useState('');
+  const [editPartnerTarget, setEditPartnerTarget] = useState<number | ''>('');
+  const [editCodeStatus, setEditCodeStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
+  const [editCodeStatusMsg, setEditCodeStatusMsg] = useState('');
+  const [isUpdatingPartnerProfile, setIsUpdatingPartnerProfile] = useState(false);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
+  const editCodeTimerRef = React.useRef<any>(null);
+
   // Settlement Modal State
   const [settlePartner, setSettlePartner] = useState<any | null>(null);
   const [settleSummary, setSettleSummary] = useState<any | null>(null);
@@ -123,7 +127,7 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase().trim();
     const name = (p.display_name || p.name || '').toLowerCase();
-    const phone = (p.affiliates?.phone || '').toLowerCase();
+    const phone = (p.affiliates?.phone || p.phone || '').toLowerCase();
     const refCode = (p.affiliates?.referral_code || p.referral_code || '').toLowerCase();
     const region = (p.region || '').toLowerCase();
 
@@ -200,7 +204,7 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
   }, []);
 
   const handleCustomCodeChange = (raw: string) => {
-    const clean = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    const clean = raw.toUpperCase().replace(/[^A-Z0-9_-]/g, '');
     setReferralCode(clean);
     setModalError(null);
 
@@ -320,6 +324,109 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
     }
   };
 
+  // ✏️ Open Edit Partner Modal
+  const openEditPartnerModal = (p: any) => {
+    setEditModalPartner(p);
+    setEditPartnerName(p.display_name || p.name || '');
+    setEditPartnerPhone(p.affiliates?.phone || p.phone || '');
+    const currentCode = p.affiliates?.referral_code || p.referral_code || '';
+    setEditPartnerCode(currentCode);
+    setEditPartnerRegion(p.region || '');
+    setEditPartnerTarget(typeof p.target_value === 'number' ? p.target_value : 20);
+    setEditCodeStatus('available');
+    setEditCodeStatusMsg('الكود الحالي للمسوق ✅');
+    setEditModalError(null);
+  };
+
+  const handleEditPartnerCodeChange = (raw: string) => {
+    const clean = raw.toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    setEditPartnerCode(clean);
+    setEditModalError(null);
+
+    if (editCodeTimerRef.current) {
+      clearTimeout(editCodeTimerRef.current);
+    }
+
+    if (!clean || clean.length < 2) {
+      setEditCodeStatus('taken');
+      setEditCodeStatusMsg('الكود يجب أن يتكون من حرفين أو رقمين على الأقل');
+      return;
+    }
+
+    const currentCode = (editModalPartner?.affiliates?.referral_code || editModalPartner?.referral_code || '').toUpperCase().trim();
+    if (clean === currentCode) {
+      setEditCodeStatus('available');
+      setEditCodeStatusMsg('الكود الحالي للمسوق ✅');
+      return;
+    }
+
+    setEditCodeStatus('checking');
+    setEditCodeStatusMsg('جاري التحقق من توفر الكود... ⏳');
+
+    editCodeTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await LoyaltyService.checkReferralCodeAvailability(clean, editModalPartner?.id);
+        if (res.available) {
+          setEditCodeStatus('available');
+          setEditCodeStatusMsg('الكود متاح وفريد ويمكن اعتماده ✅');
+        } else {
+          setEditCodeStatus('taken');
+          setEditCodeStatusMsg(res.reason || 'الكود مستخدم مسبقاً لشريك آخر ❌');
+        }
+      } catch {
+        setEditCodeStatus('available');
+      }
+    }, 400);
+  };
+
+  const handleUpdatePartnerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editModalPartner) return;
+    setEditModalError(null);
+
+    const cleanName = editPartnerName.trim();
+    const cleanPhone = normalizeSaudiPhone(editPartnerPhone.trim());
+    const cleanCode = editPartnerCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+
+    if (!cleanName || cleanName.length < 2) {
+      setEditModalError('يرجى كتابة اسم المسوق (حرفين على الأقل)');
+      return;
+    }
+
+    if (!cleanPhone || cleanPhone.length < 9) {
+      setEditModalError('يرجى إدخال رقم جوال صحيح للمسوق (05XXXXXXXX)');
+      return;
+    }
+
+    if (!cleanCode || cleanCode.length < 2) {
+      setEditModalError('يرجى كتابة كود إحالة صحيح يتكون من حرفين أو رقمين على الأقل');
+      return;
+    }
+
+    setIsUpdatingPartnerProfile(true);
+    try {
+      const res = await LoyaltyService.updatePartnerProfile(editModalPartner.id, {
+        name: cleanName,
+        phone: cleanPhone,
+        referral_code: cleanCode,
+        region: editPartnerRegion.trim(),
+        target_value: typeof editPartnerTarget === 'number' ? editPartnerTarget : 20,
+      });
+
+      if (res.success) {
+        setSuccess(`تم بنجاح تحديث بيانات المسوق [${cleanName}] وكود الإحالة: [${cleanCode}] 🎉`);
+        setEditModalPartner(null);
+        await fetchPartners();
+      } else {
+        setEditModalError(res.error || 'فشل تحديث بيانات المسوق');
+      }
+    } catch (err: any) {
+      setEditModalError(err.message || 'حدث خطأ أثناء حفظ التعديلات');
+    } finally {
+      setIsUpdatingPartnerProfile(false);
+    }
+  };
+
   // Open Settlement Modal
   const openSettlementModal = async (p: any) => {
     setSettlePartner(p);
@@ -388,28 +495,43 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
     return clean;
   };
 
-  const handleCreateSubmit = async (e: React.FormEvent) => {
+  const handleCreatePartner = async (e: React.FormEvent) => {
     e.preventDefault();
     setModalError(null);
     setError(null);
     setSuccess(null);
 
     const cleanName = partnerName.trim();
-    const cleanPhone = normalizeSaudiPhone(partnerPhone.trim());
-    let cleanCode = referralCode.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    const cleanPhoneDigits = partnerPhone.replace(/\D/g, '');
+    let cleanCode = referralCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+    const cleanPin = pinCode.trim();
 
+    // 4. التحقق الصارم من الحقول قبل الإرسال (DoD Requirements)
     if (!cleanName || cleanName.length < 2) {
-      setModalError('يرجى كتابة اسم المسوق (حرفين على الأقل)');
+      const msg = 'الاسم قصير';
+      setModalError(msg);
+      setError(msg);
       return;
     }
 
-    if (!cleanPhone || cleanPhone.length < 9) {
-      setModalError('يرجى إدخال رقم جوال صحيح للمسوق (05XXXXXXXX)');
+    if (!/^05\d{8}$/.test(cleanPhoneDigits)) {
+      const msg = 'الجوال يجب أن يكون 10 أرقام يبدأ بـ 05';
+      setModalError(msg);
+      setError(msg);
+      return;
+    }
+
+    if (cleanPin.length < 4) {
+      const msg = 'الرمز السري 4 أرقام على الأقل';
+      setModalError(msg);
+      setError(msg);
       return;
     }
 
     if (!cleanCode || cleanCode.length < 2) {
-      setModalError('يرجى كتابة كود إحالة متاح أو الضغط على زر التوليد التلقائي');
+      const msg = 'يرجى كتابة كود إحالة متاح أو الضغط على زر التوليد التلقائي';
+      setModalError(msg);
+      setError(msg);
       return;
     }
 
@@ -419,30 +541,65 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
       setCodeStatus('taken');
       setCodeStatusMsg(codeCheck.reason || 'الكود مستخدم مسبقاً لشريك آخر ❌');
       setModalError(codeCheck.reason || 'كود الإحالة مستخدم مسبقاً، يرجى كتابة رمز آخر');
+      setError(codeCheck.reason || 'كود الإحالة مستخدم مسبقاً، يرجى كتابة رمز آخر');
       return;
     }
 
     let cleanSlug = partnerSlug.trim() ? generateSafeSlug(partnerSlug.trim()) : generateSafeSlug(cleanName);
-    if (!cleanSlug) cleanSlug = cleanCode;
+    if (!cleanSlug) cleanSlug = cleanCode.toLowerCase();
+
+    const decimalRate = (Number(commissionRate) || 20) / 100;
+    const decimalRecurring = (Number(recurringCommissionRate) || 10) / 100;
+    const target = typeof monthlyTarget === 'number' ? monthlyTarget : 20;
 
     setIsSubmitting(true);
 
     try {
-      const decimalRate = (Number(commissionRate) || 20) / 100;
-      const decimalRecurring = (Number(recurringCommissionRate) || 10) / 100;
-      await LoyaltyService.addPartner({
-        name: cleanName,
-        phone: cleanPhone,
-        referral_code: cleanCode,
-        pin_code: pinCode.trim() || '1234',
-        slug: cleanSlug,
-        region: region.trim(),
-        target_value: typeof monthlyTarget === 'number' ? monthlyTarget : 20,
-        commission_rate: decimalRate,
-        recurring_commission_rate: decimalRecurring,
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        throw new Error('تعذر الاتصال بقاعدة البيانات (Supabase client not initialized)');
+      }
+
+      const masterToken = getSovereignMasterToken();
+
+      // 1. استدعاء الـ RPC مع فحص كامل
+      const { data, error: rpcError } = await (supabase.rpc as any)('admin_create_partner_full_atomic', {
+        p_name: cleanName,
+        p_phone: cleanPhoneDigits,
+        p_referral_code: cleanCode,
+        p_pin_code: cleanPin,
+        p_slug: cleanSlug,
+        p_region: region.trim() || 'الرياض',
+        p_commission_rate: decimalRate,
+        p_recurring_commission_rate: decimalRecurring,
+        p_monthly_target: target,
+        p_master_token: masterToken,
       });
 
-      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بنسبة عمولة أول اشتراك: ${commissionRate}%، وتجديد: ${recurringCommissionRate}%، وكود: ${cleanCode} والرمز السري (PIN): ${pinCode.trim() || '1234'} 🎉`);
+      // فحص كامل لنتيجة الـ RPC: خطأ شبكة أو رفض من قاعدة البيانات
+      if (rpcError || !data || !data.success) {
+        let errorMsg = data?.error || rpcError?.message || 'فشل إنشاء حساب المسوق في السحابة';
+
+        if (data?.code === 'PHONE_EXISTS') {
+          errorMsg = 'رقم الجوال مسجل مسبقاً';
+        } else if (data?.code === 'CODE_EXISTS') {
+          errorMsg = 'كود الإحالة مستخدم مسبقاً';
+        } else if (data?.code === 'LOCKED') {
+          errorMsg = 'الحساب مقفل مؤقتاً لكثرة المحاولات';
+        }
+
+        if (typeof data?.attempts_left === 'number') {
+          errorMsg += ` (المحاولات المتبقية: ${data.attempts_left})`;
+        }
+
+        // إشعار خطأ أحمر، منع Confetti، منع إغلاق الـ Modal، ومنع الـ Optimistic Update
+        setModalError(errorMsg);
+        setError(errorMsg);
+        return;
+      }
+
+      // 2. نجاح مؤكد من قاعدة البيانات (DB Confirmation)
+      setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بنسبة عمولة أول اشتراك: ${commissionRate}%، وتجديد: ${recurringCommissionRate}%، وكود: ${cleanCode} والرمز السري (PIN): ${cleanPin} 🎉`);
       setIsModalOpen(false);
       setPartnerName('');
       setPartnerPhone('');
@@ -454,15 +611,24 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
       setRecurringCommissionRate(10);
       setModalError(null);
 
-      try { confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } }); } catch {}
+      try {
+        confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+      } catch {}
+
+      // تحديث البيانات من قاعدة البيانات حصرياً بعد نجاح الـ RPC
+      invalidatePartnersCache();
       await fetchPartners();
     } catch (err: any) {
-      console.error(err);
-      setModalError(err.message || 'حدث خطأ أثناء حفظ المسوق');
+      console.error('[SuperAdminPartnersConsole] handleCreatePartner error:', err);
+      const errMsg = err.message || 'حدث خطأ أثناء حفظ المسوق';
+      setModalError(errMsg);
+      setError(errMsg);
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  const handleCreateSubmit = handleCreatePartner;
 
   const handleToggleStatus = async (partnerId: string, affiliateId: string, currentActive: boolean) => {
     try {
@@ -512,7 +678,7 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
     const name = p.display_name || 'الشريك المعتمد';
     const phone = p.affiliates?.phone || '';
     const pin = p.pin_code || '1234';
-    const refCode = p.affiliates?.referral_code || p.referral_code || 'r1001';
+    const refCode = p.affiliates?.referral_code || p.referral_code || (p.slug ? p.slug.toUpperCase() : 'ALHAJ');
 
     return `مرحباً بك ${name} في المنصة كمسوق معتمد 🤝
 
@@ -534,7 +700,7 @@ ${origin}/join?ref=${refCode}
    */
   const getMerchantPromoMessage = (p: any) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://myradar.sarl';
-    const refCode = p.affiliates?.referral_code || p.referral_code || 'r1001';
+    const refCode = p.affiliates?.referral_code || p.referral_code || (p.slug ? p.slug.toUpperCase() : 'ALHAJ');
 
     return `عميلك اشترى منك اليوم... هل يضمن لك أحد عودته غداً؟ 🎯
 
@@ -584,6 +750,34 @@ ${origin}/join?ref=${refCode}`;
 
   return (
     <div className="space-y-6">
+      {/* Floating Toast Notification (Red for errors, Green for success) */}
+      {(error || success) && (
+        <div className="fixed top-5 left-5 right-5 sm:left-auto sm:right-5 sm:w-96 z-[100] animate-fade-in">
+          {error && (
+            <div className="p-4 rounded-2xl bg-slate-900/95 backdrop-blur border-2 border-rose-500 text-rose-400 text-xs font-bold flex items-center justify-between gap-3 shadow-2xl shadow-rose-950/80">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-400" />
+                <span className="leading-relaxed">{error}</span>
+              </div>
+              <button onClick={() => setError(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          {success && (
+            <div className="p-4 rounded-2xl bg-slate-900/95 backdrop-blur border-2 border-emerald-500 text-emerald-400 text-xs font-bold flex items-center justify-between gap-3 shadow-2xl shadow-emerald-950/80">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-400" />
+                <span className="leading-relaxed">{success}</span>
+              </div>
+              <button onClick={() => setSuccess(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Header Toolbar */}
       <div className={`border rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6 transition-colors ${
         isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
@@ -782,7 +976,8 @@ ${origin}/join?ref=${refCode}`;
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {filteredPartners.map((p) => {
             const refCode = p.affiliates?.referral_code || p.referral_code || '—';
-            const phone = p.affiliates?.phone || '—';
+            const rawPhone = p.affiliates?.phone || p.phone || '';
+            const phone = rawPhone ? (rawPhone.startsWith('5') && rawPhone.length === 9 ? `0${rawPhone}` : rawPhone) : '—';
             const partnerPin = p.pin_code || '1234';
             const commRatePct = Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100);
             const recurringRatePct = Math.round((typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : 0.10) * 100);
@@ -884,6 +1079,16 @@ ${origin}/join?ref=${refCode}`;
                           title="نسخ كود الإحالة"
                         >
                           {copiedSlug === `code_${p.id}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEditPartnerModal(p)}
+                          className={`p-1.5 rounded-lg border transition ${
+                            isDark ? 'bg-slate-900 border-slate-800 text-slate-400 hover:text-amber-400' : 'bg-white border-slate-200 text-slate-500 hover:text-amber-600'
+                          }`}
+                          title="تعديل بيانات وكود المسوق"
+                        >
+                          <Edit3 className="w-3 h-3" />
                         </button>
                       </div>
                     </div>
@@ -1175,7 +1380,8 @@ ${origin}/join?ref=${refCode}`;
               <tbody className={`divide-y ${isDark ? 'divide-slate-800/60' : 'divide-slate-100'}`}>
                 {filteredPartners.map((p) => {
                   const refCode = p.affiliates?.referral_code || p.referral_code || '—';
-                  const phone = p.affiliates?.phone || '—';
+                  const rawPhone = p.affiliates?.phone || p.phone || '';
+                  const phone = rawPhone ? (rawPhone.startsWith('5') && rawPhone.length === 9 ? `0${rawPhone}` : rawPhone) : '—';
                   const partnerPin = p.pin_code || '1234';
                   const commRatePct = Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100);
                   const recurringRatePct = Math.round((typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : 0.10) * 100);
@@ -1204,9 +1410,21 @@ ${origin}/join?ref=${refCode}`;
                       </td>
 
                       <td className="py-4 px-4 font-mono font-bold text-amber-400">
-                        <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                          {refCode}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2.5 py-1 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                            {refCode}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => openEditPartnerModal(p)}
+                            className={`p-1 rounded-lg border transition ${
+                              isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-400 border-slate-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                            }`}
+                            title="تعديل كود وبيانات المسوق"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                        </div>
                       </td>
 
                       <td className="py-4 px-4">
@@ -1753,7 +1971,7 @@ ${origin}/join?ref=${refCode}`;
               <div className="flex items-center justify-between">
                 <div>
                   <strong className="text-white block text-sm">{pinModalPartner.display_name}</strong>
-                  <span className="text-slate-400 text-[11px] font-mono" dir="ltr">📞 {pinModalPartner.affiliates?.phone || '—'}</span>
+                  <span className="text-slate-400 text-[11px] font-mono" dir="ltr">📞 {pinModalPartner.affiliates?.phone || pinModalPartner.phone || '—'}</span>
                 </div>
                 <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono font-bold text-xs">
                   {pinModalPartner.affiliates?.referral_code || pinModalPartner.referral_code}
@@ -1801,6 +2019,136 @@ ${origin}/join?ref=${refCode}`;
         </div>
       )}
 
+      {/* Modal: Edit Marketer Details & Referral Code */}
+      {editModalPartner && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-md w-full bg-slate-900 border border-amber-500/30 rounded-3xl p-6 sm:p-7 space-y-5 shadow-2xl relative">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-amber-400" />
+                <h4 className="text-base font-black text-white">تعديل بيانات وكود المسوق</h4>
+              </div>
+              <button onClick={() => setEditModalPartner(null)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {editModalError && (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{editModalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleUpdatePartnerSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">اسم المسوق</label>
+                <div className="relative">
+                  <User className="absolute right-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input
+                    type="text"
+                    required
+                    value={editPartnerName}
+                    onChange={(e) => setEditPartnerName(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-10 pl-4 py-2.5 text-xs text-white outline-none focus:border-amber-400 transition"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">رقم الجوال (05XXXXXXXX)</label>
+                <div className="relative">
+                  <Phone className="absolute right-3.5 top-3 w-4 h-4 text-slate-500" />
+                  <input
+                    type="tel"
+                    required
+                    dir="ltr"
+                    value={editPartnerPhone}
+                    onChange={(e) => setEditPartnerPhone(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pr-10 pl-4 py-2.5 text-xs text-white font-mono outline-none focus:border-amber-400 transition text-right"
+                  />
+                </div>
+              </div>
+
+              {/* Referral Code Field with live status */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-amber-300">كود الإحالة المخصص (Referral Code)</label>
+                  {editCodeStatusMsg && (
+                    <span className={`text-[10px] font-bold ${editCodeStatus === 'available' ? 'text-emerald-400' : editCodeStatus === 'taken' ? 'text-rose-400' : 'text-slate-400'}`}>
+                      {editCodeStatusMsg}
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <Tag className="absolute right-3.5 top-3 w-4 h-4 text-amber-400" />
+                  <input
+                    type="text"
+                    required
+                    dir="ltr"
+                    value={editPartnerCode}
+                    onChange={(e) => handleEditPartnerCodeChange(e.target.value)}
+                    placeholder="مثال: ALHAJ أو PARTNER01"
+                    className={`w-full bg-slate-950 border rounded-xl pr-10 pl-4 py-2.5 text-xs font-mono font-bold outline-none transition ${
+                      editCodeStatus === 'taken'
+                        ? 'border-rose-500 text-rose-400'
+                        : editCodeStatus === 'available'
+                        ? 'border-emerald-500/80 text-emerald-300'
+                        : 'border-slate-800 text-amber-300 focus:border-amber-400'
+                    }`}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  رابط الإحالة المباشر سيكون:{' '}
+                  <span className="text-amber-400 font-mono" dir="ltr">/join?ref={editPartnerCode || '...'}</span>
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1.5">المنطقة / المدينة</label>
+                  <input
+                    type="text"
+                    value={editPartnerRegion}
+                    onChange={(e) => setEditPartnerRegion(e.target.value)}
+                    placeholder="مثال: جدة، الرياض"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-amber-400 transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1.5">الهدف الشهري (متجر)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={editPartnerTarget}
+                    onChange={(e) => setEditPartnerTarget(e.target.value ? parseInt(e.target.value) : '')}
+                    placeholder="20"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-amber-400 transition"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="submit"
+                  disabled={isUpdatingPartnerProfile || editCodeStatus === 'taken' || editCodeStatus === 'checking'}
+                  className="flex-1 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20"
+                >
+                  {isUpdatingPartnerProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>حفظ التعديلات ✅</span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditModalPartner(null)}
+                  className="px-4 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs font-bold transition"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Settlement & Payout */}
       {settlePartner && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
@@ -1819,7 +2167,7 @@ ${origin}/join?ref=${refCode}`;
               <div className="flex items-center justify-between">
                 <div>
                   <strong className="text-white block text-sm">{settlePartner.display_name}</strong>
-                  <span className="text-slate-400 text-[11px]">📞 {settlePartner.affiliates?.phone || '—'}</span>
+                  <span className="text-slate-400 text-[11px]">📞 {settlePartner.affiliates?.phone || settlePartner.phone || '—'}</span>
                 </div>
                 <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono font-bold text-xs">
                   كود: {settlePartner.affiliates?.referral_code || settlePartner.referral_code}

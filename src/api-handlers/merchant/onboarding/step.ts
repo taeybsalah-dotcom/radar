@@ -125,11 +125,11 @@ export default async function handler(req: any, res: any) {
       case 'STORE_SETTINGS': {
         if (stepData.points_per_riyal !== undefined) {
           const ppr = Number(stepData.points_per_riyal);
-          if (isNaN(ppr) || ppr <= 0) {
+          if (isNaN(ppr) || ppr < 1) {
             return res.status(422).json({
               success: false,
               code: 'INVALID_POINTS_PER_RIYAL',
-              error: 'معدل النقاط لكل ريال يجب أن يكون رقماً موجباً',
+              error: 'معدل النقاط لكل ريال يجب أن يكون 1 أو أكثر',
             });
           }
           storeUpdates.points_per_riyal = ppr;

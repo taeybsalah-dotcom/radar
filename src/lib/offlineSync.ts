@@ -127,25 +127,7 @@ export const OfflineSyncEngine = {
         // 1. Create order in Supabase
         await LoyaltyService.createStoreOrder(item.orderPayload);
 
-        // 2. Award loyalty points if customer was registered
-        if (item.customerPhone) {
-          try {
-            await LoyaltyService.processPurchase(
-              storeId,
-              item.customerPhone,
-              item.cartGrandTotal,
-              `فاتورة كاشير #${item.orderNumber} (مزامنة أوفلاين)`,
-              undefined,
-              item.activeStaff.id,
-              item.activeStaff.name,
-              'qr_scan',
-              item.branchId || null,
-              item.branchName || null
-            );
-          } catch (ptsErr) {
-            console.warn(`Points award failed during offline sync for order ${item.orderNumber}:`, ptsErr);
-          }
-        }
+        // 2. 🔒 نقاط الولاء تُمنح ذرياً داخل السيرفر عند إنشاء الطلب المدفوع (لا منح مزدوج من الواجهة)
 
         successCount++;
       } catch (err: any) {

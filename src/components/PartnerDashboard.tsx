@@ -298,7 +298,7 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
     const partnerName = partner.display_name || 'الشريك المعتمد';
     const partnerSlug = partner.slug || 'partner';
-    const refCode = partner.affiliates?.referral_code || partner.referral_code || 'r1001';
+    const refCode = partner.affiliates?.referral_code || partner.referral_code || (partner.slug ? partner.slug.toUpperCase() : 'ALHAJ');
 
     // Set immediate rich defaults
     setSalesKit(buildDefaultSalesKit(partnerName, partnerSlug, refCode));
@@ -889,14 +889,15 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
 
   const RESERVED_SLUGS = new Set(['partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', '']);
 
-  let rawCode = partner.affiliates?.referral_code || partner.referral_code || 'r1001';
-  if (rawCode.toLowerCase().startsWith('radar-')) {
-    rawCode = 'r' + (rawCode.replace(/\D/g, '') || '1001');
-  } else if (!rawCode.toLowerCase().startsWith('r')) {
-    rawCode = 'r' + (rawCode.replace(/\D/g, '') || '1001');
+  let rawCode = (partner.affiliates?.referral_code || partner.referral_code || '').trim().toLowerCase();
+  if (rawCode.startsWith('radar-')) {
+    const afterRadar = rawCode.replace(/^radar-/, '');
+    rawCode = /^\d+$/.test(afterRadar) ? ('r' + afterRadar) : afterRadar;
   }
-  const partnerRefCode = rawCode.toLowerCase();
-
+  let partnerRefCode = rawCode.replace(/[^a-z0-9_-]/g, '');
+  if (!partnerRefCode) {
+    partnerRefCode = (partner.slug || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'alhaj';
+  }
   const directJoinLink = typeof window !== 'undefined'
     ? `${window.location.origin}/join?ref=${encodeURIComponent(partnerRefCode)}`
     : `https://radar.sa/join?ref=${encodeURIComponent(partnerRefCode)}`;

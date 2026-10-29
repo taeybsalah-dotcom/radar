@@ -86,7 +86,7 @@ export const MerchantJoinLanding: React.FC = () => {
       const urlParams = new URLSearchParams(window.location.search);
       const ref = urlParams.get('ref') || urlParams.get('r') || '';
       if (ref && ref.trim()) {
-        const cleanRef = ref.trim().toLowerCase();
+        const cleanRef = ref.trim().toUpperCase();
         setReferralCode(cleanRef);
         sessionStorage.setItem('radar_captured_ref', cleanRef);
 
@@ -96,7 +96,7 @@ export const MerchantJoinLanding: React.FC = () => {
         }).catch(() => {});
       } else {
         const saved = sessionStorage.getItem('radar_captured_ref');
-        if (saved) setReferralCode(saved);
+        if (saved) setReferralCode(saved.toUpperCase());
       }
     } catch {}
   }, [tenant.brandName]);

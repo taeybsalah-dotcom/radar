@@ -212,6 +212,10 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
         logo_url: logoUrl.trim(),
       };
     } else if (currentStep === 'STORE_SETTINGS') {
+      if (Number(pointsPerRiyal) < 1) {
+        setErrorMsg('معامل النقاط يجب أن يكون 1 أو أكثر');
+        return;
+      }
       stepPayload = {
         slug: slug.trim(),
         points_per_riyal: pointsPerRiyal,
@@ -715,10 +719,10 @@ export const MerchantOnboardingConsole: React.FC<MerchantOnboardingConsoleProps>
                 </label>
                 <input
                   type="number"
-                  step="0.1"
-                  min="0.1"
+                  step="1"
+                  min="1"
                   value={pointsPerRiyal}
-                  onChange={(e) => setPointsPerRiyal(parseFloat(e.target.value) || 1)}
+                  onChange={(e) => setPointsPerRiyal(Math.max(1, parseFloat(e.target.value) || 1))}
                   className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
                 />
                 <p className="text-[11px] text-slate-500">

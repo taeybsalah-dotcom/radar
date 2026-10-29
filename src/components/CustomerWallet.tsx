@@ -2577,7 +2577,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       const activationCode = Math.floor(1000 + Math.random() * 9000).toString();
       const isPaid = Boolean(paidDetails);
       const resolvedPaymentMethod = isPaid ? (paidDetails?.paymentMethod || 'online') : 'pay_at_store';
-      const resolvedPaymentStatus = isPaid ? 'paid' : 'pending';
+      // 🔒 حالة الدفع لا تُحدَّد من المتصفح؛ التأكيد يتم فقط عبر Webhook البوابة أو الكاشير
+      const resolvedPaymentStatus = 'pending';
 
       const coords = extractCoordsFromMapUrl(deliveryGpsLink);
 
@@ -2642,7 +2643,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       await LoyaltyService.createStoreOrder(payload);
 
       // 2. إذا تم السداد إلكترونياً، يتم منح نقاط الولاء فوراً للعميل وتحديث المحفظة
-      if (isPaid && estimatedLoyaltyPoints > 0) {
+      // 🔒 منح النقاط يتم سيرفرياً فقط بعد تأكيد الدفع/الاكتمال، وليس من المتصفح
+      if (false && isPaid && estimatedLoyaltyPoints > 0) {
         LoyaltyService.rewardPointsForCompletedTransaction(
           store.id,
           targetCustomer.phone,
