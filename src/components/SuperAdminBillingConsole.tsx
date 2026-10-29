@@ -2798,9 +2798,10 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
                   <input
                     type="number"
                     min="1"
+                    dir="ltr"
                     value={planDurationMonths}
                     onChange={(e) => setPlanDurationMonths(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono font-bold outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono font-bold outline-none focus:border-amber-500 text-right"
                     required
                   />
                 </div>
@@ -2810,9 +2811,10 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
                   <input
                     type="number"
                     min="0"
+                    dir="ltr"
                     value={planAmount}
                     onChange={(e) => setPlanAmount(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-amber-400 font-mono font-bold outline-none focus:border-amber-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-amber-400 font-mono font-bold outline-none focus:border-amber-500 text-right"
                     required
                   />
                 </div>
@@ -2823,9 +2825,10 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
                 <input
                   type="number"
                   min="0"
+                  dir="ltr"
                   value={planTrialDays}
                   onChange={(e) => setPlanTrialDays(e.target.value ? Number(e.target.value) : '')}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono outline-none focus:border-amber-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono outline-none focus:border-amber-500 text-right"
                 />
               </div>
 
