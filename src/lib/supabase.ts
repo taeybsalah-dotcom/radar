@@ -7441,8 +7441,12 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const store = storeOverride || stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
 
     const isPaidActive = Boolean(
-      (store.has_paid_invoice === true || store.latest_paid_invoice || (store.subscription_status === 'active' && store.lifecycle_stage === 'مشترك مدفوع')) &&
-      store.subscription_status === 'active'
+      store.setup_fee_paid === true ||
+      store.subscription_status === 'active' ||
+      store.status === 'active' ||
+      store.lifecycle_stage === 'مشترك مدفوع' ||
+      store.has_paid_invoice === true ||
+      store.latest_paid_invoice
     );
 
     const supabase = getSupabaseClient();
@@ -7459,9 +7463,16 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
               ? true
               : Boolean(data.is_suspended);
 
+          const isPaidFinal = Boolean(
+            isPaidActive ||
+            data.status === 'active' ||
+            store.setup_fee_paid === true ||
+            store.lifecycle_stage === 'مشترك مدفوع'
+          );
+
           const statusFinal: StoreSubscriptionStatus = isSuspendedFinal
             ? 'suspended'
-            : isPaidActive || data.status === 'active'
+            : isPaidFinal
             ? 'active'
             : 'trial';
 
@@ -7471,7 +7482,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
             subscriptionEndDate: data.subscription_end_date || store.subscription_end_date || new Date().toISOString(),
             trialEndDate: data.trial_end_date || store.trial_end_date || new Date().toISOString(),
             isSuspended: isSuspendedFinal,
-            requiresSetup: !isPaidActive,
+            requiresSetup: !isPaidFinal,
             requiresRenewal: Boolean(data.requires_renewal),
             renewalAmount: Number(data.renewal_amount || 195),
             inGracePeriod: false,
@@ -9601,41 +9612,71 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const isAuth = Boolean(supabase.auth && typeof supabase.auth.getSession === 'function' ? (await supabase.auth.getSession().catch(() => null))?.data?.session : null);
         const [affRes, paRes] = await Promise.all([
-          withTimeout(supabase.from('affiliates').select('*').order('created_at', { ascending: false }), 6000),
-          isAuth ? withTimeout(supabase.from('partner_accounts').select('*'), 6000).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
+          withTimeout(supabase.from('affiliates').select('*').order('created_at', { ascending: false }), 6000).catch(() => ({ data: [] })),
+          withTimeout(supabase.from('partner_accounts').select('*').order('created_at', { ascending: false }), 6000).catch(() => ({ data: [] })),
         ]);
 
-        const affList = affRes?.data || [];
-        const paList = paRes?.data || [];
+        const affList = (affRes?.data || []) as any[];
+        const paList = (paRes?.data || []) as any[];
 
-        if (!affRes?.error) {
-          const combined = affList.map((aff: any) => {
-            const pa = paList.find((p: any) => p.affiliate_id === aff.id);
+        if (affList.length > 0 || paList.length > 0) {
+          const map = new Map<string, any>();
+
+          for (const pa of paList) {
+            const code = (pa.referral_code || pa.slug || 'r1001').toLowerCase();
+            const partnerObj = {
+              id: pa.id,
+              affiliate_id: pa.affiliate_id || pa.id,
+              display_name: pa.display_name || pa.name || 'شريك مبيعات',
+              name: pa.display_name || pa.name || 'شريك مبيعات',
+              slug: pa.slug || code,
+              region: pa.region || '',
+              phone: pa.phone || '',
+              referral_code: code,
+              pin_code: pa.pin_code || '1234',
+              active: pa.active !== false,
+              created_at: pa.created_at,
+              commission_rate: pa.commission_rate ?? 0.20,
+              acquisition_commission_rate: pa.acquisition_commission_rate ?? 0.20,
+              recurring_commission_rate: pa.recurring_commission_rate ?? 0.10,
+              target_value: pa.target_value ?? 20,
+            };
+            map.set(partnerObj.id, partnerObj);
+            map.set(partnerObj.referral_code.toLowerCase(), partnerObj);
+            if (partnerObj.affiliate_id) map.set(partnerObj.affiliate_id, partnerObj);
+          }
+
+          for (const aff of affList) {
+            const code = (aff.referral_code || 'r1001').toLowerCase();
+            const existing = map.get(aff.id) || map.get(code);
             const rawNotes = aff.notes || '';
             const pinMatch = rawNotes.match(/PIN:\s*(\S+)/);
-            const pinCode = pinMatch ? pinMatch[1] : (pa?.pin_code || '1234');
-            const code = (aff.referral_code || 'r1001').toLowerCase();
+            const pinCode = pinMatch ? pinMatch[1] : (existing?.pin_code || '1234');
 
             const partnerObj = {
-              id: pa?.id || aff.id,
+              id: existing?.id || aff.id,
               affiliate_id: aff.id,
-              display_name: aff.name,
-              name: aff.name,
-              slug: pa?.slug || code,
-              region: pa?.region || '',
-              phone: aff.phone,
+              display_name: existing?.display_name || aff.name,
+              name: existing?.name || aff.name,
+              slug: existing?.slug || code,
+              region: existing?.region || '',
+              phone: aff.phone || existing?.phone || '',
               referral_code: code,
               pin_code: pinCode,
-              active: aff.status !== 'SUSPENDED' && pa?.active !== false,
+              active: aff.status !== 'SUSPENDED' && existing?.active !== false,
               created_at: aff.created_at,
+              commission_rate: aff.commission_rate ?? existing?.commission_rate ?? 0.20,
+              acquisition_commission_rate: aff.acquisition_commission_rate ?? existing?.acquisition_commission_rate ?? 0.20,
+              recurring_commission_rate: aff.recurring_commission_rate ?? existing?.recurring_commission_rate ?? 0.10,
+              target_value: existing?.target_value ?? 20,
               affiliates: aff,
             };
+            map.set(partnerObj.id, partnerObj);
+            map.set(code, partnerObj);
+          }
 
-            return sanitizePartner(partnerObj);
-          });
-
+          const combined = Array.from(new Set(map.values())).map(sanitizePartner);
           saveLocalData(STORAGE_KEYS.LOCAL_PARTNERS, combined);
           partnersListCache = { data: combined, timestamp: Date.now() };
           return combined;
@@ -10105,8 +10146,15 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           (c.merchant_name && norm.store_name && c.merchant_name.trim().toLowerCase() === norm.store_name.trim().toLowerCase())
       );
       const hasEarnedComm = Boolean(matchComm && (matchComm.status === 'EARNED' || matchComm.status === 'AVAILABLE' || matchComm.status === 'PAID'));
-      const hasPaidInv = Boolean(matchingStore && (matchingStore.has_paid_invoice === true || (matchingStore as any).latest_paid_invoice));
-      const isPaidStore = Boolean(hasEarnedComm || hasPaidInv);
+      const hasPaidInv = Boolean(matchingStore && (matchingStore.has_paid_invoice === true || matchingStore.setup_fee_paid === true || (matchingStore as any).latest_paid_invoice));
+      const isPaidStore = Boolean(
+        hasEarnedComm || 
+        hasPaidInv || 
+        matchingStore?.setup_fee_paid === true || 
+        matchingStore?.lifecycle_stage === 'مشترك مدفوع' ||
+        (matchingStore?.status === 'active' && matchingStore?.subscription_status === 'active') ||
+        norm.lifecycle_stage === 'مشترك مدفوع'
+      );
       const isTrialStore = !isPaidStore;
 
       if (matchingStore || hasEarnedComm || norm.converted_store_id) {
@@ -10254,6 +10302,39 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
           return { success: true, lead_id: data.id };
         } else if (error) {
+          if (error.code === '23505' || String(error.message).includes('duplicate key') || String(error.message).includes('idx_merchant_leads_active_phone')) {
+            // 🛡️ Lead with this phone already exists - update it gracefully
+            const { data: existingLead } = await supabase
+              .from('merchant_leads')
+              .select('id')
+              .eq('normalized_phone', normPhone)
+              .limit(1)
+              .maybeSingle();
+
+            const targetId = existingLead?.id || tempId;
+            await supabase
+              .from('merchant_leads')
+              .update({
+                store_name: cleanStore,
+                manager_name: cleanManager,
+                city: payload.city || null,
+                business_type: payload.business_type || null,
+                notes: newLead.notes,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', targetId);
+
+            newLead.id = targetId;
+            newLead.partner_id = affiliateId;
+            const current = getLocalData<MerchantLead[]>(STORAGE_KEYS.LOCAL_LEADS, []);
+            saveLocalData(STORAGE_KEYS.LOCAL_LEADS, [newLead, ...current.filter((l) => l.id !== newLead.id)]);
+            invalidateLeadsCache();
+            invalidatePartnersCache();
+            LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: 'global' });
+            LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+            return { success: true, lead_id: targetId };
+          }
+
           console.error('Supabase direct insert merchant_leads error details:', error);
           return {
             success: false,
@@ -10619,10 +10700,21 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
   },
 
   async getPartnerCommissions(partnerId: string): Promise<any[]> {
-    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const partner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId || p.slug === partnerId);
-    const resolvedPartnerId = partner?.id || partnerId;
-    const resolvedAffiliateId = partner?.affiliate_id || partnerId;
+    let resolvedPartnerId = partnerId;
+    let resolvedAffiliateId = partnerId;
+
+    const allPartners = await this.getAllPartners();
+    const partner = allPartners.find((p: any) => 
+      p.id === partnerId || 
+      p.affiliate_id === partnerId || 
+      p.slug?.toLowerCase() === partnerId.toLowerCase() ||
+      p.referral_code?.toLowerCase() === partnerId.toLowerCase()
+    );
+
+    if (partner) {
+      resolvedPartnerId = partner.id;
+      resolvedAffiliateId = partner.affiliate_id || partner.id;
+    }
 
     const supabase = getSupabaseClient();
 
@@ -10653,12 +10745,21 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         // حذف أي عمولات معلقة من قاعدة البيانات تلقائياً
         Promise.resolve(supabase.from('partner_commissions').delete().eq('status', 'PENDING')).catch(() => {});
 
-        const { data, error } = await supabase
+        let query = supabase
           .from('partner_commissions')
           .select('*, merchant_leads(store_name)')
-          .or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`)
           .neq('status', 'PENDING')
           .order('created_at', { ascending: false });
+
+        if (isUUID(resolvedPartnerId) && isUUID(resolvedAffiliateId) && resolvedPartnerId !== resolvedAffiliateId) {
+          query = query.or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`);
+        } else if (isUUID(resolvedPartnerId)) {
+          query = query.eq('partner_account_id', resolvedPartnerId);
+        } else if (isUUID(resolvedAffiliateId)) {
+          query = query.eq('partner_account_id', resolvedAffiliateId);
+        }
+
+        const { data, error } = await query;
 
         if (!error && Array.isArray(data)) {
           const reconciledList = data.filter((c) => c.status !== 'PENDING').map(reconcileComm);
@@ -10674,10 +10775,21 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
   },
 
   async getPartnerBonuses(partnerId: string, affiliateId?: string): Promise<{ milestones: any[]; paidCount: number }> {
-    const allPartners = getLocalData<PartnerAccount[]>(STORAGE_KEYS.LOCAL_PARTNERS, []);
-    const partner = allPartners.find((p: any) => p.id === partnerId || p.affiliate_id === partnerId || p.slug === partnerId);
-    const resolvedPartnerId = partner?.id || partnerId;
-    const resolvedAffiliateId = partner?.affiliate_id || affiliateId || partnerId;
+    let resolvedPartnerId = partnerId;
+    let resolvedAffiliateId = affiliateId || partnerId;
+
+    const allPartners = await this.getAllPartners();
+    const partner = allPartners.find((p: any) => 
+      p.id === partnerId || 
+      p.affiliate_id === partnerId || 
+      p.slug?.toLowerCase() === partnerId.toLowerCase() ||
+      p.referral_code?.toLowerCase() === partnerId.toLowerCase()
+    );
+
+    if (partner) {
+      resolvedPartnerId = partner.id;
+      resolvedAffiliateId = partner.affiliate_id || affiliateId || partner.id;
+    }
 
     const supabase = getSupabaseClient();
     let rules = [
@@ -10691,19 +10803,33 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
     if (supabase) {
       try {
+        let awardsQuery = supabase.from('partner_bonus_awards').select('*');
+        if (isUUID(resolvedPartnerId) && isUUID(resolvedAffiliateId) && resolvedPartnerId !== resolvedAffiliateId) {
+          awardsQuery = awardsQuery.or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`);
+        } else if (isUUID(resolvedPartnerId)) {
+          awardsQuery = awardsQuery.eq('partner_account_id', resolvedPartnerId);
+        }
+
         const [rulesRes, awardsRes] = await Promise.all([
           supabase.from('partner_bonus_rules').select('*').eq('active', true).order('milestone', { ascending: true }),
-          supabase.from('partner_bonus_awards').select('*').or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`),
+          awardsQuery,
         ]);
 
         if (rulesRes.data && rulesRes.data.length > 0) rules = rulesRes.data;
         if (awardsRes.data) awards = awardsRes.data;
 
-        const { data: commRows } = await supabase
+        let commsQuery = supabase
           .from('partner_commissions')
           .select('store_id')
-          .or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`)
           .in('status', ['AVAILABLE', 'EARNED', 'PAID']);
+
+        if (isUUID(resolvedPartnerId) && isUUID(resolvedAffiliateId) && resolvedPartnerId !== resolvedAffiliateId) {
+          commsQuery = commsQuery.or(`partner_account_id.eq.${resolvedPartnerId},partner_account_id.eq.${resolvedAffiliateId}`);
+        } else if (isUUID(resolvedPartnerId)) {
+          commsQuery = commsQuery.eq('partner_account_id', resolvedPartnerId);
+        }
+
+        const { data: commRows } = await commsQuery;
 
         if (commRows && Array.isArray(commRows)) {
           const uniquePaid = new Set(commRows.map((c) => c.store_id).filter(Boolean));

@@ -141,6 +141,15 @@ export function resolveUnifiedStage(
 
   const it = item as any;
 
+  // Direct check on current item first (Single Source of Truth)
+  const isDirectPaid = Boolean(
+    it.setup_fee_paid === true ||
+    it.lifecycle_stage === 'مشترك مدفوع' ||
+    it.has_paid_invoice === true ||
+    it.has_commission === true ||
+    (it.subscription_status === 'active' && it.status === 'active' && it.setup_fee_paid !== false)
+  );
+
   // فحص المتجر المرتبط إذا كان العنصر عبارة عن Lead
   let matchedStore: any = null;
   if (typeof window !== 'undefined') {
@@ -161,7 +170,8 @@ export function resolveUnifiedStage(
     } catch {}
   }
 
-  const effectiveObj = matchedStore || it;
+  // Never let stale matchedStore downgrade a directly paid item
+  const effectiveObj = isDirectPaid ? it : (matchedStore || it);
 
   // فحص ما إذا كان المتجر أو الطلب مرتبطاً بعمولة مسوق معتمدة أو قيد مالي مدفوع
   let hasCommissionOrLedgerProof = false;
@@ -195,19 +205,22 @@ export function resolveUnifiedStage(
     it.status === 'UNDER_REVIEW' ||
     it.lifecycle_stage === 'تحت المراجعة';
 
-  const dbSaysIsPaid = (effectiveObj.subscription_status === 'active' && effectiveObj.lifecycle_stage === 'مشترك مدفوع') || 
-                       (it.subscription_status === 'active' && it.lifecycle_stage === 'مشترك مدفوع');
+  const dbSaysIsPaid = isDirectPaid ||
+                       (effectiveObj.setup_fee_paid === true) ||
+                       (effectiveObj.lifecycle_stage === 'مشترك مدفوع') ||
+                       (effectiveObj.subscription_status === 'active' && effectiveObj.status === 'active');
 
   const hasPaidProof = Boolean(
+    isDirectPaid ||
+    dbSaysIsPaid ||
     hasCommissionOrLedgerProof ||
-      effectiveObj.has_paid_invoice === true ||
-      Boolean(effectiveObj.latest_paid_invoice) ||
-      it.has_paid_invoice === true ||
-      it.has_commission === true ||
-      dbSaysIsPaid
+    effectiveObj.has_paid_invoice === true ||
+    Boolean(effectiveObj.latest_paid_invoice) ||
+    it.has_paid_invoice === true ||
+    it.has_commission === true
   );
 
-  const isExplicitTrial = !dbSaysIsPaid && (
+  const isExplicitTrial = !dbSaysIsPaid && !isDirectPaid && (
     effectiveObj.subscription_status === 'trial' ||
     effectiveObj.status === 'trial' ||
     effectiveObj.lifecycle_stage === 'فترة تجريبية' ||
@@ -219,7 +232,7 @@ export function resolveUnifiedStage(
     !hasPaidProof
   );
 
-  const isPaid = !isSuspended && !isExplicitTrial && hasPaidProof;
+  const isPaid = !isSuspended && (dbSaysIsPaid || isDirectPaid || (!isExplicitTrial && hasPaidProof));
 
   // 1. المشترك المدفوع (Paid Subscriber) - أولوية مطلقة فور سداد الرسوم أو وجود العمولة
   if (isPaid) {
