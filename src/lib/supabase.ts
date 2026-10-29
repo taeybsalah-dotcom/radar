@@ -11251,78 +11251,57 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       : (planData.billing_interval === 'YEARLY' ? 12 : 1);
 
     const cleanCode = (planData.code || `PLAN_${Date.now()}`).toUpperCase().replace(/[^A-Z0-9_-]/g, '_').slice(0, 48);
-
     const supabase = getSupabaseClient();
-    let newPlan: BillingPlan | null = null;
 
-    if (supabase) {
-      try {
-        const insertPayload: any = {
-          code: cleanCode,
-          name: planData.name.trim(),
-          description: planData.description || '',
-          amount: Number(planData.amount) || 0,
-          currency: planData.currency || 'SAR',
-          billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
-          trial_days: Number(planData.trial_days) ?? 7,
-          active: planData.active !== false,
-          metadata: {
-            features: planData.features || [],
-            duration_months: durationMonths,
-          },
-        };
-
-        const { data, error } = await supabase
-          .from('billing_plans')
-          .insert([insertPayload])
-          .select()
-          .maybeSingle();
-
-        if (!error && data) {
-          newPlan = {
-            id: data.id,
-            code: data.code,
-            name: data.name,
-            description: data.description || '',
-            amount: Number(data.amount) || 0,
-            currency: data.currency || 'ر.س',
-            duration_months: durationMonths,
-            billing_interval: (data.billing_interval as 'MONTHLY' | 'YEARLY' | 'CUSTOM') || 'MONTHLY',
-            trial_days: Number(data.trial_days) ?? 7,
-            features: planData.features || [],
-            active: data.active !== false,
-            created_at: data.created_at,
-          };
-        }
-      } catch (err) {
-        console.warn('Supabase addSubscriptionPlan error:', err);
-      }
+    if (!supabase) {
+      throw new Error('لا يوجد اتصال بقاعدة البيانات السحابية');
     }
 
-    if (!newPlan) {
-      newPlan = {
-        ...planData,
-        id: 'plan-' + Date.now(),
-        code: cleanCode,
-        duration_months: durationMonths,
-        billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
-        currency: planData.currency || 'ر.س',
+    const insertPayload: any = {
+      code: cleanCode,
+      name: planData.name.trim(),
+      description: planData.description || '',
+      amount: Number(planData.amount) || 0,
+      currency: planData.currency || 'SAR',
+      billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
+      trial_days: Number(planData.trial_days) ?? 7,
+      active: planData.active !== false,
+      metadata: {
         features: planData.features || [],
-        active: planData.active !== false,
-        created_at: new Date().toISOString(),
-      };
+        duration_months: durationMonths,
+      },
+    };
+
+    const { data, error } = await supabase
+      .from('billing_plans')
+      .insert([insertPayload])
+      .select()
+      .maybeSingle();
+
+    if (error || !data) {
+      console.error('[Supabase addSubscriptionPlan error]:', error);
+      throw new Error(error?.message || 'فشل إضافة خطة الاشتراك في قاعدة البيانات');
     }
 
-    const local = this.getAllSubscriptionPlansSync();
-    const updated = [...local.filter((p) => (p.code || p.id) !== cleanCode && p.id !== newPlan!.id), newPlan];
-    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, updated);
+    const newPlan: BillingPlan = {
+      id: data.id,
+      code: data.code,
+      name: data.name,
+      description: data.description || '',
+      amount: Number(data.amount) || 0,
+      currency: data.currency || 'ر.س',
+      duration_months: durationMonths,
+      billing_interval: (data.billing_interval as 'MONTHLY' | 'YEARLY' | 'CUSTOM') || 'MONTHLY',
+      trial_days: Number(data.trial_days) ?? 7,
+      features: planData.features || [],
+      active: data.active !== false,
+      created_at: data.created_at,
+    };
 
-    // مزامنة API كإجراء إضافي
-    fetch('/api/billing/plans', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newPlan),
-    }).catch(() => {});
+    // Cache updated list in localStorage only after DB confirmation
+    const local = this.getAllSubscriptionPlansSync();
+    const updated = [...local.filter((p) => (p.code || p.id) !== cleanCode && p.id !== newPlan.id), newPlan];
+    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, updated);
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return newPlan;
@@ -11339,56 +11318,100 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const isUuid = planId.includes('-') && planId.length > 30;
     const supabase = getSupabaseClient();
 
-    if (supabase) {
-      try {
-        const updatePayload: any = {
-          updated_at: new Date().toISOString(),
-        };
-        if (updates.name !== undefined) updatePayload.name = updates.name.trim();
-        if (updates.description !== undefined) updatePayload.description = updates.description;
-        if (updates.amount !== undefined) updatePayload.amount = Number(updates.amount);
-        if (updates.currency !== undefined) updatePayload.currency = updates.currency;
-        if (updates.trial_days !== undefined) updatePayload.trial_days = Number(updates.trial_days);
-        if (updates.active !== undefined) updatePayload.active = Boolean(updates.active);
-        if (updates.duration_months !== undefined || updates.billing_interval !== undefined) {
-          updatePayload.billing_interval = durationMonths === 12 ? 'YEARLY' : 'MONTHLY';
-        }
-        if (updates.features !== undefined || updates.duration_months !== undefined) {
-          updatePayload.metadata = {
-            features: updates.features || existing?.features || [],
-            duration_months: durationMonths,
-          };
-        }
-
-        let query = supabase.from('billing_plans').update(updatePayload);
-        if (isUuid) {
-          query = query.eq('id', planId);
-        } else {
-          query = query.eq('code', planId);
-        }
-        await query;
-      } catch (err) {
-        console.warn('Supabase updateSubscriptionPlan error:', err);
-      }
+    if (!supabase) {
+      throw new Error('تعذر الاتصال بقاعدة البيانات السحابية');
     }
 
+    let updatedDbPlan: any = null;
+    let lastError: any = null;
+
+    // 1. Try Sovereign Atomic RPC first
+    try {
+      const { data: rpcData, error: rpcErr } = await (supabase as any).rpc('update_billing_plan_atomic', {
+        p_plan_id: planId,
+        p_name: updates.name ? updates.name.trim() : (existing?.name || 'باقة اشتراك'),
+        p_description: updates.description !== undefined ? updates.description : (existing?.description || null),
+        p_amount: updates.amount !== undefined ? Number(updates.amount) : (existing?.amount || null),
+        p_duration_months: durationMonths,
+        p_trial_days: updates.trial_days !== undefined ? Number(updates.trial_days) : (existing?.trial_days || 7),
+        p_features: updates.features || existing?.features || [],
+        p_active: updates.active !== undefined ? Boolean(updates.active) : (existing?.active !== false),
+      });
+
+      if (!rpcErr && rpcData) {
+        updatedDbPlan = rpcData;
+      } else if (rpcErr) {
+        lastError = rpcErr;
+        console.warn('[updateSubscriptionPlan] Atomic RPC notice, falling back to direct table update:', rpcErr.message);
+      }
+    } catch (e) {
+      lastError = e;
+    }
+
+    // 2. Direct table update fallback if RPC was not used
+    if (!updatedDbPlan) {
+      const updatePayload: any = {
+        updated_at: new Date().toISOString(),
+      };
+      if (updates.name !== undefined) updatePayload.name = updates.name.trim();
+      if (updates.description !== undefined) updatePayload.description = updates.description;
+      if (updates.amount !== undefined) updatePayload.amount = Number(updates.amount);
+      if (updates.currency !== undefined) updatePayload.currency = updates.currency;
+      if (updates.trial_days !== undefined) updatePayload.trial_days = Number(updates.trial_days);
+      if (updates.active !== undefined) updatePayload.active = Boolean(updates.active);
+      if (updates.duration_months !== undefined || updates.billing_interval !== undefined) {
+        updatePayload.billing_interval = durationMonths === 12 ? 'YEARLY' : 'MONTHLY';
+      }
+      if (updates.features !== undefined || updates.duration_months !== undefined) {
+        updatePayload.metadata = {
+          features: updates.features || existing?.features || [],
+          duration_months: durationMonths,
+        };
+      }
+
+      let query = supabase.from('billing_plans').update(updatePayload);
+      if (isUuid) {
+        query = query.eq('id', planId);
+      } else {
+        query = query.eq('code', planId);
+      }
+      const { data, error } = await query.select().maybeSingle();
+      if (error) {
+        console.error('[Supabase updateSubscriptionPlan error]:', error);
+        throw new Error(error.message || 'فشل تحديث الخطة في قاعدة البيانات');
+      }
+      updatedDbPlan = data;
+    }
+
+    if (!updatedDbPlan && lastError) {
+      throw new Error(lastError.message || 'فشل تحديث الخطة في قاعدة البيانات');
+    }
+
+    const meta = updatedDbPlan?.metadata && typeof updatedDbPlan.metadata === 'object' ? updatedDbPlan.metadata : {};
+    const finalDurationMonths = updatedDbPlan?.duration_months
+      ? Number(updatedDbPlan.duration_months)
+      : meta.duration_months
+      ? Number(meta.duration_months)
+      : durationMonths;
+
     const updatedPlan: BillingPlan = {
-      ...(existing || {} as any),
-      ...updates,
-      id: existing?.id || planId,
-      code: existing?.code || planId,
-      duration_months: durationMonths,
-      billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
+      id: updatedDbPlan?.id || planId,
+      code: updatedDbPlan?.code || planId,
+      name: updatedDbPlan?.name || updates.name || existing?.name || 'باقة اشتراك',
+      description: updatedDbPlan?.description || updates.description || existing?.description || '',
+      amount: updatedDbPlan?.amount !== undefined ? Number(updatedDbPlan.amount) : (updates.amount !== undefined ? Number(updates.amount) : existing?.amount || 0),
+      currency: updatedDbPlan?.currency || updates.currency || existing?.currency || 'ر.س',
+      duration_months: finalDurationMonths,
+      billing_interval: updatedDbPlan?.billing_interval || (finalDurationMonths === 12 ? 'YEARLY' : 'MONTHLY'),
+      trial_days: updatedDbPlan?.trial_days !== undefined ? Number(updatedDbPlan.trial_days) : (updates.trial_days !== undefined ? Number(updates.trial_days) : 7),
+      features: Array.isArray(meta.features) ? meta.features : (updates.features || existing?.features || []),
+      active: updatedDbPlan?.active !== undefined ? updatedDbPlan.active : (updates.active !== undefined ? updates.active : true),
+      created_at: updatedDbPlan?.created_at || existing?.created_at,
     };
 
+    // Only update local cache after confirmed DB write
     const updatedList = local.map((p) => (p.id === planId || p.code === planId ? updatedPlan : p));
     saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, updatedList);
-
-    fetch('/api/billing/plans', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...updatedPlan, id: planId }),
-    }).catch(() => {});
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return updatedPlan;
@@ -11400,16 +11423,18 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const nextActive = existing ? !existing.active : true;
 
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const isUuid = planId.includes('-') && planId.length > 30;
-        let query = supabase.from('billing_plans').update({ active: nextActive, updated_at: new Date().toISOString() });
-        if (isUuid) query = query.eq('id', planId);
-        else query = query.eq('code', planId);
-        await query;
-      } catch (err) {
-        console.warn('Supabase toggleSubscriptionPlanActive error:', err);
-      }
+    if (!supabase) {
+      throw new Error('تعذر الاتصال بقاعدة البيانات السحابية');
+    }
+
+    const isUuid = planId.includes('-') && planId.length > 30;
+    let query = supabase.from('billing_plans').update({ active: nextActive, updated_at: new Date().toISOString() });
+    if (isUuid) query = query.eq('id', planId);
+    else query = query.eq('code', planId);
+    const { error } = await query;
+    if (error) {
+      console.error('[Supabase toggleSubscriptionPlanActive error]:', error);
+      throw new Error(error.message || 'فشل تحديث حالة الخطة في قاعدة البيانات');
     }
 
     if (existing) {
@@ -11417,37 +11442,29 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, local);
     }
 
-    fetch('/api/billing/plans', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: planId, active: nextActive }),
-    }).catch(() => {});
-
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return nextActive;
   },
 
   async deleteSubscriptionPlan(planId: string): Promise<boolean> {
     const supabase = getSupabaseClient();
-    if (supabase) {
-      try {
-        const isUuid = planId.includes('-') && planId.length > 30;
-        let query = supabase.from('billing_plans').delete();
-        if (isUuid) query = query.eq('id', planId);
-        else query = query.eq('code', planId);
-        await query;
-      } catch (err) {
-        console.warn('Supabase deleteSubscriptionPlan error:', err);
-      }
+    if (!supabase) {
+      throw new Error('تعذر الاتصال بقاعدة البيانات السحابية');
+    }
+
+    const isUuid = planId.includes('-') && planId.length > 30;
+    let query = supabase.from('billing_plans').delete();
+    if (isUuid) query = query.eq('id', planId);
+    else query = query.eq('code', planId);
+    const { error } = await query;
+    if (error) {
+      console.error('[Supabase deleteSubscriptionPlan error]:', error);
+      throw new Error(error.message || 'فشل حذف الخطة من قاعدة البيانات');
     }
 
     const local = this.getAllSubscriptionPlansSync();
     const filtered = local.filter((p) => p.id !== planId && p.code !== planId);
     saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, filtered);
-
-    fetch(`/api/billing/plans?id=${encodeURIComponent(planId)}`, {
-      method: 'DELETE',
-    }).catch(() => {});
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
     return true;
