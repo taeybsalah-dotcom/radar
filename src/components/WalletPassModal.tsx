@@ -16,6 +16,7 @@ import {
   QrCode,
   Flame,
   Award,
+  Loader2,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
@@ -49,6 +50,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
   const [customerGps, setCustomerGps] = useState<{ lat: number; lng: number } | null>(null);
   const [isGettingGps, setIsGettingGps] = useState(false);
   const [isSavingGoogle, setIsSavingGoogle] = useState(false);
+  const [isDownloadingApple, setIsDownloadingApple] = useState(false);
 
   const config = WalletPassService.getWalletConfig(store);
   const customerPoints = customer?.wallet_balance || 0;
@@ -85,23 +87,30 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleDownloadPass = () => {
+  const handleDownloadPass = async () => {
     if (!customer) {
       alert('يرجى تسجيل الدخول أولاً لإصدار بطاقة المحفظة الخاصة بك.');
       return;
     }
 
-    WalletPassService.downloadPassFile(store, customer, tier, storeBranches);
-    setIsDownloaded(true);
+    setIsDownloadingApple(true);
+    try {
+      await WalletPassService.downloadPassFile(store, customer, tier, storeBranches);
+      setIsDownloaded(true);
 
-    confetti({
-      particleCount: 100,
-      spread: 70,
-      origin: { y: 0.6 },
-      colors: [brandColor, '#FFFFFF', '#10B981', '#38BDF8'],
-    });
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: [brandColor, '#FFFFFF', '#10B981', '#38BDF8'],
+      });
 
-    setTimeout(() => setIsDownloaded(false), 5000);
+      setTimeout(() => setIsDownloaded(false), 5000);
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ أثناء إصدار بطاقة أبل');
+    } finally {
+      setIsDownloadingApple(false);
+    }
   };
 
   const handleSaveGoogle = async () => {
@@ -431,12 +440,21 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
               <button
                 type="button"
                 onClick={handleDownloadPass}
-                className="w-full py-3.5 px-5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white keep-white font-black text-sm flex items-center justify-center gap-2.5 shadow-xl border border-slate-700 transition-all hover:scale-[1.02] active:scale-95"
+                disabled={isDownloadingApple}
+                className="w-full py-3.5 px-5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white keep-white font-black text-sm flex items-center justify-center gap-2.5 shadow-xl border border-slate-700 transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-50"
               >
-                <svg className="w-4 h-4 fill-current shrink-0" viewBox="0 0 384 512">
-                  <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
-                </svg>
-                <span>إضافة إلى محفظة آبل (Apple Wallet)</span>
+                {isDownloadingApple ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                ) : (
+                  <svg className="w-4 h-4 fill-current shrink-0" viewBox="0 0 384 512">
+                    <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+                  </svg>
+                )}
+                <span>
+                  {isDownloadingApple
+                    ? 'جاري تجهيز وتوقيع بطاقة أبل...'
+                    : 'إضافة إلى محفظة آبل (Apple Wallet)'}
+                </span>
               </button>
             ) : (
               <button

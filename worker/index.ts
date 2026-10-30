@@ -1,3 +1,5 @@
+import { generateSignedApplePass } from '../src/lib/applePassSigner';
+
 export interface Env {
   ASSETS: { fetch: typeof fetch };
   GEMINI_API_KEY?: string;
@@ -636,6 +638,142 @@ async function handleParseMenu(request: Request, env: Env): Promise<Response> {
   }
 }
 
+// ==============================================================================
+//  4. OFFICIAL APPLE WALLET PASSKIT SIGNING ENDPOINT (.pkpass streaming)
+// ==============================================================================
+async function handleAppleWalletPass(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const storeIdOrSlug = url.searchParams.get('store_id') || url.searchParams.get('store') || '';
+  const customerIdOrPhone = url.searchParams.get('customer_id') || url.searchParams.get('phone') || '';
+
+  if (!storeIdOrSlug) {
+    return jsonResponse({ success: false, error: 'المعرف الخاص بالمتجر مطلوب (Missing store_id)' }, 400);
+  }
+
+  const { supabaseUrl, anonKey, serviceRoleKey } = resolveSupabaseCredentials(env, request.headers);
+  const authHeader = `Bearer ${serviceRoleKey || anonKey}`;
+  const apiKeyHeader = serviceRoleKey || anonKey;
+
+  try {
+    // 1. Fetch Store Details
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(storeIdOrSlug);
+    const storeQuery = isUuid ? `id=eq.${storeIdOrSlug}` : `slug=eq.${encodeURIComponent(storeIdOrSlug)}`;
+    const storeRes = await fetch(
+      `${supabaseUrl.replace(/\/$/, '')}/rest/v1/stores?${storeQuery}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone,logo_url&limit=1`,
+      {
+        headers: {
+          apikey: apiKeyHeader,
+          Authorization: authHeader,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    const storeList: any = await storeRes.json();
+    const store = storeList?.[0];
+    if (!store) {
+      return jsonResponse({ success: false, error: 'المتجر غير موجود' }, 404);
+    }
+
+    // 2. Fetch Customer Details
+    let customer: any = { id: 'guest', name: 'عميل مميز', points_balance: 0 };
+    if (customerIdOrPhone) {
+      const isCustUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(customerIdOrPhone);
+      const custQuery = isCustUuid
+        ? `id=eq.${customerIdOrPhone}`
+        : `phone=eq.${encodeURIComponent(customerIdOrPhone)}&store_id=eq.${store.id}`;
+      const custRes = await fetch(
+        `${supabaseUrl.replace(/\/$/, '')}/rest/v1/store_customers?${custQuery}&select=id,name,phone,points_balance&limit=1`,
+        {
+          headers: {
+            apikey: apiKeyHeader,
+            Authorization: authHeader,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      const custList: any = await custRes.json();
+      if (custList?.[0]) customer = custList[0];
+    }
+
+    // 3. Fetch Platform Integrations Credentials
+    const intRes = await fetch(
+      `${supabaseUrl.replace(/\/$/, '')}/rest/v1/platform_integrations?select=apple_wallet_enabled,apple_pass_type_id,apple_team_id,apple_cert_p12_base64,apple_cert_password&order=created_at.desc&limit=1`,
+      {
+        headers: {
+          apikey: apiKeyHeader,
+          Authorization: authHeader,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+    const intList: any = await intRes.json();
+    const intData = intList?.[0];
+
+    if (!intData || !intData.apple_wallet_enabled) {
+      return jsonResponse(
+        { success: false, error: 'بوابة محفظة آبل الرسمية غير مفعلة في لوحة التحكم' },
+        403
+      );
+    }
+
+    if (!intData.apple_cert_p12_base64 || !intData.apple_pass_type_id || !intData.apple_team_id) {
+      return jsonResponse(
+        { success: false, error: 'بيانات شهادة آبل غير مكتملة في مركز التكاملات' },
+        422
+      );
+    }
+
+    // 4. Fetch Branches (if any)
+    let branches: any[] = [];
+    try {
+      const brRes = await fetch(
+        `${supabaseUrl.replace(/\/$/, '')}/rest/v1/store_branches?store_id=eq.${store.id}&select=name,latitude,longitude&limit=10`,
+        {
+          headers: {
+            apikey: apiKeyHeader,
+            Authorization: authHeader,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      const brList: any = await brRes.json();
+      if (Array.isArray(brList)) branches = brList;
+    } catch {}
+
+    // 5. Generate Signed Apple Pass .pkpass
+    const pkpassBytes = generateSignedApplePass({
+      store,
+      customer,
+      branches,
+      credentials: {
+        passTypeId: intData.apple_pass_type_id,
+        teamId: intData.apple_team_id,
+        p12Base64: intData.apple_cert_p12_base64,
+        p12Password: intData.apple_cert_password,
+      },
+    });
+
+    const filename = `${(store.slug || store.name).replace(/\s+/g, '_')}_Loyalty.pkpass`;
+    return new Response(pkpassBytes, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/vnd.apple.pkpass',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        ...CORS_HEADERS,
+      },
+    });
+  } catch (err: any) {
+    return jsonResponse(
+      {
+        success: false,
+        error: `فشل توقيع بطاقة آبل: ${err?.message || 'خطأ غير معروف'}`,
+      },
+      500
+    );
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -657,6 +795,11 @@ export default {
     // 3. Authenticated Sandbox Webhook Route (Requires Store Owner JWT / Staff Token + Sandbox Mode)
     if (url.pathname === '/api/billing/sandbox-webhook' && request.method === 'POST') {
       return handleSandboxWebhook(request, env);
+    }
+
+    // 4. Official Apple Wallet PassKit Route (.pkpass binary streaming)
+    if (url.pathname === '/api/wallet/apple-pass') {
+      return handleAppleWalletPass(request, env);
     }
 
     // 4. Serve static assets with anti-stale caching rules

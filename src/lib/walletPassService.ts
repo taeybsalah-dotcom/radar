@@ -1,5 +1,6 @@
 import { Store, Customer, Tier, StoreBranch, StoreWalletPassConfig, ProximityDistanceResult, WalletDeviceRegistration, SpinWheelPrize } from '../types';
 import { getSupabaseClient, LoyaltyService } from './supabase';
+import { generateSignedApplePass } from './applePassSigner';
 
 const WALLET_CONFIG_STORAGE_KEY_PREFIX = 'radar_wallet_pass_config_';
 const WALLET_DEVICES_STORAGE_KEY_PREFIX = 'radar_wallet_device_registrations_';
@@ -597,33 +598,92 @@ export class WalletPassService {
   }
 
   /**
-   * تحميل ملف البطاقة الرقمية الفوري (.pkpass / JSON Pass)
+   * تحميل وتثبيت بطاقة Apple Wallet الرسمية الموقعة (.pkpass)
    */
-  static downloadPassFile(
+  static async downloadPassFile(
     store: Store,
     customer: Customer,
     tier?: Tier | null,
     storeBranches: StoreBranch[] = []
-  ): void {
-    const passData = this.generateApplePassPayload(store, customer, tier, storeBranches);
-    const jsonString = JSON.stringify(passData, null, 2);
-    const blob = new Blob([jsonString], { type: 'application/vnd.apple.pkpass' });
-    const url = URL.createObjectURL(blob);
+  ): Promise<void> {
+    const passUrl = `/api/wallet/apple-pass?store_id=${encodeURIComponent(store.id)}&customer_id=${encodeURIComponent(customer.id)}`;
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${store.name.replace(/\s+/g, '_')}_Loyalty_Pass.pkpass`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // 1. تسجيل الجهاز افتراضياً
+    const passSerial = customer.phone
+      ? `RADAR-${store.id.slice(0, 4)}-${customer.phone}`
+      : `RADAR-VIP-${customer.id.slice(0, 6)}`;
 
-    // Register simulated device
     this.registerDevice({
       customer_id: customer.id,
       store_id: store.id,
       platform: 'apple',
-      pass_serial_number: passData.serialNumber,
+      pass_serial_number: passSerial,
     });
+
+    // 2. فحص متصفح iOS Safari: التوجيه المباشر يفتح شاشة إضافة المحفظة الرسمية للآيفون تلقائياً
+    const isIOS =
+      typeof navigator !== 'undefined' &&
+      (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
+    if (isIOS) {
+      window.location.href = passUrl;
+      return;
+    }
+
+    // 3. للمتصفحات الأخرى أو أجهزة سطح المكتب: جلب وتحميل ملف .pkpass الموقّع
+    try {
+      const res = await fetch(passUrl);
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(store.slug || store.name).replace(/\s+/g, '_')}_Loyalty_Pass.pkpass`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return;
+      }
+    } catch (apiErr) {
+      console.warn('API pass generation failed, attempting local fallback signing...', apiErr);
+    }
+
+    // 4. توقيع فوري محلي في المتصفح كبديل في حال انقطاع السيرفر وتوفر المفاتيح
+    try {
+      const cached = localStorage.getItem('radar_platform_wallet_credentials');
+      if (cached) {
+        const creds = JSON.parse(cached);
+        if (creds.apple_cert_p12_base64 && creds.apple_pass_type_id && creds.apple_team_id) {
+          const pkpassBytes = generateSignedApplePass({
+            store,
+            customer,
+            branches: storeBranches,
+            credentials: {
+              passTypeId: creds.apple_pass_type_id,
+              teamId: creds.apple_team_id,
+              p12Base64: creds.apple_cert_p12_base64,
+              p12Password: creds.apple_cert_password,
+            },
+          });
+          const blob = new Blob([pkpassBytes], { type: 'application/vnd.apple.pkpass' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${(store.slug || store.name).replace(/\s+/g, '_')}_Loyalty_Pass.pkpass`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          return;
+        }
+      }
+    } catch (localErr) {
+      console.error('Local signing fallback failed:', localErr);
+    }
+
+    // 5. التوجيه النهائي للرابط في حال لم تتوفر الشهادة محلياً
+    window.location.href = passUrl;
   }
 }
