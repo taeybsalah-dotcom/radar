@@ -4,6 +4,24 @@
 // المتغيرات السرية المطلوبة في إعدادات Cloudflare (Pages > Settings > Variables):
 //   SUPABASE_URL                (أو VITE_SUPABASE_URL)  رابط قاعدة بيانات هذا الوكيل
 //   SUPABASE_SERVICE_ROLE_KEY   مفتاح سري: للسيرفر فقط، ممنوع وضعه في الواجهة أو الكود
+// Polyfill crypto.randomBytes for Cloudflare Workers / Edge runtime
+if (typeof crypto !== 'undefined' && !(crypto as any).randomBytes) {
+  (crypto as any).randomBytes = (size: number, callback?: (err: any, buf: any) => void) => {
+    const arr = new Uint8Array(size);
+    crypto.getRandomValues(arr);
+    const res = {
+      toString: () => {
+        let s = '';
+        for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+        return s;
+      },
+      length: arr.length,
+    };
+    if (typeof callback === 'function') callback(null, res);
+    return res;
+  };
+}
+
 import { generateSignedApplePass } from '../../../src/lib/applePassSigner';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

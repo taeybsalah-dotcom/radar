@@ -1,6 +1,45 @@
 import forge from 'node-forge';
 import { zipSync, strToU8 } from 'fflate';
 
+// 🛡️ Fix node-forge PRNG in Cloudflare Workers / Edge Runtime
+(forge as any).options = (forge as any).options || {};
+(forge as any).options.usePureJavaScript = true;
+
+if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+  (forge.random as any).getBytesSync = (count: number) => {
+    const bytes = new Uint8Array(count);
+    crypto.getRandomValues(bytes);
+    return forge.util.binary.raw.encode(bytes);
+  };
+  (forge.random as any).getBytes = (count: number, callback?: (err: Error | null, bytes: string) => any) => {
+    try {
+      const bytes = new Uint8Array(count);
+      crypto.getRandomValues(bytes);
+      const str = forge.util.binary.raw.encode(bytes);
+      if (typeof callback === 'function') callback(null, str);
+    } catch (e: any) {
+      if (typeof callback === 'function') callback(e, '');
+    }
+  };
+}
+
+if (typeof crypto !== 'undefined' && !(crypto as any).randomBytes) {
+  (crypto as any).randomBytes = (size: number, callback?: (err: any, buf: any) => void) => {
+    const arr = new Uint8Array(size);
+    crypto.getRandomValues(arr);
+    const res = {
+      toString: () => {
+        let s = '';
+        for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+        return s;
+      },
+      length: arr.length,
+    };
+    if (typeof callback === 'function') callback(null, res);
+    return res;
+  };
+}
+
 // Apple Worldwide Developer Relations (WWDR) G4 Intermediate Certificate (PEM)
 const APPLE_WWDR_G4_PEM = `-----BEGIN CERTIFICATE-----
 MIIEVTCCAz2gAwIBAgIUE9x3lVJx5T3GMujM/+Uh88zFztIwDQYJKoZIhvcNAQEL
