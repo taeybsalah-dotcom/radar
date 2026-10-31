@@ -94,6 +94,13 @@ export interface ApplePassSignParams {
   };
 }
 
+// يحوّل نصًا ثنائيًا (binary string) إلى بايتات بدون Buffer حتى يعمل على Cloudflare
+function binaryStringToBytes(bin: string): Uint8Array {
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xff;
+  return out;
+}
+
 function hexToRgb(hex?: string | null, defaultRgb = 'rgb(17, 14, 5)'): string {
   if (!hex || !hex.startsWith('#')) return defaultRgb;
   const clean = hex.replace('#', '');
@@ -268,8 +275,7 @@ export function generateSignedApplePass(params: ApplePassSignParams): Uint8Array
   zipFiles['pass.json'] = strToU8(passJsonStr);
 
   // إضافة الأيقونات الإلزامية من أبل
-  const iconBytes = forge.util.decode64(DEFAULT_ICON_BASE64);
-  const iconU8 = new Uint8Array(Buffer.from(iconBytes, 'binary'));
+  const iconU8 = binaryStringToBytes(forge.util.decode64(DEFAULT_ICON_BASE64));
   zipFiles['icon.png'] = iconU8;
   zipFiles['icon@2x.png'] = iconU8;
   zipFiles['logo.png'] = iconU8;
@@ -313,7 +319,7 @@ export function generateSignedApplePass(params: ApplePassSignParams): Uint8Array
 
   p7.sign({ detached: true });
   const der = forge.asn1.toDer(p7.toAsn1()).getBytes();
-  zipFiles['signature'] = new Uint8Array(Buffer.from(der, 'binary'));
+  zipFiles['signature'] = binaryStringToBytes(der);
 
   // 7. ضغط وتجميع ملف .pkpass الثنائي النهائي
   return zipSync(zipFiles);

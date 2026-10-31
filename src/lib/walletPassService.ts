@@ -1,6 +1,5 @@
 import { Store, Customer, Tier, StoreBranch, StoreWalletPassConfig, ProximityDistanceResult, WalletDeviceRegistration, SpinWheelPrize } from '../types';
 import { getSupabaseClient, LoyaltyService } from './supabase';
-import { generateSignedApplePass } from './applePassSigner';
 
 const WALLET_CONFIG_STORAGE_KEY_PREFIX = 'radar_wallet_pass_config_';
 const WALLET_DEVICES_STORAGE_KEY_PREFIX = 'radar_wallet_device_registrations_';
@@ -631,59 +630,25 @@ export class WalletPassService {
       return;
     }
 
-    // 3. للمتصفحات الأخرى أو أجهزة سطح المكتب: جلب وتحميل ملف .pkpass الموقّع
-    try {
-      const res = await fetch(passUrl);
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${(store.slug || store.name).replace(/\s+/g, '_')}_Loyalty_Pass.pkpass`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        return;
-      }
-    } catch (apiErr) {
-      console.warn('API pass generation failed, attempting local fallback signing...', apiErr);
+    // 3. للمتصفحات الأخرى أو أجهزة سطح المكتب: جلب وتحميل ملف .pkpass الموقّع من السيرفر
+    //    أي فشل يظهر للمستخدم كخطأ حقيقي (لا بديل محلي ولا نجاح وهمي)
+    const res = await fetch(passUrl);
+    if (!res.ok) {
+      let message = 'تعذر إصدار بطاقة آبل حالياً';
+      try {
+        const data = await res.json();
+        if (data?.error) message = data.error;
+      } catch {}
+      throw new Error(message);
     }
-
-    // 4. توقيع فوري محلي في المتصفح كبديل في حال انقطاع السيرفر وتوفر المفاتيح
-    try {
-      const cached = localStorage.getItem('radar_platform_wallet_credentials');
-      if (cached) {
-        const creds = JSON.parse(cached);
-        if (creds.apple_cert_p12_base64 && creds.apple_pass_type_id && creds.apple_team_id) {
-          const pkpassBytes = generateSignedApplePass({
-            store,
-            customer,
-            branches: storeBranches,
-            credentials: {
-              passTypeId: creds.apple_pass_type_id,
-              teamId: creds.apple_team_id,
-              p12Base64: creds.apple_cert_p12_base64,
-              p12Password: creds.apple_cert_password,
-            },
-          });
-          const blob = new Blob([pkpassBytes], { type: 'application/vnd.apple.pkpass' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `${(store.slug || store.name).replace(/\s+/g, '_')}_Loyalty_Pass.pkpass`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          return;
-        }
-      }
-    } catch (localErr) {
-      console.error('Local signing fallback failed:', localErr);
-    }
-
-    // 5. التوجيه النهائي للرابط في حال لم تتوفر الشهادة محلياً
-    window.location.href = passUrl;
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${(store.slug || 'loyalty').replace(/[^a-zA-Z0-9_-]/g, '_')}_Loyalty_Pass.pkpass`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
   }
 }

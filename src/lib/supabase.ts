@@ -1859,11 +1859,19 @@ export const LoyaltyService = {
       if (cached) localPrice = Number(cached);
     } catch {}
 
-    // Load any local fallback wallet credentials
+    // Load any local fallback wallet non-sensitive metadata & purge legacy secrets
     let localWalletCfg: any = {};
     try {
       const cachedWallet = localStorage.getItem('radar_platform_wallet_credentials');
-      if (cachedWallet) localWalletCfg = JSON.parse(cachedWallet);
+      if (cachedWallet) {
+        localWalletCfg = JSON.parse(cachedWallet);
+        if (localWalletCfg.apple_cert_p12_base64 || localWalletCfg.apple_cert_password || localWalletCfg.google_private_key) {
+          delete localWalletCfg.apple_cert_p12_base64;
+          delete localWalletCfg.apple_cert_password;
+          delete localWalletCfg.google_private_key;
+          localStorage.setItem('radar_platform_wallet_credentials', JSON.stringify(localWalletCfg));
+        }
+      }
     } catch {}
 
     const defaultCfg: PlatformIntegrationsConfig = {
@@ -1884,12 +1892,12 @@ export const LoyaltyService = {
       apple_wallet_enabled: Boolean(localWalletCfg.apple_wallet_enabled),
       apple_pass_type_id: localWalletCfg.apple_pass_type_id || '',
       apple_team_id: localWalletCfg.apple_team_id || '',
-      apple_cert_p12_base64: localWalletCfg.apple_cert_p12_base64 || '',
-      apple_cert_password: localWalletCfg.apple_cert_password || '',
+      apple_cert_p12_base64: '',
+      apple_cert_password: '',
       google_wallet_enabled: Boolean(localWalletCfg.google_wallet_enabled),
       google_issuer_id: localWalletCfg.google_issuer_id || '',
       google_client_email: localWalletCfg.google_client_email || '',
-      google_private_key: localWalletCfg.google_private_key || '',
+      google_private_key: '',
     };
     const supabase = getSupabaseClient();
     if (!supabase) return defaultCfg;
@@ -2030,20 +2038,17 @@ export const LoyaltyService = {
         } catch {}
       }
 
-      // Persist wallet credentials locally as fallback
+      // Persist only non-sensitive wallet identifiers locally (private keys and passwords remain server/DB only)
       try {
-        const walletFields = {
+        const publicWalletFields = {
           apple_wallet_enabled: updated.apple_wallet_enabled,
           apple_pass_type_id: updated.apple_pass_type_id,
           apple_team_id: updated.apple_team_id,
-          apple_cert_p12_base64: updated.apple_cert_p12_base64,
-          apple_cert_password: updated.apple_cert_password,
           google_wallet_enabled: updated.google_wallet_enabled,
           google_issuer_id: updated.google_issuer_id,
           google_client_email: updated.google_client_email,
-          google_private_key: updated.google_private_key,
         };
-        localStorage.setItem('radar_platform_wallet_credentials', JSON.stringify(walletFields));
+        localStorage.setItem('radar_platform_wallet_credentials', JSON.stringify(publicWalletFields));
       } catch {}
 
       const { error } = await (supabase.from as any)('platform_integrations').upsert(updated);
