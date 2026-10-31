@@ -187,8 +187,13 @@ async function getOrInitCredentials(p12Base64: string, p12Password?: string | nu
 
   if (clean.includes('-----BEGIN')) {
     // PEM format direct parsing (ultra fast ~5ms)
-    signerCert = forge.pki.certificateFromPem(clean);
-    signerKey = forge.pki.privateKeyFromPem(clean);
+    const certMatch = clean.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
+    const keyMatch = clean.match(/-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA )?PRIVATE KEY-----/);
+    if (!certMatch || !keyMatch) {
+      throw new Error('ملف الـ PEM لا يحتوي على الشهادة والمفتاح الخاص بصيغة سليمة');
+    }
+    signerCert = forge.pki.certificateFromPem(certMatch[0]);
+    signerKey = forge.pki.privateKeyFromPem(keyMatch[0]);
   } else {
     // PKCS#12 binary format
     const p12Der = forge.util.decode64(clean);
