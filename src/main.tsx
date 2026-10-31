@@ -30,18 +30,38 @@ const RootApp: React.FC = () => {
     const supabase = getSupabaseClient();
     if (!supabase) return;
 
-    // 1. Fetch Dynamic Tenant Branding from this database
+    // 1. Fetch Dynamic Tenant Branding via domain RPC (Al-Athar Core Multi-Tenant Engine)
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
     (supabase as any)
-      .from('tenant_branding')
-      .select('*')
-      .eq('key', 'default')
-      .maybeSingle()
+      .rpc('get_active_tenant_by_domain', { p_host: host })
       .then(({ data }: any) => {
-        if (data) {
+        if (data && data.brand_name) {
           applyTenantBranding(data);
+        } else {
+          // Fallback to legacy tenant_branding table
+          (supabase as any)
+            .from('tenant_branding')
+            .select('*')
+            .eq('key', 'default')
+            .maybeSingle()
+            .then(({ data: fallbackData }: any) => {
+              if (fallbackData) applyTenantBranding(fallbackData);
+            })
+            .catch(() => {});
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        // Fallback to legacy tenant_branding table if RPC fails or not yet applied
+        (supabase as any)
+          .from('tenant_branding')
+          .select('*')
+          .eq('key', 'default')
+          .maybeSingle()
+          .then(({ data: fallbackData }: any) => {
+            if (fallbackData) applyTenantBranding(fallbackData);
+          })
+          .catch(() => {});
+      });
 
     // 2. Initial Check on platform_system_config
     (supabase as any)

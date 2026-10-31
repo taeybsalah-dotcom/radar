@@ -79,7 +79,7 @@ export default async function handler(req: any, res: any) {
 
       // Check if user is staff/owner of this store or super admin
       const user = userData.user;
-      const isSuper = user.user_metadata?.is_super_admin === true || user.app_metadata?.role === 'super_admin';
+      const isSuper = user.app_metadata?.is_super_admin === true || user.app_metadata?.role === 'super_admin';
 
       if (isSuper) {
         isAuthorized = true;

@@ -1114,9 +1114,9 @@ export const LoyaltyService = {
         };
       }
 
-      // فحص احتياطي للـ Claims في الـ Token
-      const role = session.user.app_metadata?.role || (session.user.user_metadata as any)?.role;
-      const isSuper = role === 'super_admin' || role === 'admin' || (session.user.app_metadata as any)?.is_super_admin === true;
+      // فحص أمني حصري للـ Claims في app_metadata (منع التلاعب عبر user_metadata)
+      const role = session.user.app_metadata?.role;
+      const isSuper = role === 'super_admin' || (session.user.app_metadata as any)?.is_super_admin === true;
       const fallbackUser: SuperAdminUser = {
         id: session.user.id,
         user_id: session.user.id,

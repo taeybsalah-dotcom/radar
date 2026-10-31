@@ -1,7 +1,8 @@
 -- ==============================================================================
 -- 🏛️ AL-ATHAR CORE (منصة الأثر السحابية) - UNIFIED MULTI-TENANT ARCHITECTURE
 -- Migration: 20261113_al_athar_core_unified_tenants.sql
--- Hardened Version: Strict app_metadata RLS, Tenant Isolation, Indexing & Audit Triggers
+-- Production Hardened Version: Strict app_metadata RLS, Zero-Leaked Permissive Policies,
+-- Domain Normalization (www-strip), Sovereign Field Locking & Cross-Table Tenant Isolation
 -- ==============================================================================
 
 -- 0️⃣ دالة تحديث حقل updated_at تلقائياً
@@ -41,10 +42,40 @@ CREATE TRIGGER trg_tenants_updated_at
 BEFORE UPDATE ON public.tenants
 FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
+-- 🛡️ حماية الحقول السيادية في جدول الوكلاء من تلاعب الـ tenant_admin
+CREATE OR REPLACE FUNCTION public.protect_tenant_critical_fields()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_is_super BOOLEAN;
+BEGIN
+    v_is_super := (
+        COALESCE(( current_setting('request.jwt.claims', true)::jsonb -> 'app_metadata' ->> 'is_super_admin' )::boolean, false) IS TRUE
+        OR ( current_setting('request.jwt.claims', true)::jsonb -> 'app_metadata' ->> 'role' ) = 'super_admin'
+        OR current_user IN ('postgres', 'service_role', 'supabase_admin')
+    );
+
+    IF NOT v_is_super THEN
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.slug IS DISTINCT FROM OLD.slug
+           OR NEW.custom_domain IS DISTINCT FROM OLD.custom_domain
+           OR NEW.status IS DISTINCT FROM OLD.status THEN
+            RAISE EXCEPTION 'Unauthorized: Only SuperAdmin can modify id, slug, custom_domain, or status.';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_protect_tenant_critical_fields ON public.tenants;
+CREATE TRIGGER trg_protect_tenant_critical_fields
+BEFORE UPDATE ON public.tenants
+FOR EACH ROW EXECUTE FUNCTION public.protect_tenant_critical_fields();
+
 -- تفعيل حماية RLS لجدول الوكلاء
 ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
 
--- سياسة 1: قراءة عامة للوكلاء النشطين فقط (لبناء الهوية البصرية في الواجهة)
+-- سياسة 1: قراءة عامة للوكلاء النشطين فقط
 DROP POLICY IF EXISTS "Public read active tenants" ON public.tenants;
 CREATE POLICY "Public read active tenants"
 ON public.tenants
@@ -53,7 +84,6 @@ TO anon, authenticated
 USING (
     status = 'active'
     OR (
-        -- السماح للوكيل برؤية بياناته حتى لو كان في وضع الصيانة
         (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
         AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = id
     )
@@ -74,18 +104,20 @@ WITH CHECK (
     OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
 );
 
--- سياسة 3: السماح للوكيل بتحديث بيانات هويته الخاصة فقط (دون تغيير حالة الحساب أو المعرف)
+-- سياسة 3: السماح للوكيل النشط بتحديث بيانات هويته الفرعية فقط
 DROP POLICY IF EXISTS "TenantAdmin update own tenant" ON public.tenants;
 CREATE POLICY "TenantAdmin update own tenant"
 ON public.tenants
 FOR UPDATE
 TO authenticated
 USING (
-    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    status = 'active'
+    AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
     AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = id
 )
 WITH CHECK (
-    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    status = 'active'
+    AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
     AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = id
 );
 
@@ -117,7 +149,7 @@ ON CONFLICT (id) DO UPDATE SET
     copyright_holder = EXCLUDED.copyright_holder;
 
 -- 3️⃣ جدول تكاملات الوكيل المستقلة (Telegram, Gemini AI, WhatsApp)
--- ملاحظة معمارية: مفاتيح Apple/Google Wallet مركزية وتُحفظ في Cloudflare Worker Secrets فقط
+-- ملاحظة معمارية سيادية: مفاتيح Apple PassKit و Google Wallet مركزية في منصة الأثر السحابية وتُحفظ في Cloudflare Worker Secrets
 CREATE TABLE IF NOT EXISTS public.tenant_integrations (
     tenant_id TEXT PRIMARY KEY REFERENCES public.tenants(id) ON DELETE CASCADE,
     
@@ -151,7 +183,7 @@ FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 -- تفعيل حماية RLS لجدول التكاملات
 ALTER TABLE public.tenant_integrations ENABLE ROW LEVEL SECURITY;
 
--- سياسة 1: تحكم كامل للسوبر أدمن على جميع التكاملات
+-- سياسة 1: تحكم كامل للسوبر أدمن
 DROP POLICY IF EXISTS "SuperAdmin manage tenant_integrations" ON public.tenant_integrations;
 CREATE POLICY "SuperAdmin manage tenant_integrations"
 ON public.tenant_integrations
@@ -166,7 +198,7 @@ WITH CHECK (
     OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
 );
 
--- سياسة 2: كل وكيل (tenant_admin) يقرأ ويعدل مفاتيحه الخاصة فقط
+-- سياسة 2: كل وكيل (tenant_admin) يدير مفاتيحه الخاصة فقط
 DROP POLICY IF EXISTS "TenantAdmin manage own integrations" ON public.tenant_integrations;
 CREATE POLICY "TenantAdmin manage own integrations"
 ON public.tenant_integrations
@@ -188,14 +220,14 @@ VALUES
     ('sadeem', false, false, false)
 ON CONFLICT (tenant_id) DO NOTHING;
 
--- 4️⃣ ربط جدول المتاجر بعمود الوكيل مع فهرسة الأداء ومنع الحذف العشوائي
+-- 4️⃣ ربط جدول المتاجر (stores) بالوكيل مع الفهرسة وإسقاط السياسات المتساهلة القديمة
 ALTER TABLE public.stores 
 ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
 REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 CREATE INDEX IF NOT EXISTS idx_stores_tenant_id ON public.stores(tenant_id);
 
--- ربط متجر السعيد ومتاجر سديم التجريبية بوكيل سديم تلقائياً
+-- ربط المتاجر القائمة بوكلائها
 UPDATE public.stores 
 SET tenant_id = 'sadeem'
 WHERE slug = 'al-sayd' 
@@ -203,44 +235,243 @@ WHERE slug = 'al-sayd'
    OR slug ILIKE '%sadeem%' 
    OR slug ILIKE '%sadim%';
 
--- 5️⃣ ربط طلبات انضمام التجار بالوكيل (Merchant Leads Isolation)
+ALTER TABLE public.stores ENABLE ROW LEVEL SECURITY;
+
+-- 🛡️ تنظيف وإسقاط كافة السياسات القديمة لمنع ثغرة الـ OR البرمجية في PostgreSQL
+DROP POLICY IF EXISTS "stores_select_policy" ON public.stores;
+DROP POLICY IF EXISTS "stores_update_policy" ON public.stores;
+DROP POLICY IF EXISTS "stores_insert_policy" ON public.stores;
+DROP POLICY IF EXISTS "stores_delete_policy" ON public.stores;
+DROP POLICY IF EXISTS "Public stores read active" ON public.stores;
+DROP POLICY IF EXISTS "Public read active stores" ON public.stores;
+DROP POLICY IF EXISTS "SuperAdmin manage all stores" ON public.stores;
+DROP POLICY IF EXISTS "TenantAdmin manage own stores" ON public.stores;
+DROP POLICY IF EXISTS "ServiceRole full stores access" ON public.stores;
+
+-- سياسة 1: قراءة عامة للمتاجر النشطة فقط (لواجهات المنيو، الطلبات، وبطاقات الولاء للزبائن)
+CREATE POLICY "Public read active stores"
+ON public.stores
+FOR SELECT
+TO anon, authenticated
+USING (status = 'active');
+
+-- سياسة 2: تحكم كامل للسوبر أدمن على كافة المتاجر
+CREATE POLICY "SuperAdmin manage all stores"
+ON public.stores
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+-- سياسة 3: تحكم الوكيل (tenant_admin) في متاجره الخاصة فقط
+CREATE POLICY "TenantAdmin manage own stores"
+ON public.stores
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+-- سياسة 4: وصول كامل لمحرك السيرفر (service_role)
+CREATE POLICY "ServiceRole full stores access"
+ON public.stores
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 5️⃣ ربط طلبات انضمام التجار (merchant_leads) بالوكيل
 ALTER TABLE public.merchant_leads 
 ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
 REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 CREATE INDEX IF NOT EXISTS idx_merchant_leads_tenant_id ON public.merchant_leads(tenant_id);
 
--- RLS لطلبات التجار: السوبر أدمن يرى الجميع، والوكيل يرى طلبات وكالته فقط
+ALTER TABLE public.merchant_leads ENABLE ROW LEVEL SECURITY;
+
+-- 🛡️ إسقاط كافة السياسات القديمة المتساهلة
+DROP POLICY IF EXISTS "merchant_leads_anon_update_policy" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_auth_all_policy" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_select_all" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_insert_all" ON public.merchant_leads;
+DROP POLICY IF EXISTS "Service Role Full Leads Access" ON public.merchant_leads;
+DROP POLICY IF EXISTS "SuperAdmin Full Leads Access" ON public.merchant_leads;
+DROP POLICY IF EXISTS "service_role_merchant_leads_full_access" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_service_role_all" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_super_admin_all" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_anon_insert_policy" ON public.merchant_leads;
 DROP POLICY IF EXISTS "TenantAdmin manage own leads" ON public.merchant_leads;
-CREATE POLICY "TenantAdmin manage own leads"
+DROP POLICY IF EXISTS "SuperAdmin manage all leads" ON public.merchant_leads;
+DROP POLICY IF EXISTS "ServiceRole full leads access" ON public.merchant_leads;
+
+-- سياسة 1: السماح لأي تاجر جديد بالتسجيل من صفحة الهبوط
+CREATE POLICY "merchant_leads_anon_insert_policy"
+ON public.merchant_leads
+FOR INSERT
+TO anon, authenticated
+WITH CHECK (true);
+
+-- سياسة 2: السوبر أدمن يدير جميع الطلبات
+CREATE POLICY "SuperAdmin manage all leads"
 ON public.merchant_leads
 FOR ALL
 TO authenticated
 USING (
     (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
     OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
-    OR (
-        (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
-        AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
-    )
 )
 WITH CHECK (
     (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
     OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
-    OR (
-        (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
-        AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
-    )
 );
 
--- 6️⃣ ربط الشركاء والمسوقين بالوكيل (Affiliates Isolation)
+-- سياسة 3: الوكيل يدير طلبات وكالته فقط
+CREATE POLICY "TenantAdmin manage own leads"
+ON public.merchant_leads
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+-- سياسة 4: وصول كامل لمحرك السيرفر (service_role)
+CREATE POLICY "ServiceRole full leads access"
+ON public.merchant_leads
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 6️⃣ ربط الشركاء والمسوقين (affiliates) بالوكيل
 ALTER TABLE public.affiliates 
 ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
 REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 CREATE INDEX IF NOT EXISTS idx_affiliates_tenant_id ON public.affiliates(tenant_id);
 
--- 7️⃣ دالة التعرف اللحظي على هوية الوكيل حسب الدومين (0ms Zero-Flicker Domain Resolution)
+ALTER TABLE public.affiliates ENABLE ROW LEVEL SECURITY;
+
+-- 🛡️ إسقاط كافة السياسات القديمة المتساهلة
+DROP POLICY IF EXISTS "affiliates_manage_all" ON public.affiliates;
+DROP POLICY IF EXISTS "affiliates_read_public" ON public.affiliates;
+DROP POLICY IF EXISTS "SuperAdmin affiliates access" ON public.affiliates;
+DROP POLICY IF EXISTS "service_role_affiliates_full_access" ON public.affiliates;
+DROP POLICY IF EXISTS "affiliates_super_admin_all" ON public.affiliates;
+DROP POLICY IF EXISTS "affiliates_service_role_all" ON public.affiliates;
+DROP POLICY IF EXISTS "TenantAdmin manage own affiliates" ON public.affiliates;
+DROP POLICY IF EXISTS "SuperAdmin manage all affiliates" ON public.affiliates;
+DROP POLICY IF EXISTS "ServiceRole full affiliates access" ON public.affiliates;
+
+-- سياسة 1: السوبر أدمن يدير جميع المسوقين
+CREATE POLICY "SuperAdmin manage all affiliates"
+ON public.affiliates
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+-- سياسة 2: الوكيل يدير مسوقي وكالته فقط
+CREATE POLICY "TenantAdmin manage own affiliates"
+ON public.affiliates
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+-- سياسة 3: وصول كامل لمحرك السيرفر (service_role)
+CREATE POLICY "ServiceRole full affiliates access"
+ON public.affiliates
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 7️⃣ ربط اشتراكات المتاجر (merchant_subscriptions) بالوكيل
+ALTER TABLE public.merchant_subscriptions 
+ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
+REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+CREATE INDEX IF NOT EXISTS idx_merchant_subscriptions_tenant_id ON public.merchant_subscriptions(tenant_id);
+
+-- مزامنة اشتراكات المتاجر الحالية مع وكيل المتجر تلقائياً
+UPDATE public.merchant_subscriptions s
+SET tenant_id = st.tenant_id
+FROM public.stores st
+WHERE s.store_id = st.id;
+
+ALTER TABLE public.merchant_subscriptions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "merchant_subscriptions_super_admin_all" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "merchant_subscriptions_service_role_all" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "SuperAdmin manage all subscriptions" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "TenantAdmin manage own subscriptions" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "ServiceRole full subscriptions access" ON public.merchant_subscriptions;
+
+-- سياسة 1: السوبر أدمن يدير جميع الاشتراكات
+CREATE POLICY "SuperAdmin manage all subscriptions"
+ON public.merchant_subscriptions
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+-- سياسة 2: الوكيل يدير اشتراكات متاجره فقط
+CREATE POLICY "TenantAdmin manage own subscriptions"
+ON public.merchant_subscriptions
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+-- سياسة 3: وصول كامل لمحرك السيرفر (service_role)
+CREATE POLICY "ServiceRole full subscriptions access"
+ON public.merchant_subscriptions
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 8️⃣ دالة التعرف اللحظي على هوية الوكيل حسب الدومين (مع معالجة www.)
 CREATE OR REPLACE FUNCTION public.get_active_tenant_by_domain(p_host TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -251,23 +482,26 @@ DECLARE
     v_clean_host TEXT;
     v_rec RECORD;
 BEGIN
-    v_clean_host := LOWER(TRIM(p_host));
+    v_clean_host := LOWER(TRIM(COALESCE(p_host, '')));
+    -- إزالة البورت إن وجد
     IF v_clean_host LIKE '%:%' THEN
         v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
     END IF;
+    -- إزالة www. لضمان مطابقة الدومين المخصص دائماً
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
 
     -- 1. مطابقة الدومين المخصص المباشر
     SELECT * INTO v_rec
     FROM public.tenants
-    WHERE LOWER(custom_domain) = v_clean_host
+    WHERE REGEXP_REPLACE(LOWER(custom_domain), '^www\.', '') = v_clean_host
       AND status = 'active'
     LIMIT 1;
 
-    -- 2. مطابقة النطاق الفرعي
-    IF v_rec IS NULL THEN
+    -- 2. مطابقة النطاق الفرعي أو الـ slug أو المعرف
+    IF v_rec IS NULL AND v_clean_host <> '' THEN
         SELECT * INTO v_rec
         FROM public.tenants
-        WHERE v_clean_host LIKE '%' || LOWER(slug) || '%'
+        WHERE (v_clean_host LIKE '%' || LOWER(slug) || '%' OR v_clean_host LIKE '%' || LOWER(id) || '%')
           AND status = 'active'
         LIMIT 1;
     END IF;
@@ -312,7 +546,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.get_active_tenant_by_domain(TEXT) TO anon, authenticated, service_role;
 COMMENT ON FUNCTION public.get_active_tenant_by_domain(TEXT) IS 'Returns active tenant white-label configuration based on requesting hostname';
 
--- 8️⃣ دالة جلب تكاملات الوكيل العامة للواجهة (Non-sensitive Public Flags)
+-- 9️⃣ دالة جلب تكاملات الوكيل العامة للواجهة
 CREATE OR REPLACE FUNCTION public.get_tenant_integrations_public(p_tenant_id TEXT)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -334,7 +568,7 @@ BEGIN
         'gemini_enabled', COALESCE(v_rec.gemini_enabled, false),
         'whatsapp_enabled', COALESCE(v_rec.whatsapp_enabled, false),
         'whatsapp_tier_1000_price', COALESCE(v_rec.whatsapp_tier_1000_price, 150),
-        -- بطاقات أبل وقوقل مركزية ومفعلة تلقائياً من منصة الأثر السحابية
+        -- بطاقات أبل وقوقل مركزية ومفعلة تلقائياً من منصة الأثر السحابية لكافة الوكلاء
         'apple_wallet_enabled', true,
         'google_wallet_enabled', true
     );
@@ -343,5 +577,5 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_tenant_integrations_public(TEXT) TO anon, authenticated, service_role;
 
--- 9️⃣ تحديث كاش السيرفر فوراً
+-- 🔟 تحديث كاش السيرفر فوراً
 NOTIFY pgrst, 'reload schema';

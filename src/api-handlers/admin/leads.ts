@@ -80,7 +80,7 @@ export default async function handler(req: any, res: any) {
         if (!authError && userData?.user) {
           const user = userData.user;
           const appRole = user.app_metadata?.role;
-          const isSuper = user.user_metadata?.is_super_admin === true || user.app_metadata?.is_super_admin === true;
+          const isSuper = user.app_metadata?.is_super_admin === true || user.app_metadata?.role === 'super_admin';
           const adminEmails = (process.env.ADMIN_EMAILS || '')
             .split(',')
             .map((e: string) => e.trim().toLowerCase())
