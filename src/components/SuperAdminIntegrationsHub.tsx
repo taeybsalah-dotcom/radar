@@ -813,6 +813,20 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
           </div>
         </div>
 
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-slate-900 to-slate-900 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-black text-white">البنية السيادية لمنصة الأثر السحابية (Al-Athar Core) 🏛️</span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                مركزية ومفعلة تلقائياً لكافة الوكلاء ✅
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              تدار شهادات Apple PassKit وحسابات Google Wallet مركزياً من منصة الأثر السحابية (الأم) لتوقيع بطاقات الولاء لكافة الوكلاء وتجارهم تلقائياً، دون أن يحتاج أي وكيل لفتح حساب مطور مستقل.
+            </p>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
           {/* ========================================================================= */}
