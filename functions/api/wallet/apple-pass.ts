@@ -69,7 +69,7 @@ export async function onRequestGet(context: any): Promise<Response> {
   const { request, env } = context;
 
   const supabaseUrl = String(
-    env.SUPABASE_URL || env.VITE_SUPABASE_URL || 'https://kspfiijorengpckdlymx.supabase.co'
+    env.SUPABASE_URL || env.VITE_SUPABASE_URL || 'https://zagpvflyizbmzsbmhnts.supabase.co'
   ).replace(/\/$/, '');
   const serviceKey = String(
     env.SUPABASE_SERVICE_ROLE_KEY ||

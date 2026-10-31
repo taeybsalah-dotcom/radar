@@ -81,12 +81,12 @@ function resolveSupabaseCredentials(env: Env, requestHeaders?: Headers) {
     env.SUPABASE_URL ||
     env.VITE_SUPABASE_URL ||
     requestHeaders?.get('x-supabase-url') ||
-    'https://kspfiijorengpckdlymx.supabase.co';
+    'https://zagpvflyizbmzsbmhnts.supabase.co';
   const anonKey =
     env.SUPABASE_ANON_KEY ||
     env.VITE_SUPABASE_ANON_KEY ||
     requestHeaders?.get('x-supabase-anon-key') ||
-    '';
+    'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
   const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY || '';
   const masterToken = env.SOVEREIGN_MASTER_TOKEN || '';
   const webhookSecret =
