@@ -101,10 +101,29 @@ export async function onRequestGet(context: any): Promise<Response> {
     const stores = await restGet(
       supabaseUrl,
       serviceKey,
-      `stores?${storeQuery}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone,logo_url&limit=1`
+      `stores?${storeQuery}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone,logo_url,fulfillment_settings&limit=1`
     );
     const store = stores[0];
     if (!store) return errorResponse(404, 'المتجر غير موجود');
+
+    // جلب إعدادات بطاقة المحفظة الخاصة بالمتجر (الأختام، الألوان، إشعار القرب الجغرافي)
+    let walletConfig: any = null;
+    try {
+      const passConfigs = await restGet(
+        supabaseUrl,
+        serviceKey,
+        `store_wallet_pass_configs?store_id=eq.${store.id}&select=*&limit=1`
+      );
+      if (passConfigs && passConfigs[0]) {
+        walletConfig = passConfigs[0];
+      }
+    } catch (cfgErr) {
+      console.warn('store_wallet_pass_configs query notice:', cfgErr);
+    }
+
+    if (!walletConfig && store.fulfillment_settings?.wallet_pass_config) {
+      walletConfig = store.fulfillment_settings.wallet_pass_config;
+    }
 
     // دعم تمرير الشعار كمعامل بديل أو تحويل المسار النسبي إلى رابط كامل
     const logoParam = url.searchParams.get('logo_url') || url.searchParams.get('logo');
@@ -116,7 +135,7 @@ export async function onRequestGet(context: any): Promise<Response> {
     }
 
     if (url.searchParams.get('debug') === 'store') {
-      return new Response(JSON.stringify({ store }), {
+      return new Response(JSON.stringify({ store, walletConfig }), {
         status: 200,
         headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS_HEADERS },
       });
@@ -322,6 +341,7 @@ T8jHm7rv5Nq0+KO/TXq54gzH
       store,
       customer,
       branches,
+      walletConfig,
       credentials: {
         passTypeId,
         teamId,

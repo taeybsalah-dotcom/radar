@@ -118,6 +118,24 @@ export interface ApplePassSignParams {
     wallet_balance?: number | null;
     points_balance?: number | null;
   };
+  walletConfig?: {
+    enabled?: boolean;
+    loyalty_mode?: 'stamps' | 'points' | 'tiers' | 'cashback';
+    stamps_target?: number;
+    stamps_reward_title?: string;
+    stamps_icon?: string;
+    enable_spin_wheel?: boolean;
+    enable_scratch_card?: boolean;
+    scratch_card_reward_title?: string;
+    enable_streaks?: boolean;
+    streak_target_days?: number;
+    streak_reward_title?: string;
+    background_color?: string;
+    foreground_color?: string;
+    label_color?: string;
+    lockscreen_message_template?: string;
+    proximity_radius_meters?: number;
+  } | null;
   branches?: Array<{
     name: string;
     latitude?: number | null;
@@ -141,7 +159,9 @@ function binaryStringToBytes(bin: string): Uint8Array {
 }
 
 function hexToRgb(hex?: string | null, defaultRgb = 'rgb(17, 14, 5)'): string {
-  if (!hex || !hex.startsWith('#')) return defaultRgb;
+  if (!hex) return defaultRgb;
+  if (hex.startsWith('rgb(') || hex.startsWith('rgba(')) return hex;
+  if (!hex.startsWith('#')) return defaultRgb;
   const clean = hex.replace('#', '');
   if (clean.length === 3) {
     const r = parseInt(clean[0] + clean[0], 16);
@@ -263,19 +283,198 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
   const { wwdrG4Cert, wwdrG3Cert } = getWwdrCerts();
 
   // 3. بناء هيكل pass.json الرسمي المعتمد من Apple PassKit
+  const cfg = params.walletConfig || null;
+  const loyaltyMode = cfg?.loyalty_mode || 'points';
   const balance = customer.wallet_balance ?? customer.points_balance ?? 0;
   const passSerial = customer.phone
     ? `RADAR-${store.id.slice(0, 4)}-${customer.phone}`
     : `RADAR-VIP-${customer.id.slice(0, 6)}`;
   const qrData = `RADAR:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}:${Date.now()}`;
 
+  // الألوان: الأولوية لإعدادات التاجر المخصصة في بطاقة المحفظة، ثم ألوان المتجر، ثم الافتراضيات الأنيقة
+  const bgColor = cfg?.background_color || store.primary_color || '#110E05';
+  const labelColor = cfg?.label_color || store.secondary_color || '#E3B94A';
+  const fgColor = cfg?.foreground_color || '#FFFFFF';
+
+  // حساب الحقول الديناميكية بناءً على نمط الولاء المختار من التاجر
+  const isStamps = loyaltyMode === 'stamps';
+  const stampsTarget = cfg?.stamps_target || 6;
+  const currentStamps = balance % stampsTarget;
+  const stampsIcon = cfg?.stamps_icon || '☕';
+  const rewardTitle = cfg?.stamps_reward_title || 'مكافأة خاصة 🎁';
+
+  let headerFields: any[] = [];
+  let primaryFields: any[] = [];
+  let auxiliaryFields: any[] = [];
+
+  if (isStamps) {
+    headerFields = [
+      {
+        key: 'reward',
+        label: 'الهدية القادمة',
+        value: rewardTitle,
+      },
+    ];
+    primaryFields = [
+      {
+        key: 'stamps',
+        label: 'الأختام المجمعة',
+        value: `${currentStamps} من ${stampsTarget} ${stampsIcon}`,
+        changeMessage: 'تم إضافة ختم جديد إلى بطاقتك! %@ 🎉',
+      },
+    ];
+    auxiliaryFields = [
+      {
+        key: 'status',
+        label: 'حالة الحساب',
+        value: 'نشط ومفعل ✓',
+      },
+      {
+        key: 'stampsLeft',
+        label: 'المتبقي للهدية',
+        value: `${Math.max(0, stampsTarget - currentStamps)} زيارات`,
+      },
+    ];
+  } else if (loyaltyMode === 'cashback') {
+    headerFields = [
+      {
+        key: 'tier',
+        label: 'نوع البطاقة',
+        value: 'الرصيد المشحون',
+      },
+    ];
+    primaryFields = [
+      {
+        key: 'balance',
+        label: 'الرصيد المتاح',
+        value: `${balance.toFixed(2)} ر.س`,
+        changeMessage: 'تم تحديث رصيدك إلى %@ 🎉',
+      },
+    ];
+    auxiliaryFields = [
+      {
+        key: 'status',
+        label: 'حالة الحساب',
+        value: 'نشط ومفعل ✓',
+      },
+      {
+        key: 'currency',
+        label: 'العملة المعتمدة',
+        value: 'ريال سعودي (SAR)',
+      },
+    ];
+  } else {
+    // Standard 'points' and 'tiers' mode
+    headerFields = [
+      {
+        key: 'tier',
+        label: 'الفئة',
+        value: 'عضوية VIP',
+      },
+    ];
+    primaryFields = [
+      {
+        key: 'balance',
+        label: 'رصيد النقاط',
+        value: balance,
+        changeMessage: 'تم تحديث رصيدك إلى %@ 🎉',
+      },
+    ];
+    auxiliaryFields = [
+      {
+        key: 'status',
+        label: 'حالة الحساب',
+        value: 'نشط ومفعل ✓',
+      },
+      {
+        key: 'pointsRate',
+        label: 'معدل الكسب',
+        value: `${store.points_per_riyal || 1} نقطة / ﷼`,
+      },
+    ];
+  }
+
+  // نص إشعار شاشة القفل التلقائي عند الاقتراب الجغرافي
+  let lockscreenText = cfg?.lockscreen_message_template || '';
+  if (!lockscreenText) {
+    if (isStamps) {
+      lockscreenText = 'أهلاً بك بالقرب من {store}! تفضل بزيارتنا ولديك {stamps} أختام ومكافأتك بانتظارك 🎁☕';
+    } else {
+      lockscreenText = 'أهلاً بك بالقرب من {store}! لديك {points} نقطة ومكافآت بانتظارك ☕🎁';
+    }
+  }
+
+  const renderedLockscreenText = lockscreenText
+    .replace('{store}', store.name)
+    .replace('{points}', String(balance))
+    .replace('{stamps}', String(currentStamps))
+    .replace('{reward}', rewardTitle)
+    .replace('{customer}', customer.name || 'عميل مميز');
+
   const locations = (branches.length > 0 ? branches : [
     { name: 'الفرع الرئيسي', lat: 24.700346, lng: 46.685324 },
   ]).slice(0, 10).map((b) => ({
     latitude: b.latitude || b.lat || 24.700346,
     longitude: b.longitude || b.lng || 46.685324,
-    relevantText: `أهلاً بك بالقرب من ${store.name}! لديك ${balance} نقطة بانتظارك ☕🎁`,
+    relevantText: renderedLockscreenText,
   }));
+
+  const backFields: any[] = [
+    {
+      key: 'storeName',
+      label: 'اسم المتجر',
+      value: store.name,
+    },
+    {
+      key: 'phone',
+      label: 'رقم التواصل',
+      value: store.phone || '+966577371780',
+    },
+  ];
+
+  if (cfg?.enable_spin_wheel) {
+    backFields.push({
+      key: 'spinWheel',
+      label: '🎡 عجلة الحظ التفاعلية',
+      value: 'متاحة للتدوير في محفظتك الرقمية بعد كل عملية شراء للكاشير لربح جوائز وخصومات فورية!',
+    });
+  }
+
+  if (cfg?.enable_scratch_card) {
+    backFields.push({
+      key: 'scratchCard',
+      label: '🎁 بطاقة اكشط واربح',
+      value: cfg.scratch_card_reward_title || 'مكافآت المناسبات والأعياد متاحة في محفظتك الرقمية.',
+    });
+  }
+
+  if (cfg?.enable_streaks) {
+    backFields.push({
+      key: 'streaks',
+      label: '🔥 تحدي سلسلة الزيارات',
+      value: `قم بزيارتنا ${cfg.streak_target_days || 3} مرات متتالية لكسب: ${cfg.streak_reward_title || 'مكافأة خاصة'}!`,
+    });
+  }
+
+  const proximityRadius = cfg?.proximity_radius_meters || 300;
+
+  backFields.push(
+    {
+      key: 'geofence',
+      label: 'تنبيهات القرب الجغرافي',
+      value: `تظهر هذه البطاقة تلقائياً على شاشة القفل عند اقترابك ضمن ${proximityRadius} متر من أي من فروعنا.`,
+    },
+    {
+      key: 'terms',
+      label: 'الشروط والأحكام',
+      value: 'النقاط والأختام مخصصة للاستخدام الشخصي وغير قابلة للتحويل النقدي. تطبق شروط برنامج الولاء.',
+    },
+    {
+      key: 'platform',
+      label: 'النظام المشغل',
+      value: 'منصة الولاء والمدفوعات الذكية • سديم الأثر',
+    }
+  );
 
   const passJson = {
     formatVersion: 1,
@@ -285,25 +484,12 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
     organizationName: store.name,
     description: `بطاقة ولاء ${store.name}`,
     logoText: store.name,
-    foregroundColor: 'rgb(255, 255, 255)',
-    backgroundColor: hexToRgb(store.primary_color, 'rgb(17, 14, 5)'),
-    labelColor: hexToRgb(store.secondary_color, 'rgb(227, 185, 74)'),
+    foregroundColor: hexToRgb(fgColor, 'rgb(255, 255, 255)'),
+    backgroundColor: hexToRgb(bgColor, 'rgb(17, 14, 5)'),
+    labelColor: hexToRgb(labelColor, 'rgb(227, 185, 74)'),
     storeCard: {
-      headerFields: [
-        {
-          key: 'tier',
-          label: 'الفئة',
-          value: 'عضوية VIP',
-        },
-      ],
-      primaryFields: [
-        {
-          key: 'balance',
-          label: 'رصيد النقاط',
-          value: balance,
-          changeMessage: 'تم تحديث رصيدك إلى %@ 🎉',
-        },
-      ],
+      headerFields,
+      primaryFields,
       secondaryFields: [
         {
           key: 'customerName',
@@ -316,45 +502,8 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
           value: customer.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-0001',
         },
       ],
-      auxiliaryFields: [
-        {
-          key: 'status',
-          label: 'حالة الحساب',
-          value: 'نشط ومفعل ✓',
-        },
-        {
-          key: 'pointsRate',
-          label: 'معدل الكسب',
-          value: `${store.points_per_riyal || 1} نقطة / ﷼`,
-        },
-      ],
-      backFields: [
-        {
-          key: 'storeName',
-          label: 'اسم المتجر',
-          value: store.name,
-        },
-        {
-          key: 'phone',
-          label: 'رقم التواصل',
-          value: store.phone || '+966577371780',
-        },
-        {
-          key: 'geofence',
-          label: 'تنبيهات القرب الجغرافي',
-          value: 'تظهر هذه البطاقة تلقائياً على شاشة القفل عند اقترابك من أي من فروعنا.',
-        },
-        {
-          key: 'terms',
-          label: 'الشروط والأحكام',
-          value: 'النقاط مخصصة للاستخدام الشخصي وغير قابلة للتحويل النقدي. تطبق شروط برنامج الولاء.',
-        },
-        {
-          key: 'platform',
-          label: 'النظام المشغل',
-          value: 'منصة الولاء والمدفوعات الذكية • سديم الأثر',
-        },
-      ],
+      auxiliaryFields,
+      backFields,
     },
     barcodes: [
       {
@@ -365,7 +514,7 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
       },
     ],
     locations,
-    maxDistance: 300,
+    maxDistance: proximityRadius,
   };
 
   // 4. تجهيز ملفات الحزمة

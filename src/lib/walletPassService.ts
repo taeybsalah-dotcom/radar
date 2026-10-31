@@ -523,18 +523,41 @@ export class WalletPassService {
     const passSerial = customer.phone ? `RADAR-${store.id.slice(0, 4)}-${customer.phone}` : `RADAR-VIP-${customer.id.slice(0, 6)}`;
     const qrData = `RADAR:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}:${Date.now()}`;
 
+    const isStamps = config.loyalty_mode === 'stamps';
+    const stampsTarget = config.stamps_target || 6;
+    const currentStamps = (customer.wallet_balance || 0) % stampsTarget;
+    const stampsIcon = config.stamps_icon || '☕';
+
+    let loyaltyPoints: any = {
+      label: 'رصيد النقاط',
+      balance: {
+        int: customer.wallet_balance || 0,
+      },
+    };
+
+    if (isStamps) {
+      loyaltyPoints = {
+        label: 'الأختام المجمعة',
+        balance: {
+          string: `${currentStamps} من ${stampsTarget} ${stampsIcon}`,
+        },
+      };
+    } else if (config.loyalty_mode === 'cashback') {
+      loyaltyPoints = {
+        label: 'الرصيد المشحون',
+        balance: {
+          string: `${(customer.wallet_balance || 0).toFixed(2)} ر.س`,
+        },
+      };
+    }
+
     return {
       id: `${config.google_issuer_id}.${passSerial}`,
       classId: `${config.google_issuer_id}.loyalty_tier_${tier?.id || 'standard'}`,
       state: 'ACTIVE',
       accountId: customer.phone || customer.id,
       accountName: customer.name || 'عميل مميز',
-      loyaltyPoints: {
-        label: 'رصيد النقاط',
-        balance: {
-          int: customer.wallet_balance || 0,
-        },
-      },
+      loyaltyPoints,
       barcode: {
         type: 'QR_CODE',
         value: qrData,
