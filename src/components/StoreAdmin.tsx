@@ -10156,7 +10156,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     {/* Pass Footer */}
                     <div className="flex items-center justify-between text-[9px] text-white/60 pt-1 border-t border-white/10">
                       <span>📍 مستشعر شاشة القفل نشط</span>
-                      <span className="font-mono">RADAR-{store.id.slice(0, 4)}-966</span>
+                      <span className="font-mono">{(store.slug || store.name || 'STORE').trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 10) || 'STORE'}-{store.id.slice(0, 4)}-966</span>
                     </div>
                   </div>
 

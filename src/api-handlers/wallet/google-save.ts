@@ -67,9 +67,15 @@ export default async function handler(req: any, res: any) {
     const safeStoreId = (store?.id || store_id).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
     const safeCustId = (customer?.id || customer_id || 'guest').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
 
+    const storeCode = String((store as any)?.slug || store?.name || 'STORE')
+      .trim()
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 10) || `STORE_${safeStoreId.slice(0, 4)}`;
+
     const classId = `${issuerId}.loyalty_${safeStoreId}`;
     const objectId = `${issuerId}.pass_${safeStoreId}_${safeCustId}`;
-    const qrData = `RADAR:LOYALTY:${store?.id || store_id}:${customer?.id || customer_id}:${customerPhone}:${Date.now()}`;
+    const qrData = `${storeCode}:LOYALTY:${store?.id || store_id}:${customer?.id || customer_id}:${customerPhone}:${Date.now()}`;
 
     // If private key is available, sign official Google JWT
     if (privateKey && privateKey.trim()) {

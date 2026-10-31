@@ -75,8 +75,8 @@ export class WalletPassService {
       if (cached) platformWallet = JSON.parse(cached);
     } catch {}
 
-    const masterApplePassId = platformWallet.apple_pass_type_id || `pass.com.radar.${store.slug || store.id}`;
-    const masterGoogleIssuerId = platformWallet.google_issuer_id || `radar_${store.slug || store.id}`;
+    const masterApplePassId = platformWallet.apple_pass_type_id || `pass.com.sdeemalathr.loyalty`;
+    const masterGoogleIssuerId = platformWallet.google_issuer_id || `sdeem_${store.slug || store.id}`;
 
     // 1. Check embedded store fulfillment settings
     const embedded = (store as any)?.fulfillment_settings?.wallet_pass_config;
@@ -346,8 +346,20 @@ export class WalletPassService {
     storeBranches: StoreBranch[] = []
   ): Record<string, any> {
     const config = this.getWalletConfig(store);
-    const passSerial = customer.phone ? `RADAR-${store.id.slice(0, 4)}-${customer.phone}` : `RADAR-VIP-${customer.id.slice(0, 6)}`;
-    const qrData = `RADAR:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}:${Date.now()}`;
+    const storeCode = (
+      store.slug ||
+      store.name ||
+      'STORE'
+    )
+      .trim()
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 10) || `STORE-${store.id.slice(0, 4).toUpperCase()}`;
+
+    const passSerial = customer.phone
+      ? `${storeCode}-${store.id.slice(0, 4)}-${customer.phone}`
+      : `${storeCode}-VIP-${customer.id.slice(0, 6)}`;
+    const qrData = `${storeCode}:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}:${Date.now()}`;
 
     // Geofencing Locations array (Up to 10 GPS spots supported natively by Apple Wallet)
     const locations = (storeBranches.length > 0 ? storeBranches : DEFAULT_FALLBACK_BRANCHES).slice(0, 10).map((b: any) => ({
@@ -468,15 +480,15 @@ export class WalletPassService {
       {
         key: 'poweredBy',
         label: 'النظام المشغل',
-        value: 'منصة الولاء والمدفوعات السحابية • radar.taeybsalah.workers.dev',
+        value: 'منصة الولاء والمدفوعات الذكية • sdeemalathr.com',
       }
     );
 
     return {
       formatVersion: 1,
-      passTypeIdentifier: config.apple_pass_type_id || `pass.com.radar.${store.slug || store.id}`,
+      passTypeIdentifier: config.apple_pass_type_id || `pass.com.sdeemalathr.loyalty`,
       serialNumber: passSerial,
-      teamIdentifier: 'RADARTECHSA',
+      teamIdentifier: (config as any).apple_team_id || 'PK42BF79S2',
       organizationName: store.name,
       description: `بطاقة ولاء ${store.name}`,
       logoText: store.name,
@@ -506,7 +518,7 @@ export class WalletPassService {
           format: 'PKBarcodeFormatQR',
           message: qrData,
           messageEncoding: 'iso-8859-1',
-          altText: customer.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-MEMBER',
+          altText: customer.phone ? `${storeCode}-${customer.phone.slice(-6)}` : `${storeCode}-VIP`,
         },
       ],
       locations,
@@ -523,8 +535,18 @@ export class WalletPassService {
     tier?: Tier | null
   ): Record<string, any> {
     const config = this.getWalletConfig(store);
-    const passSerial = customer.phone ? `RADAR-${store.id.slice(0, 4)}-${customer.phone}` : `RADAR-VIP-${customer.id.slice(0, 6)}`;
-    const qrData = `RADAR:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}:${Date.now()}`;
+    const storeCode = (
+      store.slug ||
+      store.name ||
+      'STORE'
+    )
+      .trim()
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 10) || `STORE-${store.id.slice(0, 4).toUpperCase()}`;
+
+    const passSerial = customer.phone ? `${storeCode}-${store.id.slice(0, 4)}-${customer.phone}` : `${storeCode}-VIP-${customer.id.slice(0, 6)}`;
+    const qrData = `${storeCode}:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}:${Date.now()}`;
 
     const isStamps = config.loyalty_mode === 'stamps';
     const stampsTarget = config.stamps_target || 6;
@@ -569,7 +591,7 @@ export class WalletPassService {
       hexBackgroundColor: config.background_color || '#110E05',
       heroImage: {
         sourceUri: {
-          uri: store.logo_url || 'https://radar.taeybsalah.workers.dev/logo.png',
+          uri: store.logo_url || 'https://sdeemalathr.com/logo.png',
         },
       },
     };
@@ -693,9 +715,19 @@ export class WalletPassService {
     const passUrl = `/api/wallet/apple-pass?${params.toString()}`;
 
     // 1. تسجيل الجهاز افتراضياً
+    const storeCode = (
+      store.slug ||
+      store.name ||
+      'STORE'
+    )
+      .trim()
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 10) || `STORE-${store.id.slice(0, 4).toUpperCase()}`;
+
     const passSerial = customer.phone
-      ? `RADAR-${store.id.slice(0, 4)}-${customer.phone}`
-      : `RADAR-VIP-${customer.id.slice(0, 6)}`;
+      ? `${storeCode}-${store.id.slice(0, 4)}-${customer.phone}`
+      : `${storeCode}-VIP-${customer.id.slice(0, 6)}`;
 
     this.registerDevice({
       customer_id: customer.id,

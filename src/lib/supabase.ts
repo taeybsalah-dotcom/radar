@@ -4449,25 +4449,54 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     let pointsCost = 100;
     let rewardTitle = 'Reward';
 
-    // Parse JSON or plain string
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed.phone || parsed.p) scannedPhone = parsed.phone || parsed.p;
-      if (parsed.type || parsed.t) qrType = parsed.type || parsed.t;
-      if (parsed.coupon_id || parsed.cid) couponId = parsed.coupon_id || parsed.cid;
-      if (parsed.coupon_code || parsed.code) couponCode = parsed.coupon_code || parsed.code;
-      if (parsed.store_id || parsed.storeId || parsed.s) qrTokenStoreId = parsed.store_id || parsed.storeId || parsed.s;
-      if (parsed.reward_title || parsed.rewardTitle || parsed.rt) rewardTitle = parsed.reward_title || parsed.rewardTitle || parsed.rt;
-      if (parsed.pointsCost || parsed.cost_points || parsed.cost) pointsCost = parsed.pointsCost || parsed.cost_points || parsed.cost;
-    } catch {
-      if (
-        trimmed.toUpperCase().startsWith('CPN-') ||
-        trimmed.toUpperCase().startsWith('WELCOME-') ||
-        trimmed.toUpperCase().startsWith('COUPON-') ||
-        (trimmed.includes('-') && !trimmed.startsWith('05') && !trimmed.startsWith('+'))
-      ) {
-        qrType = 'COUPON';
-        couponCode = trimmed;
+    // Parse JSON or plain string or structured pass QR
+    if (trimmed.includes(':LOYALTY:')) {
+      const parts = trimmed.split(':');
+      // Format: [STORE_CODE]:LOYALTY:[storeId]:[customerId]:[phone]:[timestamp]
+      if (parts.length >= 5) {
+        qrType = 'PASS';
+        if (parts[2] && isUUID(parts[2])) {
+          qrTokenStoreId = parts[2];
+        }
+        const extractedPhone = parts[4];
+        if (extractedPhone && extractedPhone !== 'GUEST') {
+          scannedPhone = extractedPhone;
+        }
+      }
+    } else {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.phone || parsed.p) scannedPhone = parsed.phone || parsed.p;
+        if (parsed.type || parsed.t) qrType = parsed.type || parsed.t;
+        if (parsed.coupon_id || parsed.cid) couponId = parsed.coupon_id || parsed.cid;
+        if (parsed.coupon_code || parsed.code) couponCode = parsed.coupon_code || parsed.code;
+        if (parsed.store_id || parsed.storeId || parsed.s) qrTokenStoreId = parsed.store_id || parsed.storeId || parsed.s;
+        if (parsed.reward_title || parsed.rewardTitle || parsed.rt) rewardTitle = parsed.reward_title || parsed.rewardTitle || parsed.rt;
+        if (parsed.pointsCost || parsed.cost_points || parsed.cost) pointsCost = parsed.pointsCost || parsed.cost_points || parsed.cost;
+      } catch {
+        if (
+          trimmed.toUpperCase().startsWith('CPN-') ||
+          trimmed.toUpperCase().startsWith('WELCOME-') ||
+          trimmed.toUpperCase().startsWith('COUPON-') ||
+          (trimmed.includes('-') && !trimmed.startsWith('05') && !trimmed.startsWith('+'))
+        ) {
+          // فحص هل هو رقم تسلسلي لبطاقة ولاء بالمتجر (مثل ALSAEED-1490-0560708050 أو STORE-0560708050)
+          const dashParts = trimmed.split('-');
+          const lastPart = dashParts[dashParts.length - 1];
+          if (
+            lastPart &&
+            (lastPart.startsWith('05') ||
+              lastPart.startsWith('966') ||
+              lastPart.startsWith('+966') ||
+              (lastPart.length >= 9 && /^\d+$/.test(lastPart)))
+          ) {
+            scannedPhone = lastPart;
+            qrType = 'PASS';
+          } else {
+            qrType = 'COUPON';
+            couponCode = trimmed;
+          }
+        }
       }
     }
 

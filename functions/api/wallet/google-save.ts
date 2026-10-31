@@ -156,9 +156,15 @@ export async function onRequestPost(context: any): Promise<Response> {
     const safeStoreId = String(store?.id || store_id).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
     const safeCustId = String(customer?.id || customer_id || 'guest').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
 
+    const storeCode = String(store?.slug || store?.name || 'STORE')
+      .trim()
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 10) || `STORE_${safeStoreId.slice(0, 4)}`;
+
     const classId = `${issuerId}.loyalty_${safeStoreId}`;
     const objectId = `${issuerId}.pass_${safeStoreId}_${safeCustId}`;
-    const qrData = `RADAR:LOYALTY:${store?.id || store_id}:${customer?.id || customer_id || 'GUEST'}:${customerPhone}:${Date.now()}`;
+    const qrData = `${storeCode}:LOYALTY:${store?.id || store_id}:${customer?.id || customer_id || 'GUEST'}:${customerPhone}:${Date.now()}`;
 
     // حساب حقل الرصيد بحسب نمط الولاء
     let loyaltyPointsPayload: any = {

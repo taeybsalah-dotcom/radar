@@ -286,10 +286,22 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
   const cfg = params.walletConfig || null;
   const loyaltyMode = cfg?.loyalty_mode || 'points';
   const balance = customer.wallet_balance ?? customer.points_balance ?? 0;
+
+  // استخراج كود تاجر نظيف ومعبر باللغة الإنجليزية للأكواد والباركود
+  const storeCode = (
+    store.slug ||
+    store.name ||
+    'STORE'
+  )
+    .trim()
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toUpperCase()
+    .slice(0, 10) || `STORE-${store.id.slice(0, 4).toUpperCase()}`;
+
   const passSerial = customer.phone
-    ? `RADAR-${store.id.slice(0, 4)}-${customer.phone}`
-    : `RADAR-VIP-${customer.id.slice(0, 6)}`;
-  const qrData = `RADAR:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}:${Date.now()}`;
+    ? `${storeCode}-${store.id.slice(0, 4)}-${customer.phone}`
+    : `${storeCode}-VIP-${customer.id.slice(0, 6)}`;
+  const qrData = `${storeCode}:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}:${Date.now()}`;
 
   // الألوان: الأولوية لإعدادات التاجر المخصصة في بطاقة المحفظة، ثم ألوان المتجر، ثم الافتراضيات الأنيقة
   const bgColor = cfg?.background_color || store.primary_color || '#110E05';
@@ -510,7 +522,7 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
         format: 'PKBarcodeFormatQR',
         message: qrData,
         messageEncoding: 'iso-8859-1',
-        altText: customer.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-MEMBER',
+        altText: customer.phone ? `${storeCode}-${customer.phone.slice(-6)}` : `${storeCode}-VIP`,
       },
     ],
     locations,

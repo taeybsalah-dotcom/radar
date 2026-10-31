@@ -418,7 +418,7 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                       <div>
                         <strong className="text-white block font-bold">رقم البطاقة التسلسلي:</strong>
                         <span className="font-mono text-white/60 text-[10px]">
-                          RADAR-{store.id.slice(0, 4)}-{customer?.phone || 'DEMO'}
+                          {(store.slug || store.name || 'STORE').trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 10) || 'STORE'}-{store.id.slice(0, 4)}-{customer?.phone || 'DEMO'}
                         </span>
                       </div>
                     </div>
