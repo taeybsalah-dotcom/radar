@@ -16,6 +16,7 @@ import { OfflineSyncModal } from './OfflineSyncModal';
 import { OfflineSyncEngine } from '../lib/offlineSync';
 import { KitchenDisplaySystem } from './KitchenDisplaySystem';
 import { CashierCashMovementModal } from './CashierCashMovementModal';
+import { WalletPassService } from '../lib/walletPassService';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   Camera, QrCode, ShoppingBag, Calendar,
@@ -1626,6 +1627,27 @@ ${portalUrl}`;
         newLifetimeXP: res.customer.lifetime_xp,
         currentTier: res.currentTier,
       });
+
+      // 🎡 فحص تأهيل العميل للألعاب التفاعلية بحسب الحد الأدنى للفاتورة لمنع استغلال فواتير الريال والريالين
+      try {
+        const cfg = WalletPassService.getWalletConfig(store);
+        const minSpend = cfg.spin_wheel_trigger_min_spend ?? 30;
+        if (cfg.enable_spin_wheel && amountNum >= minSpend) {
+          LoyaltyEvents.emit({
+            type: 'GAME_TRIGGERED',
+            storeId: store.id,
+            phone: pendingCustomerScan.phone,
+            gameType: 'spin',
+          });
+        } else if (cfg.enable_scratch_card && amountNum >= (cfg.scratch_card_trigger_min_spend ?? 25)) {
+          LoyaltyEvents.emit({
+            type: 'GAME_TRIGGERED',
+            storeId: store.id,
+            phone: pendingCustomerScan.phone,
+            gameType: 'scratch',
+          });
+        }
+      } catch {}
     } catch (err: any) {
       setErrorMessage(err.message || 'فشلت عملية إضافة النقاط');
       if (err.message && (err.message.includes('جلسة الكاشير') || err.message.includes('UNAUTHORIZED_STAFF'))) {
@@ -1728,6 +1750,27 @@ ${portalUrl}`;
         newLifetimeXP: res.customer.lifetime_xp,
         currentTier: res.currentTier,
       });
+
+      // 🎡 فحص تأهيل العميل للألعاب التفاعلية بحسب الحد الأدنى للفاتورة لمنع استغلال فواتير الريال والريالين
+      try {
+        const cfg = WalletPassService.getWalletConfig(store);
+        const minSpend = cfg.spin_wheel_trigger_min_spend ?? 30;
+        if (cfg.enable_spin_wheel && amountNum >= minSpend) {
+          LoyaltyEvents.emit({
+            type: 'GAME_TRIGGERED',
+            storeId: store.id,
+            phone: pendingCustomerScan.phone,
+            gameType: 'spin',
+          });
+        } else if (cfg.enable_scratch_card && amountNum >= (cfg.scratch_card_trigger_min_spend ?? 25)) {
+          LoyaltyEvents.emit({
+            type: 'GAME_TRIGGERED',
+            storeId: store.id,
+            phone: pendingCustomerScan.phone,
+            gameType: 'scratch',
+          });
+        }
+      } catch {}
     } catch (err: any) {
       setManagerPinError(err.message || 'فشلت عملية اعتماد الفاتورة');
       if (err.message && (err.message.includes('جلسة الكاشير') || err.message.includes('UNAUTHORIZED_STAFF'))) {
@@ -4194,6 +4237,39 @@ ${portalUrl}`;
               <div className="text-left rtl:text-right font-mono text-amber-400 font-bold" dir="ltr">
                 {pendingCustomerScan.phone}
               </div>
+            </div>
+
+            {/* 🎁 خيار إكرام العميل المميز بهدية أو لعبة مباشرة */}
+            <div className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500/10 to-emerald-500/10 border border-amber-500/25 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🎁</span>
+                <div>
+                  <span className="text-white font-bold block text-[11px]">زبون مميز؟ أكرمه الآن!</span>
+                  <span className="text-[10px] text-slate-400">إهداء محاولة لعبة تفاعلية فورية</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  LoyaltyEvents.emit({
+                    type: 'GAME_TRIGGERED',
+                    storeId: store.id,
+                    phone: pendingCustomerScan.phone,
+                    gameType: 'spin',
+                  });
+                  playBeepSound('success');
+                  setSuccessResult({
+                    message: `تم إهداء فرصة تدوير العجلة للعميل (${pendingCustomerScan.name || pendingCustomerScan.phone}) بنجاح! 🎡🎁`,
+                    phone: pendingCustomerScan.phone,
+                    type: 'PURCHASE',
+                  });
+                  setIsAmountModalOpen(false);
+                  setPendingCustomerScan(null);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs hover:bg-amber-400 active:scale-95 transition shadow-sm shrink-0"
+              >
+                إهداء لعبة 🎡
+              </button>
             </div>
 
             {/* Amount Input Form */}

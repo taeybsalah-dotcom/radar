@@ -27,6 +27,7 @@ export type LoyaltyEventType =
   | 'REFUND_PROCESSED'
   | 'CASH_MOVEMENT_RECORDED'
   | 'DRIVERS_UPDATED'
+  | 'GAME_TRIGGERED'
   | 'INVENTORY_UPDATED';
 
 export interface LoyaltyEventPayload {
@@ -35,6 +36,7 @@ export interface LoyaltyEventPayload {
   eventId?: string;
   senderId?: string;
   phone?: string;
+  gameType?: 'spin' | 'scratch';
   points?: number;
   newBalance?: number;
   newLifetimeXP?: number;

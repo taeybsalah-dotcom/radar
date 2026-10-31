@@ -1027,6 +1027,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         return;
       }
 
+      if (event.type === 'GAME_TRIGGERED') {
+        const isTargetCustomer = Boolean(
+          curCust &&
+          event.phone &&
+          normalizePhone(event.phone) === normalizePhone(curCust.phone)
+        );
+        if (isTargetCustomer && (event.storeId === store?.id || event.storeId === 'all')) {
+          playBeepSound('success');
+          if (event.gameType === 'scratch') {
+            setShowScratchCard(true);
+          } else {
+            setShowSpinWheel(true);
+          }
+        }
+        return;
+      }
+
       if (event.type === 'CUSTOM_NOTIFICATION') {
         const isTargetCustomer =
           event.targetType === 'all_customers' ||
@@ -5564,6 +5581,22 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </h3>
           </div>
 
+          {walletConfig.loyalty_mode === 'stamps' && (
+            <div className={`p-3.5 rounded-2xl border flex items-center gap-2.5 text-xs ${
+              isDarkTheme ? 'bg-amber-500/10 border-amber-500/25 text-slate-300' : 'bg-amber-50/80 border-amber-200 text-slate-700'
+            }`}>
+              <span className="text-xl">☕</span>
+              <div>
+                <strong className={`block font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                  نظام المكافآت بالمتجر يعتمد بطاقة الأختام التراكمية!
+                </strong>
+                <span>
+                  اجمع {walletConfig.stamps_target || 6} أختام عند شرائك للحصول على {walletConfig.stamps_reward_title || 'مكافأتك المجانية'} تلقائياً 🎉 (العروض أدناه عروض ترويجية مباشرة بالفرع).
+                </span>
+              </div>
+            </div>
+          )}
+
           {!customer?.special_date && showSpecialDateForm && (
             <div className={`p-3.5 sm:p-4 rounded-2xl relative overflow-hidden space-y-2.5 transition-colors ${
               isDarkTheme
@@ -9049,6 +9082,23 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             if (prize.reward_type === 'points') {
               const pts = Number(prize.reward_value) || 50;
               setCustomer((prev) => (prev ? { ...prev, wallet_balance: (prev.wallet_balance || 0) + pts } : null));
+            } else if (prize.reward_type !== 'no_luck') {
+              // 🎟️ إيداع فوري للجائزة في "حصرياتي" مع كود حرق لمرة واحدة
+              const nowIso = new Date().toISOString();
+              const wonCoupon: CustomerCoupon = {
+                id: `win-${Date.now()}`,
+                customer_id: customer?.id || 'guest',
+                store_id: store.id,
+                privilege_id: 'gamification-prize',
+                privilege_title: prize.label,
+                cost_points: 0,
+                status: 'ACTIVE',
+                coupon_code: `WIN-${Math.floor(1000 + Math.random() * 9000)}`,
+                purchased_at: nowIso,
+                created_at: nowIso,
+              };
+              setCustomerCoupons((prev) => [wonCoupon, ...prev]);
+              playBeepSound('success');
             }
           }}
         />
@@ -9060,6 +9110,24 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           onClose={() => setShowScratchCard(false)}
           rewardTitle={walletConfig.scratch_card_reward_title || 'خصم 20% بمناسبة زيارتك 🎁'}
           store={store}
+          onRewardRevealed={() => {
+            // 🎟️ إيداع فوري لقسيمة الكشط في "حصرياتي" مع كود حرق لمرة واحدة
+            const nowIso = new Date().toISOString();
+            const wonCoupon: CustomerCoupon = {
+              id: `scratch-${Date.now()}`,
+              customer_id: customer?.id || 'guest',
+              store_id: store.id,
+              privilege_id: 'scratch-reward',
+              privilege_title: walletConfig.scratch_card_reward_title || 'هدية كرت اكشط واربح 🎁',
+              cost_points: 0,
+              status: 'ACTIVE',
+              coupon_code: `WIN-${Math.floor(1000 + Math.random() * 9000)}`,
+              purchased_at: nowIso,
+              created_at: nowIso,
+            };
+            setCustomerCoupons((prev) => [wonCoupon, ...prev]);
+            playBeepSound('success');
+          }}
         />
       )}
 

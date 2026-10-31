@@ -9783,20 +9783,52 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       </div>
 
                       {currentWalletConfig.enable_spin_wheel && (
-                        <div className="pt-2 border-t border-slate-800 flex items-center gap-1.5 overflow-x-auto text-[10px] text-slate-300 animate-fade-in">
-                          <span className="text-slate-500 shrink-0 font-bold">الجوائز المدمجة:</span>
-                          <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
-                            خصم 15% (35%)
-                          </span>
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
-                            حلى مجاني 🍩 (20%)
-                          </span>
-                          <span className="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
-                            50 نقطة ⭐ (25%)
-                          </span>
-                          <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 shrink-0">
-                            حظ أوفر 🎯 (20%)
-                          </span>
+                        <div className="pt-2.5 border-t border-slate-800 space-y-2 animate-fade-in">
+                          <div className="flex items-center gap-1.5 overflow-x-auto text-[10px] text-slate-300">
+                            <span className="text-slate-500 shrink-0 font-bold">الجوائز المدمجة:</span>
+                            <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                              خصم 15% (35%)
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                              حلى مجاني 🍩 (20%)
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0">
+                              50 نقطة ⭐ (25%)
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 shrink-0">
+                              حظ أوفر 🎯 (20%)
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-800/80">
+                            <div>
+                              <label className="text-[10px] text-slate-400 block mb-1 font-bold">
+                                🛡️ الحد الأدنى للفاتورة لتفعيل العجلة (ر.س):
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                defaultValue={currentWalletConfig.spin_wheel_trigger_min_spend ?? 30}
+                                onBlur={(e) => updateWalletSettings({ spin_wheel_trigger_min_spend: Number(e.target.value) || 0 })}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-amber-300 font-mono font-bold outline-none focus:border-emerald-500"
+                                placeholder="مثال: 30"
+                              />
+                              <span className="text-[9px] text-slate-500 block mt-0.5">يمنع فواتير الريال والريالين من تدوير العجلة لحماية أرباحك</span>
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-400 block mb-1 font-bold">
+                                🎉 مسمى الحملة / المناسبة الحالية:
+                              </label>
+                              <input
+                                type="text"
+                                defaultValue={currentWalletConfig.game_event_name || 'عروض ومكافآت المتجر 🌟'}
+                                onBlur={(e) => updateWalletSettings({ game_event_name: e.target.value })}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-emerald-500"
+                                placeholder="مثال: موسم الشتاء ☕ أو يوم التأسيس 🇸🇦"
+                              />
+                              <span className="text-[9px] text-slate-500 block mt-0.5">يظهر للعميل في واجهة اللعبة</span>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -9831,14 +9863,34 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       </div>
 
                       {currentWalletConfig.enable_scratch_card && (
-                        <div className="pt-2 border-t border-slate-800 animate-fade-in">
-                          <input
-                            type="text"
-                            defaultValue={currentWalletConfig.scratch_card_reward_title || 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦'}
-                            onBlur={(e) => updateWalletSettings({ scratch_card_reward_title: e.target.value })}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-emerald-500"
-                            placeholder="مسمى جائزة اكشط واربح"
-                          />
+                        <div className="pt-2 border-t border-slate-800 space-y-2 animate-fade-in">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] text-slate-400 block mb-1 font-bold">
+                                مسمى جائزة كرت الكشط:
+                              </label>
+                              <input
+                                type="text"
+                                defaultValue={currentWalletConfig.scratch_card_reward_title || 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦'}
+                                onBlur={(e) => updateWalletSettings({ scratch_card_reward_title: e.target.value })}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-white outline-none focus:border-emerald-500"
+                                placeholder="مسمى جائزة اكشط واربح"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-slate-400 block mb-1 font-bold">
+                                🛡️ الحد الأدنى للفاتورة للكشط (ر.س):
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                defaultValue={currentWalletConfig.scratch_card_trigger_min_spend ?? 25}
+                                onBlur={(e) => updateWalletSettings({ scratch_card_trigger_min_spend: Number(e.target.value) || 0 })}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-emerald-300 font-mono font-bold outline-none focus:border-emerald-500"
+                                placeholder="مثال: 25"
+                              />
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>

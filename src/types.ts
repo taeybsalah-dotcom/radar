@@ -1519,9 +1519,11 @@ export interface StoreWalletPassConfig {
   enable_spin_wheel?: boolean; // عجلة الحظ
   spin_wheel_prizes?: SpinWheelPrize[];
   spin_wheel_trigger_min_spend?: number; // e.g. 30 SAR
+  game_event_name?: string; // اسم المناسبة أو الحدث (مثل 'يوم التأسيس 🇸🇦')
 
   enable_scratch_card?: boolean; // اكشط واربح
   scratch_card_reward_title?: string; // e.g. 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦'
+  scratch_card_trigger_min_spend?: number; // e.g. 25 SAR
 
   enable_streaks?: boolean; // سلسلة الزيارات المتتالية
   streak_target_days?: number; // e.g. 3 days
