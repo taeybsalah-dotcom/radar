@@ -3173,48 +3173,6 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           </div>
 
-          {/* 📍 Proximity Distance Radar Strip (كم يبعد العميل عن المتجر مع تنبيه شاشة القفل) */}
-          {proximityInfo && (
-            <div className="relative z-20 mb-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setWalletPassPlatform('apple');
-                  setIsWalletPassModalOpen(true);
-                }}
-                className={`w-full p-2.5 sm:p-3 rounded-2xl border shadow-md flex items-center justify-between gap-2.5 transition text-right group active:scale-[0.99] ${
-                  isDarkTheme
-                    ? 'bg-slate-900/95 hover:bg-slate-800 border-emerald-500/40 hover:border-emerald-400 text-white'
-                    : 'bg-white hover:bg-slate-50 border-emerald-500/40 hover:border-emerald-500 text-slate-900'
-                }`}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center text-emerald-500 shrink-0">
-                    <MapPin className="w-4 h-4 animate-bounce" />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-[11px] font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
-                        أقرب فرع لك ({proximityInfo.nearestBranchName}):
-                      </span>
-                      <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 font-mono">
-                        {proximityInfo.formattedDistance}
-                      </span>
-                    </div>
-                    <span className={`text-[10px] block truncate ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
-                      تنبيه شاشة القفل التلقائي نشط ببطاقة المحفظة 🔔
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 text-[11px] font-black text-amber-600 dark:text-amber-400 shrink-0 group-hover:translate-x-[-2px] transition-transform bg-amber-500/10 px-2.5 py-1 rounded-xl border border-amber-500/25">
-                  <Smartphone className="w-3.5 h-3.5" />
-                  <span>بطاقة المحفظة</span>
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </div>
-              </button>
-            </div>
-          )}
 
           {/* 🌟 04 - VIP Pass Card (Adaptive Monochromatic Luxury matching Merchant Identity) */}
           <div className="relative group select-none -mt-10 sm:-mt-12 z-20">
@@ -5975,7 +5933,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
       {activeTab === 'tickets' && (
         <div className="space-y-5 animate-fade-in pb-28">
-          {/* 👑 VIP Tier Progress & Rank Bar (مكانتي المدمجة) */}
+          {/* 👑 Dynamic Loyalty Mode Status Bar (يتكيف مع نمط الولاء النشط) */}
           <div
             className="p-4 rounded-3xl border shadow-xl relative overflow-hidden backdrop-blur-md transition-colors"
             style={
@@ -5990,76 +5948,181 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   }
             }
           >
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-2.5">
-                <div
-                  className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-lg shadow-inner"
-                  style={{
-                    backgroundColor: `${currentTierObj?.badge_color || safeAccentFill}20`,
-                    color: currentTierObj?.badge_color || safeAccentText,
-                    border: `1px solid ${currentTierObj?.badge_color || safeAccentFill}40`,
-                  }}
-                >
-                  <Crown className="w-5 h-5" />
-                </div>
+            {walletConfig.loyalty_mode === 'stamps' ? (() => {
+              const target = walletConfig.stamps_target || 6;
+              const balance = customer?.wallet_balance || 0;
+              const currentStamps = balance % target;
+              const icon = walletConfig.stamps_icon || '☕';
+              const rewardTitle = walletConfig.stamps_reward_title || 'مكافأة مجانية 🎁';
+              const remaining = Math.max(0, target - currentStamps);
+              const percent = Math.min(100, Math.round((currentStamps / target) * 100));
+
+              return (
                 <div>
-                  <div className={`text-[11px] font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
-                    مكانتك ومستواك الحالي:
+                  <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-lg shadow-inner bg-amber-500/20 text-amber-500 border border-amber-500/40">
+                        <Award className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className={`text-[11px] font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                          بطاقة الأختام التراكمية:
+                        </div>
+                        <div className={`text-base font-black flex items-center gap-2 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                          <span>{currentStamps} من {target} أختام {icon}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-left">
+                      <span className={`text-[10px] block font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                        المكافأة القادمة:
+                      </span>
+                      <span className="text-xs font-bold font-mono text-emerald-400">
+                        {rewardTitle}
+                      </span>
+                    </div>
                   </div>
-                  <div className={`text-base font-black flex items-center gap-2 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
-                    <span>{currentTierObj?.tier_name || 'عضو مميز'}</span>
-                    <span
-                      className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold font-mono shadow-2xs ${
-                        safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
-                      }`}
-                      style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
-                    >
-                      {customer?.lifetime_xp || 0} XP
-                    </span>
+
+                  <div className={`space-y-1.5 mt-2 p-2.5 rounded-2xl border ${
+                    isDarkTheme ? 'bg-slate-950/60 border-white/5' : 'bg-slate-50 border-slate-200/90'
+                  }`}>
+                    <div className={`w-full rounded-full h-2.5 overflow-hidden border p-0.5 ${
+                      isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-slate-200 border-slate-300'
+                    }`}>
+                      <div
+                        className="h-full rounded-full transition-all duration-700 shadow-sm bg-amber-500"
+                        style={{ width: `${percent}%` }}
+                      />
+                    </div>
+                    <div className={`flex items-center justify-between text-[10px] font-mono ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                      <span>التقدم: <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{percent}%</strong></span>
+                      <span className="font-bold text-amber-400">
+                        {remaining === 0
+                          ? '🎉 بطاقتك مكتملة وجاهزة للمكافأة!'
+                          : `باقي ${remaining} أختام للمكافأة 🚗`}
+                      </span>
+                    </div>
                   </div>
                 </div>
+              );
+            })() : walletConfig.loyalty_mode === 'cashback' ? (
+              /* نمط الاسترداد المالي Cashback */
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-lg shadow-inner bg-emerald-500/20 text-emerald-500 border border-emerald-500/40">
+                      <CreditCard className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className={`text-[11px] font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                        رصيد الاسترداد النقدي (Cashback):
+                      </div>
+                      <div className={`text-base font-black flex items-center gap-2 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                        <span>{(customer?.wallet_balance || 0).toFixed(2)} ر.س</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p className={`text-[11px] mt-2 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                  رصيدك النقدي متاح للصرف والخصم المباشر عند الكاشير 💳
+                </p>
               </div>
-
-              {nextTierObj && (
-                <div className="text-left">
-                  <span className={`text-[10px] block font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
-                    المستوى القادم:
-                  </span>
-                  <span className={`text-xs font-bold font-mono ${isDarkTheme ? 'text-amber-300' : 'text-amber-700'}`}>
-                    {nextTierObj.tier_name}
-                  </span>
+            ) : walletConfig.loyalty_mode === 'points' ? (
+              /* نمط النقاط البسيطة */
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-lg shadow-inner bg-amber-500/20 text-amber-500 border border-amber-500/40">
+                      <Coins className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className={`text-[11px] font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                        رصيد نقاط الولاء:
+                      </div>
+                      <div className={`text-base font-black flex items-center gap-2 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                        <span>{customer?.wallet_balance || 0} نقطة</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
-
-            {/* Smart Visual Progress Bar */}
-            {nextTierObj ? (
-              <div className={`space-y-1.5 mt-2 p-2.5 rounded-2xl border ${
-                isDarkTheme ? 'bg-slate-950/60 border-white/5' : 'bg-slate-50 border-slate-200/90'
-              }`}>
-                <div className={`w-full rounded-full h-2.5 overflow-hidden border p-0.5 ${
-                  isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-slate-200 border-slate-300'
-                }`}>
-                  <div
-                    className="h-full rounded-full transition-all duration-700 shadow-sm"
-                    style={{
-                      width: `${progressPercent}%`,
-                      backgroundColor: safeAccentFill,
-                    }}
-                  />
-                </div>
-                <div className={`flex items-center justify-between text-[10px] font-mono ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
-                  <span>نسبة التقدم: <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{progressPercent}%</strong></span>
-                  <span className={`font-bold ${isDarkTheme ? 'text-amber-300' : 'text-amber-700'}`}>
-                    باقي {xpNeeded} XP للوصول لـ {nextTierObj.tier_name} 🚀
-                  </span>
-                </div>
+                <p className={`text-[11px] mt-2 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
+                  استبدل نقاطك بكوبونات وخصومات حصرية من متجر {store?.name || ''} 🎁
+                </p>
               </div>
             ) : (
-              <div className="text-[11px] text-emerald-500 font-bold mt-2 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 shrink-0" />
-                <span>تهانينا! أنت حالياً في أعلى مستوى VIP متاح بالمتجر 👑</span>
-              </div>
+              /* نمط المستويات وفئات VIP (Default / Tiers) */
+              <>
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-lg shadow-inner"
+                      style={{
+                        backgroundColor: `${currentTierObj?.badge_color || safeAccentFill}20`,
+                        color: currentTierObj?.badge_color || safeAccentText,
+                        border: `1px solid ${currentTierObj?.badge_color || safeAccentFill}40`,
+                      }}
+                    >
+                      <Crown className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className={`text-[11px] font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                        مكانتك ومستواك الحالي:
+                      </div>
+                      <div className={`text-base font-black flex items-center gap-2 ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
+                        <span>{currentTierObj?.tier_name || 'عضو مميز'}</span>
+                        <span
+                          className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold font-mono shadow-2xs ${
+                            safeAccentFillContrast === '#FFFFFF' ? 'keep-white' : ''
+                          }`}
+                          style={{ backgroundColor: safeAccentFill, color: safeAccentFillContrast }}
+                        >
+                          {customer?.lifetime_xp || 0} XP
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {nextTierObj && (
+                    <div className="text-left">
+                      <span className={`text-[10px] block font-medium ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                        المستوى القادم:
+                      </span>
+                      <span className={`text-xs font-bold font-mono ${isDarkTheme ? 'text-amber-300' : 'text-amber-700'}`}>
+                        {nextTierObj.tier_name}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {nextTierObj ? (
+                  <div className={`space-y-1.5 mt-2 p-2.5 rounded-2xl border ${
+                    isDarkTheme ? 'bg-slate-950/60 border-white/5' : 'bg-slate-50 border-slate-200/90'
+                  }`}>
+                    <div className={`w-full rounded-full h-2.5 overflow-hidden border p-0.5 ${
+                      isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-slate-200 border-slate-300'
+                    }`}>
+                      <div
+                        className="h-full rounded-full transition-all duration-700 shadow-sm"
+                        style={{
+                          width: `${progressPercent}%`,
+                          backgroundColor: safeAccentFill,
+                        }}
+                      />
+                    </div>
+                    <div className={`flex items-center justify-between text-[10px] font-mono ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
+                      <span>نسبة التقدم: <strong className={isDarkTheme ? 'text-white' : 'text-slate-900'}>{progressPercent}%</strong></span>
+                      <span className={`font-bold ${isDarkTheme ? 'text-amber-300' : 'text-amber-700'}`}>
+                        باقي {xpNeeded} XP للوصول لـ {nextTierObj.tier_name} 🚀
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-emerald-500 font-bold mt-2 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 shrink-0" />
+                    <span>تهانينا! أنت حالياً في أعلى مستوى VIP متاح بالمتجر 👑</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
