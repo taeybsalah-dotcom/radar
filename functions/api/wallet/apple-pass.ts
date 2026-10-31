@@ -231,8 +231,8 @@ export async function onRequestGet(context: any): Promise<Response> {
       branches = [];
     }
 
-    // 5. الختم
-    const pkpass = generateSignedApplePass({
+    // 5. الختم السريع
+    const pkpass = await generateSignedApplePass({
       store,
       customer,
       branches,
