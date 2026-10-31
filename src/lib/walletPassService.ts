@@ -1,5 +1,6 @@
 import { Store, Customer, Tier, StoreBranch, StoreWalletPassConfig, ProximityDistanceResult, WalletDeviceRegistration, SpinWheelPrize } from '../types';
 import { getSupabaseClient, LoyaltyService } from './supabase';
+import { uploadImageBlob } from './imageCompressor';
 
 const WALLET_CONFIG_STORAGE_KEY_PREFIX = 'radar_wallet_pass_config_';
 const WALLET_DEVICES_STORAGE_KEY_PREFIX = 'radar_wallet_device_registrations_';
@@ -518,7 +519,7 @@ export class WalletPassService {
           format: 'PKBarcodeFormatQR',
           message: qrData,
           messageEncoding: 'iso-8859-1',
-          altText: customer.phone ? `${storeCode}-${customer.phone.slice(-6)}` : `${storeCode}-VIP`,
+          altText: customer.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-MEMBER',
         },
       ],
       locations,
@@ -702,12 +703,22 @@ export class WalletPassService {
     if (customer?.name) params.set('name', customer.name);
     if (store?.logo_url) {
       try {
-        const pngData = await rasterizeLogoToPngDataUrl(store.logo_url);
-        if (pngData && pngData.startsWith('data:image/png')) {
-          params.set('logo_url', pngData);
-        } else {
-          params.set('logo_url', store.logo_url);
+        let finalLogoUrl = store.logo_url;
+        // If logo is not an explicit PNG (e.g. webp/jpeg), rasterize to PNG and upload to storage so edge signer receives genuine PNG
+        if (!store.logo_url.toLowerCase().endsWith('.png') || store.logo_url.includes('.webp')) {
+          const pngData = await rasterizeLogoToPngDataUrl(store.logo_url);
+          if (pngData && pngData.startsWith('data:image/png')) {
+            try {
+              const res = await fetch(pngData);
+              const blob = await res.blob();
+              const uploadedUrl = await uploadImageBlob(blob, 'logos');
+              if (uploadedUrl) finalLogoUrl = uploadedUrl;
+            } catch (upErr) {
+              console.warn('Could not upload rasterized PNG, using original logoUrl', upErr);
+            }
+          }
         }
+        params.set('logo_url', finalLogoUrl);
       } catch {
         params.set('logo_url', store.logo_url);
       }

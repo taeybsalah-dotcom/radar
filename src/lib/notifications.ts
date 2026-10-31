@@ -1,5 +1,6 @@
-// 🔔 Radar Loyalty Engine — Unified Push & Notification Center
+// 🔔 Loyalty Platform — Unified Push & Notification Center
 import { playBeepSound } from './sound';
+import { getActiveTenantConfig } from '../config/tenant';
 
 export type NotificationPermissionState = 'granted' | 'denied' | 'default' | 'unsupported';
 
@@ -72,13 +73,17 @@ export interface SendNotificationOptions {
  * - Shows OS / Lock-screen notification via ServiceWorker or Notification API.
  */
 export async function sendPortalNotification(options: SendNotificationOptions): Promise<void> {
+  const tenant = getActiveTenantConfig();
+  const defaultIcon = tenant.logoUrl || tenant.faviconUrl || '/favicon.png';
+  const defaultBadge = tenant.faviconUrl || '/favicon-32.png';
+
   const {
     title,
     body,
-    icon = '/icon-192.png',
-    badge = '/favicon-32.png',
+    icon = defaultIcon,
+    badge = defaultBadge,
     url = window.location.href,
-    tag = 'radar-alert',
+    tag = 'loyalty-alert',
     soundType = 'notification',
     requireInteraction = false,
   } = options;
@@ -123,7 +128,7 @@ export async function sendPortalNotification(options: SendNotificationOptions): 
         });
       }
     } catch (err) {
-      console.warn('[Radar Notifications] Failed to show system notification:', err);
+      console.warn('[Notifications] Failed to show system notification:', err);
     }
   }
 }
@@ -131,11 +136,12 @@ export async function sendPortalNotification(options: SendNotificationOptions): 
 /**
  * 👤 Customer Notification (Points earned, coupons, rewards)
  */
-export function notifyCustomer(title: string, body: string, url?: string) {
+export function notifyCustomer(title: string, body: string, url?: string, customIcon?: string) {
+  const tenant = getActiveTenantConfig();
   return sendPortalNotification({
     title: `🎁 ${title}`,
     body,
-    icon: '/icon-192.png',
+    icon: customIcon || tenant.logoUrl || tenant.faviconUrl,
     url,
     soundType: 'success',
     tag: 'customer-reward',
@@ -145,11 +151,12 @@ export function notifyCustomer(title: string, body: string, url?: string) {
 /**
  * 🏪 Cashier POS Notification (New scan, coupon redemption, transaction)
  */
-export function notifyCashier(title: string, body: string, url?: string) {
+export function notifyCashier(title: string, body: string, url?: string, customIcon?: string) {
+  const tenant = getActiveTenantConfig();
   return sendPortalNotification({
     title: `⚡ ${title}`,
     body,
-    icon: '/icon-192.png',
+    icon: customIcon || tenant.logoUrl || tenant.faviconUrl,
     url,
     soundType: 'notification',
     tag: 'cashier-operation',
@@ -159,11 +166,12 @@ export function notifyCashier(title: string, body: string, url?: string) {
 /**
  * 🏢 Merchant Admin Notification (New customer, daily sales, invoice)
  */
-export function notifyMerchant(title: string, body: string, url?: string) {
+export function notifyMerchant(title: string, body: string, url?: string, customIcon?: string) {
+  const tenant = getActiveTenantConfig();
   return sendPortalNotification({
     title: `🏪 ${title}`,
     body,
-    icon: '/icon-192.png',
+    icon: customIcon || tenant.logoUrl || tenant.faviconUrl,
     url,
     soundType: 'notification',
     tag: 'merchant-update',
@@ -173,11 +181,12 @@ export function notifyMerchant(title: string, body: string, url?: string) {
 /**
  * 🤝 Partner / Marketer Notification (New merchant lead, commission earned)
  */
-export function notifyPartner(title: string, body: string, url?: string) {
+export function notifyPartner(title: string, body: string, url?: string, customIcon?: string) {
+  const tenant = getActiveTenantConfig();
   return sendPortalNotification({
     title: `💰 ${title}`,
     body,
-    icon: '/icon-192.png',
+    icon: customIcon || tenant.logoUrl || tenant.faviconUrl,
     url,
     soundType: 'commission',
     tag: 'partner-commission',
@@ -187,11 +196,12 @@ export function notifyPartner(title: string, body: string, url?: string) {
 /**
  * 👑 Super Admin Notification (New store registered, subscription paid)
  */
-export function notifySuperAdmin(title: string, body: string, url?: string) {
+export function notifySuperAdmin(title: string, body: string, url?: string, customIcon?: string) {
+  const tenant = getActiveTenantConfig();
   return sendPortalNotification({
     title: `👑 ${title}`,
     body,
-    icon: '/icon-192.png',
+    icon: customIcon || tenant.logoUrl || tenant.faviconUrl,
     url,
     soundType: 'commission',
     tag: 'super-admin-event',

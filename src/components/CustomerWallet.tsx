@@ -427,6 +427,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [walletConfig, setWalletConfig] = useState<StoreWalletPassConfig>(() => {
     return WalletPassService.getWalletConfig(store || initialStore);
   });
+  const isStampsMode = walletConfig?.loyalty_mode === 'stamps';
+  const isCashbackMode = walletConfig?.loyalty_mode === 'cashback';
   const [showSpinWheel, setShowSpinWheel] = useState(false);
   const [showScratchCard, setShowScratchCard] = useState(false);
 
@@ -2160,15 +2162,15 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     .slice(0, 10) || 'STORE';
 
   const unifiedBarcodeAltText = customer?.phone
-    ? `${storeCode}-${customer.phone.slice(-6)}`
-    : `${storeCode}-VIP`;
+    ? `VIP-${customer.phone.slice(-6)}`
+    : 'VIP-MEMBER';
 
   const qrDataPayload = isCouponFrozen
     ? 'FROZEN'
     : selectedCouponForQR
     ? selectedCouponForQR.coupon_code
     : customer
-    ? `${storeCode}:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}`
+    ? `VIP:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}`
     : '';
 
   const sortedTiers = [...tiers].sort((a, b) => a.required_xp - b.required_xp);
@@ -3201,11 +3203,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
           {/* 🌟 04 - VIP Pass Card (Adaptive Monochromatic Luxury matching Merchant Identity) */}
           <div className="relative group select-none -mt-10 sm:-mt-12 z-20">
-            {/* Ambient Brand Glow Behind Card */}
+            {/* Ambient Brand & VIP Tier Glow Behind Card */}
             <div
               className="absolute -inset-1 rounded-[30px] blur-xl opacity-35 group-hover:opacity-60 transition duration-700 pointer-events-none"
               style={{
-                background: `radial-gradient(circle, ${brandSecondary}40 0%, transparent 70%)`,
+                background: `radial-gradient(circle, ${(!isStampsMode && currentTierObj?.badge_color) ? currentTierObj.badge_color + '50' : brandSecondary + '40'} 0%, transparent 70%)`,
               }}
             ></div>
 
@@ -3213,8 +3215,10 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               className="relative rounded-[28px] p-5 sm:p-6 transition-all duration-300 vip-card-shine"
               style={{
                 background: brandColors.cardGradient,
-                boxShadow: brandColors.cardBoxShadow,
-                border: `1px solid ${brandColors.cardBorderColor}`,
+                boxShadow: (!isStampsMode && currentTierObj?.badge_color)
+                  ? `0 12px 32px ${currentTierObj.badge_color}25`
+                  : brandColors.cardBoxShadow,
+                border: `1.5px solid ${(!isStampsMode && currentTierObj?.badge_color) || brandColors.cardBorderColor}`,
                 color: brandColors.cardTextColor,
               }}
             >
@@ -3478,7 +3482,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     color: brandColors.howButtonText,
                   }}
                 >
-                  كيف أجمع نقاط؟
+                  {isStampsMode ? 'كيف أجمع أختام؟ ☕' : isCashbackMode ? 'كيف يعمل الرصيد؟ 💳' : 'كيف أجمع نقاط؟ ⭐'}
                 </button>
 
                 {/* 2. Left Button (RTL): "إظهار رمز الباركود" / "إخفاء الرمز" */}
@@ -3714,7 +3718,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 : 'bg-white border-slate-200 shadow-xl'
             }`}>
               <p className={`text-xs font-bold ${isDarkTheme ? 'text-slate-300' : 'text-slate-700'}`}>
-                أبرز الرمز للكاشير لتسجيل زيارتك وكسب النقاط
+                {isStampsMode
+                  ? 'أبرز الرمز للكاشير لتسجيل زيارتك وكسب الأختام ☕'
+                  : isCashbackMode
+                  ? 'أبرز الرمز للكاشير لتسجيل زيارتك وإضافة الرصيد 💰'
+                  : 'أبرز الرمز للكاشير لتسجيل زيارتك وكسب النقاط ⭐'}
               </p>
 
               {/* Large High-Contrast White QR Card */}
@@ -6892,42 +6900,108 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             isDarkTheme ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
           }`}>
             <h3 className={`font-black text-xl ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
-              كيف تجمع نقاط؟
+              {isStampsMode ? 'كيف تجمع أختام بطاقتك؟ ☕' : isCashbackMode ? 'كيف يعمل الرصيد المسترد؟ 💳' : 'كيف تجمع نقاط؟ ⭐'}
             </h3>
 
             <div className="space-y-3 text-right text-xs sm:text-sm py-2">
-              <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
-                isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <span className="font-bold text-amber-500 font-mono text-sm shrink-0">1.</span>
-                <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
-                  اطلب من المنيو أو زر المطعم وأبرز الباركود للكاشير عند المحاسبة.
-                </span>
-              </div>
-              <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
-                isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <span className="font-bold text-amber-500 font-mono text-sm shrink-0">2.</span>
-                <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
-                  كل ريال تدفعه = {store.points_per_riyal || 5} نقاط تضاف تلقائياً لمحفظتك.
-                </span>
-              </div>
-              <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
-                isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <span className="font-bold text-amber-500 font-mono text-sm shrink-0">3.</span>
-                <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
-                  استبدل نقاطك بمكافآت وهدايا حصرية من شاشة "العروض والامتيازات".
-                </span>
-              </div>
-              <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
-                isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <span className="font-bold text-amber-500 font-mono text-sm shrink-0">4.</span>
-                <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
-                  كل ما زادت نقاطك ارتقى مستواك وزادت مميزاتك الخاصة! 👑
-                </span>
-              </div>
+              {isStampsMode ? (
+                <>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-amber-500 font-mono text-sm shrink-0">1.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      زر المتجر وأبرز باركود المحفظة المعتمد للكاشير عند كل طلب أو محاسبة.
+                    </span>
+                  </div>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-amber-500 font-mono text-sm shrink-0">2.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      تحصل فورياً على ختم رقمي {walletConfig.stamps_icon || '☕'} يُضاف لبطاقتك في التطبيق ومحفظة الهاتف.
+                    </span>
+                  </div>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-amber-500 font-mono text-sm shrink-0">3.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      عند إكمال {walletConfig.stamps_target || 6} أختام، تحصل تلقائياً على هديتك: <strong className="text-amber-400 font-bold">{walletConfig.stamps_reward_title || 'مكافأة خاصة 🎁'}</strong>!
+                    </span>
+                  </div>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-amber-500 font-mono text-sm shrink-0">4.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      جرّب أيضاً عجلة الحظ التفاعلية وتحديات الزيارات المتتالية لكسب جوائز إضافية! 🎡
+                    </span>
+                  </div>
+                </>
+              ) : isCashbackMode ? (
+                <>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-emerald-500 font-mono text-sm shrink-0">1.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      أبرز باركود المحفظة للكاشير عند كل عملية شراء في {store.name}.
+                    </span>
+                  </div>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-emerald-500 font-mono text-sm shrink-0">2.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      نسبة نقدية مستردة (Cashback) تضاف مباشرة لرصيدك المالي المتاح في المحفظة.
+                    </span>
+                  </div>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-emerald-500 font-mono text-sm shrink-0">3.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      استخدم رصيدك في دفع أو خصم فواتيرك القادمة بكل سهولة وأمان.
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-amber-500 font-mono text-sm shrink-0">1.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      اطلب من المنيو أو زر المتجر وأبرز الباركود للكاشير عند المحاسبة.
+                    </span>
+                  </div>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-amber-500 font-mono text-sm shrink-0">2.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      كل 1 ريال تدفعه = {store.points_per_riyal || 1} نقطة تضاف تلقائياً لرصيدك.
+                    </span>
+                  </div>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-amber-500 font-mono text-sm shrink-0">3.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      استبدل نقاطك بمكافآت وهدايا حصرية من كتالوج المكافآت.
+                    </span>
+                  </div>
+                  <div className={`flex items-start gap-2.5 p-3 rounded-2xl border ${
+                    isDarkTheme ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-200'
+                  }`}>
+                    <span className="font-bold text-amber-500 font-mono text-sm shrink-0">4.</span>
+                    <span className={`font-semibold leading-relaxed ${isDarkTheme ? 'text-slate-200' : 'text-slate-800'}`}>
+                      كل ما زادت نقاطك ترتقي فئة عضويتك الملكية ويتغير لون بطاقتك وتزيد مميزاتك! 👑
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
 
             <button
