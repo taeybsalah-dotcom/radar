@@ -51,10 +51,12 @@ import {
   testApplePassConfig,
   executeMasterSql,
   uploadLogoToStorage,
+  executeMasterProvisionTenantAdmin,
   SqlExecutionResult,
   SOVEREIGN_MASTER_TOKEN,
   MASTER_SUPABASE_URL,
 } from './lib/masterApi';
+import { compressAndUploadLogo, CompressionResult } from './lib/imageCompressor';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'tenants' | 'wallets' | 'security' | 'sql'>('tenants');
@@ -110,6 +112,20 @@ export const App: React.FC = () => {
     accent_color_hex: '#10B981',
     logo_url: '',
   });
+
+  // 🔑 Credentials Management Modal
+  const [showCredentialsModal, setShowCredentialsModal] = useState(false);
+  const [credentialsTarget, setCredentialsTarget] = useState<TenantRecord | null>(null);
+  const [credEmailInput, setCredEmailInput] = useState('');
+  const [credPasswordInput, setCredPasswordInput] = useState('');
+  const [showCredPassword, setShowCredPassword] = useState(false);
+  const [isSavingCredentials, setIsSavingCredentials] = useState(false);
+
+  // 🖼️ Image Compression & Upload States
+  const [isUploadingEditLogo, setIsUploadingEditLogo] = useState(false);
+  const [editLogoSavingsMsg, setEditLogoSavingsMsg] = useState<string | null>(null);
+  const [isUploadingCreateLogo, setIsUploadingCreateLogo] = useState(false);
+  const [createLogoSavingsMsg, setCreateLogoSavingsMsg] = useState<string | null>(null);
 
   // SQL Console
   const [sqlScript, setSqlScript] = useState(`-- ⚡ استعلام سيادي مباشر على قاعدة الأثر
@@ -310,6 +326,100 @@ FROM public.tenants;`);
       setError(err?.message || 'خطأ أثناء التحديث');
     } finally {
       setActionLoading(null);
+    }
+  }
+
+  // 🔑 Credentials Handlers
+  function openCredentialsModal(tenant: TenantRecord) {
+    setCredentialsTarget(tenant);
+    // Prefill with existing admin_email or fallback to custom_domain/slug email
+    const defaultEmail = tenant.admin_email || `admin@${tenant.custom_domain || tenant.slug + '.com'}`;
+    setCredEmailInput(defaultEmail);
+    setCredPasswordInput('');
+    setShowCredPassword(false);
+    setShowCredentialsModal(true);
+  }
+
+  function generateRandomPassword() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let pw = '';
+    for (let i = 0; i < 12; i++) {
+      pw += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setCredPasswordInput(pw);
+    setShowCredPassword(true);
+  }
+
+  async function handleSaveCredentialsSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!credentialsTarget) return;
+    if (!credEmailInput.trim() || !credPasswordInput.trim()) {
+      setError('يرجى كتابة البريد الإلكتروني وكلمة المرور');
+      return;
+    }
+
+    setIsSavingCredentials(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const res = await executeMasterProvisionTenantAdmin(
+        credentialsTarget.id,
+        credEmailInput.trim(),
+        credPasswordInput.trim()
+      );
+
+      if (res.success) {
+        setSuccessMsg(
+          `تم بنجاح تعيين البريد وكلمة المرور للوكيل "${credentialsTarget.name}"! يمكن للوكيل الآن تسجيل الدخول مباشرة بدون أي تدخل تقني.`
+        );
+        setShowCredentialsModal(false);
+        await loadAllData();
+      } else {
+        setError(res.error || 'فشل تعيين حساب الوكيل');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'خطأ أثناء حفظ حساب الوكيل');
+    } finally {
+      setIsSavingCredentials(false);
+    }
+  }
+
+  // 🖼️ Logo Compression & Upload Handler
+  async function handleLogoUpload(file: File, isEdit: boolean) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setError('الملف المرفوع يجب أن يكون صورة (PNG, JPG, SVG, WebP)');
+      return;
+    }
+
+    if (isEdit) {
+      setIsUploadingEditLogo(true);
+      setEditLogoSavingsMsg(null);
+    } else {
+      setIsUploadingCreateLogo(true);
+      setCreateLogoSavingsMsg(null);
+    }
+
+    try {
+      const result: CompressionResult = await compressAndUploadLogo(file, 400, 400, 0.85);
+      const msg = `تم ضغط الصورة بنجاح: من ${result.originalSizeKB}KB إلى ${result.compressedSizeKB}KB (توفير ${result.savingsPercent}%) ⚡`;
+
+      if (isEdit) {
+        setEditFormData((prev) => ({ ...prev, logo_url: result.url }));
+        setEditLogoSavingsMsg(msg);
+      } else {
+        setCreateFormData((prev) => ({ ...prev, logo_url: result.url }));
+        setCreateLogoSavingsMsg(msg);
+      }
+      setSuccessMsg('تم رفع الشعار المضغوط للسحابة بنجاح!');
+    } catch (err: any) {
+      setError(err?.message || 'فشل ضغط ورفع الشعار');
+    } finally {
+      if (isEdit) {
+        setIsUploadingEditLogo(false);
+      } else {
+        setIsUploadingCreateLogo(false);
+      }
     }
   }
 
@@ -709,6 +819,29 @@ FROM public.tenants;`);
                               </span>
                             </div>
                           </div>
+                        </div>
+
+                        {/* Admin Account Strip */}
+                        <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 text-xs truncate">
+                            <div className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400">
+                              <Lock className="w-4 h-4" />
+                            </div>
+                            <div className="truncate">
+                              <span className="text-[10px] text-slate-400 block font-bold">حساب المسؤول المعتمد:</span>
+                              <span className="font-mono text-amber-300 font-bold truncate text-xs">
+                                {tenant.admin_email || 'لم يتم تعيين حساب بعد'}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openCredentialsModal(tenant)}
+                            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-amber-600/20 hover:from-amber-500/30 hover:to-amber-600/30 text-amber-300 hover:text-white text-xs font-bold flex items-center gap-1.5 border border-amber-500/40 transition flex-shrink-0 shadow-sm"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                            <span>إدارة كلمة المرور</span>
+                          </button>
                         </div>
 
                         {/* Contacts Strip */}
@@ -1314,6 +1447,66 @@ FROM public.tenants;`);
                 />
               </div>
 
+              {/* Logo Upload with Canvas Compression */}
+              <div className="space-y-2 p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                    <span>شعار المنظومة الرسمي (Logo)</span>
+                  </label>
+                  {createLogoSavingsMsg && (
+                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      {createLogoSavingsMsg}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-700 p-2 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    {createFormData.logo_url ? (
+                      <img
+                        src={createFormData.logo_url}
+                        alt="Logo Preview"
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          (e.target as any).src = '/favicon.png';
+                        }}
+                      />
+                    ) : (
+                      <ImageIcon className="w-6 h-6 text-slate-600" />
+                    )}
+                  </div>
+
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <label className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-amber-500/30 transition shadow-sm">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>{isUploadingCreateLogo ? 'جاري ضغط الشعار ورفعه...' : '📷 رفع شعار من الجهاز (ضغط فوري)'}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={isUploadingCreateLogo}
+                          onChange={(e) => {
+                            if (e.target.files?.[0]) {
+                              handleLogoUpload(e.target.files[0], false);
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                      {isUploadingCreateLogo && <Loader2 className="w-4 h-4 animate-spin text-amber-400" />}
+                    </div>
+                    <input
+                      type="text"
+                      value={createFormData.logo_url}
+                      onChange={(e) => setCreateFormData({ ...createFormData, logo_url: e.target.value })}
+                      placeholder="/sadeem-logo.svg أو رابط صورة مباشر"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-1">اللون الأساسي (Primary HEX)</label>
@@ -1469,6 +1662,66 @@ FROM public.tenants;`);
                 />
               </div>
 
+              {/* Logo Upload with Canvas Compression */}
+              <div className="space-y-2 p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                    <span>شعار المنظومة الرسمي (Logo)</span>
+                  </label>
+                  {editLogoSavingsMsg && (
+                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      {editLogoSavingsMsg}
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-700 p-2 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    {editFormData.logo_url ? (
+                      <img
+                        src={editFormData.logo_url}
+                        alt="Logo Preview"
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                          (e.target as any).src = '/favicon.png';
+                        }}
+                      />
+                    ) : (
+                      <ImageIcon className="w-6 h-6 text-slate-600" />
+                    )}
+                  </div>
+
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <label className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-amber-500/30 transition shadow-sm">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>{isUploadingEditLogo ? 'جاري ضغط الشعار ورفعه...' : '📷 رفع شعار من الجهاز (ضغط فوري)'}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={isUploadingEditLogo}
+                          onChange={(e) => {
+                            if (e.target.files?.[0]) {
+                              handleLogoUpload(e.target.files[0], true);
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                      {isUploadingEditLogo && <Loader2 className="w-4 h-4 animate-spin text-amber-400" />}
+                    </div>
+                    <input
+                      type="text"
+                      value={editFormData.logo_url}
+                      onChange={(e) => setEditFormData({ ...editFormData, logo_url: e.target.value })}
+                      placeholder="/sadeem-logo.svg أو رابط صورة مباشر"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-1">اللون الأساسي (Primary HEX)</label>
@@ -1547,6 +1800,148 @@ FROM public.tenants;`);
                     <CheckCheck className="w-4 h-4" />
                   )}
                   <span>حفظ التعديلات في السحابة</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 🔑 MODAL: MANAGE AGENT CREDENTIALS & PASSWORD */}
+      {/* ========================================================================= */}
+      {showCredentialsModal && credentialsTarget && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">
+                    إدارة حساب وكلمة مرور: {credentialsTarget.name}
+                  </h3>
+                  <p className="text-xs text-slate-400 font-mono">
+                    ID: {credentialsTarget.id} • النطاق: {credentialsTarget.custom_domain || 'myradar.sarl'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCredentialsModal(false)}
+                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCredentialsSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  البريد الإلكتروني المعتمد للمسؤول (Admin Email) *
+                </label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    required
+                    dir="ltr"
+                    value={credEmailInput}
+                    onChange={(e) => setCredEmailInput(e.target.value)}
+                    placeholder="admin@sdeemalathr.com"
+                    className="w-full px-3.5 py-2.5 pl-10 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
+                  />
+                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  هذا هو الإيميل الذي يسجل به مسؤول المنصة دخوله في بوابة Super Admin.
+                </p>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-300">
+                    كلمة المرور الجديدة (Password) *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={generateRandomPassword}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>توليد كلمة مرور قوية</span>
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showCredPassword ? 'text' : 'password'}
+                    required
+                    dir="ltr"
+                    value={credPasswordInput}
+                    onChange={(e) => setCredPasswordInput(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full px-3.5 py-2.5 pl-20 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none tracking-wider"
+                  />
+                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowCredPassword(!showCredPassword)}
+                      className="p-1 rounded-lg text-slate-400 hover:text-white"
+                      title={showCredPassword ? 'إخفاء' : 'إظهار'}
+                    >
+                      {showCredPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                    {credPasswordInput && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(credPasswordInput);
+                          setSuccessMsg('تم نسخ كلمة المرور للحافظة');
+                        }}
+                        className="p-1 rounded-lg text-slate-400 hover:text-white"
+                        title="نسخ كلمة المرور"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  يجب ألا تقل عن 6 خانات. عند النقر على اعتماد، سيتم تشفيرها وتثبيتها في محرك Supabase Auth فوراً.
+                </p>
+              </div>
+
+              {/* Security Shield Note */}
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 leading-relaxed space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                  <ShieldCheck className="w-4 h-4 flex-shrink-0" />
+                  <span>السيادة والأمان التام (Sovereign Engine):</span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  يتم ربط المستخدم برتبة <code className="text-amber-300">tenant_admin</code> وعزله أمنياً بـ RLS.
+                  إذا أضاع الوكيل كلمة مروره، يمكنك إعادة تعيينها من هذه النافذة فوراً دون الحاجة لكتابة أي كود أو الذهاب لقاعدة البيانات.
+                </p>
+              </div>
+
+              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowCredentialsModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCredentials}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition transform active:scale-95"
+                >
+                  {isSavingCredentials ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <KeyRound className="w-4 h-4" />
+                  )}
+                  <span>اعتماد وتعيين الحساب فوراً 🔐</span>
                 </button>
               </div>
             </form>

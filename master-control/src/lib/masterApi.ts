@@ -38,6 +38,7 @@ export interface TenantRecord {
   pwa_name?: string | null;
   copyright_holder?: string | null;
   status: 'active' | 'suspended' | 'maintenance';
+  admin_email?: string | null;
   created_at: string;
   updated_at: string;
   // Computed / Aggregated KPIs:
@@ -498,6 +499,46 @@ export async function executeMasterSql(sqlScript: string): Promise<SqlExecutionR
       error: err?.message || 'فشل الاتصال بقاعدة البيانات',
       durationMs: Date.now() - startTime,
     };
+  }
+}
+
+/**
+ * 🔑 Sovereign Provision / Reset Tenant Admin Credentials
+ */
+export async function executeMasterProvisionTenantAdmin(
+  tenantId: string,
+  email: string,
+  password: string
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const { data, error } = await masterSupabase.rpc('master_provision_tenant_admin', {
+      p_master_token: SOVEREIGN_MASTER_TOKEN,
+      p_tenant_id: tenantId,
+      p_email: email.trim().toLowerCase(),
+      p_password: password,
+    });
+
+    if (error) {
+      // Fallback: If RPC is not registered yet, return descriptive error
+      return { 
+        success: false, 
+        error: error.message.includes('Could not find the function') 
+          ? 'دالة master_provision_tenant_admin غير مثبتة بعد في قاعدة البيانات. يرجى تشغيل كود التأسيس في Supabase SQL Editor لمرة واحدة.'
+          : error.message 
+      };
+    }
+
+    const res = data as any;
+    if (res?.success === false || res?.error) {
+      return { success: false, error: res?.error || 'فشل تحديث بيانات حساب الوكيل' };
+    }
+
+    return {
+      success: true,
+      message: res?.message || 'تم تعيين حساب وكلمة مرور الوكيل بنجاح فوراً',
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'خطأ غير متوقع أثناء تعيين الحساب' };
   }
 }
 

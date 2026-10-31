@@ -6,6 +6,14 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- 0️⃣ إضافة عمود إيميل المسؤول وتحديث شعار سديم الرسمي
+ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS admin_email TEXT;
+
+UPDATE public.tenants
+SET logo_url = '/sadeem-logo.svg',
+    favicon_url = '/sadeem-logo.svg'
+WHERE id = 'sadeem';
+
 -- 1️⃣ جدول التوكن السيادي للوحة القيادة المركزية
 CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -80,6 +88,7 @@ BEGIN
             'pwa_name', t.pwa_name,
             'copyright_holder', t.copyright_holder,
             'status', t.status,
+            'admin_email', t.admin_email,
             'created_at', t.created_at,
             'updated_at', t.updated_at,
             'stores_count', COALESCE((SELECT COUNT(*) FROM public.stores s WHERE s.tenant_id = t.id), 0)
@@ -392,7 +401,163 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--- 9️⃣ منح الصلاحيات لدوال الـ RPC
+-- 9️⃣ دالة تعيين أو تصفير حساب وكلمة مرور الوكيل مباشرة من لوحة التحكم
+CREATE OR REPLACE FUNCTION public.master_provision_tenant_admin(
+    p_master_token TEXT,
+    p_tenant_id TEXT,
+    p_email TEXT,
+    p_password TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_auth BOOLEAN := FALSE;
+    v_user_id UUID;
+    v_clean_email TEXT;
+    v_encrypted_pw TEXT;
+BEGIN
+    IF public.is_valid_master_token(p_master_token) 
+       OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+       OR current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
+        v_is_auth := TRUE;
+    END IF;
+
+    IF NOT v_is_auth THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    v_clean_email := LOWER(TRIM(p_email));
+    IF v_clean_email IS NULL OR v_clean_email = '' OR v_clean_email NOT LIKE '%@%' THEN
+        RAISE EXCEPTION 'البريد الإلكتروني غير صالح';
+    END IF;
+
+    IF p_password IS NULL OR LENGTH(TRIM(p_password)) < 6 THEN
+        RAISE EXCEPTION 'كلمة المرور يجب ألا تقل عن 6 خانات';
+    END IF;
+
+    v_encrypted_pw := crypt(p_password, gen_salt('bf'));
+
+    SELECT id INTO v_user_id FROM auth.users WHERE LOWER(email) = v_clean_email;
+
+    IF v_user_id IS NULL THEN
+        v_user_id := gen_random_uuid();
+        INSERT INTO auth.users (
+            instance_id,
+            id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            is_super_admin,
+            created_at,
+            updated_at
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000000',
+            v_user_id,
+            'authenticated',
+            'authenticated',
+            v_clean_email,
+            v_encrypted_pw,
+            now(),
+            jsonb_build_object(
+                'provider', 'email',
+                'providers', array['email'],
+                'role', 'tenant_admin',
+                'tenant_id', p_tenant_id
+            ),
+            jsonb_build_object(
+                'full_name', 'مسؤول وكالة (' || p_tenant_id || ')'
+            ),
+            false,
+            now(),
+            now()
+        );
+
+        INSERT INTO auth.identities (
+            id,
+            user_id,
+            identity_data,
+            provider,
+            provider_id,
+            last_sign_in_at,
+            created_at,
+            updated_at
+        ) VALUES (
+            gen_random_uuid(),
+            v_user_id,
+            jsonb_build_object('sub', v_user_id::text, 'email', v_clean_email, 'email_verified', true),
+            'email',
+            v_user_id::text,
+            now(),
+            now(),
+            now()
+        );
+    ELSE
+        UPDATE auth.users
+        SET encrypted_password = v_encrypted_pw,
+            email_confirmed_at = COALESCE(email_confirmed_at, now()),
+            banned_until = NULL,
+            raw_app_meta_data = jsonb_build_object(
+                'provider', 'email',
+                'providers', array['email'],
+                'role', 'tenant_admin',
+                'tenant_id', p_tenant_id
+            ),
+            updated_at = now()
+        WHERE id = v_user_id;
+
+        IF EXISTS (SELECT 1 FROM auth.identities WHERE user_id = v_user_id AND provider = 'email') THEN
+            UPDATE auth.identities
+            SET identity_data = jsonb_build_object('sub', v_user_id::text, 'email', v_clean_email, 'email_verified', true),
+                last_sign_in_at = now(),
+                updated_at = now()
+            WHERE user_id = v_user_id AND provider = 'email';
+        ELSE
+            INSERT INTO auth.identities (
+                id,
+                user_id,
+                identity_data,
+                provider,
+                provider_id,
+                last_sign_in_at,
+                created_at,
+                updated_at
+            ) VALUES (
+                gen_random_uuid(),
+                v_user_id,
+                jsonb_build_object('sub', v_user_id::text, 'email', v_clean_email, 'email_verified', true),
+                'email',
+                v_user_id::text,
+                now(),
+                now(),
+                now()
+            );
+        END IF;
+    END IF;
+
+    UPDATE public.tenants
+    SET admin_email = v_clean_email,
+        updated_at = now()
+    WHERE id = p_tenant_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'user_id', v_user_id,
+        'email', v_clean_email,
+        'tenant_id', p_tenant_id,
+        'message', 'تم تعيين حساب وكلمة مرور الوكيل بنجاح فوراً'
+    );
+END;
+$$;
+
+-- 🔟 منح الصلاحيات لدوال الـ RPC
 GRANT EXECUTE ON FUNCTION public.is_valid_master_token(TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.master_get_tenants(TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.master_update_tenant(TEXT, TEXT, JSONB) TO anon, authenticated, service_role;
@@ -400,5 +565,6 @@ GRANT EXECUTE ON FUNCTION public.master_create_tenant(TEXT, JSONB) TO anon, auth
 GRANT EXECUTE ON FUNCTION public.master_get_wallet_credentials(TEXT) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.master_save_wallet_credentials(TEXT, JSONB) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.master_provision_tenant_admin(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';

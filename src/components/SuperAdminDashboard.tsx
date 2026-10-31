@@ -242,6 +242,15 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [isResetPlatformModalOpen, setIsResetPlatformModalOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
+  // 🔑 Change Admin Password State
+  const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
+  const [newAdminPassword, setNewAdminPassword] = useState('');
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [isUpdatingAdminPassword, setIsUpdatingAdminPassword] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+  const [changePasswordSuccess, setChangePasswordSuccess] = useState<string | null>(null);
+
   // Edit Store Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
@@ -546,6 +555,60 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       console.error('Failed to reset platform', e);
     } finally {
       setIsResetting(false);
+    }
+  };
+
+  const handleChangeAdminPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePasswordError(null);
+    setChangePasswordSuccess(null);
+
+    if (newAdminPassword.length < 6) {
+      setChangePasswordError('كلمة المرور يجب ألا تقل عن 6 خانات');
+      return;
+    }
+
+    if (newAdminPassword !== confirmAdminPassword) {
+      setChangePasswordError('كلمتا المرور غير متطابقتين');
+      return;
+    }
+
+    setIsUpdatingAdminPassword(true);
+    try {
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        setChangePasswordError('تعذر الاتصال بقاعدة البيانات');
+        return;
+      }
+      const { error } = await supabase.auth.updateUser({
+        password: newAdminPassword,
+      });
+
+      if (error) {
+        setChangePasswordError(error.message || 'فشل تحديث كلمة المرور');
+        return;
+      }
+
+      setChangePasswordSuccess('تم تحديث كلمة المرور بنجاح! يمكنك استخدامها لتسجيل الدخول مستقبلاً.');
+      try {
+        confetti({
+          particleCount: 50,
+          spread: 60,
+          origin: { y: 0.7 },
+        });
+      } catch (e) {
+        // Confetti fallback
+      }
+      setTimeout(() => {
+        setIsChangePasswordModalOpen(false);
+        setNewAdminPassword('');
+        setConfirmAdminPassword('');
+        setChangePasswordSuccess(null);
+      }, 2000);
+    } catch (err: any) {
+      setChangePasswordError(err?.message || 'حدث خطأ غير متوقع');
+    } finally {
+      setIsUpdatingAdminPassword(false);
     }
   };
 
@@ -1327,6 +1390,24 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   >
                     <Lock className="w-3.5 h-3.5 text-amber-400" />
                     <span>قفل وتسجيل الخروج</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsHeaderMenuOpen(false);
+                      setChangePasswordError(null);
+                      setChangePasswordSuccess(null);
+                      setNewAdminPassword('');
+                      setConfirmAdminPassword('');
+                      setIsChangePasswordModalOpen(true);
+                    }}
+                    className={`w-full p-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition text-right mt-1 ${
+                      isDark ? 'hover:bg-white/5 text-amber-300' : 'hover:bg-slate-100 text-amber-600'
+                    }`}
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                    <span>تغيير كلمة المرور</span>
                   </button>
 
                   {stores.length > 0 && canPerform('can_reset_platform') && currentAdminUser?.role === 'super_admin' && (
@@ -3793,7 +3874,116 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         </div>
       )}
 
-      {/* ⚠️ Modal: Reset All Platform Confirmation */}
+      {/* 🔑 Modal: Change Admin Password */}
+      {isChangePasswordModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div className="glass-card max-w-md w-full rounded-3xl p-6 sm:p-8 border border-amber-500/30 shadow-2xl relative space-y-6 bg-slate-900">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">تغيير كلمة المرور</h3>
+                  <p className="text-xs text-slate-400">تحديث كلمة مرور حسابك كمسؤول المنصة</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsChangePasswordModalOpen(false)}
+                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {changePasswordError && (
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                <span>{changePasswordError}</span>
+              </div>
+            )}
+
+            {changePasswordSuccess && (
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                <span>{changePasswordSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangeAdminPassword} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                  كلمة المرور الجديدة *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    dir="ltr"
+                    value={newAdminPassword}
+                    onChange={(e) => setNewAdminPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs text-white placeholder-slate-600 outline-none transition font-mono tracking-wider"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  >
+                    {showNewPassword ? 'إخفاء' : 'عرض'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">يجب ألا تقل عن 6 خانات</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                  تأكيد كلمة المرور الجديدة *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    dir="ltr"
+                    value={confirmAdminPassword}
+                    onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded-2xl px-4 py-3 text-xs text-white placeholder-slate-600 outline-none transition font-mono tracking-wider"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-3 rtl:space-x-reverse pt-2">
+                <button
+                  type="submit"
+                  disabled={isUpdatingAdminPassword}
+                  className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-extrabold text-xs sm:text-sm shadow-lg shadow-amber-500/20 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isUpdatingAdminPassword ? (
+                    <span className="inline-block animate-spin">⚡</span>
+                  ) : (
+                    <>
+                      <KeyRound className="w-4 h-4" />
+                      <span>تحديث كلمة المرور</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  disabled={isUpdatingAdminPassword}
+                  onClick={() => setIsChangePasswordModalOpen(false)}
+                  className="px-5 py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs sm:text-sm transition disabled:opacity-50"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {isResetPlatformModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div className="glass-card max-w-md w-full rounded-3xl p-6 sm:p-8 border-2 border-rose-500/50 shadow-2xl relative space-y-6">
