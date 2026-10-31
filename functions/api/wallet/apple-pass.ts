@@ -21,8 +21,8 @@ export async function onRequestOptions(): Promise<Response> {
   });
 }
 
-function errorResponse(status: number, message: string): Response {
-  return new Response(JSON.stringify({ success: false, error: message }), {
+function errorResponse(status: number, message: string, details?: any): Response {
+  return new Response(JSON.stringify({ success: false, error: message, ...(details ? { debug: details } : {}) }), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
@@ -145,24 +145,48 @@ export async function onRequestGet(context: any): Promise<Response> {
     }
 
     // 3. بيانات شهادة آبل (سرية، تُقرأ بمفتاح السيرفر فقط)
-    const integrations = await restGet(
-      supabaseUrl,
-      serviceKey,
-      'platform_integrations?select=id,apple_wallet_enabled,apple_pass_type_id,apple_team_id,apple_cert_p12_base64,apple_cert_password,created_at,updated_at&order=updated_at.desc.nullslast,created_at.desc.nullslast&limit=10'
-    );
+    let integrations: any[] = [];
+    let intError: string | null = null;
+    try {
+      integrations = await restGet(
+        supabaseUrl,
+        serviceKey,
+        'platform_integrations?select=id,apple_wallet_enabled,apple_pass_type_id,apple_team_id,apple_cert_p12_base64,apple_cert_password,created_at,updated_at&order=updated_at.desc.nullslast,created_at.desc.nullslast&limit=10'
+      );
+    } catch (e: any) {
+      intError = e.message;
+    }
+
     const cfg =
       integrations.find((c: any) => c.apple_cert_p12_base64 && c.apple_pass_type_id) ||
       integrations.find((c: any) => c.apple_wallet_enabled) ||
       integrations[0];
 
-    // إذا كانت بيانات الشهادة موجودة، يتم تفعيلها تلقائياً بدون تعليق العميل
+    // تشخيص دقيق إذا تعذر التفعيل
     const isConfigured = Boolean(cfg && (cfg.apple_wallet_enabled || cfg.apple_cert_p12_base64));
     if (!isConfigured) {
-      return errorResponse(403, 'بوابة محفظة آبل غير مفعّلة في مركز التكاملات');
+      const isAnon = serviceKey.startsWith('sb_publishable_');
+      const keyRoleGuess = isAnon ? 'ANON_KEY (المفتاح المستخدم في Cloudflare هو مفتاح anon وليس service_role)' : (serviceKey.startsWith('sb_secret_') ? 'SERVICE_ROLE_KEY' : (serviceKey.startsWith('eyJ') ? 'JWT' : 'UNKNOWN'));
+      return errorResponse(403, 'بوابة محفظة آبل غير مفعّلة في مركز التكاملات', {
+        db_host: new URL(supabaseUrl).host,
+        key_type: keyRoleGuess,
+        key_length: serviceKey.length,
+        key_prefix: serviceKey.substring(0, 16) + '...',
+        integrations_count: integrations.length,
+        fetch_error: intError,
+        has_cfg: Boolean(cfg),
+        cfg_enabled: cfg?.apple_wallet_enabled ?? null,
+        cfg_has_p12: Boolean(cfg?.apple_cert_p12_base64),
+        cfg_has_password: Boolean(cfg?.apple_cert_password),
+      });
     }
 
     if (!cfg.apple_pass_type_id || !cfg.apple_team_id || !cfg.apple_cert_p12_base64) {
-      return errorResponse(422, 'بيانات شهادة آبل غير مكتملة في مركز التكاملات');
+      return errorResponse(422, 'بيانات شهادة آبل غير مكتملة في مركز التكاملات', {
+        has_pass_type_id: Boolean(cfg?.apple_pass_type_id),
+        has_team_id: Boolean(cfg?.apple_team_id),
+        has_p12: Boolean(cfg?.apple_cert_p12_base64),
+      });
     }
 
     if (!cfg.apple_cert_password) {
