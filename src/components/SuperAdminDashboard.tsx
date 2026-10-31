@@ -1165,13 +1165,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     return (
       <div className="max-w-md mx-auto py-12 px-4 animate-fade-in text-center">
         <div className="rounded-3xl p-8 bg-slate-900/90 border-2 border-amber-500/40 shadow-2xl backdrop-blur-2xl space-y-6">
-          <div className="w-20 h-20 mx-auto rounded-3xl p-1 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-2xl shadow-cyan-500/20">
+          <div className="w-24 h-24 mx-auto rounded-2xl p-2 bg-slate-950/80 border border-slate-700/80 shadow-xl flex items-center justify-center overflow-hidden">
             <img
-              src={getActiveTenantConfig().logoUrl || "/favicon.png"}
+              src={getActiveTenantConfig().logoUrl || "/sadeem-logo.jpg"}
               alt={getActiveTenantConfig().brandName}
-              className="w-full h-full object-cover rounded-[22px]"
+              className="max-w-full max-h-full object-contain"
               onError={(e) => {
-                (e.target as any).src = '/sadeem-logo.svg';
+                (e.target as any).src = 'https://zagpvflyizbmzsbmhnts.supabase.co/storage/v1/object/public/store-assets/logos/sadeem-official-logo.jpg';
               }}
             />
           </div>
