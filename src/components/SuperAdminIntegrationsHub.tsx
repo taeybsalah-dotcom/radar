@@ -824,15 +824,20 @@ export const SuperAdminIntegrationsHub: React.FC<SuperAdminIntegrationsHubProps>
                 <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700 text-white flex items-center justify-center font-bold text-xl shadow-inner">
                   <span></span>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(config.apple_wallet_enabled)}
-                    onChange={(e) => setConfig({ ...config, apple_wallet_enabled: e.target.checked })}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-slate-200 peer-checked:after:bg-slate-950"></div>
-                </label>
+                <div className="flex items-center gap-3">
+                  <span className={`text-xs font-bold ${config.apple_wallet_enabled ? 'text-emerald-400' : 'text-slate-500'}`}>
+                    {config.apple_wallet_enabled ? 'مفعّل 🟢' : 'معطّل ⚪'}
+                  </span>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(config.apple_wallet_enabled)}
+                      onChange={(e) => setConfig({ ...config, apple_wallet_enabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-white"></div>
+                  </label>
+                </div>
               </div>
 
               <div>

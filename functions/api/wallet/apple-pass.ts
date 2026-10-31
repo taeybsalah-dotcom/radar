@@ -151,15 +151,22 @@ export async function onRequestGet(context: any): Promise<Response> {
       'platform_integrations?select=id,apple_wallet_enabled,apple_pass_type_id,apple_team_id,apple_cert_p12_base64,apple_cert_password,created_at,updated_at&order=updated_at.desc.nullslast,created_at.desc.nullslast&limit=10'
     );
     const cfg =
-      integrations.find((c: any) => c.apple_wallet_enabled && c.apple_cert_p12_base64) ||
+      integrations.find((c: any) => c.apple_cert_p12_base64 && c.apple_pass_type_id) ||
       integrations.find((c: any) => c.apple_wallet_enabled) ||
       integrations[0];
 
-    if (!cfg || !cfg.apple_wallet_enabled) {
+    // إذا كانت بيانات الشهادة موجودة، يتم تفعيلها تلقائياً بدون تعليق العميل
+    const isConfigured = Boolean(cfg && (cfg.apple_wallet_enabled || cfg.apple_cert_p12_base64));
+    if (!isConfigured) {
       return errorResponse(403, 'بوابة محفظة آبل غير مفعّلة في مركز التكاملات');
     }
+
     if (!cfg.apple_pass_type_id || !cfg.apple_team_id || !cfg.apple_cert_p12_base64) {
       return errorResponse(422, 'بيانات شهادة آبل غير مكتملة في مركز التكاملات');
+    }
+
+    if (!cfg.apple_cert_password) {
+      return errorResponse(422, 'كلمة مرور شهادة آبل غير مدخلة في مركز التكاملات');
     }
 
     // 4. فروع المتجر للتنبيه الجغرافي (اختياري: لو الجدول أو الأعمدة غير موجودة نكمل بدونها)
