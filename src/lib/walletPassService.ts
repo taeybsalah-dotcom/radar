@@ -184,11 +184,14 @@ export class WalletPassService {
     if (supabase) {
       // A. Write to dedicated store_wallet_pass_configs table
       (supabase.from as any)('store_wallet_pass_configs')
-        .upsert({
-          store_id: storeId,
-          ...updated,
-          updated_at: new Date().toISOString(),
-        })
+        .upsert(
+          {
+            store_id: storeId,
+            ...updated,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'store_id' }
+        )
         .then(({ error }: any) => {
           if (error) {
             console.warn('store_wallet_pass_configs sync notice:', error.message);
@@ -667,8 +670,10 @@ export class WalletPassService {
     tier?: Tier | null,
     storeBranches: StoreBranch[] = []
   ): Promise<void> {
+    const config = this.getWalletConfig(store);
     const params = new URLSearchParams();
     params.set('store_id', store.id || store.slug || '');
+    if (config?.loyalty_mode) params.set('mode', config.loyalty_mode);
     if (customer?.id) params.set('customer_id', customer.id);
     if (customer?.phone) params.set('phone', customer.phone);
     if (customer?.name) params.set('name', customer.name);

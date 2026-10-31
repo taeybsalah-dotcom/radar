@@ -94,15 +94,22 @@ export async function onRequestPost(context: any): Promise<Response> {
 
     // 2. جلب إعدادات بطاقة المحفظة للمتجر (الأختام، الألوان، النمط)
     let walletConfig: any = null;
+    let tableConfig: any = null;
     if (supabaseUrl && serviceKey && store) {
       const passConfigs = await restGet(
         supabaseUrl,
         serviceKey,
         `store_wallet_pass_configs?store_id=eq.${store.id}&select=*&limit=1`
       );
-      if (passConfigs[0]) walletConfig = passConfigs[0];
-      if (!walletConfig && store.fulfillment_settings?.wallet_pass_config) {
-        walletConfig = store.fulfillment_settings.wallet_pass_config;
+      if (passConfigs[0]) tableConfig = passConfigs[0];
+
+      const embeddedConfig = store.fulfillment_settings?.wallet_pass_config || null;
+      if (tableConfig && embeddedConfig) {
+        const tableTime = new Date(tableConfig.updated_at || 0).getTime();
+        const embeddedTime = new Date(embeddedConfig.updated_at || 0).getTime();
+        walletConfig = embeddedTime >= tableTime ? embeddedConfig : tableConfig;
+      } else {
+        walletConfig = embeddedConfig || tableConfig;
       }
     }
 

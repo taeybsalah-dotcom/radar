@@ -108,6 +108,7 @@ export async function onRequestGet(context: any): Promise<Response> {
 
     // جلب إعدادات بطاقة المحفظة الخاصة بالمتجر (الأختام، الألوان، إشعار القرب الجغرافي)
     let walletConfig: any = null;
+    let tableConfig: any = null;
     try {
       const passConfigs = await restGet(
         supabaseUrl,
@@ -115,14 +116,55 @@ export async function onRequestGet(context: any): Promise<Response> {
         `store_wallet_pass_configs?store_id=eq.${store.id}&select=*&limit=1`
       );
       if (passConfigs && passConfigs[0]) {
-        walletConfig = passConfigs[0];
+        tableConfig = passConfigs[0];
       }
     } catch (cfgErr) {
       console.warn('store_wallet_pass_configs query notice:', cfgErr);
     }
 
-    if (!walletConfig && store.fulfillment_settings?.wallet_pass_config) {
-      walletConfig = store.fulfillment_settings.wallet_pass_config;
+    const embeddedConfig = store.fulfillment_settings?.wallet_pass_config || null;
+
+    if (tableConfig && embeddedConfig) {
+      const tableTime = new Date(tableConfig.updated_at || 0).getTime();
+      const embeddedTime = new Date(embeddedConfig.updated_at || 0).getTime();
+      if (embeddedTime >= tableTime) {
+        walletConfig = embeddedConfig;
+        // مزامنة الجدول السحابي تلقائياً بالمفتاح السري
+        try {
+          await fetch(`${supabaseUrl}/rest/v1/store_wallet_pass_configs?store_id=eq.${store.id}`, {
+            method: 'PATCH',
+            headers: {
+              apikey: serviceKey,
+              Authorization: `Bearer ${serviceKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify({
+              loyalty_mode: embeddedConfig.loyalty_mode,
+              stamps_target: embeddedConfig.stamps_target,
+              stamps_reward_title: embeddedConfig.stamps_reward_title,
+              stamps_icon: embeddedConfig.stamps_icon,
+              background_color: embeddedConfig.background_color,
+              foreground_color: embeddedConfig.foreground_color,
+              label_color: embeddedConfig.label_color,
+              lockscreen_message_template: embeddedConfig.lockscreen_message_template,
+              proximity_radius_meters: embeddedConfig.proximity_radius_meters,
+              updated_at: embeddedConfig.updated_at || new Date().toISOString(),
+            }),
+          });
+        } catch {}
+      } else {
+        walletConfig = tableConfig;
+      }
+    } else {
+      walletConfig = embeddedConfig || tableConfig;
+    }
+
+    // دعم تمرير النمط مباشرة كمعامل استعلام سريع في حال التبديل اللحظي
+    const modeParam = url.searchParams.get('mode') || url.searchParams.get('loyalty_mode');
+    if (modeParam && ['stamps', 'points', 'tiers', 'cashback'].includes(modeParam)) {
+      if (!walletConfig) walletConfig = {};
+      walletConfig.loyalty_mode = modeParam;
     }
 
     // دعم تمرير الشعار كمعامل بديل أو تحويل المسار النسبي إلى رابط كامل
@@ -356,7 +398,8 @@ T8jHm7rv5Nq0+KO/TXq54gzH
       headers: {
         'Content-Type': 'application/vnd.apple.pkpass',
         'Content-Disposition': `inline; filename="${safeName}.pkpass"`,
-        'Cache-Control': 'no-store',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+        'Pragma': 'no-cache',
         ...CORS_HEADERS,
       },
     });
