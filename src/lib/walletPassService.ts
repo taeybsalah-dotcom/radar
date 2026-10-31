@@ -690,9 +690,10 @@ export class WalletPassService {
     store: Store,
     customer: Customer,
     tier?: Tier | null,
-    storeBranches: StoreBranch[] = []
+    storeBranches: StoreBranch[] = [],
+    configOverride?: StoreWalletPassConfig
   ): Promise<void> {
-    const config = this.getWalletConfig(store);
+    const config = configOverride || this.getWalletConfig(store);
     const params = new URLSearchParams();
     params.set('store_id', store.id || store.slug || '');
     if (config?.loyalty_mode) params.set('mode', config.loyalty_mode);

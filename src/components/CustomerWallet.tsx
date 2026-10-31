@@ -18,6 +18,7 @@ import {
   StoreBranch,
   CustomerSavedAddress,
   getStoreActiveModules,
+  StoreWalletPassConfig,
 } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
 import { getActiveTenantConfig } from '../config/tenant';
@@ -33,6 +34,7 @@ import { saveActiveStoreBranding } from '../lib/storeBranding';
 import { SandboxPaymentModal } from './SandboxPaymentModal';
 import { WalletPassModal } from './WalletPassModal';
 import { WalletPassService } from '../lib/walletPassService';
+import { SpinWheelModal, ScratchCardModal, StreakBanner } from './CustomerGamification';
 import {
   Building2,
   Sparkles,
@@ -421,6 +423,39 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [isAddingAppleWallet, setIsAddingAppleWallet] = useState(false);
   const [isAddingGoogleWallet, setIsAddingGoogleWallet] = useState(false);
 
+  // 🎮 محرك الأنماط والألعاب التفاعلية المصاحب (Loyalty Modes & Gamification Engine)
+  const [walletConfig, setWalletConfig] = useState<StoreWalletPassConfig>(() => {
+    return WalletPassService.getWalletConfig(store || initialStore);
+  });
+  const [showSpinWheel, setShowSpinWheel] = useState(false);
+  const [showScratchCard, setShowScratchCard] = useState(false);
+
+  useEffect(() => {
+    if (store?.id) {
+      const cfg = WalletPassService.getWalletConfig(store);
+      setWalletConfig(cfg);
+      WalletPassService.fetchCloudWalletConfig(store.id).then((cloudCfg) => {
+        if (cloudCfg) setWalletConfig(cloudCfg);
+      });
+    }
+  }, [store]);
+
+  useEffect(() => {
+    const unsub = LoyaltyEvents.listen((payload) => {
+      if (payload.type === 'STORE_UPDATED') {
+        LoyaltyService.getStoreById(store.id).then((freshStore) => {
+          if (freshStore) {
+            setStore(freshStore);
+            setWalletConfig(WalletPassService.getWalletConfig(freshStore));
+          }
+        });
+      }
+    });
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [store.id]);
+
   const handleDirectAddAppleWallet = async () => {
     const effectiveCustomer: Customer = customer || {
       id: 'guest',
@@ -435,7 +470,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
     setIsAddingAppleWallet(true);
     try {
-      await WalletPassService.downloadPassFile(store, effectiveCustomer, currentTierObj, branches);
+      await WalletPassService.downloadPassFile(store, effectiveCustomer, currentTierObj, branches, walletConfig);
       try {
         confetti({
           particleCount: 80,
@@ -3240,53 +3275,210 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              {/* Massive Points Display */}
-              <div className="relative z-10 my-3.5 text-center">
-                <div
-                  className={`text-[44px] sm:text-[50px] font-black font-mono leading-none ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`}
-                  style={{ color: brandColors.cardTextColor }}
-                >
-                  {customer?.wallet_balance?.toLocaleString() ?? '0'}
-                </div>
-                <div
-                  className="text-xs font-black mt-1"
-                  style={{ color: brandColors.cardSubtextColor }}
-                >
-                  نقطة ولاء
-                </div>
-              </div>
+              {/* 🎯 العرض المتكيف مع نمط الولاء المختار من التاجر (Stamps / Cashback / Tiers / Points) */}
+              {walletConfig.loyalty_mode === 'stamps' ? (() => {
+                const target = walletConfig.stamps_target || 6;
+                const balance = customer?.wallet_balance || 0;
+                const currentStamps = balance % target;
+                const icon = walletConfig.stamps_icon || '☕';
+                const rewardTitle = walletConfig.stamps_reward_title || 'مكافأة خاصة 🎁';
+                const remaining = Math.max(0, target - currentStamps);
 
-              {/* Progress Bar & XP Remaining */}
-              <div className="relative z-10 space-y-1.5 my-2">
-                <div
-                  className="w-full h-2.5 rounded-full overflow-hidden p-[2px] shadow-inner"
-                  style={{
-                    backgroundColor: brandColors.isPrimaryLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(255, 255, 255, 0.15)',
-                    border: `1px solid ${brandColors.cardBorderColor}`,
-                  }}
-                >
+                return (
+                  <div className="relative z-10 my-3 text-center animate-fadeIn">
+                    {/* Stamps Counter */}
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">{icon}</span>
+                      <span className="text-2xl sm:text-3xl font-black font-mono text-white">
+                        {currentStamps} <span className="text-base text-white/70 font-normal">من</span> {target}
+                      </span>
+                      <span className="text-xs font-bold text-amber-300 px-2 py-0.5 rounded-full bg-amber-400/20 border border-amber-400/30">
+                        بطاقة الأختام
+                      </span>
+                    </div>
+
+                    {/* Interactive Stamps Grid */}
+                    <div className="flex items-center justify-center gap-2 sm:gap-2.5 flex-wrap my-3">
+                      {Array.from({ length: target }).map((_, idx) => {
+                        const isStamped = idx < currentStamps;
+                        return (
+                          <div
+                            key={idx}
+                            className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center text-lg sm:text-xl font-bold transition-all duration-300 shadow-md ${
+                              isStamped
+                                ? 'bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 scale-105 shadow-amber-400/30 ring-2 ring-white/60'
+                                : 'bg-white/10 border-2 border-dashed border-white/25 text-white/40'
+                            }`}
+                          >
+                            {isStamped ? icon : (idx + 1)}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Reward Notification Banner */}
+                    <div className="p-2.5 rounded-xl bg-white/10 backdrop-blur-sm border border-white/15 text-center mt-2">
+                      <div className="text-xs font-bold text-white flex items-center justify-center gap-1">
+                        <span>🎁 الهدية:</span>
+                        <span className="text-amber-300 font-black">{rewardTitle}</span>
+                      </div>
+                      <div className="text-[10px] text-white/70 mt-0.5 font-medium">
+                        {remaining === 0 ? '🎉 مبارك! يمكنك استلام مكافأتك الآن من الكاشير' : `متبقي ${remaining} أختام لإكمال البطاقة والحصول على هديتك`}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })() : walletConfig.loyalty_mode === 'cashback' ? (
+                <div className="relative z-10 my-3.5 text-center animate-fadeIn">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 font-bold text-xs mb-2">
+                    <span>💳</span>
+                    <span>الرصيد المشحون مسبقاً</span>
+                  </div>
                   <div
-                    className="h-full rounded-full transition-all duration-700 shadow-sm"
-                    style={{
-                      width: `${progressPercent}%`,
-                      background: brandColors.progressGradient,
-                      boxShadow: `0 0 10px ${brandColors.progressGlow}`,
-                    }}
-                  ></div>
+                    className={`text-[42px] sm:text-[48px] font-black font-mono leading-none ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`}
+                    style={{ color: brandColors.cardTextColor }}
+                  >
+                    {(customer?.wallet_balance || 0).toFixed(2)}{' '}
+                    <span className="text-lg font-bold">ر.س</span>
+                  </div>
+                  <div className="text-xs font-bold mt-1 text-white/70">
+                    رصيدك المالي المتاح للاستخدام في {store.name}
+                  </div>
                 </div>
-                <div
-                  className="text-center text-[11px] font-bold"
-                  style={{ color: brandColors.cardSubtextColor }}
-                >
-                  {nextTierObj ? (
-                    <span>
-                      باقي <strong className={`font-mono font-black ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`} style={{ color: brandColors.cardTextColor }}>{xpNeeded} XP</strong> للوصول إلى {nextTierObj.tier_name}
-                    </span>
-                  ) : (
-                    <span>وصلت لأعلى مستوى ملكي 👑</span>
+              ) : walletConfig.loyalty_mode === 'tiers' ? (
+                <div className="relative z-10 my-3 text-center animate-fadeIn">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-400/30 text-amber-300 font-black text-xs mb-2">
+                    <span>👑</span>
+                    <span>{currentTierObj?.tier_name ? `فئة ${currentTierObj.tier_name}` : 'فئة VIP المميزة'}</span>
+                  </div>
+                  <div
+                    className={`text-[40px] sm:text-[46px] font-black font-mono leading-none ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`}
+                    style={{ color: brandColors.cardTextColor }}
+                  >
+                    {customer?.lifetime_xp?.toLocaleString() ?? customer?.wallet_balance?.toLocaleString() ?? '0'}{' '}
+                    <span className="text-sm font-bold text-white/70">XP</span>
+                  </div>
+                  <div className="text-xs font-bold mt-1 text-white/70">
+                    نقاط الخبرة والمستوى الملكي
+                  </div>
+
+                  {/* Progress Bar & XP Remaining */}
+                  <div className="space-y-1.5 my-2.5">
+                    <div
+                      className="w-full h-2.5 rounded-full overflow-hidden p-[2px] shadow-inner"
+                      style={{
+                        backgroundColor: brandColors.isPrimaryLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(255, 255, 255, 0.15)',
+                        border: `1px solid ${brandColors.cardBorderColor}`,
+                      }}
+                    >
+                      <div
+                        className="h-full rounded-full transition-all duration-700 shadow-sm"
+                        style={{
+                          width: `${progressPercent}%`,
+                          background: brandColors.progressGradient,
+                          boxShadow: `0 0 10px ${brandColors.progressGlow}`,
+                        }}
+                      ></div>
+                    </div>
+                    <div className="text-center text-[11px] font-bold text-white/70">
+                      {nextTierObj ? (
+                        <span>
+                          باقي <strong className="font-mono font-black text-amber-300">{xpNeeded} XP</strong> للوصول إلى {nextTierObj.tier_name}
+                        </span>
+                      ) : (
+                        <span>وصلت لأعلى مستوى ملكي 👑</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Points Mode */
+                <>
+                  <div className="relative z-10 my-3.5 text-center animate-fadeIn">
+                    <div
+                      className={`text-[44px] sm:text-[50px] font-black font-mono leading-none ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`}
+                      style={{ color: brandColors.cardTextColor }}
+                    >
+                      {customer?.wallet_balance?.toLocaleString() ?? '0'}
+                    </div>
+                    <div
+                      className="text-xs font-black mt-1"
+                      style={{ color: brandColors.cardSubtextColor }}
+                    >
+                      نقطة ولاء
+                    </div>
+                  </div>
+
+                  {/* Progress Bar & XP Remaining */}
+                  <div className="relative z-10 space-y-1.5 my-2">
+                    <div
+                      className="w-full h-2.5 rounded-full overflow-hidden p-[2px] shadow-inner"
+                      style={{
+                        backgroundColor: brandColors.isPrimaryLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(255, 255, 255, 0.15)',
+                        border: `1px solid ${brandColors.cardBorderColor}`,
+                      }}
+                    >
+                      <div
+                        className="h-full rounded-full transition-all duration-700 shadow-sm"
+                        style={{
+                          width: `${progressPercent}%`,
+                          background: brandColors.progressGradient,
+                          boxShadow: `0 0 10px ${brandColors.progressGlow}`,
+                        }}
+                      ></div>
+                    </div>
+                    <div
+                      className="text-center text-[11px] font-bold"
+                      style={{ color: brandColors.cardSubtextColor }}
+                    >
+                      {nextTierObj ? (
+                        <span>
+                          باقي <strong className={`font-mono font-black ${!brandColors.isPrimaryLight ? 'keep-white' : ''}`} style={{ color: brandColors.cardTextColor }}>{xpNeeded} XP</strong> للوصول إلى {nextTierObj.tier_name}
+                        </span>
+                      ) : (
+                        <span>وصلت لأعلى مستوى ملكي 👑</span>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* 🎡 محرك الألعاب التفاعلية المصاحب (Gamification Engine Action Strip) */}
+              {(walletConfig.enable_spin_wheel || walletConfig.enable_scratch_card || walletConfig.enable_streaks) && (
+                <div className="relative z-10 my-3 pt-2.5 border-t border-white/10 space-y-2">
+                  <div className="flex items-center gap-2">
+                    {walletConfig.enable_spin_wheel && (
+                      <button
+                        type="button"
+                        onClick={() => setShowSpinWheel(true)}
+                        className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500/25 via-amber-400/20 to-orange-500/25 hover:from-amber-500/40 hover:to-orange-500/40 border border-amber-400/40 text-amber-300 font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition active:scale-95 animate-pulse"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                        <span>عجلة الحظ 🎡</span>
+                      </button>
+                    )}
+
+                    {walletConfig.enable_scratch_card && (
+                      <button
+                        type="button"
+                        onClick={() => setShowScratchCard(true)}
+                        className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-500/25 via-teal-400/20 to-emerald-500/25 hover:from-emerald-500/40 hover:to-teal-500/40 border border-emerald-400/40 text-emerald-300 font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition active:scale-95"
+                      >
+                        <Gift className="w-3.5 h-3.5 text-emerald-300" />
+                        <span>اكشط واربح 🎁</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {walletConfig.enable_streaks && (
+                    <StreakBanner
+                      currentStreak={customer?.lifetime_xp ? Math.min(walletConfig.streak_target_days || 3, Math.max(1, Math.floor(customer.lifetime_xp / 100))) : 1}
+                      targetDays={walletConfig.streak_target_days || 3}
+                      rewardTitle={walletConfig.streak_reward_title || 'مشروب مجاني'}
+                    />
                   )}
                 </div>
-              </div>
+              )}
 
               {/* Bottom Interactive Pill Buttons */}
               <div className="relative z-10 mt-4 pt-1 flex items-center justify-between gap-2.5">
@@ -8798,6 +8990,32 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         storeBranches={branches}
         initialPlatform={walletPassPlatform}
       />
+
+      {/* 🎡 محرك الألعاب التفاعلية المصاحب (Gamification Modals) */}
+      {walletConfig.enable_spin_wheel && (
+        <SpinWheelModal
+          isOpen={showSpinWheel}
+          onClose={() => setShowSpinWheel(false)}
+          prizes={walletConfig.spin_wheel_prizes || []}
+          store={store}
+          customer={customer}
+          onPrizeWon={(prize) => {
+            if (prize.reward_type === 'points') {
+              const pts = Number(prize.reward_value) || 50;
+              setCustomer((prev) => (prev ? { ...prev, wallet_balance: (prev.wallet_balance || 0) + pts } : null));
+            }
+          }}
+        />
+      )}
+
+      {walletConfig.enable_scratch_card && (
+        <ScratchCardModal
+          isOpen={showScratchCard}
+          onClose={() => setShowScratchCard(false)}
+          rewardTitle={walletConfig.scratch_card_reward_title || 'خصم 20% بمناسبة زيارتك 🎁'}
+          store={store}
+        />
+      )}
 
     </div>
   );
