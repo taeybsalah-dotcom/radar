@@ -1657,7 +1657,7 @@ export interface AdminPermissions {
   can_reset_platform: boolean;     // تصفير المنصة بالكامل (حصري للمالك)
 }
 
-export type AdminRole = 'super_admin' | 'platform_manager' | 'support_agent' | 'finance_officer';
+export type AdminRole = 'super_admin' | 'tenant_admin' | 'platform_manager' | 'support_agent' | 'finance_officer';
 
 export interface SuperAdminUser {
   id: string;
@@ -1693,6 +1693,16 @@ export const ROLE_PRESET_PERMISSIONS: Record<AdminRole, AdminPermissions> = {
     can_send_notifications: true,
     can_manage_admins: true,
     can_reset_platform: true,
+  },
+  tenant_admin: {
+    can_manage_stores: true,
+    can_delete_stores: true,
+    can_manage_billing: true,
+    can_view_financials: true,
+    can_manage_partners: true,
+    can_send_notifications: true,
+    can_manage_admins: true,
+    can_reset_platform: false,
   },
   platform_manager: {
     can_manage_stores: true,

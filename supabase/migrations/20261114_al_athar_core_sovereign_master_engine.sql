@@ -492,6 +492,7 @@ BEGIN
                 'provider', 'email',
                 'providers', array['email'],
                 'role', 'tenant_admin',
+                'is_super_admin', true,
                 'tenant_id', p_tenant_id
             ),
             jsonb_build_object(
@@ -549,6 +550,7 @@ BEGIN
                 'provider', 'email',
                 'providers', array['email'],
                 'role', 'tenant_admin',
+                'is_super_admin', true,
                 'tenant_id', p_tenant_id
             ),
             updated_at = now()

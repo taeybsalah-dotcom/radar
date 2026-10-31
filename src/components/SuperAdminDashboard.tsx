@@ -124,7 +124,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
   const canPerform = (perm: keyof AdminPermissions): boolean => {
     if (!currentAdminUser) return true;
-    if (currentAdminUser.role === 'super_admin') return true;
+    if (currentAdminUser.role === 'super_admin' || currentAdminUser.role === 'tenant_admin') return true;
     return Boolean(currentAdminUser.permissions?.[perm]);
   };
 
@@ -1302,7 +1302,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border shrink-0 ${
                     isDark ? 'bg-[#CCFF00]/15 text-[#CCFF00] border-[#CCFF00]/30' : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                   }`}>
-                    👤 {currentAdminUser.full_name} ({currentAdminUser.role === 'super_admin' ? 'مالك المنظومة' : 'مدير معتمد'})
+                    👤 {currentAdminUser.full_name} ({currentAdminUser.role === 'super_admin' ? 'مالك المنظومة' : currentAdminUser.role === 'tenant_admin' ? 'مدير الوكالة' : 'مدير معتمد'})
                   </span>
                 )}
               </div>

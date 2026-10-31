@@ -1116,14 +1116,14 @@ export const LoyaltyService = {
 
       // فحص أمني حصري للـ Claims في app_metadata (منع التلاعب عبر user_metadata)
       const role = session.user.app_metadata?.role;
-      const isSuper = role === 'super_admin' || (session.user.app_metadata as any)?.is_super_admin === true;
+      const isSuper = role === 'super_admin' || role === 'tenant_admin' || (session.user.app_metadata as any)?.is_super_admin === true;
       const fallbackUser: SuperAdminUser = {
         id: session.user.id,
         user_id: session.user.id,
         email: session.user.email || '',
-        full_name: (session.user.user_metadata as any)?.full_name || 'مالك المنصة',
+        full_name: (session.user.user_metadata as any)?.full_name || (role === 'tenant_admin' ? 'مسؤول المنصة' : 'مالك المنصة'),
         phone: (session.user.user_metadata as any)?.phone || '',
-        role: 'super_admin',
+        role: (role === 'tenant_admin' ? 'tenant_admin' : 'super_admin') as AdminRole,
         permissions: DEFAULT_SUPER_ADMIN_PERMISSIONS,
         is_active: true,
       };
@@ -1131,7 +1131,7 @@ export const LoyaltyService = {
         authenticated: Boolean(session),
         is_super_admin: Boolean(isSuper),
         email: session.user.email,
-        role: 'super_admin',
+        role: (role === 'tenant_admin' ? 'tenant_admin' : 'super_admin') as AdminRole,
         permissions: DEFAULT_SUPER_ADMIN_PERMISSIONS,
         user: fallbackUser,
       };

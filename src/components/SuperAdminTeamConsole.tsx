@@ -49,6 +49,11 @@ const ROLE_LABELS: Record<AdminRole, { name: string; badge: string; icon: any }>
     badge: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
     icon: ShieldCheck,
   },
+  tenant_admin: {
+    name: 'مسؤول الوكالة (Agency Admin)',
+    badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+    icon: ShieldCheck,
+  },
   platform_manager: {
     name: 'مدير عام المنصة (Manager)',
     badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
