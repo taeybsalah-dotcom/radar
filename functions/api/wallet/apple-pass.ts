@@ -57,36 +57,92 @@ export async function onRequestGet(context: any): Promise<Response> {
   }
 
   const url = new URL(request.url);
-  const storeId = url.searchParams.get('store_id') || '';
-  const customerId = url.searchParams.get('customer_id') || '';
-  if (!UUID_RE.test(storeId) || !UUID_RE.test(customerId)) {
-    return errorResponse(400, 'معرّف المتجر أو العميل غير صالح');
+  const storeParam = url.searchParams.get('store_id') || url.searchParams.get('store') || '';
+  const customerIdParam = url.searchParams.get('customer_id') || url.searchParams.get('customerId') || '';
+  const phoneParam = url.searchParams.get('phone') || '';
+  const nameParam = url.searchParams.get('name') || '';
+
+  if (!storeParam) {
+    return errorResponse(400, 'معرّف المتجر مطلوب');
   }
 
   try {
-    // 1. المتجر
+    // 1. جلب بيانات المتجر (يدعم الـ UUID أو الـ Slug)
+    const isStoreUuid = UUID_RE.test(storeParam);
+    const storeQuery = isStoreUuid
+      ? `id=eq.${storeParam}`
+      : `slug=eq.${encodeURIComponent(storeParam)}`;
+
     const stores = await restGet(
       supabaseUrl,
       serviceKey,
-      `stores?id=eq.${storeId}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone&limit=1`
+      `stores?${storeQuery}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone&limit=1`
     );
     const store = stores[0];
     if (!store) return errorResponse(404, 'المتجر غير موجود');
 
-    // 2. العميل (لازم يتبع نفس المتجر)
-    const customers = await restGet(
-      supabaseUrl,
-      serviceKey,
-      `store_customers?id=eq.${customerId}&store_id=eq.${storeId}&select=*&limit=1`
-    );
-    const row = customers[0];
-    if (!row) return errorResponse(404, 'العميل غير موجود في هذا المتجر');
-    const customer = {
-      id: row.id,
-      name: row.name ?? null,
-      phone: row.phone ?? null,
-      points_balance: Number(row.points_balance ?? row.wallet_balance ?? 0),
+    // 2. معالجة بيانات العميل (بحث في قاعدة البيانات مع دعم Fallback فوري)
+    let customer: { id: string; name: string | null; phone: string | null; points_balance: number } = {
+      id: customerIdParam || 'guest',
+      name: nameParam || 'عميل مميز',
+      phone: phoneParam || null,
+      points_balance: 0,
     };
+
+    try {
+      let row: any = null;
+
+      // أ) محاولة البحث بمعرّف العميل أولاً
+      if (customerIdParam && UUID_RE.test(customerIdParam)) {
+        const byIdAndStore = await restGet(
+          supabaseUrl,
+          serviceKey,
+          `store_customers?id=eq.${customerIdParam}&store_id=eq.${store.id}&select=*&limit=1`
+        );
+        if (byIdAndStore[0]) {
+          row = byIdAndStore[0];
+        } else {
+          const byId = await restGet(
+            supabaseUrl,
+            serviceKey,
+            `store_customers?id=eq.${customerIdParam}&select=*&limit=1`
+          );
+          if (byId[0]) row = byId[0];
+        }
+      }
+
+      // ب) إذا لم نجد العميل ووصل رقم الجوال، نبحث برقم الجوال
+      if (!row && phoneParam) {
+        const cleanPhone = phoneParam.replace(/[^\d+]/g, '');
+        const byPhoneAndStore = await restGet(
+          supabaseUrl,
+          serviceKey,
+          `store_customers?store_id=eq.${store.id}&phone=eq.${encodeURIComponent(cleanPhone)}&select=*&limit=1`
+        );
+        if (byPhoneAndStore[0]) {
+          row = byPhoneAndStore[0];
+        } else {
+          const byPhone = await restGet(
+            supabaseUrl,
+            serviceKey,
+            `store_customers?phone=eq.${encodeURIComponent(cleanPhone)}&select=*&limit=1`
+          );
+          if (byPhone[0]) row = byPhone[0];
+        }
+      }
+
+      // ج) إذا وُجد العميل في السجلات، نعتمد بياناته ورصيده الحقيقي
+      if (row) {
+        customer = {
+          id: row.id,
+          name: row.name || nameParam || 'عميل مميز',
+          phone: row.phone || phoneParam || null,
+          points_balance: Number(row.points_balance ?? row.wallet_balance ?? 0),
+        };
+      }
+    } catch (custLookupErr) {
+      console.warn('Customer lookup error (continuing with base info):', custLookupErr);
+    }
 
     // 3. بيانات شهادة آبل (سرية، تُقرأ بمفتاح السيرفر فقط)
     const integrations = await restGet(

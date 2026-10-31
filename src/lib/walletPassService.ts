@@ -605,7 +605,12 @@ export class WalletPassService {
     tier?: Tier | null,
     storeBranches: StoreBranch[] = []
   ): Promise<void> {
-    const passUrl = `/api/wallet/apple-pass?store_id=${encodeURIComponent(store.id)}&customer_id=${encodeURIComponent(customer.id)}`;
+    const params = new URLSearchParams();
+    params.set('store_id', store.id || store.slug || '');
+    if (customer?.id) params.set('customer_id', customer.id);
+    if (customer?.phone) params.set('phone', customer.phone);
+    if (customer?.name) params.set('name', customer.name);
+    const passUrl = `/api/wallet/apple-pass?${params.toString()}`;
 
     // 1. تسجيل الجهاز افتراضياً
     const passSerial = customer.phone
