@@ -2133,17 +2133,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
 
   const isCouponFrozen = !timeLockCheck.allowed;
 
+  const storeCode = (
+    store.slug ||
+    store.name ||
+    'STORE'
+  )
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 10) || 'STORE';
+
+  const unifiedBarcodeAltText = customer?.phone
+    ? `${storeCode}-${customer.phone.slice(-6)}`
+    : `${storeCode}-VIP`;
+
   const qrDataPayload = isCouponFrozen
     ? 'FROZEN'
     : selectedCouponForQR
     ? selectedCouponForQR.coupon_code
     : customer
-    ? JSON.stringify({
-        t: 'PASS',
-        s: store.id,
-        p: customer.phone,
-        tk: currentQRToken?.token_id,
-      })
+    ? `${storeCode}:LOYALTY:${store.id}:${customer.id}:${customer.phone || 'GUEST'}`
     : '';
 
   const sortedTiers = [...tiers].sort((a, b) => a.required_xp - b.required_xp);
@@ -3713,39 +3721,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </div>
               </div>
 
-              {/* Countdown Timer and Refresh */}
-              <div className={`flex items-center justify-center gap-2 text-xs ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
-                <span>يتجدد خلال</span>
-                <strong
-                  className="px-2 py-0.5 rounded-lg font-black font-mono"
-                  style={{
-                    backgroundColor: `${safeAccentFill}18`,
-                    color: safeAccentText,
-                  }}
-                >
-                  {timeLeft} ثانية
-                </strong>
-                <span>•</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (customer) {
-                      regenerateToken(customer, null);
-                      playBeepSound('success');
-                    }
-                  }}
-                  className={`transition flex items-center gap-1 font-bold hover:underline ${
-                    isDarkTheme ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>تحديث الرمز</span>
-                </button>
+              {/* 🔒 بطاقة الباركود الرقمية الموحدة مع محفظة أبل وقوقل */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-500 font-bold bg-emerald-500/10 py-1.5 px-3 rounded-full border border-emerald-500/20 max-w-xs mx-auto">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>رمز المحفظة الموحد (دائم ومعتمد) 🔒</span>
+                </div>
+                <p className={`text-xs font-mono font-bold tracking-wider ${isDarkTheme ? 'text-amber-400' : 'text-amber-600'}`} dir="ltr">
+                  {unifiedBarcodeAltText}
+                </p>
               </div>
-
-              <p className={`text-[11px] font-bold ${isDarkTheme ? 'text-slate-500' : 'text-slate-600'}`} dir="ltr">
-                VIP-{customer?.phone ? customer.phone.slice(-6) : 'DEMO01'}
-              </p>
             </div>
           )}
 
@@ -6968,11 +6953,9 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               />
             </div>
 
-            <div className={`text-xs ${isDarkTheme ? 'text-slate-300' : 'text-slate-600'}`}>
-              <span>يتحدث الرمز خلال: </span>
-              <strong className="font-bold font-mono" style={{ color: safeAccentText }}>
-                {timeLeft} ثانية
-              </strong>
+            <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-500 font-bold bg-emerald-500/10 py-1.5 px-3 rounded-full border border-emerald-500/20 max-w-xs mx-auto">
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span dir="ltr" className="font-mono tracking-wider">{unifiedBarcodeAltText}</span>
             </div>
 
             <button
