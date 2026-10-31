@@ -87,7 +87,10 @@ function resolveSupabaseCredentials(env: Env, requestHeaders?: Headers) {
     env.VITE_SUPABASE_ANON_KEY ||
     requestHeaders?.get('x-supabase-anon-key') ||
     'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY || '';
+  const serviceRoleKey =
+    env.SUPABASE_SERVICE_ROLE_KEY ||
+    (env as any).SUPABASE_SERVICE_ROLE_KE ||
+    '';
   const masterToken = env.SOVEREIGN_MASTER_TOKEN || '';
   const webhookSecret =
     env.PAYMENT_WEBHOOK_SECRET ||

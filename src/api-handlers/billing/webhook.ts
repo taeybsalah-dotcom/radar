@@ -69,6 +69,7 @@ export default async function handler(req: any, res: any) {
       'https://zagpvflyizbmzsbmhnts.supabase.co';
     const activeKey =
       process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      (process.env as any).SUPABASE_SERVICE_ROLE_KE ||
       process.env.SUPABASE_ANON_KEY ||
       process.env.VITE_SUPABASE_ANON_KEY;
     const masterToken =
