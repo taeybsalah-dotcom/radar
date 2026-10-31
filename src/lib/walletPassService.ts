@@ -18,6 +18,45 @@ export const DEFAULT_SPIN_WHEEL_PRIZES: SpinWheelPrize[] = [
   { id: 'p4', label: 'حظ أوفر في زيارتك القادمة 🎯', reward_type: 'no_luck', reward_value: 0, probability_weight: 20, color: '#64748B' },
 ];
 
+/**
+ * تحويل شعار المتجر إلى صيغة PNG نقية لضمان قبولها في Apple PassKit
+ */
+async function rasterizeLogoToPngDataUrl(logoUrl: string): Promise<string | null> {
+  if (typeof window === 'undefined' || !logoUrl) return null;
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const maxDim = 80;
+          let w = img.naturalWidth || img.width || maxDim;
+          let h = img.naturalHeight || img.height || maxDim;
+          if (w > maxDim || h > maxDim) {
+            const scale = Math.min(maxDim / w, maxDim / h);
+            w = Math.round(w * scale);
+            h = Math.round(h * scale);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(w, 20);
+          canvas.height = Math.max(h, 20);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(null);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/png');
+          resolve(dataUrl);
+        } catch {
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = logoUrl;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 export class WalletPassService {
   /**
    * جلب إعدادات بطاقة المحفظة للمتجر (سحابياً ومحلياً مع القيم الافتراضية الذكية)
@@ -610,7 +649,18 @@ export class WalletPassService {
     if (customer?.id) params.set('customer_id', customer.id);
     if (customer?.phone) params.set('phone', customer.phone);
     if (customer?.name) params.set('name', customer.name);
-    if (store?.logo_url) params.set('logo_url', store.logo_url);
+    if (store?.logo_url) {
+      try {
+        const pngData = await rasterizeLogoToPngDataUrl(store.logo_url);
+        if (pngData && pngData.startsWith('data:image/png')) {
+          params.set('logo_url', pngData);
+        } else {
+          params.set('logo_url', store.logo_url);
+        }
+      } catch {
+        params.set('logo_url', store.logo_url);
+      }
+    }
     params.set('_t', Date.now().toString());
     const passUrl = `/api/wallet/apple-pass?${params.toString()}`;
 

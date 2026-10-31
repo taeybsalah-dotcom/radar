@@ -108,7 +108,7 @@ export async function onRequestGet(context: any): Promise<Response> {
 
     // دعم تمرير الشعار كمعامل بديل أو تحويل المسار النسبي إلى رابط كامل
     const logoParam = url.searchParams.get('logo_url') || url.searchParams.get('logo');
-    if (logoParam && !store.logo_url) {
+    if (logoParam) {
       store.logo_url = logoParam;
     }
     if (store.logo_url && store.logo_url.startsWith('/')) {

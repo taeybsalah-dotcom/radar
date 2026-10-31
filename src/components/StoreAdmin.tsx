@@ -1408,7 +1408,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
     setIsCompressing(true);
     try {
-      const result = await compressImage(file, 400, 400, 0.8);
+      const result = await compressImage(file, 400, 400, 0.85, 'image/png', 'logos');
       setStoreLogoUrl(result.dataUrl);
       setLogoStats(result);
     } catch (err: any) {
