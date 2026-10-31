@@ -511,10 +511,23 @@ export async function executeMasterProvisionTenantAdmin(
   password: string
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
+    const cleanEmail = email.trim().toLowerCase();
+
+    // 1. Try GoTrue native signup first (if new user, GoTrue sets up native tables)
+    try {
+      await masterSupabase.auth.signUp({
+        email: cleanEmail,
+        password: password,
+      });
+    } catch (e) {
+      // Ignore if user already exists or needs schema sanitize
+    }
+
+    // 2. Call Sovereign RPC to confirm email, set role/tenant_id, sanitize NULL columns, and update password
     const { data, error } = await masterSupabase.rpc('master_provision_tenant_admin', {
       p_master_token: SOVEREIGN_MASTER_TOKEN,
       p_tenant_id: tenantId,
-      p_email: email.trim().toLowerCase(),
+      p_email: cleanEmail,
       p_password: password,
     });
 
