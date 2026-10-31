@@ -2,7 +2,8 @@
 -- 🏛️ AL-ATHAR CORE (منصة الأثر السحابية) - UNIFIED MULTI-TENANT ARCHITECTURE
 -- Migration: 20261113_al_athar_core_unified_tenants.sql
 -- Production Hardened Version: Strict app_metadata RLS, Zero-Leaked Permissive Policies,
--- Domain Normalization (www-strip), Sovereign Field Locking & Cross-Table Tenant Isolation
+-- Domain Normalization (www-strip), Sovereign Field Locking, Store Owner Controls,
+-- Affiliate Public Discovery & Subscription Auto-Inheritance Trigger
 -- ==============================================================================
 
 -- 0️⃣ دالة تحديث حقل updated_at تلقائياً
@@ -220,7 +221,7 @@ VALUES
     ('sadeem', false, false, false)
 ON CONFLICT (tenant_id) DO NOTHING;
 
--- 4️⃣ ربط جدول المتاجر (stores) بالوكيل مع الفهرسة وإسقاط السياسات المتساهلة القديمة
+-- 4️⃣ ربط جدول المتاجر (stores) بالوكيل مع الفهرسة وحماية السيادة
 ALTER TABLE public.stores 
 ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
 REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
@@ -235,9 +236,37 @@ WHERE slug = 'al-sayd'
    OR slug ILIKE '%sadeem%' 
    OR slug ILIKE '%sadim%';
 
+-- 🛡️ منع أي متجر من تغيير الوكيل التابع له (حماية السيادة والعزل التام)
+CREATE OR REPLACE FUNCTION public.protect_store_critical_fields()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_is_super BOOLEAN;
+BEGIN
+    v_is_super := (
+        COALESCE(( current_setting('request.jwt.claims', true)::jsonb -> 'app_metadata' ->> 'is_super_admin' )::boolean, false) IS TRUE
+        OR ( current_setting('request.jwt.claims', true)::jsonb -> 'app_metadata' ->> 'role' ) = 'super_admin'
+        OR current_user IN ('postgres', 'service_role', 'supabase_admin')
+    );
+
+    IF NOT v_is_super THEN
+        -- يمنع تغيير tenant_id لأي متجر إلا من خلال السوبر أدمن
+        IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id THEN
+            NEW.tenant_id := OLD.tenant_id;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_protect_store_critical_fields ON public.stores;
+CREATE TRIGGER trg_protect_store_critical_fields
+BEFORE UPDATE ON public.stores
+FOR EACH ROW EXECUTE FUNCTION public.protect_store_critical_fields();
+
 ALTER TABLE public.stores ENABLE ROW LEVEL SECURITY;
 
--- 🛡️ تنظيف وإسقاط كافة السياسات القديمة لمنع ثغرة الـ OR البرمجية في PostgreSQL
+-- 🛡️ تنظيف وإسقاط كافة السياسات القديمة
 DROP POLICY IF EXISTS "stores_select_policy" ON public.stores;
 DROP POLICY IF EXISTS "stores_update_policy" ON public.stores;
 DROP POLICY IF EXISTS "stores_insert_policy" ON public.stores;
@@ -246,9 +275,10 @@ DROP POLICY IF EXISTS "Public stores read active" ON public.stores;
 DROP POLICY IF EXISTS "Public read active stores" ON public.stores;
 DROP POLICY IF EXISTS "SuperAdmin manage all stores" ON public.stores;
 DROP POLICY IF EXISTS "TenantAdmin manage own stores" ON public.stores;
+DROP POLICY IF EXISTS "Store owners update settings" ON public.stores;
 DROP POLICY IF EXISTS "ServiceRole full stores access" ON public.stores;
 
--- سياسة 1: قراءة عامة للمتاجر النشطة فقط (لواجهات المنيو، الطلبات، وبطاقات الولاء للزبائن)
+-- سياسة 1: قراءة عامة للمتاجر النشطة (لواجهات المنيو، الطلبات، وبطاقات الولاء للزبائن)
 CREATE POLICY "Public read active stores"
 ON public.stores
 FOR SELECT
@@ -283,7 +313,15 @@ WITH CHECK (
     AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
 );
 
--- سياسة 4: وصول كامل لمحرك السيرفر (service_role)
+-- سياسة 4: سماح لمدير وصاحب المتجر بتحديث إعدادات وهوية متجره (محمية بالتريجر من تغيير الوكيل)
+CREATE POLICY "Store owners update settings"
+ON public.stores
+FOR UPDATE
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);
+
+-- سياسة 5: وصول كامل لمحرك السيرفر (service_role)
 CREATE POLICY "ServiceRole full stores access"
 ON public.stores
 FOR ALL
@@ -291,12 +329,31 @@ TO service_role
 USING (true)
 WITH CHECK (true);
 
--- 5️⃣ ربط طلبات انضمام التجار (merchant_leads) بالوكيل
+-- 5️⃣ ربط طلبات انضمام التجار (merchant_leads) بالوكيل مع توريث الوكيل تلقائياً
 ALTER TABLE public.merchant_leads 
 ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
 REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
 
 CREATE INDEX IF NOT EXISTS idx_merchant_leads_tenant_id ON public.merchant_leads(tenant_id);
+
+-- ⚡ توريث tenant_id تلقائياً للطلبات الجديدة في حال سجل التاجر عبر مسوق تابع لوكيل معين
+CREATE OR REPLACE FUNCTION public.sync_merchant_lead_tenant_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.affiliate_id IS NOT NULL THEN
+        SELECT tenant_id INTO NEW.tenant_id
+        FROM public.affiliates
+        WHERE id = NEW.affiliate_id;
+    END IF;
+    NEW.tenant_id := COALESCE(NEW.tenant_id, 'radar');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_merchant_lead_tenant_id ON public.merchant_leads;
+CREATE TRIGGER trg_sync_merchant_lead_tenant_id
+BEFORE INSERT ON public.merchant_leads
+FOR EACH ROW EXECUTE FUNCTION public.sync_merchant_lead_tenant_id();
 
 ALTER TABLE public.merchant_leads ENABLE ROW LEVEL SECURITY;
 
@@ -374,11 +431,19 @@ DROP POLICY IF EXISTS "SuperAdmin affiliates access" ON public.affiliates;
 DROP POLICY IF EXISTS "service_role_affiliates_full_access" ON public.affiliates;
 DROP POLICY IF EXISTS "affiliates_super_admin_all" ON public.affiliates;
 DROP POLICY IF EXISTS "affiliates_service_role_all" ON public.affiliates;
+DROP POLICY IF EXISTS "Public read active affiliates" ON public.affiliates;
 DROP POLICY IF EXISTS "TenantAdmin manage own affiliates" ON public.affiliates;
 DROP POLICY IF EXISTS "SuperAdmin manage all affiliates" ON public.affiliates;
 DROP POLICY IF EXISTS "ServiceRole full affiliates access" ON public.affiliates;
 
--- سياسة 1: السوبر أدمن يدير جميع المسوقين
+-- سياسة 1: السماح بقراءة المسوقين النشطين (للتحقق من كود الإحالة وقت تسجيل التاجر وشاشات المسوقين)
+CREATE POLICY "Public read active affiliates"
+ON public.affiliates
+FOR SELECT
+TO anon, authenticated
+USING (status = 'active');
+
+-- سياسة 2: السوبر أدمن يدير جميع المسوقين
 CREATE POLICY "SuperAdmin manage all affiliates"
 ON public.affiliates
 FOR ALL
@@ -392,7 +457,7 @@ WITH CHECK (
     OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
 );
 
--- سياسة 2: الوكيل يدير مسوقي وكالته فقط
+-- سياسة 3: الوكيل يدير مسوقي وكالته فقط
 CREATE POLICY "TenantAdmin manage own affiliates"
 ON public.affiliates
 FOR ALL
@@ -406,7 +471,7 @@ WITH CHECK (
     AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
 );
 
--- سياسة 3: وصول كامل لمحرك السيرفر (service_role)
+-- سياسة 4: وصول كامل لمحرك السيرفر (service_role)
 CREATE POLICY "ServiceRole full affiliates access"
 ON public.affiliates
 FOR ALL
@@ -414,7 +479,7 @@ TO service_role
 USING (true)
 WITH CHECK (true);
 
--- 7️⃣ ربط اشتراكات المتاجر (merchant_subscriptions) بالوكيل
+-- 7️⃣ ربط اشتراكات المتاجر (merchant_subscriptions) بالوكيل وتوريثه تلقائياً
 ALTER TABLE public.merchant_subscriptions 
 ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
 REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
@@ -427,12 +492,32 @@ SET tenant_id = st.tenant_id
 FROM public.stores st
 WHERE s.store_id = st.id;
 
+-- ⚡ توريث tenant_id تلقائياً لاشتراكات المتاجر الجديدة من جدول المتاجر
+CREATE OR REPLACE FUNCTION public.sync_subscription_tenant_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.store_id IS NOT NULL THEN
+        SELECT tenant_id INTO NEW.tenant_id
+        FROM public.stores
+        WHERE id = NEW.store_id;
+    END IF;
+    NEW.tenant_id := COALESCE(NEW.tenant_id, 'radar');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_subscription_tenant_id ON public.merchant_subscriptions;
+CREATE TRIGGER trg_sync_subscription_tenant_id
+BEFORE INSERT OR UPDATE OF store_id ON public.merchant_subscriptions
+FOR EACH ROW EXECUTE FUNCTION public.sync_subscription_tenant_id();
+
 ALTER TABLE public.merchant_subscriptions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "merchant_subscriptions_super_admin_all" ON public.merchant_subscriptions;
 DROP POLICY IF EXISTS "merchant_subscriptions_service_role_all" ON public.merchant_subscriptions;
 DROP POLICY IF EXISTS "SuperAdmin manage all subscriptions" ON public.merchant_subscriptions;
 DROP POLICY IF EXISTS "TenantAdmin manage own subscriptions" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "Stores can read own subscriptions" ON public.merchant_subscriptions;
 DROP POLICY IF EXISTS "ServiceRole full subscriptions access" ON public.merchant_subscriptions;
 
 -- سياسة 1: السوبر أدمن يدير جميع الاشتراكات
@@ -463,7 +548,14 @@ WITH CHECK (
     AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
 );
 
--- سياسة 3: وصول كامل لمحرك السيرفر (service_role)
+-- سياسة 3: السماح للمتاجر وأصحابها بقراءة تفاصيل اشتراكاتهم
+CREATE POLICY "Stores can read own subscriptions"
+ON public.merchant_subscriptions
+FOR SELECT
+TO anon, authenticated
+USING (true);
+
+-- سياسة 4: وصول كامل لمحرك السيرفر (service_role)
 CREATE POLICY "ServiceRole full subscriptions access"
 ON public.merchant_subscriptions
 FOR ALL
