@@ -384,14 +384,28 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
       if (rawLogo.startsWith('data:image/')) {
         const comma = rawLogo.indexOf(',');
         if (comma !== -1) {
-          const b64 = rawLogo.slice(comma + 1);
-          const rawBin = forge.util.decode64(b64);
-          storeLogoU8 = binaryStringToBytes(rawBin);
+          let b64 = rawLogo.slice(comma + 1).trim().replace(/\s+/g, '+');
+          while (b64.length % 4 !== 0) b64 += '=';
+          const rawBin = typeof atob === 'function' ? atob(b64) : forge.util.decode64(b64);
+          const bytes = binaryStringToBytes(rawBin);
+          const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47;
+          const isJpg = bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF;
+          if (isPng || isJpg) {
+            storeLogoU8 = bytes;
+          }
         }
       } else if (/^https?:\/\//i.test(rawLogo)) {
         const imgRes = await fetch(rawLogo, {
+          cf: {
+            image: {
+              format: 'png',
+              width: 160,
+              height: 160,
+              fit: 'contain',
+            },
+          },
           headers: { Accept: 'image/png,image/jpeg,image/*;q=0.9' },
-        });
+        } as any);
         if (imgRes.ok) {
           const ab = await imgRes.arrayBuffer();
           if (ab.byteLength > 100 && ab.byteLength < 5 * 1024 * 1024) {
