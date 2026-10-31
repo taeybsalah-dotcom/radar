@@ -26,7 +26,7 @@ function errorResponse(status: number, message: string): Response {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
       ...CORS_HEADERS,
     },
   });
@@ -148,9 +148,13 @@ export async function onRequestGet(context: any): Promise<Response> {
     const integrations = await restGet(
       supabaseUrl,
       serviceKey,
-      'platform_integrations?select=apple_wallet_enabled,apple_pass_type_id,apple_team_id,apple_cert_p12_base64,apple_cert_password&order=created_at.desc&limit=1'
+      'platform_integrations?select=id,apple_wallet_enabled,apple_pass_type_id,apple_team_id,apple_cert_p12_base64,apple_cert_password,created_at,updated_at&order=updated_at.desc.nullslast,created_at.desc.nullslast&limit=10'
     );
-    const cfg = integrations[0];
+    const cfg =
+      integrations.find((c: any) => c.apple_wallet_enabled && c.apple_cert_p12_base64) ||
+      integrations.find((c: any) => c.apple_wallet_enabled) ||
+      integrations[0];
+
     if (!cfg || !cfg.apple_wallet_enabled) {
       return errorResponse(403, 'بوابة محفظة آبل غير مفعّلة في مركز التكاملات');
     }
@@ -164,7 +168,7 @@ export async function onRequestGet(context: any): Promise<Response> {
       branches = await restGet(
         supabaseUrl,
         serviceKey,
-        `store_branches?store_id=eq.${storeId}&select=name,latitude,longitude&limit=10`
+        `store_branches?store_id=eq.${store.id}&select=name,latitude,longitude&limit=10`
       );
     } catch {
       branches = [];
