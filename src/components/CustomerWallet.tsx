@@ -45,6 +45,7 @@ import {
   X,
   RefreshCw,
   Smartphone,
+  Loader2,
   User,
   Edit3,
   Check,
@@ -417,6 +418,70 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const [isWalletPassModalOpen, setIsWalletPassModalOpen] = useState(false);
   const [walletPassPlatform, setWalletPassPlatform] = useState<'apple' | 'google'>('apple');
   const [proximityInfo, setProximityInfo] = useState<any>(null);
+  const [isAddingAppleWallet, setIsAddingAppleWallet] = useState(false);
+  const [isAddingGoogleWallet, setIsAddingGoogleWallet] = useState(false);
+
+  const handleDirectAddAppleWallet = async () => {
+    const effectiveCustomer: Customer = customer || {
+      id: 'guest',
+      store_id: store.id,
+      name: guestName || 'عميل مميز',
+      phone: guestPhone || '',
+      wallet_balance: 0,
+      lifetime_xp: 0,
+      last_visit_date: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    setIsAddingAppleWallet(true);
+    try {
+      await WalletPassService.downloadPassFile(store, effectiveCustomer, currentTierObj, branches);
+      try {
+        confetti({
+          particleCount: 80,
+          spread: 70,
+          origin: { y: 0.6 },
+          colors: [brandColors.cardTextColor || '#00A3E0', '#FFFFFF', '#10B981'],
+        });
+      } catch {}
+    } catch (err: any) {
+      console.error('Direct Apple Wallet download error:', err);
+      alert(err?.message || 'تعذر إصدار بطاقة آبل حالياً');
+    } finally {
+      setIsAddingAppleWallet(false);
+    }
+  };
+
+  const handleDirectAddGoogleWallet = async () => {
+    const effectiveCustomer: Customer = customer || {
+      id: 'guest',
+      store_id: store.id,
+      name: guestName || 'عميل مميز',
+      phone: guestPhone || '',
+      wallet_balance: 0,
+      lifetime_xp: 0,
+      last_visit_date: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    setIsAddingGoogleWallet(true);
+    try {
+      await WalletPassService.saveToGoogleWallet(store, effectiveCustomer, currentTierObj);
+      try {
+        confetti({
+          particleCount: 80,
+          spread: 70,
+          origin: { y: 0.6 },
+          colors: ['#4285F4', '#EA4335', '#FBBC05', '#34A853'],
+        });
+      } catch {}
+    } catch (err: any) {
+      console.error('Direct Google Wallet save error:', err);
+      alert(err?.message || 'تعذر الحفظ في محفظة قوقل حالياً');
+    } finally {
+      setIsAddingGoogleWallet(false);
+    }
+  };
 
   useEffect(() => {
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -3275,42 +3340,50 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             </div>
           </div>
 
-          {/* 📱 1-Click Add to Apple Wallet & Google Wallet Strip (Arabic + Vector SVGs) */}
+          {/* 📱 1-Click Direct Add to Apple Wallet & Google Wallet Strip (Arabic + Vector SVGs) */}
           <div className="relative z-10 my-4 grid grid-cols-2 gap-3">
             <button
               type="button"
-              onClick={() => {
-                setWalletPassPlatform('apple');
-                setIsWalletPassModalOpen(true);
-              }}
-              className="py-3 px-3 rounded-2xl bg-black hover:bg-neutral-900 border border-black/80 text-white keep-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition hover:scale-[1.02] active:scale-95 group"
+              disabled={isAddingAppleWallet}
+              onClick={handleDirectAddAppleWallet}
+              className="py-3 px-3 rounded-2xl bg-black hover:bg-neutral-900 border border-black/80 text-white keep-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition hover:scale-[1.02] active:scale-95 disabled:opacity-75 disabled:pointer-events-none group"
               style={{ backgroundColor: '#000000', color: '#FFFFFF' }}
             >
-              <svg className="w-4 h-4 fill-white shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 384 512">
-                <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
-              </svg>
-              <span className="truncate keep-white text-white" style={{ color: '#FFFFFF' }}>إضافة لمحفظة آبل</span>
+              {isAddingAppleWallet ? (
+                <Loader2 className="w-4 h-4 text-white animate-spin shrink-0" />
+              ) : (
+                <svg className="w-4 h-4 fill-white shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 384 512">
+                  <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+                </svg>
+              )}
+              <span className="truncate keep-white text-white" style={{ color: '#FFFFFF' }}>
+                {isAddingAppleWallet ? 'جاري التجهيز...' : 'إضافة لمحفظة آبل'}
+              </span>
             </button>
 
             <button
               type="button"
-              onClick={() => {
-                setWalletPassPlatform('google');
-                setIsWalletPassModalOpen(true);
-              }}
-              className={`py-3 px-3 rounded-2xl border font-black text-xs flex items-center justify-center gap-2 shadow-sm transition hover:scale-[1.02] active:scale-95 group ${
+              disabled={isAddingGoogleWallet}
+              onClick={handleDirectAddGoogleWallet}
+              className={`py-3 px-3 rounded-2xl border font-black text-xs flex items-center justify-center gap-2 shadow-sm transition hover:scale-[1.02] active:scale-95 disabled:opacity-75 disabled:pointer-events-none group ${
                 isDarkTheme
                   ? 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-white'
                   : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-900 shadow-sm'
               }`}
             >
-              <svg className="w-4 h-4 shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
-                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24z" />
-                <path fill="#FBBC05" d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14z" />
-                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z" />
-              </svg>
-              <span className="truncate">حفظ في محفظة قوقل</span>
+              {isAddingGoogleWallet ? (
+                <Loader2 className="w-4 h-4 text-emerald-500 animate-spin shrink-0" />
+              ) : (
+                <svg className="w-4 h-4 shrink-0 group-hover:scale-110 transition-transform" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z" />
+                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24z" />
+                  <path fill="#FBBC05" d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14z" />
+                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z" />
+                </svg>
+              )}
+              <span className="truncate">
+                {isAddingGoogleWallet ? 'جاري الحفظ...' : 'حفظ في محفظة قوقل'}
+              </span>
             </button>
           </div>
 

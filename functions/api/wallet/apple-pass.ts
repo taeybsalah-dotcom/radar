@@ -101,10 +101,26 @@ export async function onRequestGet(context: any): Promise<Response> {
     const stores = await restGet(
       supabaseUrl,
       serviceKey,
-      `stores?${storeQuery}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone&limit=1`
+      `stores?${storeQuery}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone,logo_url&limit=1`
     );
     const store = stores[0];
     if (!store) return errorResponse(404, 'المتجر غير موجود');
+
+    // دعم تمرير الشعار كمعامل بديل أو تحويل المسار النسبي إلى رابط كامل
+    const logoParam = url.searchParams.get('logo_url') || url.searchParams.get('logo');
+    if (logoParam && !store.logo_url) {
+      store.logo_url = logoParam;
+    }
+    if (store.logo_url && store.logo_url.startsWith('/')) {
+      store.logo_url = `${url.origin}${store.logo_url}`;
+    }
+
+    if (url.searchParams.get('debug') === 'store') {
+      return new Response(JSON.stringify({ store }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS_HEADERS },
+      });
+    }
 
     // 2. معالجة بيانات العميل (بحث في قاعدة البيانات مع دعم Fallback فوري)
     let customer: { id: string; name: string | null; phone: string | null; points_balance: number } = {

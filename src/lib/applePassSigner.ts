@@ -374,12 +374,50 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
   const passJsonStr = JSON.stringify(passJson, null, 2);
   zipFiles['pass.json'] = strToU8(passJsonStr);
 
-  // إضافة الأيقونات الإلزامية من أبل
-  const iconU8 = binaryStringToBytes(forge.util.decode64(DEFAULT_ICON_BASE64));
-  zipFiles['icon.png'] = iconU8;
-  zipFiles['icon@2x.png'] = iconU8;
-  zipFiles['logo.png'] = iconU8;
-  zipFiles['logo@2x.png'] = iconU8;
+  // جلب شعار المتجر الحقيقي (Logo) بدلاً من الشعار العام الافتراضي
+  const defaultIconU8 = binaryStringToBytes(forge.util.decode64(DEFAULT_ICON_BASE64));
+  let storeLogoU8: Uint8Array = defaultIconU8;
+
+  if (store.logo_url && typeof store.logo_url === 'string') {
+    const rawLogo = store.logo_url.trim();
+    try {
+      if (rawLogo.startsWith('data:image/')) {
+        const comma = rawLogo.indexOf(',');
+        if (comma !== -1) {
+          const b64 = rawLogo.slice(comma + 1);
+          const rawBin = forge.util.decode64(b64);
+          storeLogoU8 = binaryStringToBytes(rawBin);
+        }
+      } else if (/^https?:\/\//i.test(rawLogo)) {
+        const imgRes = await fetch(rawLogo, {
+          headers: { Accept: 'image/png,image/jpeg,image/*;q=0.9' },
+        });
+        if (imgRes.ok) {
+          const ab = await imgRes.arrayBuffer();
+          if (ab.byteLength > 100 && ab.byteLength < 5 * 1024 * 1024) {
+            const bytes = new Uint8Array(ab);
+            const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47;
+            const isJpg = bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF;
+            if (isPng || isJpg) {
+              storeLogoU8 = bytes;
+            } else {
+              console.warn('Custom logo format is neither PNG nor JPEG, skipping:', rawLogo);
+            }
+          }
+        }
+      }
+    } catch (logoErr) {
+      console.warn('Failed to load custom store logo, fallback to default:', logoErr);
+    }
+  }
+
+  // إضافة الأيقونات والشعارات لبطاقة Apple PassKit
+  zipFiles['icon.png'] = defaultIconU8;
+  zipFiles['icon@2x.png'] = defaultIconU8;
+  zipFiles['icon@3x.png'] = defaultIconU8;
+  zipFiles['logo.png'] = storeLogoU8;
+  zipFiles['logo@2x.png'] = storeLogoU8;
+  zipFiles['logo@3x.png'] = storeLogoU8;
 
   // 5. حساب جدول SHA-1 (manifest.json) لكافة الملفات
   const manifest: Record<string, string> = {};

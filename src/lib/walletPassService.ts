@@ -610,6 +610,7 @@ export class WalletPassService {
     if (customer?.id) params.set('customer_id', customer.id);
     if (customer?.phone) params.set('phone', customer.phone);
     if (customer?.name) params.set('name', customer.name);
+    if (store?.logo_url) params.set('logo_url', store.logo_url);
     params.set('_t', Date.now().toString());
     const passUrl = `/api/wallet/apple-pass?${params.toString()}`;
 
