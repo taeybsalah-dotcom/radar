@@ -50,8 +50,15 @@ async function restGet(supabaseUrl: string, serviceKey: string, path: string): P
 export async function onRequestGet(context: any): Promise<Response> {
   const { request, env } = context;
 
-  const supabaseUrl = String(env.SUPABASE_URL || env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
-  const serviceKey = String(env.SUPABASE_SERVICE_ROLE_KEY || '');
+  const supabaseUrl = String(
+    env.SUPABASE_URL || env.VITE_SUPABASE_URL || 'https://kspfiijorengpckdlymx.supabase.co'
+  ).replace(/\/$/, '');
+  const serviceKey = String(
+    env.SUPABASE_SERVICE_ROLE_KEY ||
+    env.SUPABASE_SERVICE_ROLE_KE ||
+    env.SERVICE_ROLE_KEY ||
+    ''
+  ).trim();
   if (!supabaseUrl || !serviceKey) {
     return errorResponse(500, 'إعدادات السيرفر غير مكتملة: يلزم ضبط SUPABASE_SERVICE_ROLE_KEY في Cloudflare');
   }
@@ -181,16 +188,17 @@ export async function onRequestGet(context: any): Promise<Response> {
       });
     }
 
-    if (!cfg.apple_pass_type_id || !cfg.apple_team_id || !cfg.apple_cert_p12_base64) {
-      return errorResponse(422, 'بيانات شهادة آبل غير مكتملة في مركز التكاملات', {
-        has_pass_type_id: Boolean(cfg?.apple_pass_type_id),
-        has_team_id: Boolean(cfg?.apple_team_id),
-        has_p12: Boolean(cfg?.apple_cert_p12_base64),
-      });
-    }
+    const passTypeId = cfg.apple_pass_type_id || 'pass.com.sdeemalathr.loyalty';
+    const teamId = cfg.apple_team_id || 'PK42BF79S2';
+    const p12Base64 = cfg.apple_cert_p12_base64;
+    const p12Password = cfg.apple_cert_password || 'iquh7O5P1G9lmNgoy8hW';
 
-    if (!cfg.apple_cert_password) {
-      return errorResponse(422, 'كلمة مرور شهادة آبل غير مدخلة في مركز التكاملات');
+    if (!p12Base64) {
+      return errorResponse(422, 'بيانات شهادة آبل غير مكتملة في مركز التكاملات', {
+        has_pass_type_id: Boolean(passTypeId),
+        has_team_id: Boolean(teamId),
+        has_p12: false,
+      });
     }
 
     // 4. فروع المتجر للتنبيه الجغرافي (اختياري: لو الجدول أو الأعمدة غير موجودة نكمل بدونها)
@@ -211,10 +219,10 @@ export async function onRequestGet(context: any): Promise<Response> {
       customer,
       branches,
       credentials: {
-        passTypeId: cfg.apple_pass_type_id,
-        teamId: cfg.apple_team_id,
-        p12Base64: cfg.apple_cert_p12_base64,
-        p12Password: cfg.apple_cert_password,
+        passTypeId,
+        teamId,
+        p12Base64,
+        p12Password,
       },
     });
 
