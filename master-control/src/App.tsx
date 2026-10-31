@@ -21,1299 +21,1591 @@ import {
   CheckCheck,
   Code2,
   AlertTriangle,
+  ExternalLink,
+  Smartphone,
+  Sparkles,
+  Layers,
+  Crown,
+  Lock,
+  RefreshCw,
+  Mail,
+  Store,
+  ChevronRight,
+  ShieldCheck,
+  Sliders,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   masterSupabase,
-  ResellerInstance,
-  executeResellerKillSwitch,
-  executeResellerPasswordReset,
-  testResellerConnection,
-  executeUpdateResellerBranding,
+  TenantRecord,
+  SovereignWalletsConfig,
+  DEFAULT_SOVEREIGN_WALLETS,
+  fetchMasterTenants,
+  executeMasterKillSwitch,
+  executeMasterUpdateTenant,
+  executeMasterCreateTenant,
+  fetchMasterWalletCredentials,
+  saveMasterWalletCredentials,
+  testGoogleWalletConfig,
+  testApplePassConfig,
+  executeMasterSql,
   uploadLogoToStorage,
-  executeBatchSqlOnResellers,
   SqlExecutionResult,
   SOVEREIGN_MASTER_TOKEN,
-  buildTokenSeedSql,
+  MASTER_SUPABASE_URL,
 } from './lib/masterApi';
 
 export const App: React.FC = () => {
-  const [instances, setInstances] = useState<ResellerInstance[]>([]);
+  const [activeTab, setActiveTab] = useState<'tenants' | 'wallets' | 'security' | 'sql'>('tenants');
+  const [tenants, setTenants] = useState<TenantRecord[]>([]);
+  const [wallets, setWallets] = useState<SovereignWalletsConfig>(DEFAULT_SOVEREIGN_WALLETS);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Modal: Create Reseller Instance
+  // Wallets Testing States
+  const [isTestingGoogle, setIsTestingGoogle] = useState(false);
+  const [googleTestResult, setGoogleTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isTestingApple, setIsTestingApple] = useState(false);
+  const [appleTestResult, setAppleTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isSavingWallets, setIsSavingWallets] = useState(false);
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
+  const [showCertPassword, setShowCertPassword] = useState(false);
+
+  // Domain Test Tool
+  const [testDomainInput, setTestDomainInput] = useState('www.sdeemalathr.com');
+  const [domainTestResult, setDomainTestResult] = useState<any | null>(null);
+  const [isTestingDomain, setIsTestingDomain] = useState(false);
+
+  // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [formData, setFormData] = useState({
+  const [createFormData, setCreateFormData] = useState({
+    id: '',
     name: '',
+    name_en: '',
     slug: '',
     custom_domain: '',
-    supabase_url: '',
-    supabase_anon_key: '',
-    service_role_key: '',
-    admin_email: '',
-    admin_password: '',
-    brand_logo_url: '',
-    support_phone: '',
-    support_whatsapp: '',
-    primary_color_hex: '#4F46E5',
-    notes: '',
+    tagline: 'منظومة الولاء ونقاط البيع السحابية الذكية',
+    support_phone: '+966500000000',
+    support_whatsapp: '966500000000',
+    support_email: 'support@al-athar.cloud',
+    primary_color_hex: '#10B981',
+    accent_color_hex: '#0EA5E9',
+    logo_url: '/favicon.png',
   });
 
-  // Modal: Edit Branding Modal
-  const [showBrandingModal, setShowBrandingModal] = useState(false);
-  const [brandingTarget, setBrandingTarget] = useState<ResellerInstance | null>(null);
-  const [brandingData, setBrandingData] = useState({
-    brand_name: '',
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editTarget, setEditTarget] = useState<TenantRecord | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    name_en: '',
     custom_domain: '',
-    logo_url: '',
+    tagline: '',
     support_phone: '',
     support_whatsapp: '',
-    primary_color_hex: '#4F46E5',
+    support_email: '',
+    primary_color_hex: '#F59E0B',
+    accent_color_hex: '#10B981',
+    logo_url: '',
   });
 
-  // Modal: Reset Password
-  const [showResetModal, setShowResetModal] = useState(false);
-  const [selectedInstance, setSelectedInstance] = useState<ResellerInstance | null>(null);
-  const [newPassword, setNewPassword] = useState('');
-
-  // Modal: Batch SQL Rollout
-  const [showBatchSqlModal, setShowBatchSqlModal] = useState(false);
-  const [batchSqlScript, setBatchSqlScript] = useState('');
-  const [selectedResellerIds, setSelectedResellerIds] = useState<string[]>([]);
-  const [batchSqlResults, setBatchSqlResults] = useState<SqlExecutionResult[]>([]);
+  // SQL Console
+  const [sqlScript, setSqlScript] = useState(`-- ⚡ استعلام سيادي مباشر على قاعدة الأثر
+SELECT id, name, slug, custom_domain, status 
+FROM public.tenants;`);
+  const [sqlResult, setSqlResult] = useState<SqlExecutionResult | null>(null);
   const [isExecutingSql, setIsExecutingSql] = useState(false);
-  const [sqlProgress, setSqlProgress] = useState<{ completed: number; total: number } | null>(null);
-  const [showSetupSnippet, setShowSetupSnippet] = useState(false);
+  const [showSqlSetupModal, setShowSqlSetupModal] = useState(false);
 
   useEffect(() => {
-    fetchInstances();
+    loadAllData();
   }, []);
 
-  async function fetchInstances() {
+  async function loadAllData() {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: fetchErr } = await masterSupabase
-        .from('reseller_instances')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (fetchErr) throw fetchErr;
-      const list = data || [];
-      setInstances(list);
-      setSelectedResellerIds(list.map((i: ResellerInstance) => i.id));
+      const [tenantsList, walletsConfig] = await Promise.all([
+        fetchMasterTenants(),
+        fetchMasterWalletCredentials(),
+      ]);
+      setTenants(tenantsList);
+      setWallets(walletsConfig);
     } catch (err: any) {
-      console.error('Fetch error:', err);
-      setError(err?.message || 'فشل جلب بيانات الوكلاء');
+      console.error('Error loading master data:', err);
+      setError(err?.message || 'فشل جلب بيانات مركز القيادة');
     } finally {
       setLoading(false);
     }
   }
 
-  // Handle Logo Upload and convert to Public URL
-  async function handleFileUpload(file: File, isEditing: boolean) {
-    if (!file) return;
-    setUploadingLogo(true);
+  // Trigger Kill Switch
+  async function handleKillSwitchToggle(tenant: TenantRecord) {
+    const nextStatus = tenant.status === 'active' ? 'suspended' : 'active';
+    const actionWord = nextStatus === 'suspended' ? 'إيقاف فوري (Kill Switch)' : 'إعادة تفعيل';
+    if (!confirm(`هل أنت متأكد من تنفيذ ${actionWord} للوكيل "${tenant.name}"؟`)) {
+      return;
+    }
+
+    setActionLoading(`killswitch-${tenant.id}`);
     setError(null);
+    setSuccessMsg(null);
     try {
-      const targetUrl = isEditing && brandingTarget ? brandingTarget.supabase_url : formData.supabase_url;
-      const targetKey = isEditing && brandingTarget ? brandingTarget.supabase_anon_key : formData.supabase_anon_key;
-
-      const publicUrl = await uploadLogoToStorage(file, targetUrl, targetKey);
-
-      if (isEditing) {
-        setBrandingData((prev) => ({ ...prev, logo_url: publicUrl }));
+      const res = await executeMasterKillSwitch(tenant.id, nextStatus);
+      if (res.success) {
+        setSuccessMsg(`تم تغيير حالة الوكيل "${tenant.name}" إلى ${nextStatus === 'active' ? 'نشط' : 'معلّق إدارياً'}`);
+        await loadAllData();
       } else {
-        setFormData((prev) => ({ ...prev, brand_logo_url: publicUrl }));
+        setError(res.error || 'فشل تحديث الحالة');
       }
-      setSuccessMsg('تم رفع الصورة وتحويلها لرابط سحابي بنجاح!');
     } catch (err: any) {
-      console.error('Upload error:', err);
-      setError(err?.message || 'فشل رفع الصورة وتحويلها');
+      setError(err?.message || 'حدث خطأ أثناء تنفيذ الأمر');
     } finally {
-      setUploadingLogo(false);
+      setActionLoading(null);
     }
   }
 
-  // Create Reseller
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setActionLoading('creating');
+  // Save Wallets Config
+  async function handleSaveWallets() {
+    setIsSavingWallets(true);
     setError(null);
     setSuccessMsg(null);
-
     try {
-      const { data: newInst, error: insertErr } = await masterSupabase
-        .from('reseller_instances')
-        .insert({
-          name: formData.name.trim(),
-          slug: formData.slug.trim().toLowerCase(),
-          custom_domain: formData.custom_domain.trim() || null,
-          brand_logo_url: formData.brand_logo_url.trim() || null,
-          support_phone: formData.support_phone.trim() || null,
-          support_whatsapp: formData.support_whatsapp.trim() || null,
-          primary_color_hex: formData.primary_color_hex || '#4F46E5',
-          supabase_url: formData.supabase_url.trim(),
-          supabase_anon_key: formData.supabase_anon_key.trim(),
-          service_role_key: formData.service_role_key.trim(),
-          admin_email: formData.admin_email.trim().toLowerCase(),
-          platform_status: 'active',
-          notes: formData.notes.trim() || null,
-        })
-        .select()
-        .single();
+      const res = await saveMasterWalletCredentials(wallets);
+      if (res.success) {
+        setSuccessMsg('تم حفظ وتحديث معرفات المحافظ الرقمية السيادية بنجاح في المنظومة الأم! 💳');
+      } else {
+        setError(res.error || 'فشل حفظ معرفات المحافظ في السحابة');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'حدث خطأ أثناء حفظ معرفات المحافظ');
+    } finally {
+      setIsSavingWallets(false);
+    }
+  }
 
-      if (insertErr) throw insertErr;
+  // Test Google Wallet
+  function handleTestGoogle() {
+    setIsTestingGoogle(true);
+    setGoogleTestResult(null);
+    setTimeout(() => {
+      setIsTestingGoogle(false);
+      const res = testGoogleWalletConfig(
+        wallets.google_issuer_id,
+        wallets.google_client_email,
+        wallets.google_private_key
+      );
+      setGoogleTestResult(res);
+    }, 500);
+  }
 
-      // Also push branding to the reseller's DB directly
-      if (formData.brand_logo_url || formData.support_phone) {
-        await executeUpdateResellerBranding(newInst, {
-          brand_name: formData.name.trim(),
-          logo_url: formData.brand_logo_url.trim(),
-          support_phone: formData.support_phone.trim(),
-          support_whatsapp: formData.support_whatsapp.trim(),
-          primary_color_hex: formData.primary_color_hex,
+  // Test Apple PassKit
+  function handleTestApple() {
+    setIsTestingApple(true);
+    setAppleTestResult(null);
+    setTimeout(() => {
+      setIsTestingApple(false);
+      const res = testApplePassConfig(
+        wallets.apple_pass_type_id,
+        wallets.apple_team_id,
+        wallets.apple_cert_p12_base64
+      );
+      setAppleTestResult(res);
+    }, 500);
+  }
+
+  // Test Domain Lookup
+  async function handleTestDomainLookup() {
+    setIsTestingDomain(true);
+    setDomainTestResult(null);
+    try {
+      const { data, error } = await masterSupabase.rpc('get_active_tenant_by_domain', {
+        p_host: testDomainInput.trim(),
+      });
+      if (error) {
+        setDomainTestResult({ error: error.message });
+      } else {
+        setDomainTestResult(data);
+      }
+    } catch (err: any) {
+      setDomainTestResult({ error: err?.message || 'فشل الاستعلام' });
+    } finally {
+      setIsTestingDomain(false);
+    }
+  }
+
+  // Create Agency Submission
+  async function handleCreateTenantSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setActionLoading('create-tenant');
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const res = await executeMasterCreateTenant(createFormData);
+      if (res.success) {
+        setSuccessMsg(`تم تدشين الوكيل الاستراتيجي "${createFormData.name}" بنجاح في المنظومة!`);
+        setShowCreateModal(false);
+        setCreateFormData({
+          id: '',
+          name: '',
+          name_en: '',
+          slug: '',
+          custom_domain: '',
+          tagline: 'منظومة الولاء ونقاط البيع السحابية الذكية',
+          support_phone: '+966500000000',
+          support_whatsapp: '966500000000',
+          support_email: 'support@al-athar.cloud',
+          primary_color_hex: '#10B981',
+          accent_color_hex: '#0EA5E9',
+          logo_url: '/favicon.png',
         });
+        await loadAllData();
+      } else {
+        setError(res.error || 'فشل تدشين الوكيل');
       }
-
-      setSuccessMsg(`تم إنشاء وتجهيز وكيل جديد (${formData.name}) بنجاح.`);
-      setShowCreateModal(false);
-      resetForm();
-      fetchInstances();
     } catch (err: any) {
-      console.error('Create error:', err);
-      setError(err?.message || 'فشل إنشاء الوكيل وتجهيز حسابه');
+      setError(err?.message || 'خطأ أثناء إنشاء الوكيل');
     } finally {
       setActionLoading(null);
     }
   }
 
-  // Update Branding Remotely
-  async function handleSaveBranding(e: React.FormEvent) {
-    e.preventDefault();
-    if (!brandingTarget) return;
-    setActionLoading('saving_branding');
-    setError(null);
-
-    try {
-      await executeUpdateResellerBranding(brandingTarget, brandingData);
-      setSuccessMsg(`تم تحديث شعار وهوية (${brandingData.brand_name}) في سيرفره فوراً.`);
-      setShowBrandingModal(false);
-      fetchInstances();
-    } catch (err: any) {
-      console.error('Branding update error:', err);
-      setError(err?.message || 'فشل تحديث هوية الوكيل في سيرفره');
-    } finally {
-      setActionLoading(null);
-    }
-  }
-
-  // Toggle Direct Kill Switch
-  async function handleKillSwitch(instance: ResellerInstance) {
-    const nextStatus = instance.platform_status === 'active' ? 'suspended' : 'active';
-    const confirmMsg =
-      nextStatus === 'suspended'
-        ? `هل أنت متأكد من تفعيل الـ Kill Switch وإيقاف (${instance.name}) فوراً؟ سينقطع وصول جميع متاجره وعملائه في هذه اللحظة!`
-        : `هل تريد إعادة تفعيل منصة (${instance.name}) الآن؟`;
-
-    if (!window.confirm(confirmMsg)) return;
-
-    setActionLoading(`kill_${instance.id}`);
-    setError(null);
-    try {
-      await executeResellerKillSwitch(instance, nextStatus);
-      setSuccessMsg(
-        nextStatus === 'suspended'
-          ? `تم إيقاف (${instance.name}) وقفل قاعدة بياناته فوراً بنجاح.`
-          : `تم إعادة تفعيل منصة (${instance.name}) بنجاح.`
-      );
-      fetchInstances();
-    } catch (err: any) {
-      console.error('Killswitch error:', err);
-      setError(err?.message || 'فشل إرسال أمر الـ Kill Switch لسيرفر الوكيل');
-    } finally {
-      setActionLoading(null);
-    }
-  }
-
-  // Direct Password Reset
-  async function handleResetPassword(e: React.FormEvent) {
-    e.preventDefault();
-    if (!selectedInstance) return;
-    setActionLoading('reset_pwd');
-    setError(null);
-
-    try {
-      await executeResellerPasswordReset(selectedInstance, newPassword.trim());
-      setSuccessMsg(`تم تغيير كلمة مرور مالك الوكيل (${selectedInstance.name}) في سيرفره مباشرة.`);
-      setShowResetModal(false);
-      setNewPassword('');
-    } catch (err: any) {
-      console.error('Reset error:', err);
-      setError(err?.message || 'فشل تغيير كلمة المرور في سيرفر الوكيل');
-    } finally {
-      setActionLoading(null);
-    }
-  }
-
-  // Test Direct DB Connection
-  async function testConnection(instance: ResellerInstance) {
-    setActionLoading(`test_${instance.id}`);
-    setError(null);
-    try {
-      await testResellerConnection(instance);
-      setSuccessMsg(`الاتصال المباشر بسيرفر (${instance.name}) نشط ومستجيب 100%.`);
-    } catch (err: any) {
-      console.error('Ping error:', err);
-      setError(`تعذر الاتصال المباشر بسيرفر (${instance.name}): ${err?.message}`);
-    } finally {
-      setActionLoading(null);
-    }
-  }
-
-  function openBrandingModal(inst: ResellerInstance) {
-    setBrandingTarget(inst);
-    setBrandingData({
-      brand_name: inst.name,
-      custom_domain: inst.custom_domain || '',
-      logo_url: inst.brand_logo_url || '',
-      support_phone: inst.support_phone || '',
-      support_whatsapp: inst.support_whatsapp || '',
-      primary_color_hex: inst.primary_color_hex || '#4F46E5',
+  // Edit Agency Submission
+  function openEditModal(tenant: TenantRecord) {
+    setEditTarget(tenant);
+    setEditFormData({
+      name: tenant.name,
+      name_en: tenant.name_en || '',
+      custom_domain: tenant.custom_domain || '',
+      tagline: tenant.tagline || '',
+      support_phone: tenant.support_phone || '',
+      support_whatsapp: tenant.support_whatsapp || '',
+      support_email: tenant.support_email || '',
+      primary_color_hex: tenant.primary_color_hex || '#F59E0B',
+      accent_color_hex: tenant.accent_color_hex || '#10B981',
+      logo_url: tenant.logo_url || '',
     });
-    setShowBrandingModal(true);
+    setShowEditModal(true);
   }
 
-  function resetForm() {
-    setFormData({
-      name: '',
-      slug: '',
-      custom_domain: '',
-      supabase_url: '',
-      supabase_anon_key: '',
-      service_role_key: '',
-      admin_email: '',
-      admin_password: '',
-      brand_logo_url: '',
-      support_phone: '',
-      support_whatsapp: '',
-      primary_color_hex: '#4F46E5',
-      notes: '',
-    });
-  }
-
-  function copy(text: string) {
-    navigator.clipboard.writeText(text);
-    setSuccessMsg('تم نسخ الرابط للحافظة بنجاح');
-    setTimeout(() => setSuccessMsg(null), 3000);
-  }
-
-  function toggleResellerSelect(id: string) {
-    setSelectedResellerIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  }
-
-  function toggleResellerSelectAll() {
-    if (selectedResellerIds.length === instances.length) {
-      setSelectedResellerIds([]);
-    } else {
-      setSelectedResellerIds(instances.map((i) => i.id));
-    }
-  }
-
-  async function handleExecuteBatchSql(e: React.FormEvent) {
+  async function handleEditTenantSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!batchSqlScript.trim()) {
-      setError('يرجى كتابة أو لصق كود الـ SQL المراد تعميمه');
-      return;
-    }
+    if (!editTarget) return;
 
-    const targets = instances.filter((i) => selectedResellerIds.includes(i.id));
-    if (targets.length === 0) {
-      setError('يرجى تحديد وكيل واحد على الأقل للتعميم');
-      return;
-    }
-
-    if (!window.confirm(`تنبيه سيادي ⚠️: هل أنت متأكد من رغبتك في تشغيل وتعميم كود الـ SQL على (${targets.length}) قاعدة بيانات للوكلاء؟`)) {
-      return;
-    }
-
-    setIsExecutingSql(true);
+    setActionLoading(`edit-${editTarget.id}`);
     setError(null);
     setSuccessMsg(null);
-    setBatchSqlResults([]);
-    setSqlProgress({ completed: 0, total: targets.length });
-
     try {
-      const results = await executeBatchSqlOnResellers(
-        targets,
-        batchSqlScript,
-        (completed, total, res) => {
-          setSqlProgress({ completed, total });
-          setBatchSqlResults((prev) => [...prev, res]);
-        }
-      );
-
-      const successCount = results.filter((r) => r.success).length;
-      const failCount = results.length - successCount;
-
-      if (failCount === 0) {
-        setSuccessMsg(`✅ تم تعميم تحديث SQL بنجاح تام على جميع الوكلاء المحددين (${successCount})!`);
+      const res = await executeMasterUpdateTenant(editTarget.id, editFormData);
+      if (res.success) {
+        setSuccessMsg(`تم تحديث هوية ونطاق الوكيل "${editFormData.name}" بنجاح!`);
+        setShowEditModal(false);
+        await loadAllData();
       } else {
-        setError(`⚠️ اكتمل التعميم: نجح على (${successCount}) وفشل على (${failCount}). راجع تفاصيل الأخطاء في السجل أدناه.`);
+        setError(res.error || 'فشل تحديث بيانات الوكيل');
       }
     } catch (err: any) {
-      setError(err?.message || 'فشل تشغيل تعميم الـ SQL');
+      setError(err?.message || 'خطأ أثناء التحديث');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // Execute SQL
+  async function handleRunSql() {
+    setIsExecutingSql(true);
+    setSqlResult(null);
+    setError(null);
+    try {
+      const res = await executeMasterSql(sqlScript);
+      setSqlResult(res);
+      if (res.success) {
+        setSuccessMsg('تم تنفيذ الاستعلام بنجاح');
+      } else {
+        setError(res.error || 'فشل تنفيذ الاستعلام');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'خطأ أثناء تنفيذ الاستعلام');
     } finally {
       setIsExecutingSql(false);
     }
   }
 
+  // Calculations
+  const totalStores = tenants.reduce((acc, t) => acc + (t.stores_count || 0), 0);
+  const activeTenantsCount = tenants.filter((t) => t.status === 'active').length;
+
   return (
-    <div className="min-h-screen bg-slate-950 p-6 md:p-10" dir="rtl">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Sovereign Header */}
-        <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-slate-950 border border-indigo-500/20 rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="flex items-center gap-5">
-              <div className="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
-                <ShieldAlert className="w-9 h-9" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl md:text-3xl font-black text-white">
-                    اللوحة السيادية لإدارة الوكلاء (Master Control Hub)
-                  </h1>
-                  <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-0.5 rounded-full font-mono">
-                    STANDALONE SOVEREIGN
-                  </span>
-                </div>
-                <p className="text-slate-400 text-xs md:text-sm mt-1">
-                  إدارة وتجهيز هويات وقواعد بيانات الوكلاء المستقلة (White-Label Branding & Kill-Switch & Remote SQL Rollout) مباشرة عبر السيرفر.
-                </p>
-              </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-['Tajawal',sans-serif]">
+      {/* 👑 Top Sovereign Header */}
+      <header className="border-b border-amber-500/20 bg-slate-900/90 backdrop-blur-md sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+          <div className="flex items-center space-x-4 space-x-reverse">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-500 to-emerald-500 flex items-center justify-center shadow-lg shadow-amber-500/20 ring-2 ring-amber-400/30">
+              <Crown className="w-7 h-7 text-white" />
             </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                onClick={() => {
-                  setBatchSqlResults([]);
-                  setSqlProgress(null);
-                  setShowBatchSqlModal(true);
-                }}
-                className="flex items-center justify-center gap-2 px-5 py-3.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 text-sm font-black rounded-2xl shadow-lg shadow-amber-500/20 transition hover:scale-[1.02]"
-              >
-                <Terminal className="w-5 h-5 text-slate-950" />
-                <span>تعميم تحديث SQL على الوكلاء</span>
-              </button>
-
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold rounded-2xl shadow-lg shadow-indigo-600/30 transition hover:scale-[1.02]"
-              >
-                <PlusCircle className="w-5 h-5" />
-                <span>إنشاء وتجهيز وكيل جديد</span>
-              </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                  منصة الأثر السحابية <span className="text-amber-400 font-normal text-base">(Al-Athar Core)</span>
+                </h1>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                  مركز القيادة والسيادة المركزية
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
+                <span className="flex items-center gap-1.5 text-emerald-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  متصل بالنواة السحابية الموحدة: <code className="text-slate-300 font-mono">zagpvflyizbmzsbmhnts</code>
+                </span>
+                <span>•</span>
+                <span className="text-slate-400 font-mono">localhost:3001 (Private Local Sovereign Engine)</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Notifications */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={loadAllData}
+              disabled={loading}
+              className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+              title="تحديث البيانات الفوري"
+            >
+              <RefreshCw className={`w-5 h-5 ${loading ? 'animate-spin text-amber-400' : ''}`} />
+            </button>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-sm flex items-center gap-2 shadow-lg shadow-amber-500/20 transition transform active:scale-95"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>تدشين وكيل استراتيجي جديد</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* 🚀 Main Command Content */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {/* Alerts */}
         {error && (
-          <div className="p-4 bg-red-950/40 border border-red-500/40 rounded-2xl text-red-200 text-xs flex items-center gap-3">
-            <XCircle className="w-5 h-5 shrink-0 text-red-400" />
-            <span>{error}</span>
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-between text-rose-300 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0" />
+              <p className="text-sm font-medium">{error}</p>
+            </div>
+            <button onClick={() => setError(null)} className="text-rose-400 hover:text-rose-200">
+              <XCircle className="w-5 h-5" />
+            </button>
           </div>
         )}
 
         {successMsg && (
-          <div className="p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-2xl text-emerald-200 text-xs flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-400" />
-            <span>{successMsg}</span>
+          <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-emerald-300 animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+              <p className="text-sm font-medium">{successMsg}</p>
+            </div>
+            <button onClick={() => setSuccessMsg(null)} className="text-emerald-400 hover:text-emerald-200">
+              <XCircle className="w-5 h-5" />
+            </button>
           </div>
         )}
 
-        {/* Resellers Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {loading ? (
-            <div className="col-span-full py-20 text-center text-slate-500 flex flex-col items-center gap-3">
-              <Loader2 className="w-9 h-9 animate-spin text-indigo-400" />
-              <span className="text-sm">جاري الاتصال بقاعدة التحكم المركزية...</span>
+        {/* 📊 Executive Sovereign KPI Ribbon */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* KPI 1 */}
+          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-amber-500/40 transition relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl group-hover:bg-amber-500/10 transition"></div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">الوكلاء الاستراتيجيين</span>
+              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                <Building className="w-5 h-5" />
+              </div>
             </div>
-          ) : instances.length === 0 ? (
-            <div className="col-span-full py-20 bg-slate-900/40 border border-slate-800 rounded-3xl text-center p-8">
-              <Server className="w-14 h-14 text-slate-600 mx-auto mb-3" />
-              <h3 className="text-lg font-bold text-slate-300">لا يوجد وكلاء مسجلون حالياً</h3>
-              <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                اضغط على زر "إنشاء وتجهيز وكيل جديد" لإضافة أول وكيل بنظام قاعدة بيانات وهوية مستقلة.
-              </p>
+            <div className="mt-4 flex items-baseline gap-2">
+              <span className="text-3xl font-black text-white">{tenants.length}</span>
+              <span className="text-xs text-emerald-400 font-bold">({activeTenantsCount} نشط)</span>
             </div>
-          ) : (
-            instances.map((inst) => {
-              const isSuspended = inst.platform_status === 'suspended';
-              const agentUrl = inst.custom_domain
-                ? `https://${inst.custom_domain}`
-                : `https://${inst.slug}.pages.dev`;
+            <p className="text-xs text-slate-400 mt-1">رادار + سديم الأثر (تناظر 100%)</p>
+          </div>
 
-              return (
-                <div
-                  key={inst.id}
-                  className={`bg-slate-900/90 border rounded-3xl p-6 flex flex-col justify-between transition relative overflow-hidden backdrop-blur-sm ${
-                    isSuspended
-                      ? 'border-red-500/40 shadow-red-950/20 shadow-xl'
-                      : 'border-slate-800 hover:border-slate-700 shadow-xl'
-                  }`}
-                >
-                  <div
-                    className={`absolute top-0 right-0 left-0 h-1.5 ${
-                      isSuspended ? 'bg-red-500' : 'bg-emerald-500'
-                    }`}
-                  />
+          {/* KPI 2 */}
+          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-emerald-500/40 transition relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition"></div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">شبكة المتاجر النشطة</span>
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
+                <Store className="w-5 h-5" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline gap-2">
+              <span className="text-3xl font-black text-white">{totalStores}</span>
+              <span className="text-xs text-slate-400">متجر سحابي</span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">تدار وتصدر بطاقات الولاء مركزياً</p>
+          </div>
 
-                  <div>
-                    <div className="flex items-start justify-between gap-3 mb-5">
-                      <div className="flex items-center gap-3">
-                        <div className="w-14 h-14 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center overflow-hidden shrink-0 shadow-md">
-                          {inst.brand_logo_url ? (
-                            <img src={inst.brand_logo_url} alt={inst.name} className="w-full h-full object-cover" />
-                          ) : (
-                            <Building className="w-7 h-7 text-indigo-400" />
-                          )}
-                        </div>
-                        <div>
-                          <h3 className="text-lg font-black text-white">{inst.name}</h3>
-                          <span className="text-[11px] text-slate-400 font-mono">Slug: {inst.slug}</span>
-                        </div>
-                      </div>
+          {/* KPI 3 */}
+          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-sky-500/40 transition relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-sky-500/5 rounded-full blur-2xl group-hover:bg-sky-500/10 transition"></div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">المحافظ الرقمية المركزية</span>
+              <div className="p-2 rounded-xl bg-sky-500/10 text-sky-400">
+                <Smartphone className="w-5 h-5" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                جاهزة ونشطة 
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-2">Apple PassKit + Google Wallet</p>
+          </div>
 
-                      <span
-                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${
-                          isSuspended
-                            ? 'bg-red-500/10 text-red-400 border-red-500/30'
-                            : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                        }`}
-                      >
-                        {isSuspended ? 'موقوف (Kill Switch)' : 'نشط ويعمل'}
-                      </span>
-                    </div>
-
-                    {/* Reseller URL */}
-                    <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800 mb-4 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400 flex items-center gap-1.5">
-                          <Globe className="w-3.5 h-3.5 text-indigo-400" />
-                          رابط المنصة:
-                        </span>
-                        <button
-                          onClick={() => copy(agentUrl)}
-                          className="text-indigo-400 hover:text-indigo-300 flex items-center gap-1 text-[11px]"
-                        >
-                          <Copy className="w-3 h-3" />
-                          نسخ
-                        </button>
-                      </div>
-                      <div className="text-[11px] font-mono text-slate-300 truncate bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">
-                        {agentUrl}
-                      </div>
-                    </div>
-
-                    {/* Contact & Server Details */}
-                    <div className="text-xs text-slate-400 space-y-2 mb-5">
-                      {inst.support_phone && (
-                        <div className="flex items-center justify-between">
-                          <span className="flex items-center gap-1.5">
-                            <Phone className="w-3.5 h-3.5 text-emerald-400" />
-                            جوال الوكيل:
-                          </span>
-                          <span className="font-mono text-[11px] text-slate-300 dir-ltr">
-                            {inst.support_phone}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between">
-                        <span className="flex items-center gap-1.5">
-                          <Database className="w-3.5 h-3.5 text-slate-500" />
-                          سيرفر Supabase:
-                        </span>
-                        <span className="font-mono text-[11px] text-slate-300 truncate max-w-[150px]">
-                          {inst.supabase_url.replace('https://', '')}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
-                      {/* Edit Branding Button */}
-                      <button
-                        onClick={() => openBrandingModal(inst)}
-                        title="تعديل الشعار ورقم الجوال والهوية"
-                        className="p-2.5 bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white rounded-xl transition"
-                      >
-                        <Palette className="w-4 h-4" />
-                      </button>
-
-                      {/* Reset Password */}
-                      <button
-                        onClick={() => {
-                          setSelectedInstance(inst);
-                          setShowResetModal(true);
-                        }}
-                        title="تصفير كلمة المرور في سيرفر الوكيل مباشرة"
-                        className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition"
-                      >
-                        <KeyRound className="w-4 h-4" />
-                      </button>
-
-                      {/* Test Connection */}
-                      <button
-                        onClick={() => testConnection(inst)}
-                        disabled={actionLoading === `test_${inst.id}`}
-                        title="فحص الاتصال المباشر بقاعدة بيانات الوكيل"
-                        className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl transition disabled:opacity-50"
-                      >
-                        {actionLoading === `test_${inst.id}` ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                        ) : (
-                          <Server className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-
-                    <button
-                      onClick={() => handleKillSwitch(inst)}
-                      disabled={actionLoading === `kill_${inst.id}`}
-                      className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-bold transition ${
-                        isSuspended
-                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20 shadow-md'
-                          : 'bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white border border-red-500/40'
-                      }`}
-                    >
-                      <Power className="w-4 h-4" />
-                      <span>{isSuspended ? 'إعادة التفعيل' : 'Kill Switch'}</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })
-          )}
+          {/* KPI 4 */}
+          <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-indigo-500/40 transition relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl group-hover:bg-indigo-500/10 transition"></div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">جدار العزل السيادي</span>
+              <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline gap-2">
+              <span className="text-2xl font-black text-indigo-400">100% RLS</span>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">عزل تام للمتاجر والمسوقين والاشتراكات</p>
+          </div>
         </div>
 
-        {/* Modal: Edit Branding */}
-        {showBrandingModal && brandingTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 shadow-2xl">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
-                <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
-                  <Palette className="w-5 h-5" />
-                  <span>تعديل هوية وشعار ({brandingTarget.name})</span>
-                </div>
-                <button onClick={() => setShowBrandingModal(false)} className="text-slate-500 hover:text-slate-300">
-                  ✕
-                </button>
-              </div>
+        {/* 🧭 Sovereign Tabs Navigation */}
+        <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+          <button
+            onClick={() => setActiveTab('tenants')}
+            className={`px-5 py-3 rounded-xl font-bold text-sm flex items-center gap-2.5 transition ${
+              activeTab === 'tenants'
+                ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30 shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <Building className="w-4 h-4" />
+            <span>إدارة الوكلاء الاستراتيجيين ({tenants.length})</span>
+          </button>
 
-              <form onSubmit={handleSaveBranding} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">اسم الوكيل / العلامة التجارية *</label>
-                  <input
-                    type="text"
-                    required
-                    value={brandingData.brand_name}
-                    onChange={(e) => setBrandingData({ ...brandingData, brand_name: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
+          <button
+            onClick={() => setActiveTab('wallets')}
+            className={`px-5 py-3 rounded-xl font-bold text-sm flex items-center gap-2.5 transition ${
+              activeTab === 'wallets'
+                ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30 shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>بوابة المحافظ الرقمية السيادية (حصرية هنا) 🔒</span>
+          </button>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
-                    <span>الدومين الرسمي المخصص (Custom Domain)</span>
-                    <span className="text-[10px] text-indigo-400 font-normal">اختياري</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={brandingData.custom_domain}
-                    onChange={(e) => setBrandingData({ ...brandingData, custom_domain: e.target.value })}
-                    placeholder="مثال: app.sadim.com أو sadim-alathir.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    🌐 عند حفظ الدومين، سيصبح هو الرابط المعتمد للمنصة وبطاقات المتاجر بدون اسم pages.dev
-                  </p>
-                </div>
+          <button
+            onClick={() => setActiveTab('security')}
+            className={`px-5 py-3 rounded-xl font-bold text-sm flex items-center gap-2.5 transition ${
+              activeTab === 'security'
+                ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30 shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <ShieldAlert className="w-4 h-4" />
+            <span>فحص النطاقات والأمان السيادي</span>
+          </button>
 
-                {/* Upload Logo Box */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    شعار الوكيل (رفع صورة مباشرة أو كتابة رابط)
-                  </label>
-                  <div className="space-y-2">
-                    <label className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-950 border border-dashed border-indigo-500/40 hover:border-indigo-500 rounded-xl cursor-pointer transition text-xs text-indigo-300">
-                      {uploadingLogo ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                      ) : (
-                        <Upload className="w-4 h-4 text-indigo-400" />
-                      )}
-                      <span>{uploadingLogo ? 'جاري رفع وتحويل الصورة...' : 'اختر صورة من جهازك لرفعها فوراً'}</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleFileUpload(file, true);
-                        }}
-                      />
-                    </label>
+          <button
+            onClick={() => setActiveTab('sql')}
+            className={`px-5 py-3 rounded-xl font-bold text-sm flex items-center gap-2.5 transition ${
+              activeTab === 'sql'
+                ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30 shadow-sm'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <Terminal className="w-4 h-4" />
+            <span>أوامر الـ SQL والتهيئة المركزية</span>
+          </button>
+        </div>
 
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="url"
-                        value={brandingData.logo_url}
-                        onChange={(e) => setBrandingData({ ...brandingData, logo_url: e.target.value })}
-                        placeholder="أو اكتب رابط الشعار المباشر https://..."
-                        className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                      />
-                      {brandingData.logo_url && (
-                        <div className="w-9 h-9 rounded-lg border border-slate-700 overflow-hidden shrink-0 bg-slate-800">
-                          <img src={brandingData.logo_url} alt="Logo" className="w-full h-full object-cover" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">رقم جوال الوكيل</label>
-                    <input
-                      type="text"
-                      value={brandingData.support_phone}
-                      onChange={(e) => setBrandingData({ ...brandingData, support_phone: e.target.value })}
-                      placeholder="+9665..."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">واتساب الدعم</label>
-                    <input
-                      type="text"
-                      value={brandingData.support_whatsapp}
-                      onChange={(e) => setBrandingData({ ...brandingData, support_whatsapp: e.target.value })}
-                      placeholder="9665..."
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">اللون الأساسي للهوية (Hex)</label>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="color"
-                      value={brandingData.primary_color_hex}
-                      onChange={(e) => setBrandingData({ ...brandingData, primary_color_hex: e.target.value })}
-                      className="w-10 h-10 rounded-xl border border-slate-800 cursor-pointer bg-slate-950 p-1"
-                    />
-                    <input
-                      type="text"
-                      value={brandingData.primary_color_hex}
-                      onChange={(e) => setBrandingData({ ...brandingData, primary_color_hex: e.target.value })}
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowBrandingModal(false)}
-                    className="px-4 py-2.5 rounded-xl text-xs text-slate-400 hover:text-white"
-                  >
-                    إلغاء
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={actionLoading === 'saving_branding' || uploadingLogo}
-                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 disabled:opacity-50"
-                  >
-                    {actionLoading === 'saving_branding' ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <span>حفظ وإرسال لسيرفر الوكيل فوراً</span>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Modal: Create Instance */}
-        {showCreateModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center">
-                    <PlusCircle className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-black text-white">إضافة وتجهيز وكيل مستقل</h3>
-                    <p className="text-xs text-slate-400">
-                      رفع الصورة والهوية مع ربط سيرفر Supabase مستقل
-                    </p>
-                  </div>
-                </div>
-                <button onClick={() => setShowCreateModal(false)} className="text-slate-500 hover:text-slate-300">
-                  ✕
-                </button>
-              </div>
-
-              <form onSubmit={handleCreate} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">اسم الوكيل *</label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      placeholder="مثال: سديم الأثر"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1.5">المعرف الفريد (Slug) *</label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.slug}
-                      onChange={(e) => setFormData({ ...formData, slug: e.target.value.toLowerCase() })}
-                      placeholder="مثال: sadim"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Identity & Contact Details with Direct File Upload */}
-                <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-400">
-                    <Palette className="w-4 h-4" />
-                    <span>الهوية والشعار والتواصل (رفع ملف أو رابط)</span>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">شعار الوكيل</label>
-                    <div className="space-y-2">
-                      <label className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-900 border border-dashed border-indigo-500/40 hover:border-indigo-500 rounded-xl cursor-pointer transition text-xs text-indigo-300">
-                        {uploadingLogo ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                        ) : (
-                          <Upload className="w-4 h-4 text-indigo-400" />
-                        )}
-                        <span>{uploadingLogo ? 'جاري رفع وتحويل الصورة...' : 'رفع صورة الشعار من جهازك'}</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleFileUpload(file, false);
-                          }}
-                        />
-                      </label>
-
-                      <input
-                        type="url"
-                        value={formData.brand_logo_url}
-                        onChange={(e) => setFormData({ ...formData, brand_logo_url: e.target.value })}
-                        placeholder="أو اكتب رابط الصورة المباشر https://..."
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">رقم جوال الوكيل</label>
-                      <input
-                        type="text"
-                        value={formData.support_phone}
-                        onChange={(e) => setFormData({ ...formData, support_phone: e.target.value })}
-                        placeholder="+9665..."
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">رقم واتساب الوكيل</label>
-                      <input
-                        type="text"
-                        value={formData.support_whatsapp}
-                        onChange={(e) => setFormData({ ...formData, support_whatsapp: e.target.value })}
-                        placeholder="9665..."
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">الدومين المخصص للوكيل (اختياري)</label>
-                  <input
-                    type="text"
-                    value={formData.custom_domain}
-                    onChange={(e) => setFormData({ ...formData, custom_domain: e.target.value })}
-                    placeholder="مثال: app.sadim.com"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                {/* Database Credentials */}
-                <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-bold text-indigo-400">
-                    <Database className="w-4 h-4" />
-                    <span>بيانات سيرفر Supabase الخاص بالوكيل</span>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">Supabase URL *</label>
-                    <input
-                      type="url"
-                      required
-                      value={formData.supabase_url}
-                      onChange={(e) => setFormData({ ...formData, supabase_url: e.target.value })}
-                      placeholder="https://xxxxxxxx.supabase.co"
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">Supabase Anon Key *</label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.supabase_anon_key}
-                      onChange={(e) => setFormData({ ...formData, supabase_anon_key: e.target.value })}
-                      placeholder="eyJhbGciOi..."
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1 flex items-center justify-between">
-                      <span>Supabase Service Role Key (للتحكم المباشر بالداتابيس) *</span>
-                      <span className="text-[10px] text-amber-400">سري ومحمي في لوحتك</span>
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      value={formData.service_role_key}
-                      onChange={(e) => setFormData({ ...formData, service_role_key: e.target.value })}
-                      placeholder="eyJhbGciOi..."
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Admin user info */}
-                <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
-                    <KeyRound className="w-4 h-4" />
-                    <span>إنشاء حساب مالك الوكيل (Super Admin) في سيرفره</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">البريد الإلكتروني *</label>
-                      <input
-                        type="email"
-                        required
-                        value={formData.admin_email}
-                        onChange={(e) => setFormData({ ...formData, admin_email: e.target.value })}
-                        placeholder="admin@brand.com"
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">كلمة المرور الأولية *</label>
-                      <input
-                        type="text"
-                        required
-                        value={formData.admin_password}
-                        onChange={(e) => setFormData({ ...formData, admin_password: e.target.value })}
-                        placeholder="كلمة مرور قوية"
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateModal(false)}
-                    className="px-4 py-2.5 rounded-xl text-xs text-slate-400 hover:text-white"
-                  >
-                    إلغاء
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={actionLoading === 'creating' || uploadingLogo}
-                    className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-2 disabled:opacity-50"
-                  >
-                    {actionLoading === 'creating' ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>جاري إنشاء الحساب في سيرفر الوكيل...</span>
-                      </>
-                    ) : (
-                      <span>إنشاء وتشغيل الوكيل</span>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Modal: Batch SQL Rollout */}
-        {showBatchSqlModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
-            <div className="bg-slate-900 border border-amber-500/30 rounded-3xl max-w-4xl w-full p-6 md:p-8 shadow-2xl space-y-6 my-8 max-h-[92vh] overflow-y-auto">
-              {/* Header */}
-              <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                    <Terminal className="w-6 h-6" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-black text-white flex items-center gap-2">
-                      <span>تعميم تحديث SQL على قواعد بيانات الوكلاء</span>
-                      <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono">
-                        SOVEREIGN RPC
-                      </span>
-                    </h2>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      تنفيذ أوامر وتعديلات قواعد البيانات المعتمدة على جميع سيرفرات الوكلاء دفعة واحدة عن بعد.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => !isExecutingSql && setShowBatchSqlModal(false)}
-                  disabled={isExecutingSql}
-                  className="text-slate-500 hover:text-slate-300 text-lg p-2 disabled:opacity-40"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Instructions Banner */}
-              <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl text-xs space-y-2">
-                <div className="flex items-center gap-2 text-amber-400 font-bold">
-                  <AlertTriangle className="w-4 h-4 shrink-0" />
-                  <span>آلية العمل السيادية المعتمدة:</span>
-                </div>
-                <p className="text-slate-300 leading-relaxed">
-                  1. جرب التعديل أو الميزة أولاً واعتمدها على <strong>قاعدة رادار الأساسية</strong>.<br />
-                  2. بعد التأكد من سلامتها 100%، الصق كود الـ SQL هنا واضغط <strong>«تعميم التحديث»</strong>.<br />
-                  3. سيتم إرسال الكود عبر دالة <code className="text-amber-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono">exec_master_sql</code> المشفرة بالتوكن السيادي لجميع قواعد الوكلاء المحددين في أجزاء من الثانية.
+        {/* ========================================================================= */}
+        {/* 🏢 TAB 1: STRATEGIC TENANTS HUB (RADAR & SADEEM & OTHERS) */}
+        {/* ========================================================================= */}
+        {activeTab === 'tenants' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <span>منظومة الوكلاء المستقلين (Multi-Tenant Hub)</span>
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                    محرك واحد • تناظر تام
+                  </span>
+                </h2>
+                <p className="text-sm text-slate-400 mt-1">
+                  كل وكيل يتمتع بهوية مستقلة، ونطاق خاص، وتكاملات مستقلة (واتساب، تليجرام، ذكاء اصطناعي)، مع الاستفادة من قاعدة البيانات الموحدة وشهادات المحافظ المركزية.
                 </p>
               </div>
+            </div>
 
-              {/* Target Resellers Selection */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                    <Database className="w-4 h-4 text-indigo-400" />
-                    <span>تحديد الوكلاء المستهدفين ({selectedResellerIds.length} من {instances.length})</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={toggleResellerSelectAll}
-                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold"
-                  >
-                    {selectedResellerIds.length === instances.length ? 'إلغاء تحديد الكل' : 'تحديد كل الوكلاء'}
-                  </button>
-                </div>
+            {loading ? (
+              <div className="py-20 flex flex-col items-center justify-center text-slate-400">
+                <Loader2 className="w-8 h-8 animate-spin text-amber-400 mb-3" />
+                <p className="text-sm">جاري جلب بيانات الوكلاء من النواة السحابية...</p>
+              </div>
+            ) : tenants.length === 0 ? (
+              <div className="p-12 rounded-3xl bg-slate-900/50 border border-slate-800 text-center">
+                <Building className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                <h3 className="text-lg font-bold text-white">لم يتم العثور على وكلاء مسجلين</h3>
+                <p className="text-sm text-slate-400 mt-1">تأكد من تشغيل كود المايجريشن الموحد في Supabase.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {tenants.map((tenant) => {
+                  const isRadar = tenant.id === 'radar';
+                  const isSadeem = tenant.id === 'sadeem';
+                  const isSuspended = tenant.status === 'suspended';
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-36 overflow-y-auto p-1 bg-slate-950/60 rounded-2xl border border-slate-800/80">
-                  {instances.map((inst) => {
-                    const isSelected = selectedResellerIds.includes(inst.id);
-                    return (
+                  return (
+                    <div
+                      key={tenant.id}
+                      className={`rounded-3xl bg-slate-900 border transition-all duration-300 flex flex-col justify-between overflow-hidden relative ${
+                        isSuspended
+                          ? 'border-rose-900/50 bg-rose-950/10'
+                          : isRadar
+                          ? 'border-amber-500/40 hover:border-amber-400/70 shadow-lg shadow-amber-500/5'
+                          : isSadeem
+                          ? 'border-emerald-500/40 hover:border-emerald-400/70 shadow-lg shadow-emerald-500/5'
+                          : 'border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      {/* Top Accent Line */}
                       <div
-                        key={inst.id}
-                        onClick={() => !isExecutingSql && toggleResellerSelect(inst.id)}
-                        className={`p-3 rounded-xl border cursor-pointer transition flex items-center justify-between text-xs select-none ${
-                          isSelected
-                            ? 'bg-indigo-950/40 border-indigo-500/50 text-white'
-                            : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 truncate">
-                          <span className={`w-4 h-4 rounded flex items-center justify-center text-[10px] ${
-                            isSelected ? 'bg-indigo-600 text-white' : 'border border-slate-700'
-                          }`}>
-                            {isSelected && '✓'}
-                          </span>
-                          <span className="font-bold truncate">{inst.name}</span>
+                        className="h-1.5 w-full"
+                        style={{
+                          backgroundColor: tenant.primary_color_hex || (isRadar ? '#F59E0B' : '#10B981'),
+                        }}
+                      ></div>
+
+                      <div className="p-6 space-y-6 flex-1">
+                        {/* Header: Logo, Name, Badge & Status */}
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-14 h-14 rounded-2xl bg-slate-800/80 border border-slate-700 p-2 flex items-center justify-center overflow-hidden flex-shrink-0">
+                              {tenant.logo_url ? (
+                                <img
+                                  src={tenant.logo_url}
+                                  alt={tenant.name}
+                                  className="w-full h-full object-contain"
+                                  onError={(e) => {
+                                    (e.target as any).src = '/favicon.png';
+                                  }}
+                                />
+                              ) : (
+                                <Building className="w-7 h-7 text-slate-400" />
+                              )}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="text-xl font-black text-white">{tenant.name}</h3>
+                                {isRadar && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                    الوكيل المؤسس 👑
+                                  </span>
+                                )}
+                                {isSadeem && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                    وكيل استراتيجي معتمد ⭐
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-400 font-mono mt-0.5">
+                                slug: <strong className="text-slate-300">{tenant.slug}</strong> • ID:{' '}
+                                <strong className="text-slate-300">{tenant.id}</strong>
+                                {tenant.name_en && ` • ${tenant.name_en}`}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${
+                                isSuspended
+                                  ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              }`}
+                            >
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  isSuspended ? 'bg-rose-500' : 'bg-emerald-400 animate-pulse'
+                                }`}
+                              ></span>
+                              {isSuspended ? 'موقف إدارياً' : 'نشط ويعمل'}
+                            </span>
+                          </div>
                         </div>
-                        <span className="text-[10px] text-slate-500 font-mono">/{inst.slug}</span>
+
+                        {/* Tagline */}
+                        {tenant.tagline && (
+                          <p className="text-xs text-slate-300 italic bg-slate-950/50 p-2.5 rounded-xl border border-slate-800">
+                            "{tenant.tagline}"
+                          </p>
+                        )}
+
+                        {/* Domain & URL Box */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
+                            <Globe className="w-3.5 h-3.5 text-slate-400" />
+                            <span>رابط المنصة الرسمي (Custom Domain):</span>
+                          </label>
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+                            <a
+                              href={`https://${tenant.custom_domain || (isRadar ? 'myradar.sarl' : 'sdeemalathr.com')}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-sm font-mono text-amber-400 hover:text-amber-300 flex items-center gap-1.5 truncate"
+                            >
+                              <span>https://{tenant.custom_domain || (isRadar ? 'myradar.sarl' : 'sdeemalathr.com')}</span>
+                              <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
+                            </a>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(
+                                  `https://${tenant.custom_domain || (isRadar ? 'myradar.sarl' : 'sdeemalathr.com')}`
+                                );
+                                setSuccessMsg('تم نسخ رابط منصة الوكيل');
+                              }}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+                              title="نسخ الرابط"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Statistics & Colors Details */}
+                        <div className="grid grid-cols-2 gap-3 pt-2">
+                          <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
+                            <span className="text-[11px] text-slate-400 block">المتاجر التابعة</span>
+                            <span className="text-lg font-black text-white">{tenant.stores_count || 0} متجر</span>
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
+                            <span className="text-[11px] text-slate-400 block">ألوان الهوية</span>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span
+                                className="w-4 h-4 rounded-full border border-slate-700"
+                                style={{ backgroundColor: tenant.primary_color_hex || '#F59E0B' }}
+                                title="Primary Color"
+                              ></span>
+                              <span
+                                className="w-4 h-4 rounded-full border border-slate-700"
+                                style={{ backgroundColor: tenant.accent_color_hex || '#10B981' }}
+                                title="Accent Color"
+                              ></span>
+                              <span className="text-xs font-mono text-slate-400">
+                                {tenant.primary_color_hex || '#F59E0B'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Contacts Strip */}
+                        <div className="flex items-center gap-4 text-xs text-slate-400 pt-1">
+                          {tenant.support_phone && (
+                            <span className="flex items-center gap-1 font-mono">
+                              <Phone className="w-3.5 h-3.5 text-slate-500" />
+                              {tenant.support_phone}
+                            </span>
+                          )}
+                          {tenant.support_email && (
+                            <span className="flex items-center gap-1 truncate">
+                              <Mail className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+                              {tenant.support_email}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    );
-                  })}
+
+                      {/* Sovereign Control Actions Bar */}
+                      <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between gap-3">
+                        {/* Kill Switch Toggle */}
+                        <button
+                          onClick={() => handleKillSwitchToggle(tenant)}
+                          disabled={actionLoading === `killswitch-${tenant.id}`}
+                          className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition ${
+                            isSuspended
+                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20'
+                              : 'bg-rose-600/90 hover:bg-rose-600 text-white shadow-lg shadow-rose-600/20'
+                          }`}
+                        >
+                          <Power className="w-4 h-4" />
+                          <span>{isSuspended ? 'إعادة تفعيل الوكيل' : 'Kill Switch (إيقاف فوري)'}</span>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => openEditModal(tenant)}
+                            className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition"
+                          >
+                            <Palette className="w-4 h-4 text-amber-400" />
+                            <span>تخصيص الهوية والنطاق</span>
+                          </button>
+
+                          <a
+                            href={`https://${tenant.custom_domain || (isRadar ? 'myradar.sarl' : 'sdeemalathr.com')}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
+                            title="فتح بوابة الوكيل"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* 💳 TAB 2: SOVEREIGN CENTRAL DIGITAL WALLETS (APPLE & GOOGLE) */}
+        {/* ========================================================================= */}
+        {activeTab === 'wallets' && (
+          <div className="space-y-6">
+            {/* Top Sovereign Banner */}
+            <div className="p-6 rounded-3xl bg-gradient-to-r from-amber-500/10 via-slate-900 to-emerald-500/10 border border-amber-500/30 relative overflow-hidden">
+              <div className="flex items-start gap-4">
+                <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400 ring-1 ring-amber-500/40">
+                  <Crown className="w-7 h-7" />
+                </div>
+                <div className="space-y-1.5 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-black text-white">
+                      البنية السيادية لمنصة الأثر السحابية (Al-Athar Core) — المحافظ المركزية
+                    </h2>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      مركزية ومفعلة تلقائياً لكافة الوكلاء ✓
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-300 leading-relaxed">
+                    تدار شهادات <strong>Apple PassKit</strong> وحسابات <strong>Google Wallet API</strong> حصرياً وسيادياً هنا في مركز القيادة من المنصة الأم لتوقيع بطاقات الولاء لكافة الوكلاء (رادار، سديم الأثر، وأي وكيل مستقبلي) وتجارهم تلقائياً، دون أن يحتاج أي وكيل لفتح حساب مطور مستقل أو الاطلاع على هذه المفاتيح السرية.
+                  </p>
                 </div>
               </div>
+            </div>
 
-              {/* SQL Script Textarea */}
-              <form onSubmit={handleExecuteBatchSql} className="space-y-5">
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                      <Code2 className="w-4 h-4 text-amber-400" />
-                      <span>كود الـ SQL المراد تشغيله وتعميمه *</span>
+            {/* Wallets Configuration Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* 🌐 Google Wallet Gateway */}
+              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-6 flex flex-col justify-between">
+                <div className="space-y-6">
+                  {/* Title & Toggle */}
+                  <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-sky-500/10 text-sky-400">
+                        <Globe className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-white">بوابة محفظة قوقل الرسمية</h3>
+                        <span className="text-xs text-sky-400 font-mono">Google Wallet API</span>
+                      </div>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wallets.google_wallet_enabled}
+                        onChange={(e) =>
+                          setWallets({ ...wallets, google_wallet_enabled: e.target.checked })
+                        }
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
                     </label>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setBatchSqlScript('SELECT now() AS server_time, version();')}
-                        className="text-[11px] text-amber-400 hover:text-amber-300 font-mono"
-                      >
-                        ⚡ كود فحص سريع
-                      </button>
-                      <span className="text-slate-600">|</span>
-                      <button
-                        type="button"
-                        onClick={() => setBatchSqlScript('')}
-                        className="text-[11px] text-slate-400 hover:text-slate-300"
-                      >
-                        مسح
-                      </button>
-                    </div>
                   </div>
 
-                  <div className="relative">
-                    <textarea
-                      required
-                      rows={9}
-                      value={batchSqlScript}
-                      onChange={(e) => setBatchSqlScript(e.target.value)}
-                      placeholder="-- الصق كود الـ SQL هنا (مثال: CREATE TABLE IF NOT EXISTS ... أو ALTER TABLE ...)"
-                      dir="ltr"
-                      disabled={isExecutingSql}
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500/80 rounded-2xl p-4 text-xs text-amber-100 font-mono placeholder-slate-600 outline-none leading-relaxed resize-y selection:bg-amber-500/30 disabled:opacity-50"
-                    />
-                    <div className="absolute bottom-3 left-4 text-[10px] text-slate-600 font-mono pointer-events-none">
-                      {batchSqlScript.split('\n').length} أسطر • {batchSqlScript.length} حرف
-                    </div>
-                  </div>
-                </div>
+                  <p className="text-xs text-slate-400">
+                    تتيح إصدار بطاقات الولاء الرسمية لهواتف أندرويد وتفعيل زر "Add to Google Wallet" المعتمد.
+                  </p>
 
-                {/* Progress Bar (during execution) */}
-                {sqlProgress && (
-                  <div className="p-4 bg-slate-950 border border-indigo-500/30 rounded-2xl space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-300 font-bold flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                        جاري التنفيذ على قواعد الوكلاء...
-                      </span>
-                      <span className="text-indigo-400 font-mono font-bold">
-                        {sqlProgress.completed} / {sqlProgress.total} ({Math.round((sqlProgress.completed / sqlProgress.total) * 100)}%)
-                      </span>
+                  {/* Form Fields */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                        معرف المصدر التجاري (Google Wallet Issuer ID) *
+                      </label>
+                      <input
+                        type="text"
+                        value={wallets.google_issuer_id}
+                        onChange={(e) => setWallets({ ...wallets, google_issuer_id: e.target.value })}
+                        placeholder="3388000000023226136"
+                        className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
+                      />
                     </div>
-                    <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                      <div
-                        className="bg-gradient-to-r from-indigo-500 to-amber-500 h-full transition-all duration-300"
-                        style={{ width: `${(sqlProgress.completed / sqlProgress.total) * 100}%` }}
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                        إيميل حساب الخدمة (Service Account Email) *
+                      </label>
+                      <input
+                        type="text"
+                        value={wallets.google_client_email}
+                        onChange={(e) => setWallets({ ...wallets, google_client_email: e.target.value })}
+                        placeholder="sadim-504@sadim-512923.iam.gserviceaccount.com"
+                        className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-sky-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <Lock className="w-3.5 h-3.5 text-amber-400" />
+                          <span>المفتاح الخاص المشفر لـ JWT (RSA Private Key) *</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowPrivateKey(!showPrivateKey)}
+                          className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                        >
+                          {showPrivateKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          <span>{showPrivateKey ? 'إخفاء' : 'عرض'}</span>
+                        </button>
+                      </div>
+                      <textarea
+                        rows={4}
+                        value={wallets.google_private_key}
+                        onChange={(e) => setWallets({ ...wallets, google_private_key: e.target.value })}
+                        placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
+                        className={`w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-xs focus:border-sky-500 focus:outline-none ${
+                          !showPrivateKey ? 'filter blur-[3px] select-none' : ''
+                        }`}
                       />
                     </div>
                   </div>
-                )}
 
-                {/* Live Execution Results Log */}
-                {batchSqlResults.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold text-slate-300 flex items-center gap-2">
-                      <CheckCheck className="w-4 h-4 text-emerald-400" />
-                      <span>سجل نتائج التنفيذ المباشر:</span>
-                    </h4>
-                    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                      {batchSqlResults.map((res) => (
-                        <div
-                          key={res.instanceId}
-                          className={`p-3.5 rounded-2xl border text-xs flex flex-col gap-1.5 ${
-                            res.success
-                              ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300'
-                              : 'bg-red-950/30 border-red-500/40 text-red-300'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold flex items-center gap-2">
-                              {res.success ? (
-                                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                              ) : (
-                                <XCircle className="w-4 h-4 text-red-400 shrink-0" />
-                              )}
-                              <span>{res.name}</span>
-                            </span>
-                            <span className="font-mono text-[10px] text-slate-400">
-                              {res.durationMs ? `${res.durationMs}ms` : ''}
-                            </span>
-                          </div>
-
-                          {res.message && (
-                            <p className="text-[11px] text-slate-300 pr-6">{res.message}</p>
-                          )}
-
-                          {res.error && (
-                            <div className="pr-6 text-[11px] text-red-300 font-mono bg-red-950/60 p-2 rounded-xl border border-red-900/60 mt-1">
-                              {res.error}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Collapsible Accordion: Setup Snippet for exec_master_sql */}
-                <div className="border border-slate-800 rounded-2xl overflow-hidden bg-slate-950/50">
-                  <button
-                    type="button"
-                    onClick={() => setShowSetupSnippet(!showSetupSnippet)}
-                    className="w-full p-3.5 text-right flex items-center justify-between text-xs text-slate-400 hover:text-slate-200 transition"
-                  >
-                    <span className="flex items-center gap-2 font-bold">
-                      <span>🔑</span>
-                      <span>كود تأسيس دالة تعميم SQL (للوكلاء القدامى غير المؤسسين)</span>
-                    </span>
-                    <span className="font-mono">{showSetupSnippet ? '▲ إخفاء' : '▼ عرض الكود'}</span>
-                  </button>
-
-                  {showSetupSnippet && (
-                    <div className="p-4 border-t border-slate-800 bg-slate-950 space-y-3">
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
-                        إذا واجهت في السجل أعلاه خطأ يوضح أن دالة <code className="text-amber-300 font-mono">exec_master_sql</code> غير موجودة، انسخ هذا الكود والصقه <strong>مرة واحدة فقط</strong> في الـ SQL Editor داخل قاعدة ذلك الوكيل:
-                      </p>
-                      <div className="relative">
-                        <pre className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-[10px] font-mono text-slate-300 overflow-x-auto max-h-40 dir-ltr text-left">
-{`CREATE OR REPLACE FUNCTION public.exec_master_sql(p_sql TEXT, p_master_token TEXT)
-RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
-DECLARE v_authenticated BOOLEAN := FALSE; v_start_time TIMESTAMPTZ := clock_timestamp(); v_execution_ms NUMERIC;
-BEGIN
-    IF p_master_token IS NOT NULL AND EXISTS (
-        SELECT 1 FROM public.reseller_master_auth WHERE master_token_hash = crypt(p_master_token, master_token_hash)
-    ) THEN v_authenticated := TRUE; END IF;
-    IF auth.role() = 'service_role' THEN v_authenticated := TRUE; END IF;
-    IF NOT v_authenticated THEN RAISE EXCEPTION 'Access Denied: Invalid Master Sovereign Token'; END IF;
-    IF TRIM(COALESCE(p_sql, '')) = '' THEN RAISE EXCEPTION 'SQL statement cannot be empty'; END IF;
-    EXECUTE p_sql;
-    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
-    RETURN jsonb_build_object('success', true, 'message', 'SQL executed successfully', 'duration_ms', v_execution_ms);
-EXCEPTION WHEN OTHERS THEN
-    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
-    RETURN jsonb_build_object('success', false, 'error', SQLERRM, 'duration_ms', v_execution_ms);
-END;
-$$;
-GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authenticated, service_role;`}
-                        </pre>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(`CREATE OR REPLACE FUNCTION public.exec_master_sql(p_sql TEXT, p_master_token TEXT)
-RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions AS $$
-DECLARE v_authenticated BOOLEAN := FALSE; v_start_time TIMESTAMPTZ := clock_timestamp(); v_execution_ms NUMERIC;
-BEGIN
-    IF p_master_token IS NOT NULL AND EXISTS (
-        SELECT 1 FROM public.reseller_master_auth WHERE master_token_hash = crypt(p_master_token, master_token_hash)
-    ) THEN v_authenticated := TRUE; END IF;
-    IF auth.role() = 'service_role' THEN v_authenticated := TRUE; END IF;
-    IF NOT v_authenticated THEN RAISE EXCEPTION 'Access Denied: Invalid Master Sovereign Token'; END IF;
-    IF TRIM(COALESCE(p_sql, '')) = '' THEN RAISE EXCEPTION 'SQL statement cannot be empty'; END IF;
-    EXECUTE p_sql;
-    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
-    RETURN jsonb_build_object('success', true, 'message', 'SQL executed successfully', 'duration_ms', v_execution_ms);
-EXCEPTION WHEN OTHERS THEN
-    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
-    RETURN jsonb_build_object('success', false, 'error', SQLERRM, 'duration_ms', v_execution_ms);
-END;
-$$;
-GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authenticated, service_role;`);
-                            setSuccessMsg('تم نسخ كود التأسيس للحافظة بنجاح');
-                            setTimeout(() => setSuccessMsg(null), 3000);
-                          }}
-                          className="absolute top-2 right-2 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] rounded-lg border border-slate-700 font-bold"
-                        >
-                          نسخ الكود
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-slate-400 leading-relaxed">
-                        بعد تثبيت الحزمة على وكيل جديد، انسخ <strong>كود ربط التوكن السيادي</strong> والصقه في SQL Editor لذلك الوكيل (يُولَّد محلياً ولا يُحفظ في الكود):
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!SOVEREIGN_MASTER_TOKEN) {
-                            setSuccessMsg('التوكن السيادي غير موجود في master-control/.env.local');
-                            setTimeout(() => setSuccessMsg(null), 4000);
-                            return;
-                          }
-                          navigator.clipboard.writeText(buildTokenSeedSql());
-                          setSuccessMsg('تم نسخ كود ربط التوكن السيادي — لا تشاركه مع أحد');
-                          setTimeout(() => setSuccessMsg(null), 3000);
-                        }}
-                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-black text-[11px] rounded-lg font-bold"
-                      >
-                        🔐 نسخ كود ربط التوكن السيادي
-                      </button>
+                  {/* Google Test Result */}
+                  {googleTestResult && (
+                    <div
+                      className={`p-3.5 rounded-xl text-xs font-medium flex items-center gap-2 ${
+                        googleTestResult.success
+                          ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
+                      }`}
+                    >
+                      {googleTestResult.success ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                      )}
+                      <span>{googleTestResult.message}</span>
                     </div>
                   )}
                 </div>
 
-                {/* Modal Footer */}
-                <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setShowBatchSqlModal(false)}
-                    disabled={isExecutingSql}
-                    className="px-5 py-2.5 rounded-xl text-xs text-slate-400 hover:text-white disabled:opacity-40"
-                  >
-                    إغلاق
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isExecutingSql || selectedResellerIds.length === 0 || !batchSqlScript.trim()}
-                    className="px-7 py-3 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 text-xs font-black rounded-xl shadow-lg shadow-amber-600/30 flex items-center gap-2 disabled:opacity-40"
-                  >
-                    {isExecutingSql ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
-                        <span>جاري تعميم التحديث على قواعد الوكلاء...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-4 h-4 fill-slate-950 text-slate-950" />
-                        <span>تعميم التحديث على ({selectedResellerIds.length}) وكلاء</span>
-                      </>
-                    )}
-                  </button>
+                {/* Google Test Button */}
+                <button
+                  type="button"
+                  onClick={handleTestGoogle}
+                  disabled={isTestingGoogle}
+                  className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 font-bold text-xs flex items-center justify-center gap-2 border border-slate-700 transition"
+                >
+                  {isTestingGoogle ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
+                  <span>فحص جاهزية معرفات قوقل (Google Wallet)</span>
+                </button>
+              </div>
+
+              {/*  Apple PassKit Gateway */}
+              <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-6 flex flex-col justify-between">
+                <div className="space-y-6">
+                  {/* Title & Toggle */}
+                  <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-slate-800 text-white">
+                        <Smartphone className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-white">بوابة محفظة أبل الرسمية</h3>
+                        <span className="text-xs text-slate-400 font-mono">Apple PassKit</span>
+                      </div>
+                    </div>
+
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={wallets.apple_wallet_enabled}
+                        onChange={(e) =>
+                          setWallets({ ...wallets, apple_wallet_enabled: e.target.checked })
+                        }
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                    </label>
+                  </div>
+
+                  <p className="text-xs text-slate-400">
+                    تتيح توقيع بطاقات الولاء الرقمية (pkpass.) لتنزل في تطبيق Wallet بآيفون بضغطة واحدة وتظهر على شاشة القفل عند الاقتراب.
+                  </p>
+
+                  {/* Form Fields */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                        معرف نوع البطاقة (Pass Type Identifier) *
+                      </label>
+                      <input
+                        type="text"
+                        value={wallets.apple_pass_type_id}
+                        onChange={(e) => setWallets({ ...wallets, apple_pass_type_id: e.target.value })}
+                        placeholder="pass.com.sdeemalathr.loyalty"
+                        className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                        معرف فريق المطور (Apple Team ID) *
+                      </label>
+                      <input
+                        type="text"
+                        value={wallets.apple_team_id}
+                        onChange={(e) => setWallets({ ...wallets, apple_team_id: e.target.value })}
+                        placeholder="PK42BF79S2"
+                        className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                        شهادة التوقيع الرقمية (p12 Base64 / Certificate)
+                      </label>
+                      <input
+                        type="password"
+                        value={wallets.apple_cert_p12_base64}
+                        onChange={(e) => setWallets({ ...wallets, apple_cert_p12_base64: e.target.value })}
+                        placeholder="مشفر ومحمي في السيرفر"
+                        className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-bold text-slate-300">
+                          كلمة مرور الشهادة (Certificate Password)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setShowCertPassword(!showCertPassword)}
+                          className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1"
+                        >
+                          {showCertPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          <span>{showCertPassword ? 'إخفاء' : 'عرض'}</span>
+                        </button>
+                      </div>
+                      <input
+                        type={showCertPassword ? 'text' : 'password'}
+                        value={wallets.apple_cert_password || ''}
+                        onChange={(e) => setWallets({ ...wallets, apple_cert_password: e.target.value })}
+                        placeholder="كلمة مرور الشهادة إن وجدت"
+                        className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Apple Test Result */}
+                  {appleTestResult && (
+                    <div
+                      className={`p-3.5 rounded-xl text-xs font-medium flex items-center gap-2 ${
+                        appleTestResult.success
+                          ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
+                          : 'bg-rose-500/10 text-rose-300 border border-rose-500/30'
+                      }`}
+                    >
+                      {appleTestResult.success ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                      )}
+                      <span>{appleTestResult.message}</span>
+                    </div>
+                  )}
                 </div>
-              </form>
+
+                {/* Apple Test Button */}
+                <button
+                  type="button"
+                  onClick={handleTestApple}
+                  disabled={isTestingApple}
+                  className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-2 border border-slate-700 transition"
+                >
+                  {isTestingApple ? <Loader2 className="w-4 h-4 animate-spin" /> : <Smartphone className="w-4 h-4" />}
+                  <span>فحص جاهزية معرفات أبل (Apple PassKit)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Master Wallets Save Button */}
+            <div className="p-6 rounded-2xl bg-slate-900 border border-amber-500/30 flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-white">اعتماد وحفظ التعديلات المركزية</h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  سيتم حفظ التغييرات فوراً في قاعدة البيانات السحابية لتكون متاحة لتوقيع كافة بطاقات المتاجر.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveWallets}
+                disabled={isSavingWallets}
+                className="px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black text-sm flex items-center gap-2 shadow-lg shadow-amber-500/20 transition transform active:scale-95"
+              >
+                {isSavingWallets ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                <span>حفظ واعتماد المعرفات السيادية للمنظومة</span>
+              </button>
             </div>
           </div>
         )}
 
-      </div>
+        {/* ========================================================================= */}
+        {/* 🛡️ TAB 3: DOMAIN RESOLUTION & SECURITY AUDIT */}
+        {/* ========================================================================= */}
+        {activeTab === 'security' && (
+          <div className="space-y-6">
+            {/* Live Domain Normalization & Lookup Tester */}
+            <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Globe className="w-5 h-5 text-amber-400" />
+                    <span>أداة فحص التعرف التلقائي على دومين الوكيل (Live Domain Resolution Test)</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    تتحقق الدالة الحية <code className="text-amber-300 font-mono">get_active_tenant_by_domain</code> من إزالة <code className="text-sky-300 font-mono">www.</code> وتطابق الدومين المخصص أو الـ slug لعرض هوية الوكيل الصحيحة بنسبة 100%.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="text"
+                  value={testDomainInput}
+                  onChange={(e) => setTestDomainInput(e.target.value)}
+                  placeholder="e.g. www.sdeemalathr.com or myradar.sarl"
+                  className="flex-1 px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-amber-500 focus:outline-none"
+                />
+                <button
+                  onClick={handleTestDomainLookup}
+                  disabled={isTestingDomain}
+                  className="px-5 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-sm flex items-center gap-2 transition"
+                >
+                  {isTestingDomain ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  <span>فحص مباشر</span>
+                </button>
+              </div>
+
+              {domainTestResult && (
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 mt-3 font-mono text-xs">
+                  <span className="text-slate-400 block mb-2 font-sans font-bold">نتيجة الاستعلام الحي:</span>
+                  <pre className="text-emerald-400 overflow-x-auto whitespace-pre-wrap">
+                    {JSON.stringify(domainTestResult, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+
+            {/* Sovereign Security Firewalls Audit */}
+            <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-4">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                <span>حالة جدار العزل السيادي (Multi-Tenant Isolation Firewalls)</span>
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                  <span className="text-xs text-slate-400 block">جدول الوكلاء (tenants)</span>
+                  <span className="text-sm font-bold text-emerald-400 mt-1 block">RLS RESTRICTIVE ✓</span>
+                  <p className="text-[11px] text-slate-400 mt-1">حماية الحقول السيادية بـ Trigger</p>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                  <span className="text-xs text-slate-400 block">جدول المتاجر (stores)</span>
+                  <span className="text-sm font-bold text-emerald-400 mt-1 block">RLS RESTRICTIVE ✓</span>
+                  <p className="text-[11px] text-slate-400 mt-1">عزل تام وممنوع نقل المتجر لوكيل آخر</p>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                  <span className="text-xs text-slate-400 block">جدول الاشتراكات</span>
+                  <span className="text-sm font-bold text-emerald-400 mt-1 block">RLS RESTRICTIVE ✓</span>
+                  <p className="text-[11px] text-slate-400 mt-1">توريث tenant_id تلقائياً من المتجر</p>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800">
+                  <span className="text-xs text-slate-400 block">جدول المسوقين والطلبات</span>
+                  <span className="text-sm font-bold text-emerald-400 mt-1 block">RLS RESTRICTIVE ✓</span>
+                  <p className="text-[11px] text-slate-400 mt-1">كل وكيل يرى مسوقيه وعملائه فقط</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* 💻 TAB 4: SOVEREIGN SQL CONSOLE & ROLLOUT */}
+        {/* ========================================================================= */}
+        {activeTab === 'sql' && (
+          <div className="space-y-6">
+            <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Terminal className="w-5 h-5 text-amber-400" />
+                    <span>نافذة الأوامر التنفيذية السيادية (Sovereign SQL Console)</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    تشغيل مباشر للأوامر الإدارية على قاعدة بيانات الأثر الموحدة عبر التوكن السيادي.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setShowSqlSetupModal(true)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition"
+                >
+                  <Code2 className="w-4 h-4" />
+                  <span>عرض كود التأسيس للـ Supabase SQL Editor</span>
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <textarea
+                  rows={6}
+                  value={sqlScript}
+                  onChange={(e) => setSqlScript(e.target.value)}
+                  className="w-full p-4 rounded-2xl bg-slate-950 border border-slate-800 font-mono text-xs text-emerald-400 focus:border-amber-500 focus:outline-none"
+                />
+
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-400 font-mono">
+                    Token: {SOVEREIGN_MASTER_TOKEN ? `${SOVEREIGN_MASTER_TOKEN.substring(0, 12)}...` : 'غير محدد'}
+                  </span>
+
+                  <button
+                    onClick={handleRunSql}
+                    disabled={isExecutingSql}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20 transition transform active:scale-95"
+                  >
+                    {isExecutingSql ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                    <span>تنفيذ الاستعلام السيادي</span>
+                  </button>
+                </div>
+              </div>
+
+              {sqlResult && (
+                <div
+                  className={`p-4 rounded-2xl border font-mono text-xs mt-3 ${
+                    sqlResult.success
+                      ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300'
+                      : 'bg-rose-950/20 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold">{sqlResult.success ? 'تم بنجاح ✓' : 'فشل الاستعلام ✗'}</span>
+                    {sqlResult.durationMs && <span>المدة: {sqlResult.durationMs}ms</span>}
+                  </div>
+                  {sqlResult.message && <p>{sqlResult.message}</p>}
+                  {sqlResult.error && <p className="text-rose-400">{sqlResult.error}</p>}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* ========================================================================= */}
+      {/* ➕ MODAL: CREATE STRATEGIC AGENCY */}
+      {/* ========================================================================= */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-xl w-full p-6 space-y-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400">
+                  <Building className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">تدشين وكيل استراتيجي جديد</h3>
+                  <p className="text-xs text-slate-400">إضافة وكيل متناظر بالكامل مع رادار وسديم في جدول tenants</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateTenantSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">اسم الوكيل (عربي) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={createFormData.name}
+                    onChange={(e) => setCreateFormData({ ...createFormData, name: e.target.value })}
+                    placeholder="مثال: أفق الأثر"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">الرمز الفريد (slug / id) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={createFormData.slug}
+                    onChange={(e) =>
+                      setCreateFormData({
+                        ...createFormData,
+                        slug: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
+                        id: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
+                      })
+                    }
+                    placeholder="ofooq"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">النطاق المخصص (Custom Domain)</label>
+                  <input
+                    type="text"
+                    value={createFormData.custom_domain}
+                    onChange={(e) => setCreateFormData({ ...createFormData, custom_domain: e.target.value })}
+                    placeholder="ofooq.sa أو ofooq-alathr.com"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">الاسم بالإنجليزي</label>
+                  <input
+                    type="text"
+                    value={createFormData.name_en}
+                    onChange={(e) => setCreateFormData({ ...createFormData, name_en: e.target.value })}
+                    placeholder="Ofooq"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">شعار المنظومة (Tagline)</label>
+                <input
+                  type="text"
+                  value={createFormData.tagline}
+                  onChange={(e) => setCreateFormData({ ...createFormData, tagline: e.target.value })}
+                  placeholder="منظومة الولاء ونقاط البيع السحابية الذكية"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">اللون الأساسي (Primary HEX)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={createFormData.primary_color_hex}
+                      onChange={(e) => setCreateFormData({ ...createFormData, primary_color_hex: e.target.value })}
+                      className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border border-slate-800"
+                    />
+                    <input
+                      type="text"
+                      value={createFormData.primary_color_hex}
+                      onChange={(e) => setCreateFormData({ ...createFormData, primary_color_hex: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">اللون الثانوي (Accent HEX)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={createFormData.accent_color_hex}
+                      onChange={(e) => setCreateFormData({ ...createFormData, accent_color_hex: e.target.value })}
+                      className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border border-slate-800"
+                    />
+                    <input
+                      type="text"
+                      value={createFormData.accent_color_hex}
+                      onChange={(e) => setCreateFormData({ ...createFormData, accent_color_hex: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">هاتف الدعم (واتساب)</label>
+                  <input
+                    type="text"
+                    value={createFormData.support_whatsapp}
+                    onChange={(e) => setCreateFormData({ ...createFormData, support_whatsapp: e.target.value })}
+                    placeholder="966500000000"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">إيميل الدعم</label>
+                  <input
+                    type="email"
+                    value={createFormData.support_email}
+                    onChange={(e) => setCreateFormData({ ...createFormData, support_email: e.target.value })}
+                    placeholder="support@ofooq.cloud"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={actionLoading === 'create-tenant'}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-xs flex items-center gap-2"
+                >
+                  {actionLoading === 'create-tenant' ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <PlusCircle className="w-4 h-4" />
+                  )}
+                  <span>تدشين الوكيل فوراً</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 🎨 MODAL: EDIT AGENCY BRANDING & DOMAIN */}
+      {/* ========================================================================= */}
+      {showEditModal && editTarget && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-xl w-full p-6 space-y-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400">
+                  <Palette className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">تخصيص هوية ونطاق: {editTarget.name}</h3>
+                  <p className="text-xs text-slate-400 font-mono">ID: {editTarget.id}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditTenantSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">اسم الوكيل (عربي) *</label>
+                  <input
+                    type="text"
+                    required
+                    value={editFormData.name}
+                    onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">الاسم بالإنجليزي</label>
+                  <input
+                    type="text"
+                    value={editFormData.name_en}
+                    onChange={(e) => setEditFormData({ ...editFormData, name_en: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">النطاق المخصص (Custom Domain)</label>
+                <input
+                  type="text"
+                  value={editFormData.custom_domain}
+                  onChange={(e) => setEditFormData({ ...editFormData, custom_domain: e.target.value })}
+                  placeholder="e.g. sdeemalathr.com (بدون https:// أو www)"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">شعار المنظومة (Tagline)</label>
+                <input
+                  type="text"
+                  value={editFormData.tagline}
+                  onChange={(e) => setEditFormData({ ...editFormData, tagline: e.target.value })}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">اللون الأساسي (Primary HEX)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={editFormData.primary_color_hex}
+                      onChange={(e) => setEditFormData({ ...editFormData, primary_color_hex: e.target.value })}
+                      className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border border-slate-800"
+                    />
+                    <input
+                      type="text"
+                      value={editFormData.primary_color_hex}
+                      onChange={(e) => setEditFormData({ ...editFormData, primary_color_hex: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">اللون الثانوي (Accent HEX)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={editFormData.accent_color_hex}
+                      onChange={(e) => setEditFormData({ ...editFormData, accent_color_hex: e.target.value })}
+                      className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border border-slate-800"
+                    />
+                    <input
+                      type="text"
+                      value={editFormData.accent_color_hex}
+                      onChange={(e) => setEditFormData({ ...editFormData, accent_color_hex: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">هاتف الدعم (واتساب)</label>
+                  <input
+                    type="text"
+                    value={editFormData.support_whatsapp}
+                    onChange={(e) => setEditFormData({ ...editFormData, support_whatsapp: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">إيميل الدعم</label>
+                  <input
+                    type="email"
+                    value={editFormData.support_email}
+                    onChange={(e) => setEditFormData({ ...editFormData, support_email: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={actionLoading === `edit-${editTarget.id}`}
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-xs flex items-center gap-2"
+                >
+                  {actionLoading === `edit-${editTarget.id}` ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <CheckCheck className="w-4 h-4" />
+                  )}
+                  <span>حفظ التعديلات في السحابة</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 📜 MODAL: SQL SETUP SNIPPET */}
+      {/* ========================================================================= */}
+      {showSqlSetupModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <Code2 className="w-6 h-6 text-amber-400" />
+                <h3 className="text-base font-bold text-white">كود المايجريشن للـ Supabase SQL Editor</h3>
+              </div>
+              <button
+                onClick={() => setShowSqlSetupModal(false)}
+                className="p-1 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              انسخ هذا الكود والصقه في محرّر الـ SQL بقاعدة بيانات رادار لتثبيت دوال مركز القيادة والتحكم:
+            </p>
+
+            <div className="flex-1 overflow-y-auto bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-emerald-300">
+              <pre className="whitespace-pre-wrap">{`-- الملف: supabase/migrations/20261114_al_athar_core_sovereign_master_engine.sql
+-- شغّل هذا الكود في Supabase SQL Editor مرة واحدة فقط.`}</pre>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowSqlSetupModal(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold"
+              >
+                إغلاق
+              </button>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    `-- 🏛️ AL-ATHAR CORE (منصة الأثر السحابية) - SOVEREIGN MASTER CONTROL ENGINE\n-- شغّل الملف: supabase/migrations/20261114_al_athar_core_sovereign_master_engine.sql`
+                  );
+                  setSuccessMsg('تم نسخ الكود للحافظة');
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold flex items-center gap-1.5"
+              >
+                <Copy className="w-4 h-4" />
+                <span>نسخ للحافظة</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
-
 export default App;
