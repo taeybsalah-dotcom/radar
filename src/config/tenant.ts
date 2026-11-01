@@ -162,7 +162,18 @@ export function applyTenantBranding(data: any): WhiteLabelTenantConfig {
       document.title = memoryConfig.brandName;
       if (memoryConfig.faviconUrl) {
         const fav = document.getElementById('app-favicon') as HTMLLinkElement;
-        if (fav) fav.href = memoryConfig.faviconUrl;
+        if (fav) {
+          fav.href = memoryConfig.faviconUrl;
+          if (memoryConfig.faviconUrl.includes('.jpg') || memoryConfig.faviconUrl.includes('.jpeg')) {
+            fav.type = 'image/jpeg';
+          } else if (memoryConfig.faviconUrl.includes('.png')) {
+            fav.type = 'image/png';
+          } else if (memoryConfig.faviconUrl.includes('.svg')) {
+            fav.type = 'image/svg+xml';
+          } else {
+            fav.removeAttribute('type');
+          }
+        }
       }
     } catch {}
   }

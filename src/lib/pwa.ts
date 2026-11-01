@@ -242,6 +242,15 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
     document.head.appendChild(favicon);
   }
   favicon.href = storeIconUrl;
+  if (storeIconUrl.includes('.jpg') || storeIconUrl.includes('.jpeg')) {
+    favicon.type = 'image/jpeg';
+  } else if (storeIconUrl.includes('.png')) {
+    favicon.type = 'image/png';
+  } else if (storeIconUrl.includes('.svg')) {
+    favicon.type = 'image/svg+xml';
+  } else {
+    favicon.removeAttribute('type');
+  }
 
   // 5. Apple Mobile Web App Title
   let appleTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]') as HTMLMetaElement;

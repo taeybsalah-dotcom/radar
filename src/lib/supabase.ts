@@ -1302,7 +1302,11 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase.rpc('get_all_partner_financial_summaries');
+        const activeTenant = getActiveTenantConfig();
+        const tenantId = activeTenant?.tenantId || (activeTenant?.isWhiteLabelTenant ? 'sadeem' : 'radar');
+        const { data, error } = await (supabase.rpc as any)('get_all_partner_financial_summaries', {
+          p_tenant_id: tenantId
+        });
         if (!error && data && typeof data === 'object') {
           return data as any;
         }
@@ -8876,8 +8880,12 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
+        const activeTenant = getActiveTenantConfig();
+        const tenantId = activeTenant?.tenantId || (activeTenant?.isWhiteLabelTenant ? 'sadeem' : 'radar');
         // 🔒 استدعاء الـ RPC السيادي بدون تكرار أو دمج مكرر (Single Source of Truth)
-        const { data: sumData, error: sumErr } = await (supabase.rpc as any)('get_all_partner_financial_summaries');
+        const { data: sumData, error: sumErr } = await (supabase.rpc as any)('get_all_partner_financial_summaries', {
+          p_tenant_id: tenantId
+        });
 
         if (!sumErr && sumData && typeof sumData === 'object' && Object.keys(sumData).length > 0) {
           const summaryList = Object.values(sumData) as any[];
