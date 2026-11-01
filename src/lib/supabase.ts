@@ -10868,17 +10868,35 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       throw new Error('لا يوجد اتصال بقاعدة البيانات السحابية');
     }
 
+    const tenant = getActiveTenantConfig();
+    const cleanFeatures = Array.isArray(planData.features_list) && planData.features_list.length > 0
+      ? planData.features_list
+      : (Array.isArray(planData.features) ? planData.features : []);
+    const mAmount = planData.monthly_amount !== undefined ? Number(planData.monthly_amount) : Number(planData.amount) || 99;
+    const yAmount = planData.yearly_amount !== undefined ? Number(planData.yearly_amount) : (mAmount * 10);
+    const bPrice = planData.extra_branch_price !== undefined ? Number(planData.extra_branch_price) : 49;
+    const bYPrice = planData.extra_branch_yearly_price !== undefined ? Number(planData.extra_branch_yearly_price) : (bPrice * 10);
+
     const insertPayload: any = {
+      tenant_id: tenant.tenantId || 'radar',
       code: cleanCode,
       name: planData.name.trim(),
       description: planData.description || '',
-      amount: Number(planData.amount) || 0,
+      amount: mAmount,
+      monthly_amount: mAmount,
+      yearly_amount: yAmount,
+      extra_branch_price: bPrice,
+      extra_branch_yearly_price: bYPrice,
+      tier_level: Number(planData.tier_level) || 1,
+      badge_text: planData.badge_text ? planData.badge_text.trim() : null,
+      cumulative_note: planData.cumulative_note ? planData.cumulative_note.trim() : null,
       currency: planData.currency || 'SAR',
       billing_interval: durationMonths === 12 ? 'YEARLY' : 'MONTHLY',
-      trial_days: Number(planData.trial_days) ?? 7,
+      trial_days: Number(planData.trial_days) ?? 14,
       active: planData.active !== false,
+      features_list: cleanFeatures,
       metadata: {
-        features: planData.features || [],
+        features: cleanFeatures,
         duration_months: durationMonths,
       },
     };
@@ -10899,12 +10917,20 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       code: data.code,
       name: data.name,
       description: data.description || '',
-      amount: Number(data.amount) || 0,
+      amount: Number(data.amount) || mAmount,
+      monthly_amount: Number((data as any).monthly_amount) || mAmount,
+      yearly_amount: Number((data as any).yearly_amount) || yAmount,
+      extra_branch_price: Number((data as any).extra_branch_price) || bPrice,
+      extra_branch_yearly_price: Number((data as any).extra_branch_yearly_price) || bYPrice,
+      tier_level: Number((data as any).tier_level) || 1,
+      badge_text: (data as any).badge_text || null,
+      cumulative_note: (data as any).cumulative_note || null,
       currency: data.currency || 'ر.س',
       duration_months: durationMonths,
       billing_interval: (data.billing_interval as 'MONTHLY' | 'YEARLY' | 'CUSTOM') || 'MONTHLY',
-      trial_days: Number(data.trial_days) ?? 7,
-      features: planData.features || [],
+      trial_days: Number(data.trial_days) ?? 14,
+      features: cleanFeatures,
+      features_list: cleanFeatures,
       active: data.active !== false,
       created_at: data.created_at,
     };
@@ -10936,16 +10962,49 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     let updatedDbPlan: any = null;
     let lastError: any = null;
 
-    // 1. Try Sovereign Atomic RPC first
+    const feats = (Array.isArray(updates.features_list) && updates.features_list.length > 0)
+      ? updates.features_list
+      : (Array.isArray(updates.features) ? updates.features : (existing?.features_list || existing?.features || []));
+    const monthlyAmt = updates.monthly_amount !== undefined
+      ? Number(updates.monthly_amount)
+      : (updates.amount !== undefined ? Number(updates.amount) : (existing?.monthly_amount || existing?.amount || null));
+    const yearlyAmt = updates.yearly_amount !== undefined
+      ? Number(updates.yearly_amount)
+      : (existing?.yearly_amount || (monthlyAmt ? monthlyAmt * 10 : null));
+    const branchPrice = updates.extra_branch_price !== undefined
+      ? Number(updates.extra_branch_price)
+      : (existing?.extra_branch_price ?? 0);
+    const branchYearlyPrice = updates.extra_branch_yearly_price !== undefined
+      ? Number(updates.extra_branch_yearly_price)
+      : (existing?.extra_branch_yearly_price ?? (branchPrice * 10));
+    const tierLvl = updates.tier_level !== undefined
+      ? Number(updates.tier_level)
+      : (existing?.tier_level ?? 1);
+    const badgeTxt = updates.badge_text !== undefined
+      ? updates.badge_text
+      : (existing?.badge_text || null);
+    const cumulativeNoteTxt = updates.cumulative_note !== undefined
+      ? updates.cumulative_note
+      : (existing?.cumulative_note || null);
+
+    // 1. Try Sovereign Atomic RPC first with full V2 payload
     try {
       const { data: rpcData, error: rpcErr } = await (supabase as any).rpc('update_billing_plan_atomic', {
         p_plan_id: planId,
         p_name: updates.name ? updates.name.trim() : (existing?.name || 'باقة اشتراك'),
         p_description: updates.description !== undefined ? updates.description : (existing?.description || null),
-        p_amount: updates.amount !== undefined ? Number(updates.amount) : (existing?.amount || null),
+        p_amount: monthlyAmt,
+        p_monthly_amount: monthlyAmt,
+        p_yearly_amount: yearlyAmt,
+        p_extra_branch_price: branchPrice,
+        p_extra_branch_yearly_price: branchYearlyPrice,
+        p_tier_level: tierLvl,
+        p_badge_text: badgeTxt,
+        p_cumulative_note: cumulativeNoteTxt,
+        p_trial_days: updates.trial_days !== undefined ? Number(updates.trial_days) : (existing?.trial_days || 14),
+        p_features: feats,
+        p_features_list: feats,
         p_duration_months: durationMonths,
-        p_trial_days: updates.trial_days !== undefined ? Number(updates.trial_days) : (existing?.trial_days || 7),
-        p_features: updates.features || existing?.features || [],
         p_active: updates.active !== undefined ? Boolean(updates.active) : (existing?.active !== false),
       });
 
@@ -10966,28 +11025,25 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       };
       if (updates.name !== undefined) updatePayload.name = updates.name.trim();
       if (updates.description !== undefined) updatePayload.description = updates.description;
-      if (updates.amount !== undefined) updatePayload.amount = Number(updates.amount);
-      if (updates.monthly_amount !== undefined) updatePayload.monthly_amount = Number(updates.monthly_amount);
-      if (updates.yearly_amount !== undefined) updatePayload.yearly_amount = Number(updates.yearly_amount);
-      if (updates.extra_branch_price !== undefined) updatePayload.extra_branch_price = Number(updates.extra_branch_price);
-      if (updates.extra_branch_yearly_price !== undefined) updatePayload.extra_branch_yearly_price = Number(updates.extra_branch_yearly_price);
-      if (updates.tier_level !== undefined) updatePayload.tier_level = Number(updates.tier_level);
-      if (updates.badge_text !== undefined) updatePayload.badge_text = updates.badge_text;
-      if (updates.cumulative_note !== undefined) updatePayload.cumulative_note = updates.cumulative_note;
+      if (monthlyAmt !== null && monthlyAmt !== undefined) {
+        updatePayload.monthly_amount = monthlyAmt;
+        updatePayload.amount = monthlyAmt;
+      }
+      if (yearlyAmt !== null && yearlyAmt !== undefined) updatePayload.yearly_amount = yearlyAmt;
+      if (updates.extra_branch_price !== undefined) updatePayload.extra_branch_price = branchPrice;
+      if (updates.extra_branch_yearly_price !== undefined) updatePayload.extra_branch_yearly_price = branchYearlyPrice;
+      if (updates.tier_level !== undefined) updatePayload.tier_level = tierLvl;
+      if (updates.badge_text !== undefined) updatePayload.badge_text = badgeTxt;
+      if (updates.cumulative_note !== undefined) updatePayload.cumulative_note = cumulativeNoteTxt;
       if (updates.currency !== undefined) updatePayload.currency = updates.currency;
       if (updates.trial_days !== undefined) updatePayload.trial_days = Number(updates.trial_days);
       if (updates.active !== undefined) updatePayload.active = Boolean(updates.active);
-      if (updates.duration_months !== undefined || updates.billing_interval !== undefined) {
-        updatePayload.billing_interval = durationMonths === 12 ? 'YEARLY' : 'MONTHLY';
-      }
-      if (updates.features !== undefined || updates.duration_months !== undefined || updates.features_list !== undefined) {
-        const feats = updates.features_list || updates.features || existing?.features || [];
-        updatePayload.features_list = feats;
-        updatePayload.metadata = {
-          features: feats,
-          duration_months: durationMonths,
-        };
-      }
+      updatePayload.billing_interval = durationMonths === 12 ? 'YEARLY' : 'MONTHLY';
+      updatePayload.features_list = feats;
+      updatePayload.metadata = {
+        features: feats,
+        duration_months: durationMonths,
+      };
 
       let query = supabase.from('billing_plans').update(updatePayload);
       if (isUuid) {
@@ -11014,35 +11070,40 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ? Number(meta.duration_months)
       : durationMonths;
 
-    const updatedPlan: BillingPlan = {
+    const returnPlan: BillingPlan = {
       id: updatedDbPlan?.id || planId,
       code: updatedDbPlan?.code || planId,
       name: updatedDbPlan?.name || updates.name || existing?.name || 'باقة اشتراك',
-      description: updatedDbPlan?.description || updates.description || existing?.description || '',
-      amount: updatedDbPlan?.amount !== undefined ? Number(updatedDbPlan.amount) : (updates.amount !== undefined ? Number(updates.amount) : existing?.amount || 0),
-      monthly_amount: updatedDbPlan?.monthly_amount !== undefined ? Number(updatedDbPlan.monthly_amount) : (updates.monthly_amount !== undefined ? Number(updates.monthly_amount) : existing?.monthly_amount || 99),
-      yearly_amount: updatedDbPlan?.yearly_amount !== undefined ? Number(updatedDbPlan.yearly_amount) : (updates.yearly_amount !== undefined ? Number(updates.yearly_amount) : existing?.yearly_amount || 990),
-      extra_branch_price: updatedDbPlan?.extra_branch_price !== undefined ? Number(updatedDbPlan.extra_branch_price) : (updates.extra_branch_price !== undefined ? Number(updates.extra_branch_price) : existing?.extra_branch_price || 49),
-      extra_branch_yearly_price: updatedDbPlan?.extra_branch_yearly_price !== undefined ? Number(updatedDbPlan.extra_branch_yearly_price) : (updates.extra_branch_yearly_price !== undefined ? Number(updates.extra_branch_yearly_price) : existing?.extra_branch_yearly_price || 490),
-      tier_level: updatedDbPlan?.tier_level !== undefined ? Number(updatedDbPlan.tier_level) : (updates.tier_level !== undefined ? Number(updates.tier_level) : existing?.tier_level || 1),
-      badge_text: updatedDbPlan?.badge_text !== undefined ? updatedDbPlan.badge_text : (updates.badge_text !== undefined ? updates.badge_text : existing?.badge_text || null),
-      cumulative_note: updatedDbPlan?.cumulative_note !== undefined ? updatedDbPlan.cumulative_note : (updates.cumulative_note !== undefined ? updates.cumulative_note : existing?.cumulative_note || null),
+      description: updatedDbPlan?.description !== undefined ? updatedDbPlan.description : (updates.description || existing?.description || ''),
+      amount: updatedDbPlan?.amount !== undefined ? Number(updatedDbPlan.amount) : (monthlyAmt || 0),
+      monthly_amount: updatedDbPlan?.monthly_amount !== undefined ? Number(updatedDbPlan.monthly_amount) : (monthlyAmt || 99),
+      yearly_amount: updatedDbPlan?.yearly_amount !== undefined ? Number(updatedDbPlan.yearly_amount) : (yearlyAmt || 990),
+      extra_branch_price: updatedDbPlan?.extra_branch_price !== undefined ? Number(updatedDbPlan.extra_branch_price) : branchPrice,
+      extra_branch_yearly_price: updatedDbPlan?.extra_branch_yearly_price !== undefined ? Number(updatedDbPlan.extra_branch_yearly_price) : branchYearlyPrice,
+      tier_level: updatedDbPlan?.tier_level !== undefined ? Number(updatedDbPlan.tier_level) : tierLvl,
+      badge_text: updatedDbPlan?.badge_text !== undefined ? updatedDbPlan.badge_text : badgeTxt,
+      cumulative_note: updatedDbPlan?.cumulative_note !== undefined ? updatedDbPlan.cumulative_note : cumulativeNoteTxt,
       currency: updatedDbPlan?.currency || updates.currency || existing?.currency || 'ر.س',
       duration_months: finalDurationMonths,
       billing_interval: updatedDbPlan?.billing_interval || (finalDurationMonths === 12 ? 'YEARLY' : 'MONTHLY'),
-      trial_days: updatedDbPlan?.trial_days !== undefined ? Number(updatedDbPlan.trial_days) : (updates.trial_days !== undefined ? Number(updates.trial_days) : 7),
-      features: Array.isArray(meta.features) ? meta.features : (updates.features || existing?.features || []),
-      features_list: Array.isArray(meta.features) ? meta.features : (updates.features || existing?.features || []),
+      trial_days: updatedDbPlan?.trial_days !== undefined ? Number(updatedDbPlan.trial_days) : (updates.trial_days !== undefined ? Number(updates.trial_days) : 14),
+      features: (Array.isArray(updatedDbPlan?.features_list) && updatedDbPlan.features_list.length > 0)
+        ? updatedDbPlan.features_list
+        : (Array.isArray(meta.features) && meta.features.length > 0 ? meta.features : feats),
+      features_list: (Array.isArray(updatedDbPlan?.features_list) && updatedDbPlan.features_list.length > 0)
+        ? updatedDbPlan.features_list
+        : (Array.isArray(meta.features) && meta.features.length > 0 ? meta.features : feats),
       active: updatedDbPlan?.active !== undefined ? updatedDbPlan.active : (updates.active !== undefined ? updates.active : true),
       created_at: updatedDbPlan?.created_at || existing?.created_at,
     };
 
     // Only update local cache after confirmed DB write
-    const updatedList = local.map((p) => (p.id === planId || p.code === planId ? updatedPlan : p));
-    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, updatedList);
+    const currentList = this.getAllSubscriptionPlansSync();
+    const nextList = currentList.map((p) => (p.id === returnPlan.id || p.code === returnPlan.code ? returnPlan : p));
+    saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, nextList);
 
     LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: 'global' });
-    return updatedPlan;
+    return returnPlan;
   },
 
   async toggleSubscriptionPlanActive(planId: string): Promise<boolean> {

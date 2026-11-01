@@ -387,11 +387,25 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
     setIsPlanModalOpen(true);
   };
 
+  const fetchBillingPlans = async () => {
+    try {
+      const freshPlans = await LoyaltyService.getAllSubscriptionPlans();
+      if (freshPlans && freshPlans.length > 0) {
+        setPlans(freshPlans);
+        return freshPlans;
+      }
+    } catch (e) {
+      console.warn('[SuperAdminBillingConsole] fetchBillingPlans error:', e);
+    }
+    return null;
+  };
+
   const handleSavePlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!planName.trim() || planMonthlyAmount === '' || planYearlyAmount === '') return;
 
     setIsSavingPlan(true);
+    setActionError(null);
     try {
       const cleanFeatures = planFeaturesText
         .split('\n')
@@ -420,8 +434,13 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
           features_list: cleanFeatures,
           trial_days: Number(planTrialDays) || 0,
         });
-        setPlans(plans.map((p) => (p.id === editingPlan.id ? updated : p)));
-        setActionSuccess(`تم تحديث خطة "${updated.name}" بنجاح 💾`);
+
+        // 🔄 Real-time refetch: Fetch latest plans directly from DB
+        const fresh = await fetchBillingPlans();
+        if (!fresh) {
+          setPlans((prev) => prev.map((p) => (p.id === editingPlan.id ? updated : p)));
+        }
+        setActionSuccess(`تم حفظ وتحديث خطة "${updated.name}" بنجاح 💾`);
       } else {
         const created = await LoyaltyService.addSubscriptionPlan({
           name: planName.trim(),
@@ -440,16 +459,21 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
           trial_days: Number(planTrialDays) || 0,
           active: true,
         });
-        setPlans([...plans, created]);
+
+        // 🔄 Real-time refetch
+        const fresh = await fetchBillingPlans();
+        if (!fresh) {
+          setPlans((prev) => [...prev, created]);
+        }
         setActionSuccess(`تمت إضافة خطة "${created.name}" بنجاح 🚀`);
       }
 
       setIsPlanModalOpen(false);
-      setTimeout(() => setActionSuccess(null), 3500);
+      setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
-      console.error(err);
-      setActionError(err.message || 'حدث خطأ أثناء حفظ الخطة');
-      setTimeout(() => setActionError(null), 3500);
+      console.error('[handleSavePlanSubmit error]:', err);
+      setActionError(err.message || 'حدث خطأ أثناء حفظ وتحديث الخطة');
+      setTimeout(() => setActionError(null), 5000);
     } finally {
       setIsSavingPlan(false);
     }
@@ -686,6 +710,20 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
 
   return (
     <div className="space-y-8" dir="rtl">
+      {/* Floating Viewport Toast */}
+      {actionSuccess && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-2xl bg-slate-900/95 border-2 border-emerald-500 text-emerald-300 text-sm font-black flex items-center gap-3 shadow-2xl backdrop-blur-md animate-bounce">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span>{actionSuccess}</span>
+        </div>
+      )}
+      {actionError && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] px-6 py-3 rounded-2xl bg-slate-900/95 border-2 border-rose-500 text-rose-300 text-sm font-black flex items-center gap-3 shadow-2xl backdrop-blur-md">
+          <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
+          <span>{actionError}</span>
+        </div>
+      )}
+
       {/* Toast Alerts */}
       {actionSuccess && (
         <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs sm:text-sm font-bold flex items-center gap-2 animate-fadeIn shadow-2xl">

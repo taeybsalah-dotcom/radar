@@ -259,15 +259,12 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
     icons: manifestIcons,
   };
 
-  // 2. Inject or Update Blob Manifest Link
+  // 2. Inject or Update Dynamic Manifest Link (same-origin HTTPS prevents Chromium blob URL invalid warnings)
   try {
     if (activeBlobUrl) {
       URL.revokeObjectURL(activeBlobUrl);
+      activeBlobUrl = null;
     }
-    const manifestBlob = new Blob([JSON.stringify(manifestObject, null, 2)], {
-      type: 'application/manifest+json',
-    });
-    activeBlobUrl = URL.createObjectURL(manifestBlob);
 
     let manifestLink = document.querySelector('link[rel="manifest"]') as HTMLLinkElement;
     if (!manifestLink) {
@@ -275,9 +272,12 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
       manifestLink.rel = 'manifest';
       document.head.appendChild(manifestLink);
     }
-    manifestLink.href = activeBlobUrl;
+    const manifestUrl = slug
+      ? `/api/manifest?portal=${encodeURIComponent(portal)}&store=${encodeURIComponent(slug)}`
+      : `/api/manifest?portal=${encodeURIComponent(portal)}`;
+    manifestLink.href = manifestUrl;
   } catch (e) {
-    console.warn('Dynamic manifest blob error:', e);
+    console.warn('Dynamic manifest link error:', e);
   }
 
   // 3. Apple Touch Icon
