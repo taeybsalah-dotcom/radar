@@ -3,6 +3,19 @@ import { getActiveTenantConfig } from '../config/tenant';
 
 let activeBlobUrl: string | null = null;
 
+function toAbsoluteUrl(urlOrPath: string): string {
+  if (typeof window === 'undefined') return urlOrPath || '/';
+  if (!urlOrPath) return window.location.origin + '/';
+  if (urlOrPath.startsWith('http://') || urlOrPath.startsWith('https://') || urlOrPath.startsWith('data:')) {
+    return urlOrPath;
+  }
+  try {
+    return new URL(urlOrPath, window.location.origin).href;
+  } catch {
+    return window.location.origin + (urlOrPath.startsWith('/') ? urlOrPath : '/' + urlOrPath);
+  }
+}
+
 function generateStoreSvgIcon(storeName: string, primaryColor: string, secondaryColor: string): string {
   const char = (storeName || 'ST').trim().slice(0, 2).toUpperCase();
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
@@ -200,20 +213,21 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
     }
   }
 
-  // 1. Build Dynamic Manifest Object
+  // 1. Build Dynamic Manifest Object with Absolute URLs (prevents Chromium blob URL resolution warnings)
+  const absoluteIconUrl = toAbsoluteUrl(storeIconUrl);
   const manifestIcons = [
     {
-      src: storeIconUrl,
+      src: absoluteIconUrl,
       sizes: '192x192 512x512',
-      type: storeIconUrl.startsWith('data:image/svg')
+      type: absoluteIconUrl.startsWith('data:image/svg')
         ? 'image/svg+xml'
-        : storeIconUrl.startsWith('data:image/png')
+        : absoluteIconUrl.startsWith('data:image/png')
         ? 'image/png'
-        : 'image/jpeg',
+        : 'image/png',
       purpose: 'any maskable',
     },
     {
-      src: storeIconUrl,
+      src: absoluteIconUrl,
       sizes: '192x192',
       type: 'image/png',
       purpose: 'any',
@@ -236,8 +250,8 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
     name: manifestName,
     short_name: manifestShortName,
     description: `منصة ${tenantBrand} للولاء والمكافآت الذكية - ${manifestName}`,
-    start_url: startUrl,
-    scope: '/',
+    start_url: toAbsoluteUrl(startUrl),
+    scope: toAbsoluteUrl('/'),
     display: 'standalone',
     background_color: primaryColor,
     theme_color: secondaryColor,
