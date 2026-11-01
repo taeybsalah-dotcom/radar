@@ -1284,7 +1284,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 <img
                   src={getActiveTenantConfig().logoUrl}
                   alt={getActiveTenantConfig().brandName}
-                  className="w-full h-full max-w-full max-h-full object-contain rounded-xl"
+                  className="w-full h-full object-cover rounded-xl"
                 />
               ) : (
                 <span className="w-full h-full bg-slate-950 text-[#CCFF00] rounded-xl flex items-center justify-center font-black text-lg">

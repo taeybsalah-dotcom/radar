@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="128" fill="#0A0F15"/>
-  <!-- Top Chevron (Yellow) -->
-  <polygon points="256,50 380,140 380,225 256,155 132,225 132,140" fill="#FACC15"/>
-  <!-- Middle Chevron (Magenta) -->
-  <polygon points="256,170 380,260 380,345 256,275 132,345 132,260" fill="#E11D48"/>
-  <!-- Bottom Chevron (Cyan) -->
-  <polygon points="256,290 380,380 380,465 256,395 132,465 132,380" fill="#0EA5E9"/>
-</svg>

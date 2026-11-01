@@ -3,6 +3,7 @@
  * Everything that personalizes the platform for a dedicated Wholesaler/Reseller
  */
 export interface WhiteLabelTenantConfig {
+  tenantId: string;
   brandName: string;
   brandEnglishName: string;
   tagline: string;
@@ -27,11 +28,12 @@ const getDomainCacheKey = () => {
 
 // Known tenant initial profiles for 0ms Instant Rendering based on Hostname
 const SADEEM_PROFILE: WhiteLabelTenantConfig = {
+  tenantId: 'sadeem',
   brandName: 'سديم الأثر',
   brandEnglishName: 'Sadim Al-Athir',
   tagline: 'منظومة نقاط البيع السحابية وإدارة المطاعم والمقاهي',
-  logoUrl: '/sadeem-logo-cropped.png',
-  faviconUrl: '/sadeem-favicon.png',
+  logoUrl: 'https://zagpvflyizbmzsbmhnts.supabase.co/storage/v1/object/public/store-assets/logos/sadeem-official-logo.jpg',
+  faviconUrl: 'https://zagpvflyizbmzsbmhnts.supabase.co/storage/v1/object/public/store-assets/logos/sadeem-official-logo.jpg',
   domain: 'sdeemalathr.com',
   supportPhone: '+966500000000',
   supportWhatsapp: '966500000000',
@@ -44,6 +46,7 @@ const SADEEM_PROFILE: WhiteLabelTenantConfig = {
 };
 
 const RADAR_PROFILE: WhiteLabelTenantConfig = {
+  tenantId: 'radar',
   brandName: import.meta.env.VITE_BRAND_NAME || 'رادار',
   brandEnglishName: import.meta.env.VITE_BRAND_NAME_EN || 'Radar',
   tagline: import.meta.env.VITE_BRAND_TAGLINE || 'منظومة الولاء ونقاط البيع السحابية الذكية',
@@ -81,8 +84,10 @@ function resolveInitialConfig(): WhiteLabelTenantConfig {
         if (isSadeemHost && bName === 'رادار') {
           // Reject stale radar cache on sadeem domain
         } else {
+          const tid = b.id || (isSadeemHost || bName === 'سديم الأثر' ? 'sadeem' : 'radar');
           base = {
             ...base,
+            tenantId: tid,
             brandName: bName,
             brandEnglishName: b.brand_english_name || b.name_en || base.brandEnglishName,
             tagline: b.tagline || base.tagline,
@@ -127,7 +132,10 @@ export function applyTenantBranding(data: any): WhiteLabelTenantConfig {
   const brandName = data.brand_name || data.name;
   if (!brandName) return memoryConfig;
 
+  const tenantId = data.id || (brandName === 'سديم الأثر' ? 'sadeem' : memoryConfig.tenantId || 'radar');
+
   memoryConfig = {
+    tenantId,
     brandName,
     brandEnglishName: data.brand_english_name || data.name_en || memoryConfig.brandEnglishName,
     tagline: data.tagline || memoryConfig.tagline,

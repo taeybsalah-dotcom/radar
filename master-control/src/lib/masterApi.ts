@@ -84,43 +84,20 @@ export async function fetchMasterTenants(): Promise<TenantRecord[]> {
       p_master_token: SOVEREIGN_MASTER_TOKEN,
     });
 
-    if (!rpcErr && Array.isArray(rpcData) && rpcData.length > 0) {
+    if (rpcErr) {
+      console.error('[Master Control] master_get_tenants RPC error:', rpcErr);
+      throw new Error(rpcErr.message || 'فشل استعلام الوكلاء عبر الدالة السيادية');
+    }
+
+    if (Array.isArray(rpcData)) {
       return rpcData as TenantRecord[];
     }
-  } catch (err) {
-    console.warn('[Master Control] master_get_tenants RPC unavailable, falling back to direct table query:', err);
+  } catch (err: any) {
+    console.error('[Master Control] master_get_tenants RPC failed:', err);
+    throw err;
   }
 
-  // 2. Fallback: Query public.tenants directly
-  const { data: tenantsData, error: tenantsErr } = await masterSupabase
-    .from('tenants')
-    .select('*')
-    .order('created_at', { ascending: true });
-
-  if (tenantsErr) {
-    throw new Error(tenantsErr.message || 'فشل جلب بيانات الوكلاء من السحابة');
-  }
-
-  const tenants: TenantRecord[] = (tenantsData || []) as TenantRecord[];
-
-  // 3. Fetch store counts
-  try {
-    const { data: storesData } = await masterSupabase.from('stores').select('tenant_id');
-    if (storesData) {
-      const counts: Record<string, number> = {};
-      storesData.forEach((s: any) => {
-        const tid = s.tenant_id || 'radar';
-        counts[tid] = (counts[tid] || 0) + 1;
-      });
-      tenants.forEach((t) => {
-        t.stores_count = counts[t.id] || 0;
-      });
-    }
-  } catch (err) {
-    console.warn('[Master Control] Could not count stores:', err);
-  }
-
-  return tenants;
+  return [];
 }
 
 /**

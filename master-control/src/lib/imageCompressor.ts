@@ -41,7 +41,7 @@ export function compressAndUploadLogo(
       } else {
         if (height > maxHeight) {
           width = Math.round((width * maxHeight) / height);
-          width = maxHeight;
+          height = maxHeight;
         }
       }
 

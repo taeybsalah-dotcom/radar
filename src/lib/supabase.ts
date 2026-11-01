@@ -55,6 +55,7 @@ import {
   DEFAULT_SUPER_ADMIN_PERMISSIONS,
 } from '../types';
 import { generateZatcaTLVQR } from './zatcaQR';
+import { getActiveTenantConfig } from '../config/tenant';
 import {
   INITIAL_STORES,
   INITIAL_STORE,
@@ -2228,7 +2229,10 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const trialEndIso = new Date(Date.now() + 14 * 86400000).toISOString();
 
     try {
-      const { data, error } = await supabase.rpc('create_store_concierge_onboarding', {
+      const activeTenant = getActiveTenantConfig();
+      const targetTenantId = activeTenant.tenantId || (activeTenant.isWhiteLabelTenant ? 'sadeem' : 'radar');
+
+      const { data, error } = await (supabase.rpc as any)('create_store_concierge_onboarding', {
         p_name: payload.name.trim(),
         p_slug: cleanSlug,
         p_logo_url: payload.logo_url || null,
@@ -2238,6 +2242,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         p_manager_name: payload.manager_name.trim(),
         p_manager_contact: payload.manager_contact.trim(),
         p_manager_pin: payload.manager_pin || '9999',
+        p_tenant_id: targetTenantId,
+        p_custom_domain: payload.custom_domain ? payload.custom_domain.replace(/^https?:\/\//, '').replace(/\/$/, '') : null,
       });
 
       if (!error && data && (data as any).success) {
@@ -2246,10 +2252,11 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       } else {
         lastDbError = error;
         console.error('RPC create_store_concierge_onboarding failed, trying direct table insert:', error);
-        const { data: storeData, error: sErr } = await supabase
+        const { data: storeData, error: sErr } = await (supabase as any)
           .from('stores')
           .insert([
             {
+              tenant_id: targetTenantId,
               name: payload.name.trim(),
               slug: cleanSlug,
               custom_domain: payload.custom_domain ? payload.custom_domain.replace(/^https?:\/\//, '').replace(/\/$/, '') : null,
@@ -2273,10 +2280,11 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           console.error('Direct store insert failed:', sErr);
         } else {
           createdStore = storeData as unknown as Store;
-          const { data: staffData, error: staffErr } = await supabase
+          const { data: staffData, error: staffErr } = await (supabase as any)
             .from('store_staff')
             .insert([
               {
+                tenant_id: targetTenantId,
                 store_id: storeData.id,
                 name: payload.manager_name.trim(),
                 phone: payload.manager_contact.trim(),
