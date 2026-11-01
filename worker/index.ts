@@ -662,7 +662,17 @@ export default {
       return handleSandboxWebhook(request, env);
     }
 
-    // 4. Serve static assets with anti-stale caching rules
+    // 4. Central Digital Wallet Passes Route (Apple & Google Wallet pass generation)
+    if (url.pathname.startsWith('/api/wallet/')) {
+      const targetUrl = new URL(request.url);
+      targetUrl.hostname = 'sdeemalathr.com';
+      targetUrl.port = '';
+      targetUrl.protocol = 'https:';
+      const proxyRequest = new Request(targetUrl.toString(), request);
+      return fetch(proxyRequest);
+    }
+
+    // 5. Serve static assets with anti-stale caching rules
     const response = await env.ASSETS.fetch(request);
 
     const pathname = url.pathname.toLowerCase();

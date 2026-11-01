@@ -770,10 +770,16 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   );
 
   const isStoreSuspended =
-    store.subscription_active === false ||
-    store.subscription_status === 'suspended' ||
-    store.status === 'suspended' ||
-    subscriptionInfo?.isSuspended === true;
+    (store.subscription_active === false ||
+      store.subscription_status === 'suspended' ||
+      store.status === 'suspended' ||
+      subscriptionInfo?.isSuspended === true) &&
+    // 🛡️ A store in an active trial period is NEVER suspended
+    !(
+      (store.status === 'trial' || store.subscription_status === 'trial' || (!store.setup_fee_paid && !isPaidActive)) &&
+      store.trial_end_date &&
+      new Date(store.trial_end_date).getTime() > Date.now()
+    );
 
   const nowMs = Date.now();
   const subEndDateMs = store.subscription_end_date ? new Date(store.subscription_end_date).getTime() : 0;

@@ -87,9 +87,14 @@ export async function onRequestPost(context: any): Promise<Response> {
       const stores = await restGet(
         supabaseUrl,
         serviceKey,
-        `stores?id=eq.${store_id}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone,logo_url,fulfillment_settings&limit=1`
+        `stores?id=eq.${store_id}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,manager_contact,logo_url,fulfillment_settings&limit=1`
       );
-      if (stores[0]) store = stores[0];
+      if (stores[0]) {
+        store = stores[0];
+        if (store.manager_contact && !store.phone) {
+          store.phone = store.manager_contact;
+        }
+      }
     }
 
     // 2. جلب إعدادات بطاقة المحفظة للمتجر (الأختام، الألوان، النمط)

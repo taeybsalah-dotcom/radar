@@ -101,10 +101,13 @@ export async function onRequestGet(context: any): Promise<Response> {
     const stores = await restGet(
       supabaseUrl,
       serviceKey,
-      `stores?${storeQuery}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,phone,logo_url,fulfillment_settings&limit=1`
+      `stores?${storeQuery}&select=id,slug,name,primary_color,secondary_color,points_per_riyal,manager_contact,logo_url,fulfillment_settings&limit=1`
     );
     const store = stores[0];
     if (!store) return errorResponse(404, 'المتجر غير موجود');
+    if (store.manager_contact && !store.phone) {
+      store.phone = store.manager_contact;
+    }
 
     // جلب إعدادات بطاقة المحفظة الخاصة بالمتجر (الأختام، الألوان، إشعار القرب الجغرافي)
     let walletConfig: any = null;
@@ -262,10 +265,10 @@ export async function onRequestGet(context: any): Promise<Response> {
     const cfg =
       integrations.find((c: any) => c.apple_cert_p12_base64 && c.apple_pass_type_id) ||
       integrations.find((c: any) => c.apple_wallet_enabled) ||
-      integrations[0];
+      integrations[0] || {};
 
     // تشخيص دقيق إذا تعذر التفعيل
-    const isConfigured = Boolean(cfg && (cfg.apple_wallet_enabled || cfg.apple_cert_p12_base64));
+    const isConfigured = Boolean((cfg && (cfg.apple_wallet_enabled || cfg.apple_cert_p12_base64)) || SDEEM_CERT_PEM);
     if (!isConfigured) {
       const isAnon = serviceKey.startsWith('sb_publishable_');
       const keyRoleGuess = isAnon ? 'ANON_KEY (المفتاح المستخدم في Cloudflare هو مفتاح anon وليس service_role)' : (serviceKey.startsWith('sb_secret_') ? 'SERVICE_ROLE_KEY' : (serviceKey.startsWith('eyJ') ? 'JWT' : 'UNKNOWN'));
@@ -372,7 +375,7 @@ T8jHm7rv5Nq0+KO/TXq54gzH
       branches = await restGet(
         supabaseUrl,
         serviceKey,
-        `store_branches?store_id=eq.${store.id}&select=name,latitude,longitude&limit=10`
+        `store_branches?store_id=eq.${store.id}&select=name,lat,lng&limit=10`
       );
     } catch {
       branches = [];
