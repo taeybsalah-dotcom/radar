@@ -6163,23 +6163,25 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const now = Date.now();
     const currentEndMs = store.subscription_end_date ? new Date(store.subscription_end_date).getTime() : 0;
     const remainingMs = Math.max(0, currentEndMs - now);
-    const remainingDays = Math.ceil(remainingMs / 86400000);
+    // جبر اليوم الحالي لصالح التاجر (Math.ceil) مع تحديد سقف 30 يوماً للدورة الشهرية
+    const totalDays = 30;
+    const remainingDays = Math.min(totalDays, Math.max(0, Math.ceil(remainingMs / 86400000)));
 
     const targetPrice = targetCycle === 'YEARLY'
-      ? (newPlan.yearly_amount ?? (newPlan.monthly_amount ? newPlan.monthly_amount * 10 : newPlan.amount * 10))
-      : (newPlan.monthly_amount ?? newPlan.amount);
+      ? Math.round(newPlan.yearly_amount ?? (newPlan.monthly_amount ? newPlan.monthly_amount * 10 : newPlan.amount * 10))
+      : Math.round(newPlan.monthly_amount ?? newPlan.amount);
 
     let unusedCredit = 0;
     let dailyRateCurrent = 0;
     let netUpgradeAmount = targetPrice;
 
-    // 🛡️ احتساب ترقية الباقة ودفع فرق الباقة (الصافي) حصراً عند الترقية لباقة أعلى سعراً
+    // 🛡️ احتساب ترقية الباقة ودفع فرق الباقة (الصافي) مقرب لأقرب ريال صحيح بدون كسور عشرية
     if (store.setup_fee_paid && currentPlan) {
-      const currentPrice = currentPlan.monthly_amount ?? currentPlan.amount;
+      const currentPrice = Math.round(currentPlan.monthly_amount ?? currentPlan.amount);
       if (targetPrice > currentPrice && remainingDays > 0) {
-        dailyRateCurrent = Math.round((currentPrice / 30) * 100) / 100;
-        unusedCredit = Math.min(currentPrice, Math.round(dailyRateCurrent * remainingDays * 100) / 100);
-        netUpgradeAmount = Math.max(0, Math.round((targetPrice - unusedCredit) * 100) / 100);
+        dailyRateCurrent = currentPrice / totalDays;
+        unusedCredit = Math.min(currentPrice, Math.round(dailyRateCurrent * remainingDays));
+        netUpgradeAmount = Math.max(0, Math.round(targetPrice - unusedCredit));
       }
     }
 

@@ -164,11 +164,12 @@ BEGIN
             v_total_days := 30.0;
         END IF;
 
-        v_remaining_days := GREATEST(0.0, EXTRACT(EPOCH FROM (v_store.subscription_end_date - v_now)) / 86400.0);
+        -- جبر اليوم الحالي لصالح التاجر (CEIL) مع عدم تجاوز إجمالي أيام الدورة
+        v_remaining_days := LEAST(v_total_days, GREATEST(0.0, CEIL(EXTRACT(EPOCH FROM (v_store.subscription_end_date - v_now)) / 86400.0)));
 
-        -- حساب الرصيد المتبقي (Credit)
+        -- حساب الرصيد المتبقي (Credit) مقرب لأقرب ريال صحيح بدون كسور عشرية
         v_daily_rate := v_paid_amount / v_total_days;
-        v_unused_credit := ROUND(LEAST(v_paid_amount, v_daily_rate * v_remaining_days), 2);
+        v_unused_credit := ROUND(LEAST(v_paid_amount, v_daily_rate * v_remaining_days), 0);
     ELSE
         -- في التجربة المجانية أو بعد انتهاء الاشتراك: رصيد الخصم = صفر
         v_is_trial := true;
@@ -177,8 +178,8 @@ BEGIN
         v_current_cycle := 'TRIAL';
     END IF;
 
-    -- 🛡️ حساب المبلغ الصافي مع منع الرصيد السالب نهائياً (GREATEST)
-    v_net_amount := GREATEST(0.00, ROUND(v_target_price - v_unused_credit, 2));
+    -- 🛡️ حساب المبلغ الصافي مع منع الرصيد السالب نهائياً والتقريب لأقرب ريال صحيح
+    v_net_amount := GREATEST(0.00, ROUND(v_target_price - v_unused_credit, 0));
 
     -- حساب تفاصيل الضريبة لـ ZATCA
     IF v_net_amount > 0 THEN
@@ -216,7 +217,7 @@ BEGIN
         ),
         'current_plan', v_current_plan_json,
         'is_trial', v_is_trial,
-        'remaining_days', ROUND(v_remaining_days, 1),
+        'remaining_days', CEIL(v_remaining_days),
         'unused_credit', v_unused_credit,
         'net_amount', v_net_amount,
         'net_before_vat', v_net_before_vat,
@@ -374,11 +375,11 @@ BEGIN
     SELECT * INTO v_upgrade_calc FROM public.calculate_subscription_upgrade(p_store_id, v_target_plan.id::text, v_cycle);
 
     IF v_upgrade_calc IS NOT NULL AND (v_upgrade_calc->>'success')::boolean = true THEN
-        v_gross := ROUND(COALESCE((v_upgrade_calc->>'net_amount')::numeric, 0.00), 2);
+        v_gross := ROUND(COALESCE((v_upgrade_calc->>'net_amount')::numeric, 0.00), 0);
         v_net_before_vat := ROUND(COALESCE((v_upgrade_calc->>'net_before_vat')::numeric, 0.00), 2);
         v_vat_amount := ROUND(COALESCE((v_upgrade_calc->>'vat_amount')::numeric, 0.00), 2);
-        v_unused_credit := ROUND(COALESCE((v_upgrade_calc->>'unused_credit')::numeric, 0.00), 2);
-        v_original_plan_price := ROUND(COALESCE((v_upgrade_calc->'target_plan'->>'original_price')::numeric, v_gross), 2);
+        v_unused_credit := ROUND(COALESCE((v_upgrade_calc->>'unused_credit')::numeric, 0.00), 0);
+        v_original_plan_price := ROUND(COALESCE((v_upgrade_calc->'target_plan'->>'original_price')::numeric, v_gross), 0);
     ELSE
         -- If calculation returned an error (e.g. downgrade blocked), reject transaction
         IF v_upgrade_calc IS NOT NULL AND (v_upgrade_calc->>'error') IS NOT NULL THEN

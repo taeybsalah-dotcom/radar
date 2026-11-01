@@ -1320,9 +1320,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         return;
       }
 
-      const origPrice = upgradeRes.target_plan?.original_price ?? (targetCycle === 'YEARLY' ? (plan.yearly_amount ?? plan.amount * 10) : (plan.monthly_amount ?? plan.amount));
-      const credit = upgradeRes.unused_credit ?? 0;
-      const net = upgradeRes.net_amount ?? Math.max(0, origPrice - credit);
+      const origPrice = Math.round(upgradeRes.target_plan?.original_price ?? (targetCycle === 'YEARLY' ? (plan.yearly_amount ?? plan.amount * 10) : (plan.monthly_amount ?? plan.amount)));
+      const credit = Math.round(upgradeRes.unused_credit ?? 0);
+      const net = Math.round(upgradeRes.net_amount ?? Math.max(0, origPrice - credit));
       const vat = upgradeRes.vat_amount ?? Math.round((net - (net / 1.15)) * 100) / 100;
       const netBefore = upgradeRes.net_before_vat ?? Math.round((net - vat) * 100) / 100;
 
