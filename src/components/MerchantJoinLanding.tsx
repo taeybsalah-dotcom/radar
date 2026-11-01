@@ -35,6 +35,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { LoyaltyService } from '../lib/supabase';
+import type { BillingPlan } from '../types';
 import { getActiveTenantConfig } from '../config/tenant';
 import confetti from 'canvas-confetti';
 
@@ -75,6 +76,24 @@ export const MerchantJoinLanding: React.FC = () => {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   
   const formRef = useRef<HTMLDivElement | null>(null);
+
+  // 🏷️ Dynamic White-Label Billing Plans fetched directly from get_public_billing_plans RPC
+  const [dynamicPlans, setDynamicPlans] = useState<BillingPlan[]>([]);
+
+  useEffect(() => {
+    LoyaltyService.getAllSubscriptionPlans()
+      .then((plans) => {
+        if (plans && plans.length > 0) {
+          const active = plans
+            .filter((p) => p.active !== false)
+            .sort((a, b) => (a.tier_level ?? 1) - (b.tier_level ?? 1));
+          if (active.length > 0) {
+            setDynamicPlans(active);
+          }
+        }
+      })
+      .catch((err) => console.warn('[MerchantJoinLanding] Error loading dynamic billing plans:', err));
+  }, []);
 
   // Dynamic White-Label Tenant Configuration
   const tenant = getActiveTenantConfig();
@@ -1048,129 +1067,264 @@ export const MerchantJoinLanding: React.FC = () => {
           </div>
         </div>
 
-        {/* 3 Pricing Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
-          
-          {/* Tier 1: أساس (Starter) */}
-          <div className="rounded-3xl p-7 bg-white text-slate-950 space-y-6 flex flex-col justify-between shadow-2xl">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xl font-black">أساس</h3>
-                <span className="text-xs text-slate-500 font-bold">للبدايات الواثقة</span>
-              </div>
-              <div>
-                <span className="text-4xl font-black font-mono">
-                  {billingPeriod === 'ANNUAL' ? '990' : '99'}
-                </span>
-                <span className="text-xs font-bold text-slate-500">
-                  {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
-                </span>
-                {billingPeriod === 'ANNUAL' ? (
-                  <p className="text-[11px] text-emerald-600 font-bold pt-1">وفّر 198 ريال بالسنة (شهرين مجاناً)</p>
-                ) : (
-                  <p className="text-[11px] text-slate-400 pt-1">فرع واحد + 49 لكل فرع زيادة</p>
-                )}
-              </div>
+        {/* 3 Pricing Cards (Dynamic per-tenant via get_public_billing_plans) */}
+        {(() => {
+          const fallbackPlans: Partial<BillingPlan>[] = [
+            {
+              code: 'BASIC',
+              name: 'أساس',
+              description: 'للبدايات الواثقة',
+              monthly_amount: 99,
+              yearly_amount: 990,
+              extra_branch_price: 49,
+              tier_level: 1,
+              badge_text: null,
+              cumulative_note: null,
+              features_list: [
+                'كاشير سحابي متكامل يبيع أوفلاين',
+                'فواتير ضريبية معتمدة مع رمز الزكاة QR',
+                'بطاقات ولاء رقمية أساسية',
+                'تقارير مبيعات وورديات يومية'
+              ]
+            },
+            {
+              code: 'ADVANCED',
+              name: 'عماد',
+              description: 'للمحلات النشطة',
+              monthly_amount: 179,
+              yearly_amount: 1790,
+              extra_branch_price: 89,
+              tier_level: 2,
+              badge_text: 'الأكثر طلباً ⭐',
+              cumulative_note: 'كل ما في باقة أساس، وفوقها:',
+              features_list: [
+                'نظام الحجوزات والمواعيد الذكي',
+                'محفظة Apple & Google Wallet كاملة',
+                'كرت أختام ورتب VIP وكاش باك',
+                tenant.brandName === 'رادار' ? 'رادار استعادة العملاء المنقطعين بالواتساب' : 'استعادة العملاء المنقطعين بالواتساب',
+                'شاشة تحضير المطبخ والبار (KDS)'
+              ]
+            },
+            {
+              code: 'PRO',
+              name: 'صرح',
+              description: 'للفروع والسلاسل',
+              monthly_amount: 279,
+              yearly_amount: 2790,
+              extra_branch_price: 139,
+              tier_level: 3,
+              badge_text: 'الأشمل 👑',
+              cumulative_note: 'كل ما في باقة عماد، وفوقها:',
+              features_list: [
+                'بوابة وتطبيق خاص بمناديب التوصيل 🛵',
+                'دعم فروع متعددة ومستودعات مركزية',
+                'صلاحيات مخصصة لكل كاشير وموظف',
+                'متجر إلكتروني للطلبات بدون عمولة',
+                'مدير حساب ودعم تقني مباشر 24/7'
+              ]
+            }
+          ];
 
-              <ul className="space-y-2.5 text-xs text-slate-700 font-bold pt-2 border-t border-slate-200">
-                <li className="flex items-center gap-2">✓ كاشير سحابي متكامل يبيع أوفلاين</li>
-                <li className="flex items-center gap-2">✓ فواتير ضريبية معتمدة مع رمز الزكاة QR</li>
-                <li className="flex items-center gap-2">✓ بطاقات ولاء رقمية أساسية</li>
-                <li className="flex items-center gap-2">✓ تقارير مبيعات وورديات يومية</li>
-              </ul>
+          const plansToRender = dynamicPlans.length >= 3 ? dynamicPlans : fallbackPlans;
+
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+              {plansToRender.map((plan, idx) => {
+                const tier = plan.tier_level ?? (idx + 1);
+                const isPro = tier === 2 || plan.code === 'ADVANCED';
+                const isEnterprise = tier === 3 || plan.code === 'PRO';
+
+                const monthly = Number(plan.monthly_amount) || Number(plan.amount) || (tier === 1 ? 99 : tier === 2 ? 179 : 279);
+                const yearly = Number(plan.yearly_amount) || (monthly * 10);
+                const savings = Math.max(0, (monthly * 12) - yearly);
+                const extraBranch = Number(plan.extra_branch_price) || (tier === 1 ? 49 : tier === 2 ? 89 : 139);
+
+                const feats = (plan.features_list && plan.features_list.length > 0)
+                  ? plan.features_list
+                  : (plan.features && plan.features.length > 0)
+                  ? plan.features
+                  : [];
+
+                if (isPro) {
+                  return (
+                    <div
+                      key={plan.id || plan.code || idx}
+                      className="rounded-3xl p-7 bg-[#CCFF00] text-slate-950 space-y-6 flex flex-col justify-between shadow-2xl relative transform md:-translate-y-2 border-2 border-white"
+                    >
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xl font-black">{plan.name}</h3>
+                            <span className="px-2.5 py-0.5 rounded-full bg-slate-950 text-[#CCFF00] text-[10px] font-black">
+                              {plan.badge_text || 'الأكثر طلباً ⭐'}
+                            </span>
+                          </div>
+                          <span className="text-xs font-bold text-slate-800">{plan.description || 'للمحلات النشطة'}</span>
+                        </div>
+
+                        <div>
+                          <span className="text-4xl font-black font-mono">
+                            {billingPeriod === 'ANNUAL' ? yearly.toLocaleString() : monthly.toLocaleString()}
+                          </span>
+                          <span className="text-xs font-bold text-slate-800">
+                            {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
+                          </span>
+                          {billingPeriod === 'ANNUAL' ? (
+                            <p className="text-[11px] text-slate-950 font-black pt-1">
+                              وفّر {savings > 0 ? savings.toLocaleString() : (monthly * 2).toLocaleString()} ريال بالسنة (شهرين مجاناً 🎁)
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-800 pt-1">فرع واحد + {extraBranch} لكل فرع زيادة</p>
+                          )}
+                        </div>
+
+                        {plan.cumulative_note && (
+                          <div className="pt-1">
+                            <span className="text-xs font-black text-slate-950 block">{plan.cumulative_note}</span>
+                          </div>
+                        )}
+
+                        <ul className="space-y-2.5 text-xs text-slate-950 font-black pt-2 border-t border-slate-900/20">
+                          {feats.map((feat, fIdx) => (
+                            <li key={fIdx} className="flex items-center gap-2">
+                              ✓ {feat}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <button
+                        onClick={scrollToForm}
+                        className="w-full py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-[#CCFF00] font-black text-xs transition shadow-lg hover:scale-[1.01] active:scale-[0.99]"
+                      >
+                        ابدأ تجربتك المجانية الآن 🚀
+                      </button>
+                    </div>
+                  );
+                }
+
+                if (isEnterprise) {
+                  return (
+                    <div
+                      key={plan.id || plan.code || idx}
+                      className="rounded-3xl p-7 bg-[#0E1620] border border-white/20 text-white space-y-6 flex flex-col justify-between shadow-2xl"
+                    >
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xl font-black">{plan.name}</h3>
+                            {plan.badge_text && (
+                              <span className="px-2 py-0.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-black">
+                                {plan.badge_text}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs text-purple-400 font-bold">{plan.description || 'للفروع والسلاسل'}</span>
+                        </div>
+
+                        <div>
+                          <span className="text-4xl font-black font-mono">
+                            {billingPeriod === 'ANNUAL' ? yearly.toLocaleString() : monthly.toLocaleString()}
+                          </span>
+                          <span className="text-xs font-bold text-slate-400">
+                            {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
+                          </span>
+                          {billingPeriod === 'ANNUAL' ? (
+                            <p className="text-[11px] text-purple-300 font-bold pt-1">
+                              وفّر {savings > 0 ? savings.toLocaleString() : (monthly * 2).toLocaleString()} ريال بالسنة (شهرين مجاناً 🎁)
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-400 pt-1">فرعين مشمولة + {extraBranch} لكل فرع زيادة</p>
+                          )}
+                        </div>
+
+                        {plan.cumulative_note && (
+                          <div className="pt-1">
+                            <span className="text-xs font-black text-amber-400 block">{plan.cumulative_note}</span>
+                          </div>
+                        )}
+
+                        <ul className="space-y-2.5 text-xs text-slate-300 font-bold pt-2 border-t border-white/10">
+                          {feats.map((feat, fIdx) => (
+                            <li key={fIdx} className="flex items-center gap-2">
+                              ✓ {feat}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <button
+                        onClick={scrollToForm}
+                        className="w-full py-3.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-black text-xs transition border border-white/20 hover:scale-[1.01] active:scale-[0.99]"
+                      >
+                        ابدأ مجاناً
+                      </button>
+                    </div>
+                  );
+                }
+
+                // Tier 1 (Starter)
+                return (
+                  <div
+                    key={plan.id || plan.code || idx}
+                    className="rounded-3xl p-7 bg-white text-slate-950 space-y-6 flex flex-col justify-between shadow-2xl"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-xl font-black">{plan.name}</h3>
+                          {plan.badge_text && (
+                            <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-800 text-[10px] font-black">
+                              {plan.badge_text}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs text-slate-500 font-bold">{plan.description || 'للبدايات الواثقة'}</span>
+                      </div>
+
+                      <div>
+                        <span className="text-4xl font-black font-mono">
+                          {billingPeriod === 'ANNUAL' ? yearly.toLocaleString() : monthly.toLocaleString()}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500">
+                          {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
+                        </span>
+                        {billingPeriod === 'ANNUAL' ? (
+                          <p className="text-[11px] text-emerald-600 font-bold pt-1">
+                            وفّر {savings > 0 ? savings.toLocaleString() : (monthly * 2).toLocaleString()} ريال بالسنة (شهرين مجاناً 🎁)
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-slate-400 pt-1">فرع واحد + {extraBranch} لكل فرع زيادة</p>
+                        )}
+                      </div>
+
+                      {plan.cumulative_note && (
+                        <div className="pt-1">
+                          <span className="text-xs font-bold text-slate-600 block">{plan.cumulative_note}</span>
+                        </div>
+                      )}
+
+                      <ul className="space-y-2.5 text-xs text-slate-700 font-bold pt-2 border-t border-slate-200">
+                        {feats.map((feat, fIdx) => (
+                          <li key={fIdx} className="flex items-center gap-2">
+                            ✓ {feat}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <button
+                      onClick={scrollToForm}
+                      className="w-full py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs transition hover:scale-[1.01] active:scale-[0.99]"
+                    >
+                      ابدأ مجاناً
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-
-            <button
-              onClick={scrollToForm}
-              className="w-full py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs transition"
-            >
-              ابدأ مجاناً
-            </button>
-          </div>
-
-          {/* Tier 2: عماد (Pro - Featured in Electric Lime) */}
-          <div className="rounded-3xl p-7 bg-[#CCFF00] text-slate-950 space-y-6 flex flex-col justify-between shadow-2xl relative transform md:-translate-y-2 border-2 border-white">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xl font-black">عماد</h3>
-                  <span className="px-2.5 py-0.5 rounded-full bg-slate-950 text-[#CCFF00] text-[10px] font-black">
-                    الأكثر طلباً
-                  </span>
-                </div>
-                <span className="text-xs font-bold text-slate-800">للمحلات النشطة</span>
-              </div>
-              <div>
-                <span className="text-4xl font-black font-mono">
-                  {billingPeriod === 'ANNUAL' ? '1,790' : '179'}
-                </span>
-                <span className="text-xs font-bold text-slate-800">
-                  {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
-                </span>
-                {billingPeriod === 'ANNUAL' ? (
-                  <p className="text-[11px] text-slate-950 font-black pt-1">وفّر 358 ريال بالسنة (شهرين مجاناً)</p>
-                ) : (
-                  <p className="text-[11px] text-slate-800 pt-1">فرع واحد + 89 لكل فرع زيادة</p>
-                )}
-              </div>
-
-              <ul className="space-y-2.5 text-xs text-slate-950 font-black pt-2 border-t border-slate-900/20">
-                <li className="flex items-center gap-2">✓ كل ما في باقة أساس</li>
-                <li className="flex items-center gap-2">✓ نظام الحجوزات والمواعيد الذكي</li>
-                <li className="flex items-center gap-2">✓ محفظة Apple & Google Wallet كاملة</li>
-                <li className="flex items-center gap-2">✓ كرت أختام ورتب VIP وكاش باك</li>
-                <li className="flex items-center gap-2">✓ {tenant.brandName === 'رادار' ? 'رادار استعادة العملاء المنقطعين بالواتساب' : 'استعادة العملاء المنقطعين بالواتساب'}</li>
-                <li className="flex items-center gap-2">✓ شاشة تحضير المطبخ والبار (KDS)</li>
-              </ul>
-            </div>
-
-            <button
-              onClick={scrollToForm}
-              className="w-full py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-[#CCFF00] font-black text-xs transition shadow-lg"
-            >
-              ابدأ تجربتك المجانية الآن 🚀
-            </button>
-          </div>
-
-          {/* Tier 3: صرح (Enterprise) */}
-          <div className="rounded-3xl p-7 bg-[#0E1620] border border-white/20 text-white space-y-6 flex flex-col justify-between shadow-2xl">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xl font-black">صرح</h3>
-                <span className="text-xs text-purple-400 font-bold">للفروع والسلاسل</span>
-              </div>
-              <div>
-                <span className="text-4xl font-black font-mono">
-                  {billingPeriod === 'ANNUAL' ? '2,790' : '279'}
-                </span>
-                <span className="text-xs font-bold text-slate-400">
-                  {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
-                </span>
-                {billingPeriod === 'ANNUAL' ? (
-                  <p className="text-[11px] text-purple-300 font-bold pt-1">وفّر 558 ريال بالسنة (شهرين مجاناً)</p>
-                ) : (
-                  <p className="text-[11px] text-slate-400 pt-1">فرعين مشمولة + 139 لكل فرع زيادة</p>
-                )}
-              </div>
-
-              <ul className="space-y-2.5 text-xs text-slate-300 font-bold pt-2 border-t border-white/10">
-                <li className="flex items-center gap-2">✓ كل ما في باقة عماد</li>
-                <li className="flex items-center gap-2">✓ بوابة وتطبيق خاص بمناديب التوصيل</li>
-                <li className="flex items-center gap-2">✓ دعم فروع متعددة ومستودعات</li>
-                <li className="flex items-center gap-2">✓ صلاحيات مخصصة لكل كاشير وموظف</li>
-                <li className="flex items-center gap-2">✓ مدير حساب ودعم تقني مباشر 24/7</li>
-              </ul>
-            </div>
-
-            <button
-              onClick={scrollToForm}
-              className="w-full py-3.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-black text-xs transition border border-white/20"
-            >
-              ابدأ مجاناً
-            </button>
-          </div>
-
-        </div>
+          );
+        })()}
 
       </section>
 

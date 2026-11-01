@@ -686,6 +686,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     invoiceType: 'setup' | 'renewal' | 'upgrade';
     planId?: string;
   } | null>(null);
+  const [upgradeBreakdownModal, setUpgradeBreakdownModal] = useState<{
+    isOpen: boolean;
+    plan: BillingPlan;
+    targetCycle: 'MONTHLY' | 'YEARLY';
+    originalPrice: number;
+    unusedCredit: number;
+    netBeforeVat: number;
+    vatAmount: number;
+    netAmount: number;
+    remainingDays: number;
+    hasDiscount: boolean;
+  } | null>(null);
 
   // 🏢 Branch Resolver Helpers for Central Ledgers (Operations, Bookings, Coupons)
   const resolveLogBranch = (log: AuditLog): { id: string | null; name: string; isFallback: boolean } => {
@@ -1307,25 +1319,47 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         return;
       }
 
-      const netAmount = upgradeRes.net_amount ?? (targetCycle === 'YEARLY' ? (plan.yearly_amount ?? plan.amount * 10) : (plan.monthly_amount ?? plan.amount));
-      const hasCredit = (upgradeRes.unused_credit ?? 0) > 0;
-      const desc = hasCredit
-        ? `ترقية إلى "${plan.name}" ودفع فرق الباقة (${netAmount.toLocaleString()} ر.س مع خصم ${upgradeRes.unused_credit?.toLocaleString()} ر.س قيمة باقتك السابقة)`
-        : `تفعيل باقة "${plan.name}" ومميزاتها المتقدمة (${targetCycle === 'YEARLY' ? 'سنوي - شامل شهرين مجاناً 🎁' : 'شهري'})`;
+      const origPrice = upgradeRes.target_plan?.original_price ?? (targetCycle === 'YEARLY' ? (plan.yearly_amount ?? plan.amount * 10) : (plan.monthly_amount ?? plan.amount));
+      const credit = upgradeRes.unused_credit ?? 0;
+      const net = upgradeRes.net_amount ?? Math.max(0, origPrice - credit);
+      const vat = upgradeRes.vat_amount ?? Math.round((net - (net / 1.15)) * 100) / 100;
+      const netBefore = upgradeRes.net_before_vat ?? Math.round((net - vat) * 100) / 100;
 
-      setSandboxPaymentConfig({
+      setUpgradeBreakdownModal({
         isOpen: true,
-        title: `ترقية باقة المتجر إلى ${plan.name} (${targetCycle === 'YEARLY' ? 'سنوي' : 'شهري'})`,
-        itemDescription: desc,
-        amount: netAmount,
-        invoiceType: 'upgrade',
-        planId: plan.id || plan.code,
+        plan,
+        targetCycle,
+        originalPrice: origPrice,
+        unusedCredit: credit,
+        netBeforeVat: netBefore,
+        vatAmount: vat,
+        netAmount: net,
+        remainingDays: upgradeRes.remaining_days ?? 0,
+        hasDiscount: Boolean(upgradeRes.has_discount || credit > 0),
       });
     } catch (e: any) {
       alert(e?.message || 'حدث خطأ أثناء بدء عملية الترقية');
     } finally {
       setIsUpgradingPlanId(null);
     }
+  };
+
+  const handleConfirmUpgradeCheckout = () => {
+    if (!upgradeBreakdownModal) return;
+    const { plan, targetCycle, netAmount, unusedCredit } = upgradeBreakdownModal;
+    const desc = unusedCredit > 0
+      ? `ترقية إلى "${plan.name}" ودفع فرق الباقة (${netAmount.toLocaleString()} ر.س مع خصم ${unusedCredit.toLocaleString()} ر.س رصيد باقتك السابقة)`
+      : `تفعيل باقة "${plan.name}" ومميزاتها المتقدمة (${targetCycle === 'YEARLY' ? 'سنوي - شامل شهرين مجاناً 🎁' : 'شهري'})`;
+
+    setUpgradeBreakdownModal(null);
+    setSandboxPaymentConfig({
+      isOpen: true,
+      title: `ترقية باقة المتجر إلى ${plan.name} (${targetCycle === 'YEARLY' ? 'سنوي' : 'شهري'})`,
+      itemDescription: desc,
+      amount: netAmount,
+      invoiceType: 'upgrade',
+      planId: plan.id || plan.code,
+    });
   };
 
   const handleNavigateToBilling = () => {
@@ -11030,7 +11064,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               (allPlans.length > 0 ? allPlans[0] : null)
             : null;
 
-        const activePlans = allPlans.filter((p) => p.active !== false);
+        const activePlans = allPlans
+          .filter((p) => p.active !== false)
+          .sort((a, b) => (a.tier_level ?? 1) - (b.tier_level ?? 1));
 
         return (
           <div id="merchant-billing-root" className="space-y-6 animate-fade-in" dir="rtl">
@@ -11223,7 +11259,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       ? (plan.yearly_amount ?? ((plan.monthly_amount || plan.amount) * 10))
                       : (plan.monthly_amount ?? plan.amount);
 
-                    const isCurrent =
+                    const isSamePlan =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
                       currentPaidPlan !== null &&
@@ -11231,20 +11267,34 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                     const currentPlanTier = currentPaidPlan?.tier_level ?? 1;
                     const thisPlanTier = plan.tier_level ?? 1;
+                    const isStoreAnnual = Boolean((store as any).subscription_duration_months >= 12);
 
+                    // Exact match: current plan AND current cycle
+                    const isExactCurrent = isSamePlan && (isYearly ? isStoreAnnual : !isStoreAnnual);
+
+                    // Strict lower tier: prohibited across all cycles
                     const isLowerTier =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
                       currentPaidPlan !== null &&
-                      !isCurrent &&
-                      thisPlanTier <= currentPlanTier;
+                      thisPlanTier < currentPlanTier;
 
+                    // Same tier non-upgrade (e.g. attempting to downgrade yearly to monthly on same tier, or exact current)
+                    const isSameTierBlocked =
+                      !isTrial &&
+                      Boolean(store.setup_fee_paid) &&
+                      currentPaidPlan !== null &&
+                      thisPlanTier === currentPlanTier &&
+                      (isExactCurrent || (!isYearly && isStoreAnnual));
+
+                    // Eligible upgrade: higher tier, or same tier moving from monthly to yearly
                     const isHigherTier =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
                       currentPaidPlan !== null &&
-                      !isCurrent &&
-                      thisPlanTier > currentPlanTier;
+                      !isExactCurrent &&
+                      !isLowerTier &&
+                      (thisPlanTier > currentPlanTier || (thisPlanTier === currentPlanTier && isYearly && !isStoreAnnual));
 
                     const planKey = plan.id || plan.code || plan.name;
                     const isUpgradingThis = isUpgradingPlanId === planKey;
@@ -11254,22 +11304,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         ? LoyaltyService.calculateProratedUpgrade(store, currentPaidPlan, plan, merchantBillingCycle)
                         : null;
 
-                    const isFeatured = plan.code === 'ADVANCED' || Boolean(plan.badge_text);
+                    const isFeatured = plan.code === 'ADVANCED' || plan.tier_level === 2 || Boolean(plan.badge_text);
 
                     return (
                       <div
                         key={plan.id || plan.code}
                         className={`rounded-3xl p-6 sm:p-7 space-y-6 flex flex-col justify-between transition-all duration-300 relative ${
-                          isCurrent
+                          isExactCurrent
                             ? 'bg-gradient-to-b from-slate-900 to-slate-950 border-2 border-emerald-500 shadow-2xl shadow-emerald-500/20 ring-2 ring-emerald-500/30'
                             : isFeatured
                             ? 'bg-gradient-to-b from-slate-900 to-slate-950 border-2 border-amber-500/60 shadow-xl shadow-amber-500/10'
-                            : isLowerTier
-                            ? 'bg-slate-950/50 border border-slate-800/80 opacity-75'
+                            : isLowerTier || isSameTierBlocked
+                            ? 'bg-slate-950/50 border border-slate-800/80 opacity-70'
                             : 'bg-slate-950/80 border border-slate-800 hover:border-amber-500/40 hover:shadow-lg'
                         }`}
                       >
-                        {isCurrent ? (
+                        {isExactCurrent ? (
                           <div className="absolute -top-3.5 right-6 px-4 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 text-slate-950 text-xs font-black shadow-lg shadow-emerald-500/30 flex items-center gap-1.5 animate-bounce">
                             <CheckCircle2 className="w-4 h-4 text-slate-950 stroke-[2.5]" />
                             <span>باقتك الحالية النشطة ✅</span>
@@ -11398,12 +11448,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                         {/* Action Button: Frozen for lower/previous tiers */}
                         <div className="pt-4 mt-2 border-t border-slate-800/80">
-                          {isCurrent ? (
+                          {isExactCurrent ? (
                             <div className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/20 to-teal-500/10 border-2 border-emerald-500/40 text-emerald-300 text-xs font-black flex items-center justify-center gap-2 shadow-inner select-none">
                               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                               <span>باقتك الحالية (نشطة ومفعلة) ✅</span>
                             </div>
-                          ) : isLowerTier ? (
+                          ) : isLowerTier || isSameTierBlocked ? (
                             <div className="w-full py-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 text-slate-500 text-xs font-bold flex items-center justify-center gap-2 cursor-not-allowed select-none opacity-60">
                               <Lock className="w-4 h-4 text-slate-500" />
                               <span>باقة سابقة (غير متاحة للترقية) 🔒</span>
@@ -11428,7 +11478,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                               ) : isHigherTier ? (
                                 <>
                                   <Zap className="w-4 h-4" />
-                                  <span>ترقية الآن (ادفع الفرق فقط ⚡)</span>
+                                  <span>ترقية الباقة (ادفع الفرق فقط ⚡)</span>
                                 </>
                               ) : (
                                 <>
@@ -13890,6 +13940,108 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   حسناً، فهمت ذلك
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⚡ Modal: Upgrade Proration Breakdown (سعر الباقة - الرصيد المتبقي = الصافي المطلوب) */}
+      {upgradeBreakdownModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in" dir="rtl">
+          <div className="max-w-md w-full rounded-3xl p-6 sm:p-7 bg-slate-900 border border-amber-500/40 relative shadow-2xl overflow-hidden space-y-6">
+            <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none -mr-16 -mt-16"></div>
+
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 relative z-10">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
+                  ⚡
+                </div>
+                <div>
+                  <h4 className="text-base font-black text-white">تفاصيل ترقية الباقة والخصم</h4>
+                  <span className="text-[11px] text-slate-400">حساب الفروقات التناسبية المعتمد</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUpgradeBreakdownModal(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 relative z-10 text-xs">
+              {/* Target Plan Header */}
+              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold block mb-0.5">الباقة الجديدة المطلوبة:</span>
+                  <span className="text-base font-black text-white">{upgradeBreakdownModal.plan.name}</span>
+                </div>
+                <div className="text-left">
+                  <span className={`text-[11px] font-bold px-3 py-1 rounded-full ${
+                    upgradeBreakdownModal.targetCycle === 'YEARLY'
+                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                  }`}>
+                    {upgradeBreakdownModal.targetCycle === 'YEARLY' ? 'سنوي (وفرت شهرين 🎁)' : 'شهري'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Formula & Financial Breakdown */}
+              <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800/80 space-y-2.5">
+                <div className="flex items-center justify-between text-slate-300">
+                  <span>سعر الباقة المستهدفة ({upgradeBreakdownModal.targetCycle === 'YEARLY' ? 'سنوياً' : 'شهرياً'}):</span>
+                  <span className="font-mono font-bold text-white">{upgradeBreakdownModal.originalPrice.toLocaleString()} ر.س</span>
+                </div>
+
+                {upgradeBreakdownModal.unusedCredit > 0 && (
+                  <div className="flex items-center justify-between text-emerald-400 font-bold bg-emerald-500/10 p-2.5 rounded-xl border border-emerald-500/20">
+                    <div className="flex items-center gap-1.5">
+                      <span>💡 رصيد باقتك السابقة المخصوم:</span>
+                      <span className="text-[10px] text-emerald-300/80">({upgradeBreakdownModal.remainingDays} يوم متبقي)</span>
+                    </div>
+                    <span className="font-mono font-black">-{upgradeBreakdownModal.unusedCredit.toLocaleString()} ر.س</span>
+                  </div>
+                )}
+
+                <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-slate-400 text-[11px]">
+                  <span>المبلغ قبل الضريبة:</span>
+                  <span className="font-mono">{upgradeBreakdownModal.netBeforeVat.toLocaleString()} ر.س</span>
+                </div>
+
+                <div className="flex items-center justify-between text-slate-400 text-[11px]">
+                  <span>ضريبة القيمة المضافة (15%):</span>
+                  <span className="font-mono">{upgradeBreakdownModal.vatAmount.toLocaleString()} ر.س</span>
+                </div>
+
+                <div className="pt-3 border-t-2 border-dashed border-slate-800 flex items-baseline justify-between">
+                  <span className="text-sm font-black text-amber-400">الصافي المطلوب دفعه الآن:</span>
+                  <div className="text-left">
+                    <span className="text-2xl font-black font-mono text-emerald-400">
+                      {upgradeBreakdownModal.netAmount.toLocaleString()}
+                    </span>
+                    <span className="text-xs text-slate-400 font-bold mr-1">ر.س (شامل الضريبة)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 flex items-center gap-3 relative z-10">
+              <button
+                type="button"
+                onClick={() => setUpgradeBreakdownModal(null)}
+                className="flex-1 py-3 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white font-bold text-xs border border-slate-800 transition"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmUpgradeCheckout}
+                className="flex-2 w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 via-emerald-400 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs shadow-xl shadow-emerald-500/20 transition flex items-center justify-center gap-2"
+              >
+                <span>المتابعة للسداد وتأكيد الترقية 💳</span>
+              </button>
             </div>
           </div>
         </div>
