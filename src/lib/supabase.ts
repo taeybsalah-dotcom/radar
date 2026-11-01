@@ -8914,7 +8914,12 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         commission_rate: commRate,
         acquisition_commission_rate: commRate,
         recurring_commission_rate: recurringRate,
+        sub_partner_commission_rate: typeof p.sub_partner_commission_rate === 'number' ? p.sub_partner_commission_rate : 0.05,
+        recruited_by_partner_id: p.recruited_by_partner_id || null,
+        stores_count: p.stores_count || 0,
+        sub_partners_count: p.sub_partners_count || 0,
         target_value: p.target_value || localPartnerMatch?.target_value || 20,
+        created_at: p.created_at || localPartnerMatch?.created_at || new Date().toISOString(),
         affiliates: {
           id: p.affiliate_id || p.id,
           name: p.display_name || p.name,
@@ -8962,6 +8967,10 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
               commission_rate: item.commission_rate ?? localMatch?.commission_rate ?? 0.20,
               acquisition_commission_rate: item.acquisition_commission_rate ?? localMatch?.acquisition_commission_rate ?? 0.20,
               recurring_commission_rate: item.recurring_commission_rate ?? localMatch?.recurring_commission_rate ?? 0.10,
+              sub_partner_commission_rate: item.sub_partner_commission_rate ?? localMatch?.sub_partner_commission_rate ?? 0.05,
+              recruited_by_partner_id: item.recruited_by_partner_id ?? localMatch?.recruited_by_partner_id ?? null,
+              stores_count: item.stores_count ?? localMatch?.stores_count ?? 0,
+              sub_partners_count: item.sub_partners_count ?? localMatch?.sub_partners_count ?? 0,
               target_value: item.target_value ?? localMatch?.target_value ?? 20,
               active: item.active !== false && item.status !== 'SUSPENDED' && localMatch?.active !== false,
               created_at: item.created_at || localMatch?.created_at || new Date().toISOString(),
@@ -9125,6 +9134,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     target_value?: number;
     commission_rate?: number;
     recurring_commission_rate?: number;
+    recruited_by_partner_id?: string | null;
+    sub_partner_commission_rate?: number;
   }): Promise<any> {
     const cleanName = payload.name.trim();
     const cleanPhone = payload.phone.trim();
@@ -9179,6 +9190,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_monthly_target: payload.target_value || 20,
       p_master_token: masterTok,
       p_tenant_id: activeTenant.tenantId || null,
+      p_recruited_by_partner_id: payload.recruited_by_partner_id || null,
+      p_sub_partner_commission_rate: typeof payload.sub_partner_commission_rate === 'number' ? payload.sub_partner_commission_rate : 0.05,
     });
 
     if (atomicErr) {
@@ -9284,8 +9297,14 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     name?: string;
     phone?: string;
     referral_code?: string;
+    pin_code?: string;
     region?: string;
     target_value?: number;
+    commission_rate?: number;
+    recurring_commission_rate?: number;
+    sub_partner_commission_rate?: number;
+    recruited_by_partner_id?: string | null;
+    active?: boolean;
   }): Promise<{ success: boolean; error?: string; partner?: any }> {
     const allPartners = await this.getAllPartners(true);
     const existingPartner = allPartners.find(
@@ -9346,7 +9365,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const cleanTarget = typeof payload.target_value === 'number' ? payload.target_value : (existingPartner.target_value || 20);
 
     const oldCode = (existingPartner.affiliates?.referral_code || existingPartner.referral_code || '').trim().toUpperCase();
-    const pin = existingPartner.pin_code || '1234';
+    const pin = payload.pin_code || existingPartner.pin_code || '1234';
     const currentAliases: string[] = Array.isArray(existingPartner.aliases)
       ? existingPartner.aliases
       : [];
@@ -9354,26 +9373,52 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ? Array.from(new Set([...currentAliases, oldCode])).filter(Boolean)
       : currentAliases;
 
-    // 1. Sync to Supabase
+    // 1. Sync to Supabase via admin_update_partner_full_atomic RPC
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        if (existingPartner.id) {
+        const { data: upData, error: upErr } = await (supabase.rpc as any)('admin_update_partner_full_atomic', {
+          p_partner_id: existingPartner.id,
+          p_name: cleanName,
+          p_phone: cleanPhone,
+          p_referral_code: cleanCode,
+          p_pin_code: payload.pin_code || null,
+          p_region: cleanRegion,
+          p_commission_rate: payload.commission_rate,
+          p_recurring_commission_rate: payload.recurring_commission_rate,
+          p_sub_partner_commission_rate: payload.sub_partner_commission_rate,
+          p_recruited_by_partner_id: payload.recruited_by_partner_id !== undefined ? payload.recruited_by_partner_id : existingPartner.recruited_by_partner_id || null,
+          p_monthly_target: cleanTarget,
+          p_active: payload.active !== undefined ? payload.active : existingPartner.active,
+          p_master_token: getSovereignMasterToken(),
+        });
+
+        if (upErr) {
+          console.warn('Supabase admin_update_partner_full_atomic error:', upErr);
+          // Direct fallback updates if RPC permissions issue
           await (supabase as any).from('partner_accounts').update({
             display_name: cleanName,
             referral_code: cleanCode,
             phone: cleanPhone,
             region: cleanRegion,
             target_value: cleanTarget,
+            commission_rate: payload.commission_rate ?? existingPartner.commission_rate,
+            recurring_commission_rate: payload.recurring_commission_rate ?? existingPartner.recurring_commission_rate,
+            sub_partner_commission_rate: payload.sub_partner_commission_rate ?? existingPartner.sub_partner_commission_rate,
+            recruited_by_partner_id: payload.recruited_by_partner_id !== undefined ? payload.recruited_by_partner_id : existingPartner.recruited_by_partner_id,
+            active: payload.active !== undefined ? payload.active : existingPartner.active,
           }).eq('id', existingPartner.id);
-        }
-        const targetAffId = existingPartner.affiliate_id || existingPartner.id;
-        if (targetAffId) {
-          await (supabase as any).from('affiliates').update({
-            name: cleanName,
-            phone: cleanPhone,
-            referral_code: cleanCode,
-          }).eq('id', targetAffId);
+
+          const targetAffId = existingPartner.affiliate_id || existingPartner.id;
+          if (targetAffId) {
+            await (supabase as any).from('affiliates').update({
+              name: cleanName,
+              phone: cleanPhone,
+              referral_code: cleanCode,
+              commission_rate: payload.commission_rate ?? existingPartner.commission_rate,
+              sub_partner_commission_rate: payload.sub_partner_commission_rate ?? existingPartner.sub_partner_commission_rate,
+            }).eq('id', targetAffId);
+          }
         }
       } catch (dbErr) {
         console.warn('Supabase updatePartnerProfile error:', dbErr);

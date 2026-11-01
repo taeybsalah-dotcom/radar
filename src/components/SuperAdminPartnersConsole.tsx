@@ -65,6 +65,8 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
   const [monthlyTarget, setMonthlyTarget] = useState<number | ''>('');
   const [commissionRate, setCommissionRate] = useState<number>(20);
   const [recurringCommissionRate, setRecurringCommissionRate] = useState<number>(10);
+  const [recruitedByPartnerId, setRecruitedByPartnerId] = useState<string>('');
+  const [subPartnerCommissionRate, setSubPartnerCommissionRate] = useState<number>(5);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Referral code live check & auto-generation state
@@ -91,6 +93,11 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
   const [editPartnerCode, setEditPartnerCode] = useState('');
   const [editPartnerRegion, setEditPartnerRegion] = useState('');
   const [editPartnerTarget, setEditPartnerTarget] = useState<number | ''>('');
+  const [editPartnerPin, setEditPartnerPin] = useState('1234');
+  const [editCommissionRate, setEditCommissionRate] = useState<number>(20);
+  const [editRecurringRate, setEditRecurringRate] = useState<number>(10);
+  const [editSubPartnerRate, setEditSubPartnerRate] = useState<number>(5);
+  const [editRecruitedByPartnerId, setEditRecruitedByPartnerId] = useState<string>('');
   const [editCodeStatus, setEditCodeStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
   const [editCodeStatusMsg, setEditCodeStatusMsg] = useState('');
   const [isUpdatingPartnerProfile, setIsUpdatingPartnerProfile] = useState(false);
@@ -248,6 +255,8 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
     setMonthlyTarget('');
     setCommissionRate(20);
     setRecurringCommissionRate(10);
+    setRecruitedByPartnerId('');
+    setSubPartnerCommissionRate(5);
     setCodeStatus('checking');
     setCodeStatusMsg('جاري تحضير كود فريد...');
     setIsModalOpen(true);
@@ -334,6 +343,11 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
     setEditPartnerCode(currentCode);
     setEditPartnerRegion(p.region || '');
     setEditPartnerTarget(typeof p.target_value === 'number' ? p.target_value : 20);
+    setEditPartnerPin(p.pin_code || '1234');
+    setEditCommissionRate(Math.round((typeof p.commission_rate === 'number' ? p.commission_rate : 0.20) * 100));
+    setEditRecurringRate(Math.round((typeof p.recurring_commission_rate === 'number' ? p.recurring_commission_rate : 0.10) * 100));
+    setEditSubPartnerRate(Math.round((typeof p.sub_partner_commission_rate === 'number' ? p.sub_partner_commission_rate : 0.05) * 100));
+    setEditRecruitedByPartnerId(p.recruited_by_partner_id || '');
     setEditCodeStatus('available');
     setEditCodeStatusMsg('الكود الحالي للمسوق ✅');
     setEditModalError(null);
@@ -412,6 +426,11 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
         referral_code: cleanCode,
         region: editPartnerRegion.trim(),
         target_value: typeof editPartnerTarget === 'number' ? editPartnerTarget : 20,
+        pin_code: editPartnerPin.trim(),
+        commission_rate: (Number(editCommissionRate) || 20) / 100,
+        recurring_commission_rate: (Number(editRecurringRate) || 10) / 100,
+        sub_partner_commission_rate: (Number(editSubPartnerRate) || 5) / 100,
+        recruited_by_partner_id: editRecruitedByPartnerId || null,
       });
 
       if (res.success) {
@@ -583,6 +602,8 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
         p_monthly_target: target,
         p_master_token: masterToken,
         p_tenant_id: activeTenant.tenantId || null,
+        p_recruited_by_partner_id: recruitedByPartnerId || null,
+        p_sub_partner_commission_rate: (Number(subPartnerCommissionRate) || 5) / 100,
       });
 
       // فحص كامل لنتيجة الـ RPC: خطأ شبكة أو رفض من قاعدة البيانات
@@ -1034,7 +1055,7 @@ ${origin}/join?ref=${refCode}`;
                           </span>
                         </div>
 
-                        <div className="flex items-center gap-2 text-xs">
+                        <div className="flex items-center gap-2 text-xs flex-wrap">
                           <a
                             href={`tel:${phone}`}
                             dir="ltr"
@@ -1042,6 +1063,10 @@ ${origin}/join?ref=${refCode}`;
                           >
                             📞 {phone}
                           </a>
+                          <span className="text-slate-600">•</span>
+                          <span className={`text-[10px] font-mono ${isDark ? 'text-slate-400' : 'text-slate-500'}`} title="تاريخ الانضمام">
+                            📅 {new Date(p.created_at || Date.now()).toLocaleDateString('ar-SA')}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -1165,16 +1190,36 @@ ${origin}/join?ref=${refCode}`;
                       </div>
                     </div>
 
-                    {/* Region & Target */}
-                    <div className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-1 text-[11px]">
-                        <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>{p.region || 'عام'}</span>
+                    {/* Region, Target & Clean Counters */}
+                    <div className="flex items-center justify-between text-xs gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <span className="flex items-center gap-0.5">
+                          <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                          <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>{p.region || 'عام'}</span>
+                        </span>
+                        <span className="flex items-center gap-0.5">
+                          <Target className="w-3 h-3 text-cyan-400 shrink-0" />
+                          <span className={isDark ? 'text-slate-400' : 'text-slate-500'}>
+                            {p.target_value ? `${p.target_value}/شهر` : 'بدون هدف'}
+                          </span>
+                        </span>
                       </div>
-                      <div className="flex items-center gap-1 text-[11px]">
-                        <Target className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                        <span className={isDark ? 'text-slate-400' : 'text-slate-500'}>
-                          {p.target_value ? `${p.target_value} متجر/شهر` : 'بدون هدف'}
+
+                      {/* Distinct Clean Number Badges without wordy text */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span 
+                          className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-black text-xs flex items-center gap-1"
+                          title={`عدد المتاجر المحققة: ${p.stores_count || 0}`}
+                        >
+                          <span>🏪</span>
+                          <span>{p.stores_count || 0}</span>
+                        </span>
+                        <span 
+                          className="px-2 py-0.5 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono font-black text-xs flex items-center gap-1"
+                          title={`عدد الشركاء المستقطبين: ${p.sub_partners_count || 0}`}
+                        >
+                          <span>👥</span>
+                          <span>{p.sub_partners_count || 0}</span>
                         </span>
                       </div>
                     </div>
@@ -1334,6 +1379,16 @@ ${origin}/join?ref=${refCode}`;
                   >
                     <CreditCard className="w-3.5 h-3.5" />
                     <span>تسوية المستحقات</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openEditPartnerModal(p)}
+                    className="py-2.5 px-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-black transition flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98]"
+                    title="تعديل بيانات الشريك بالكامل"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>تعديل</span>
                   </button>
 
                   <div className="flex items-center gap-1">
@@ -1562,8 +1617,17 @@ ${origin}/join?ref=${refCode}`;
                       </td>
 
                       <td className="py-4 px-4">
-                        <span className="block text-[11px]">{p.region ? `📍 ${p.region}` : '—'}</span>
-                        <span className="text-[10px] text-slate-400">{p.target_value ? `الهدف: ${p.target_value}` : 'بدون هدف'}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-bold text-xs" title="عدد المتاجر المحققة">
+                            🏪 {p.stores_count || 0}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono font-bold text-xs" title="عدد الشركاء المستقطبين">
+                            👥 {p.sub_partners_count || 0}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-mono block mt-1">
+                          📅 {new Date(p.created_at || Date.now()).toLocaleDateString('ar-SA')}
+                        </span>
                       </td>
 
                       <td className="py-4 px-4">
@@ -1581,6 +1645,15 @@ ${origin}/join?ref=${refCode}`;
 
                       <td className="py-4 px-4 text-center">
                         <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditPartnerModal(p)}
+                            className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs font-bold transition flex items-center gap-1"
+                            title="تعديل بيانات الشريك"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                            <span>تعديل</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => openSettlementModal(p)}
@@ -1723,6 +1796,48 @@ ${origin}/join?ref=${refCode}`;
                   />
                   <p className="text-[10px] text-slate-500">عند تجديد الاشتراك كل دورة</p>
                 </div>
+              </div>
+
+              {/* Field: Sponsor Partner & Two-Tier Settings */}
+              <div className="p-3.5 rounded-2xl bg-purple-500/5 border border-purple-500/20 space-y-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-purple-300 flex items-center gap-1">
+                    <Users className="w-3.5 h-3.5 text-purple-400" />
+                    <span>الشريك الراعي / المستقطِب (اختياري)</span>
+                  </label>
+                  <select
+                    value={recruitedByPartnerId}
+                    onChange={(e) => setRecruitedByPartnerId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-purple-500 rounded-2xl px-3 py-2.5 text-xs text-white outline-none transition"
+                  >
+                    <option value="">بدون شريك راعي (مباشر للمنصة)</option>
+                    {partners.map((pOpt) => (
+                      <option key={pOpt.id} value={pOpt.id}>
+                        {pOpt.display_name} ({pOpt.referral_code})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500">اختر الشريك (أ) الذي استقطب هذا الشريك (ب) لمنحه عمولة إشراف</p>
+                </div>
+
+                {recruitedByPartnerId && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-purple-300 flex items-center gap-1">
+                      <Percent className="w-3.5 h-3.5 text-purple-400" />
+                      <span>نسبة عمولة الشريك المستقطِب (% لأول 10 متاجر)</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      value={subPartnerCommissionRate}
+                      onChange={(e) => setSubPartnerCommissionRate(Number(e.target.value))}
+                      placeholder="5"
+                      className="w-full bg-slate-950 border border-purple-500/40 rounded-2xl px-3 py-2 text-xs font-mono text-purple-300 font-bold outline-none transition"
+                    />
+                    <p className="text-[10px] text-slate-400">يحصل الشريك الراعي على هذه النسبة من أول 10 متاجر يفعّلها هذا المسوق</p>
+                  </div>
+                )}
               </div>
 
               {/* Field 4: Referral Code with Auto-Gen & Real-Time Availability Check */}
@@ -2135,6 +2250,96 @@ ${origin}/join?ref=${refCode}`;
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono outline-none focus:border-amber-400 transition"
                   />
                 </div>
+              </div>
+
+              {/* Secret PIN Field */}
+              <div>
+                <label className="block text-xs font-bold text-amber-300 mb-1.5 flex items-center gap-1">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>الرمز السري للدخول (PIN Code) *</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  dir="ltr"
+                  value={editPartnerPin}
+                  onChange={(e) => setEditPartnerPin(e.target.value)}
+                  placeholder="1234"
+                  className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-xl px-3 py-2 text-xs font-mono font-bold text-amber-400 outline-none transition"
+                />
+              </div>
+
+              {/* Commission Rates */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-emerald-400 mb-1.5 flex items-center gap-1">
+                    <Percent className="w-3.5 h-3.5" />
+                    <span>عمولة جديد (%)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    required
+                    value={editCommissionRate}
+                    onChange={(e) => setEditCommissionRate(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-400 rounded-xl px-3 py-2 text-xs text-emerald-400 font-mono font-bold outline-none transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-cyan-400 mb-1.5 flex items-center gap-1">
+                    <Percent className="w-3.5 h-3.5" />
+                    <span>عمولة تجديد (%)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    required
+                    value={editRecurringRate}
+                    onChange={(e) => setEditRecurringRate(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-400 rounded-xl px-3 py-2 text-xs text-cyan-400 font-mono font-bold outline-none transition"
+                  />
+                </div>
+              </div>
+
+              {/* Two-Tier Sponsor Partner Settings */}
+              <div className="p-3.5 rounded-2xl bg-purple-500/5 border border-purple-500/20 space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-purple-300 mb-1.5 flex items-center gap-1">
+                    <Users className="w-3.5 h-3.5 text-purple-400" />
+                    <span>الشريك الراعي / المستقطِب (اختياري)</span>
+                  </label>
+                  <select
+                    value={editRecruitedByPartnerId}
+                    onChange={(e) => setEditRecruitedByPartnerId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-purple-400 rounded-xl px-3 py-2.5 text-xs text-white outline-none transition"
+                  >
+                    <option value="">بدون شريك راعي (مباشر للمنصة)</option>
+                    {partners.filter(pOpt => pOpt.id !== editModalPartner.id).map((pOpt) => (
+                      <option key={pOpt.id} value={pOpt.id}>
+                        {pOpt.display_name} ({pOpt.referral_code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {editRecruitedByPartnerId && (
+                  <div>
+                    <label className="block text-xs font-bold text-purple-300 mb-1.5 flex items-center gap-1">
+                      <Percent className="w-3.5 h-3.5 text-purple-400" />
+                      <span>نسبة عمولة الشريك المستقطِب (% لأول 10 متاجر)</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="50"
+                      value={editSubPartnerRate}
+                      onChange={(e) => setEditSubPartnerRate(Number(e.target.value))}
+                      className="w-full bg-slate-950 border border-purple-500/40 rounded-xl px-3 py-2 text-xs text-purple-300 font-mono font-bold outline-none transition"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2 pt-2">

@@ -33,8 +33,10 @@ import {
   WifiOff,
   Printer,
   Layers,
+  Users,
+  X,
 } from 'lucide-react';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents, type LoyaltyEventPayload } from '../lib/events';
 import type { BillingPlan } from '../types';
 import { getActiveTenantConfig } from '../config/tenant';
@@ -76,6 +78,15 @@ export const MerchantJoinLanding: React.FC = () => {
   const [billingPeriod, setBillingPeriod] = useState<'MONTHLY' | 'ANNUAL'>('ANNUAL');
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   
+  // 🤝 Partner Join Application State (Unified Referral)
+  const [isPartnerModalOpen, setIsPartnerModalOpen] = useState(false);
+  const [partnerApplicantName, setPartnerApplicantName] = useState('');
+  const [partnerApplicantPhone, setPartnerApplicantPhone] = useState('');
+  const [partnerApplicantCity, setPartnerApplicantCity] = useState('الرياض');
+  const [isSubmittingPartner, setIsSubmittingPartner] = useState(false);
+  const [partnerSubmitSuccess, setPartnerSubmitSuccess] = useState(false);
+  const [partnerSubmitError, setPartnerSubmitError] = useState<string | null>(null);
+
   const formRef = useRef<HTMLDivElement | null>(null);
 
   // 🏷️ Dynamic White-Label Billing Plans fetched directly from get_public_billing_plans RPC
@@ -153,6 +164,48 @@ export const MerchantJoinLanding: React.FC = () => {
     if (clean.length === 10 && clean.startsWith('05')) return clean;
     if (clean.length === 9 && clean.startsWith('5')) return `0${clean}`;
     return null;
+  };
+
+  // 🤝 Handler for Sub-Partner Application Submit (Unified Referral)
+  const handlePartnerApplicationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPartnerSubmitError(null);
+    const cleanPhone = normalizeSaudiPhone(partnerApplicantPhone);
+    if (!cleanPhone) {
+      setPartnerSubmitError('يرجى إدخال رقم جوال سعودي صحيح (05XXXXXXXX)');
+      return;
+    }
+    if (partnerApplicantName.trim().length < 2) {
+      setPartnerSubmitError('يرجى إدخال اسمك الكريم أو اسم المؤسسة');
+      return;
+    }
+
+    setIsSubmittingPartner(true);
+    try {
+      const refToUse = referralCode || sessionStorage.getItem('radar_captured_ref') || '';
+      
+      const res = await LoyaltyService.submitLead({
+        store_name: `طلب انضمام شريك: ${partnerApplicantName.trim()}`,
+        manager_name: partnerApplicantName.trim(),
+        phone: cleanPhone,
+        city: partnerApplicantCity,
+        business_type: 'PARTNER_APPLICANT',
+        referral_code: refToUse || undefined,
+        notes: `طلب انضمام كشريك نجاح / مسوق عبر صفحة الهبوط الرسمية.${refToUse ? ` موصى به عبر كود الإحالة: ${refToUse}` : ''}`,
+      });
+
+      if (!res.success) {
+        setPartnerSubmitError(res.error || 'حدث خطأ أثناء إرسال طلب الانضمام');
+        return;
+      }
+
+      setPartnerSubmitSuccess(true);
+      try { confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } }); } catch {}
+    } catch (err: any) {
+      setPartnerSubmitError(err.message || 'حدث خطأ أثناء إرسال طلب الانضمام');
+    } finally {
+      setIsSubmittingPartner(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1815,6 +1868,133 @@ export const MerchantJoinLanding: React.FC = () => {
           </div>
         </div>
       </section>
+
+      {/* ==================================================================== */}
+      {/* 🤝 PARTNER JOIN CTA BANNER (Unified Referral Supported) */}
+      {/* ==================================================================== */}
+      <section className="relative z-20 max-w-5xl mx-auto px-4 sm:px-6 py-6">
+        <div className="rounded-3xl p-6 sm:p-8 bg-gradient-to-r from-purple-950/40 via-slate-900 to-slate-900 border border-purple-500/30 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl">
+          <div className="space-y-2 text-right sm:text-right text-center">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 text-xs font-bold">
+              <span>🤝 برنامج شركاء ومسوقي {tenant.brandName}</span>
+            </div>
+            <h3 className="text-xl font-black text-white">هل ترغب بالانضمام كشريك نجاح وتحقيق دخل شهري؟</h3>
+            <p className="text-xs text-slate-400">
+              اربح عمولات دورية تصل إلى 20% ومكافآت استقطاب على كل متجر ينضم لمنظومتنا.
+              {referralCode && (
+                <span className="block text-emerald-400 font-bold mt-1">
+                  ✨ سيتم ربط حسابك كشريك مباشرة بكود الدعوة: <span className="font-mono">{referralCode}</span>
+                </span>
+              )}
+            </p>
+          </div>
+
+          <button
+            onClick={() => {
+              setPartnerSubmitSuccess(false);
+              setPartnerSubmitError(null);
+              setIsPartnerModalOpen(true);
+            }}
+            className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white font-black text-xs transition shadow-lg shadow-purple-500/25 shrink-0 flex items-center gap-2 active:scale-95"
+          >
+            <Users className="w-4 h-4" />
+            <span>انضم كشريك الآن 🚀</span>
+          </button>
+        </div>
+      </section>
+
+      {/* 🤝 Partner Join Application Modal */}
+      {isPartnerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-md w-full bg-slate-900 border border-purple-500/40 rounded-3xl p-6 sm:p-8 space-y-5 shadow-2xl relative">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-purple-400" />
+                <h4 className="text-base font-black text-white">طلب الانضمام كشريك نجاح</h4>
+              </div>
+              <button onClick={() => setIsPartnerModalOpen(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {partnerSubmitSuccess ? (
+              <div className="p-6 text-center space-y-3 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl">
+                <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto" />
+                <h4 className="text-base font-black text-white">تم استلام طلبك بنجاح! 🎉</h4>
+                <p className="text-xs text-slate-300">
+                  سيتواصل معك فريق إدارة الشركاء لتفعيل حسابك وتزويدك بروابط الإحالة ولوحة التحكم الخاصة بك.
+                </p>
+                <button
+                  onClick={() => setIsPartnerModalOpen(false)}
+                  className="px-6 py-2 rounded-xl bg-emerald-500 text-slate-950 font-black text-xs transition"
+                >
+                  إغلاق
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handlePartnerApplicationSubmit} className="space-y-4">
+                {partnerSubmitError && (
+                  <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{partnerSubmitError}</span>
+                  </div>
+                )}
+
+                {referralCode && (
+                  <div className="p-3 bg-purple-500/10 border border-purple-500/30 rounded-xl text-purple-300 text-xs flex items-center gap-2 font-bold">
+                    <Sparkles className="w-4 h-4 shrink-0 text-purple-400" />
+                    <span>دعوة موثقة من الشريك: <span className="font-mono text-white">{referralCode}</span></span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1.5">الاسم أو اسم المؤسسة *</label>
+                  <input
+                    type="text"
+                    required
+                    value={partnerApplicantName}
+                    onChange={(e) => setPartnerApplicantName(e.target.value)}
+                    placeholder="مثال: صالح القحطاني"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-purple-400 transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1.5">رقم الجوال (05XXXXXXXX) *</label>
+                  <input
+                    type="tel"
+                    required
+                    dir="ltr"
+                    value={partnerApplicantPhone}
+                    onChange={(e) => setPartnerApplicantPhone(e.target.value)}
+                    placeholder="05XXXXXXXX"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white font-mono outline-none focus:border-purple-400 transition text-right"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1.5">المدينة</label>
+                  <input
+                    type="text"
+                    value={partnerApplicantCity}
+                    onChange={(e) => setPartnerApplicantCity(e.target.value)}
+                    placeholder="الرياض، جدة..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-purple-400 transition"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmittingPartner}
+                  className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white font-black text-xs transition shadow-lg shadow-purple-500/25 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSubmittingPartner ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>إرسال طلب الانضمام 🤝</span>}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ==================================================================== */}
       {/* 📜 DYNAMIC WHITE-LABEL FOOTER */}
