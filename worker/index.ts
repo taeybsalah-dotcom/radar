@@ -239,6 +239,13 @@ export async function handleBillingWebhook(request: Request, env: Env): Promise<
           ? Number(payload.vat_rate)
           : 0.0,
       p_gateway_fee: data?.gateway_fee !== undefined ? Number(data.gateway_fee) : null,
+      p_billing_cycle:
+        data?.metadata?.billing_cycle ||
+        data?.billing_cycle ||
+        payload?.billing_cycle ||
+        (Number(data?.metadata?.duration_months || data?.duration_months || payload?.duration_months || 1) >= 12
+          ? 'YEARLY'
+          : 'MONTHLY'),
       p_webhook_event_id: eventId,
       p_master_token: masterToken || null,
     }
@@ -399,6 +406,13 @@ export async function handleSandboxWebhook(request: Request, env: Env): Promise<
     : `SANDBOX_${rawPaymentId}`;
   const sandboxEventId = String(body?.event_id || `evt_${sandboxPaymentId}`).trim();
 
+  const rawDurationMonths = Number(body?.duration_months || body?.durationMonths || 1);
+  const rawBillingCycle = String(body?.billing_cycle || body?.billingCycle || '').trim().toUpperCase();
+  const effectiveBillingCycle = rawBillingCycle === 'YEARLY' || rawBillingCycle === 'ANNUAL' || rawDurationMonths >= 12
+    ? 'YEARLY'
+    : 'MONTHLY';
+  const effectiveDurationMonths = effectiveBillingCycle === 'YEARLY' ? 12 : 1;
+
   const webhookPayload = {
     id: sandboxEventId,
     event_id: sandboxEventId,
@@ -412,7 +426,8 @@ export async function handleSandboxWebhook(request: Request, env: Env): Promise<
     plan_id: body?.plan_id || body?.planId || null,
     plan_code: body?.plan_code || body?.planCode || null,
     plan_name: body?.plan_name || body?.planName || null,
-    duration_months: Number(body?.duration_months || body?.durationMonths || 1),
+    duration_months: effectiveDurationMonths,
+    billing_cycle: effectiveBillingCycle,
     vat_rate: body?.vat_rate !== undefined ? Number(body.vat_rate) : 0.0,
     is_sandbox: true,
   };

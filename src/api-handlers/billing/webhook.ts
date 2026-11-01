@@ -103,6 +103,9 @@ export default async function handler(req: any, res: any) {
       p_duration_months: Number(event.rawPayload?.duration_months || 1),
       p_vat_rate: Number(event.rawPayload?.vat_rate ?? 0.0),
       p_gateway_fee: null,
+      p_billing_cycle:
+        event.rawPayload?.billing_cycle ||
+        (Number(event.rawPayload?.duration_months || 1) >= 12 ? 'YEARLY' : 'MONTHLY'),
       p_webhook_event_id: event.eventId,
       p_master_token: masterToken,
     });

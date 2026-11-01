@@ -685,6 +685,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     amount: number;
     invoiceType: 'setup' | 'renewal' | 'upgrade';
     planId?: string;
+    billingCycle?: 'MONTHLY' | 'YEARLY';
   } | null>(null);
   const [upgradeBreakdownModal, setUpgradeBreakdownModal] = useState<{
     isOpen: boolean;
@@ -1359,6 +1360,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       amount: netAmount,
       invoiceType: 'upgrade',
       planId: plan.id || plan.code,
+      billingCycle: targetCycle,
     });
   };
 
@@ -1395,6 +1397,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         paymentMethod: details.paymentMethod,
         gateway: 'sandbox',
         planId: sandboxPaymentConfig.planId,
+        billingCycle: sandboxPaymentConfig.billingCycle || merchantBillingCycle,
       });
 
       if (!res.success) {
@@ -4175,13 +4178,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         <button
                           type="button"
                           onClick={() => {
+                            const isYr = merchantBillingCycle === 'YEARLY';
+                            const planPrice = isYr
+                              ? (plan.yearly_amount ?? plan.amount * 10)
+                              : (plan.monthly_amount ?? plan.amount);
                             setSandboxPaymentConfig({
                               isOpen: true,
                               title: `سداد واشتراك متجر [${store.name}] في ${plan.name}`,
-                              itemDescription: `تفعيل باقة ${plan.name} (+${plan.duration_months ? plan.duration_months * 30 : 30} يوماً صلاحية لكافة بوابات النظام)`,
-                              amount: plan.amount,
+                              itemDescription: `تفعيل باقة ${plan.name} (${isYr ? '+365 يوماً (12 شهر)' : '+30 يوماً'}) لكافة بوابات النظام`,
+                              amount: planPrice,
                               invoiceType: 'renewal',
                               planId: plan.id || plan.code,
+                              billingCycle: merchantBillingCycle,
                             });
                           }}
                           className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/20 transition flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99]"

@@ -447,9 +447,19 @@ export function normalizeStore(s: any): Store {
   } catch {}
 
   // 2. التحقق الحتمي من حالة الاشتراك المدفوع (Paid Active)
-  // لا يعتبر المتجر مشتركاً مدفوعاً إلا إذا وُجدت فاتورة مسددة فعلياً أو عمولة معتمدة
-  // **تحديث**: إذا كانت قاعدة البيانات تقول بشكل صريح أنه نشط ومدفوع، نثق بها لأن الفواتير قد لا تكون محملة
-  const dbSaysIsPaid = s.subscription_status === 'active' && s.lifecycle_stage === 'مشترك مدفوع';
+  // لا يعتبر المتجر مشتركاً مدفوعاً إلا إذا وُجدت فاتورة مسددة فعلياً أو عمولة معتمدة أو إثبات قاطع من قاعدة البيانات
+  const dbSaysIsPaid = (
+    s.status === 'active' ||
+    s.subscription_status === 'active' ||
+    s.subscription_active === true ||
+    s.setup_fee_paid === true ||
+    s.lifecycle_stage === 'مشترك مدفوع'
+  ) && (
+    s.setup_fee_paid === true ||
+    s.lifecycle_stage === 'مشترك مدفوع' ||
+    s.subscription_active === true ||
+    (s.subscription_status === 'active' && s.status === 'active')
+  );
   
   const isSuspended = s.status === 'suspended' || s.subscription_status === 'suspended';
   const hasPaidProof = Boolean(hasPaidInvoice || hasCommissionProof || dbSaysIsPaid);
@@ -513,13 +523,15 @@ export function normalizeStore(s: any): Store {
     }
   }
 
-  let computedRenewalAmount = Number(s.renewal_amount) || Number(localExistingStore?.renewal_amount);
-  if (computedPlanCode === 'PRO' || computedPlanId === 'a418c6e7-5749-4186-92ce-c46d721fe9ba') {
-    computedRenewalAmount = 1890;
-  } else if (computedPlanCode === 'ADVANCED' || computedPlanId === 'fad2e3cf-141c-4e0e-9432-194615a3ef37') {
-    computedRenewalAmount = 1190;
-  } else if (computedPlanCode === 'BASIC' || computedPlanId === '8371f0bb-b52e-4198-a5e9-bc51390174f0') {
-    computedRenewalAmount = 690;
+  let computedRenewalAmount = Number(s.renewal_amount) || Number(localExistingStore?.renewal_amount) || 0;
+  if (!computedRenewalAmount) {
+    if (computedPlanCode === 'PRO' || computedPlanId === 'a418c6e7-5749-4186-92ce-c46d721fe9ba') {
+      computedRenewalAmount = 2790;
+    } else if (computedPlanCode === 'ADVANCED' || computedPlanId === 'fad2e3cf-141c-4e0e-9432-194615a3ef37') {
+      computedRenewalAmount = 1790;
+    } else if (computedPlanCode === 'BASIC' || computedPlanId === '8371f0bb-b52e-4198-a5e9-bc51390174f0') {
+      computedRenewalAmount = 990;
+    }
   }
 
   let computedEndDate =
@@ -532,37 +544,28 @@ export function normalizeStore(s: any): Store {
     s.created_at ||
     new Date().toISOString();
 
-  if (latestPaidInvoice && !computedEndDate) {
-    const invAmount = Number(latestPaidInvoice.amount) || 195;
+  // إذا تم توفير تاريخ نهاية الاشتراك من قاعدة البيانات، نلتزم به بدقة ولا نعيد تجاوزه
+  if (s.subscription_end_date) {
+    computedEndDate = s.subscription_end_date;
+  } else if (latestPaidInvoice && !computedEndDate) {
+    const invAmount = Number(latestPaidInvoice.amount) || 99;
     const startMs = new Date(computedStartDate).getTime();
     let durationDays = 30;
-    if (invAmount >= 1000 || (computedPlanName && computedPlanName.includes('6'))) {
-      durationDays = 180;
-    } else if (invAmount >= 500 || (computedPlanName && (computedPlanName.includes('3') || computedPlanName.includes('الأساسية')))) {
-      durationDays = 90;
-    } else if (invAmount >= 1800 || (computedPlanName && (computedPlanName.includes('سنوي') || computedPlanName.includes('الاحترافية')))) {
+    if (invAmount >= 1500 || (computedPlanName && (computedPlanName.includes('سنوي') || computedPlanName.includes('12')))) {
       durationDays = 365;
+    } else {
+      durationDays = 30;
     }
     computedEndDate = new Date(startMs + durationDays * 86400000).toISOString();
-  }
-
-  // ضبط ومواءمة تاريخ نهاية الاشتراك التلقائي ليتطابق مع مدة الباقة النشطة (الأساسية: 90 يوم، المتقدمة: 180 يوم، الاحترافية: 365 يوم)
-  if (isPaid) {
+  } else if (isPaid && !computedEndDate) {
     const startMs = new Date(computedStartDate).getTime();
-    let expectedPlanDays = 90;
-    if (computedPlanCode === 'PRO' || (computedPlanName && (computedPlanName.includes('الاحترافية') || computedPlanName.includes('سنوي') || computedPlanName.includes('12')))) {
+    let expectedPlanDays = 30;
+    if (computedPlanCode === 'PRO' || (computedPlanName && (computedPlanName.includes('سنوي') || computedPlanName.includes('12')))) {
       expectedPlanDays = 365;
-    } else if (computedPlanCode === 'ADVANCED' || (computedPlanName && (computedPlanName.includes('المتقدمة') || computedPlanName.includes('6')))) {
-      expectedPlanDays = 180;
     } else {
-      expectedPlanDays = 90;
+      expectedPlanDays = 30;
     }
-
-    const minEndMs = startMs + expectedPlanDays * 86400000;
-    const currentEndMs = computedEndDate ? new Date(computedEndDate).getTime() : 0;
-    if (!computedEndDate || currentEndMs < minEndMs) {
-      computedEndDate = new Date(minEndMs).toISOString();
-    }
+    computedEndDate = new Date(startMs + expectedPlanDays * 86400000).toISOString();
   }
 
   // إذا لم يكن مشتركاً مدفوعاً، فهو في فترة التجربة المجانية (14 يوم)
@@ -6363,6 +6366,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     gateway?: 'moyasar' | 'tap' | 'sandbox';
     gatewayPaymentId?: string;
     planId?: string;
+    billingCycle?: 'MONTHLY' | 'YEARLY';
   }): Promise<{ success: boolean; invoice?: StoreInvoice; store?: Store; ledgerEntry?: FinancialLedgerEntry; error?: string }> {
     const supabase = getSupabaseClient();
     if (!supabase || !isUUID(payload.storeId)) {
@@ -6404,7 +6408,10 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ) ||
       null;
 
-    const planMonths = targetPlan?.duration_months ?? (targetPlan?.billing_interval === 'YEARLY' ? 12 : 1);
+    const billingCycle: 'MONTHLY' | 'YEARLY' =
+      payload.billingCycle ||
+      (targetPlan?.billing_interval === 'YEARLY' ? 'YEARLY' : 'MONTHLY');
+    const planMonths = billingCycle === 'YEARLY' ? 12 : 1;
     const computedPlanName = targetPlan?.name || currentStore.subscription_plan || (payload.invoiceType === 'setup' ? 'باقة تأسيس المتجر' : 'تجديد الاشتراك');
     const breakdown = this.calculateBreakdown(payload.amount, paymentMethod);
 
@@ -6446,6 +6453,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
               plan_code: targetPlan?.code || null,
               plan_name: computedPlanName,
               duration_months: planMonths,
+              billing_cycle: billingCycle,
               vat_rate: breakdown.vatRate,
             }),
           });
@@ -6474,6 +6482,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
             p_plan_name: computedPlanName,
             p_duration_months: planMonths,
             p_vat_rate: breakdown.vatRate,
+            p_billing_cycle: billingCycle,
             p_master_token: masterToken,
           });
 
@@ -11158,7 +11167,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
   async upgradeStoreSubscription(
     storeId: string,
     plan: BillingPlan,
-    paymentMethod: string = 'mada'
+    paymentMethod: string = 'mada',
+    billingCycle?: 'MONTHLY' | 'YEARLY'
   ): Promise<{ success: boolean; store?: Store; invoice?: StoreInvoice; prorated: ProratedUpgradeCalculation; error?: string }> {
     const stores = getLocalData<Store[]>(STORAGE_KEYS.LOCAL_STORES, INITIAL_STORES);
     const store = stores.find((s) => s.id === storeId || s.slug === storeId) || INITIAL_STORE;
@@ -11174,6 +11184,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       paymentMethod,
       gateway: 'sandbox',
       planId: plan.id || plan.code,
+      billingCycle: billingCycle || (plan.billing_interval === 'YEARLY' ? 'YEARLY' : 'MONTHLY'),
     });
 
     return {
