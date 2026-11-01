@@ -6176,7 +6176,9 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     let netUpgradeAmount = targetPrice;
 
     // 🛡️ احتساب ترقية الباقة ودفع فرق الباقة (الصافي) مقرب لأقرب ريال صحيح بدون كسور عشرية
-    if (store.setup_fee_paid && currentPlan) {
+    // حماية التجربة المجانية: لا يُحسب أي رصيد مخصوم إذا كان المتجر في تجربة مجانية أو غير مسدد للرسوم
+    const isStoreInTrial = !store.setup_fee_paid || store.subscription_status === 'trial' || store.status === 'trial';
+    if (!isStoreInTrial && store.setup_fee_paid && currentPlan) {
       const currentPrice = Math.round(currentPlan.monthly_amount ?? currentPlan.amount);
       if (targetPrice > currentPrice && remainingDays > 0) {
         dailyRateCurrent = currentPrice / totalDays;

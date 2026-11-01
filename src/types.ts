@@ -141,15 +141,6 @@ export function resolveUnifiedStage(
 
   const it = item as any;
 
-  // Direct check on current item first (Single Source of Truth)
-  const isDirectPaid = Boolean(
-    it.setup_fee_paid === true ||
-    it.lifecycle_stage === 'مشترك مدفوع' ||
-    it.has_paid_invoice === true ||
-    it.has_commission === true ||
-    (it.subscription_status === 'active' && it.status === 'active' && it.setup_fee_paid !== false)
-  );
-
   // فحص المتجر المرتبط إذا كان العنصر عبارة عن Lead
   let matchedStore: any = null;
   if (typeof window !== 'undefined') {
@@ -170,12 +161,25 @@ export function resolveUnifiedStage(
     } catch {}
   }
 
-  // Never let stale matchedStore downgrade a directly paid item
-  const effectiveObj = isDirectPaid ? it : (matchedStore || it);
+  const effectiveObj = matchedStore || it;
+
+  // 🛡️ فحص التجربة المجانية الصارم: أي متجر بحالة trial أو setup_fee_paid = false هو في التجربة قطعيّاً
+  const isTrial = Boolean(
+    effectiveObj.subscription_status === 'trial' ||
+    effectiveObj.status === 'trial' ||
+    effectiveObj.setup_fee_paid === false ||
+    it.subscription_status === 'trial' ||
+    it.status === 'trial' ||
+    it.setup_fee_paid === false ||
+    effectiveObj.lifecycle_stage === 'فترة تجريبية' ||
+    it.lifecycle_stage === 'فترة تجريبية' ||
+    effectiveObj.subscription_plan === 'trial' ||
+    it.subscription_plan === 'trial'
+  );
 
   // فحص ما إذا كان المتجر أو الطلب مرتبطاً بعمولة مسوق معتمدة أو قيد مالي مدفوع
   let hasCommissionOrLedgerProof = false;
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && !isTrial) {
     try {
       const rawComms = localStorage.getItem('radar_local_partner_commissions');
       if (rawComms) {
@@ -196,56 +200,18 @@ export function resolveUnifiedStage(
     } catch {}
   }
 
-  const isSuspended =
+  // 1. تحت المراجعة (Under Review / Suspended)
+  const isSuspended = Boolean(
     effectiveObj.status === 'تحت المراجعة' ||
     effectiveObj.status === 'UNDER_REVIEW' ||
     effectiveObj.status === 'suspended' ||
     effectiveObj.subscription_status === 'suspended' ||
     effectiveObj.lifecycle_stage === 'تحت المراجعة' ||
     it.status === 'UNDER_REVIEW' ||
-    it.lifecycle_stage === 'تحت المراجعة';
-
-  const dbSaysIsPaid = isDirectPaid ||
-                       (effectiveObj.setup_fee_paid === true) ||
-                       (effectiveObj.lifecycle_stage === 'مشترك مدفوع') ||
-                       (effectiveObj.subscription_status === 'active' && effectiveObj.status === 'active');
-
-  const hasPaidProof = Boolean(
-    isDirectPaid ||
-    dbSaysIsPaid ||
-    hasCommissionOrLedgerProof ||
-    effectiveObj.has_paid_invoice === true ||
-    Boolean(effectiveObj.latest_paid_invoice) ||
-    it.has_paid_invoice === true ||
-    it.has_commission === true
+    it.status === 'تحت المراجعة' ||
+    it.lifecycle_stage === 'تحت المراجعة'
   );
 
-  const isExplicitTrial = !dbSaysIsPaid && !isDirectPaid && (
-    effectiveObj.subscription_status === 'trial' ||
-    effectiveObj.status === 'trial' ||
-    effectiveObj.lifecycle_stage === 'فترة تجريبية' ||
-    effectiveObj.setup_fee_paid === false ||
-    it.subscription_status === 'trial' ||
-    it.status === 'trial' ||
-    it.lifecycle_stage === 'فترة تجريبية' ||
-    it.setup_fee_paid === false ||
-    !hasPaidProof
-  );
-
-  const isPaid = !isSuspended && (dbSaysIsPaid || isDirectPaid || (!isExplicitTrial && hasPaidProof));
-
-  // 1. المشترك المدفوع (Paid Subscriber) - أولوية مطلقة فور سداد الرسوم أو وجود العمولة
-  if (isPaid) {
-    return {
-      key: 'PAID_ACTIVE',
-      label: 'مشترك مدفوع',
-      badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm',
-      icon: '👑',
-      isPaidActive: true,
-    };
-  }
-
-  // 2. تحت المراجعة (Under Review / Suspended)
   if (isSuspended) {
     return {
       key: 'UNDER_REVIEW',
@@ -256,15 +222,39 @@ export function resolveUnifiedStage(
     };
   }
 
+  // 2. المشترك المدفوع (Paid Active): لا يمكن أبداً لمن هو في فترة تجريبية أن يكون مدفوعاً!
+  const isPaid = !isSuspended && !isTrial && Boolean(
+    effectiveObj.setup_fee_paid === true && (
+      effectiveObj.subscription_status === 'active' ||
+      effectiveObj.lifecycle_stage === 'مشترك مدفوع' ||
+      effectiveObj.has_paid_invoice === true ||
+      Boolean(effectiveObj.latest_paid_invoice) ||
+      hasCommissionOrLedgerProof
+    )
+  );
+
+  if (isPaid) {
+    return {
+      key: 'PAID_ACTIVE',
+      label: 'مشترك مدفوع',
+      badgeClass: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm',
+      icon: '👑',
+      isPaidActive: true,
+    };
+  }
+
   // 3. جاري التأسيس (In Setup / Converting)
-  if (
+  const isInSetup = Boolean(
     effectiveObj.lifecycle_stage === 'جاري التأسيس' ||
     effectiveObj.status === 'جاري التأسيس' ||
     effectiveObj.status === 'IN_SETUP' ||
     effectiveObj.status === 'CONVERTING' ||
     it.status === 'CONVERTING' ||
+    it.status === 'IN_SETUP' ||
     it.lifecycle_stage === 'جاري التأسيس'
-  ) {
+  );
+
+  if (isInSetup) {
     return {
       key: 'IN_SETUP',
       label: 'جاري التأسيس',
@@ -275,12 +265,15 @@ export function resolveUnifiedStage(
   }
 
   // 4. طلب جديد (New Request)
-  if (
+  const isNew = Boolean(
     effectiveObj.lifecycle_stage === 'طلب جديد' ||
     effectiveObj.status === 'طلب جديد' ||
     effectiveObj.status === 'NEW' ||
-    it.status === 'NEW'
-  ) {
+    it.status === 'NEW' ||
+    it.lifecycle_stage === 'طلب جديد'
+  );
+
+  if (isNew && !effectiveObj.converted_store_id && !effectiveObj.slug) {
     return {
       key: 'NEW',
       label: 'طلب جديد',
@@ -290,25 +283,7 @@ export function resolveUnifiedStage(
     };
   }
 
-  // 5. فترة تجريبية أو تم التأسيس (Setup Complete / Trial / Converted to Store)
-  const isTrial =
-    effectiveObj.subscription_status === 'trial' ||
-    effectiveObj.lifecycle_stage === 'فترة تجريبية' ||
-    it.subscription_status === 'trial' ||
-    it.lifecycle_stage === 'فترة تجريبية' ||
-    effectiveObj.setup_fee_paid === false ||
-    it.setup_fee_paid === false;
-
-  if (isTrial) {
-    return {
-      key: 'TRIAL',
-      label: 'فترة تجريبية',
-      badgeClass: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-      icon: '⏳',
-      isPaidActive: false,
-    };
-  }
-
+  // 5. تم التأسيس / فترة تجريبية (Setup Complete / Trial Store)
   return {
     key: 'SETUP_COMPLETE',
     label: 'تم التأسيس',
