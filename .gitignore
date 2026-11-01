@@ -12,4 +12,8 @@ master-control/dist/
 .wrangler/
 
 backups/
+secure_backups/
+*.dump
+*.backup
+*.sql.enc
 scratch/

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "deploy": "npm run build && npx wrangler deploy --env production",
     "deploy:staging": "npm run build:staging && npx wrangler deploy --env staging",
-    "migrate:logos": "node scripts/migrate-base64-logos.js"
+    "migrate:logos": "node scripts/migrate-base64-logos.js",
+    "sentinel": "node scripts/sentinel.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

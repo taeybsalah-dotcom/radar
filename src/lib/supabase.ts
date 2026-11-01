@@ -1061,7 +1061,21 @@ export const LoyaltyService = {
       const verifyRes = await this.verifySuperAdminSession();
       if (!verifyRes.is_super_admin) {
         await supabase.auth.signOut();
-        return { success: false, error: 'هذا الحساب لا يمتلك صلاحيات مالك المنصة (Super Admin)' };
+        return { success: false, error: 'هذا الحساب لا يمتلك صلاحيات إدارة المنصة' };
+      }
+
+      // 🛡️ توجيه نطاق الجلسة للسوبر أدمن بحسب الدومين تلقائياً (سديم أو رادار)
+      if (verifyRes.role === 'super_admin') {
+        try {
+          const host = typeof window !== 'undefined' ? window.location.hostname : '';
+          const { data: tenantData } = await (supabase as any).rpc('get_active_tenant_by_domain', { p_host: host });
+          if (tenantData && tenantData.id) {
+            await (supabase as any).rpc('switch_super_admin_active_tenant', { p_target_tenant_id: tenantData.id });
+            await supabase.auth.refreshSession();
+          }
+        } catch (e) {
+          console.warn('[superAdminSignIn] tenant context switch warning:', e);
+        }
       }
 
       return { success: true, user: data.user };
@@ -1645,6 +1659,19 @@ export const LoyaltyService = {
         const supabase = getSupabaseClient();
         if (supabase) {
           try {
+            // 🛡️ فحص الدالة العامة get_public_store_by_slug أولاً لزوار المنيو والواجهة العامة
+            if (!isUUID(clean)) {
+              try {
+                const { data: rpcStore, error: rpcErr } = await (supabase as any).rpc('get_public_store_by_slug', { p_slug: cleanLower });
+                if (!rpcErr && rpcStore && rpcStore.id) {
+                  const mapped = normalizeStore(await attachStoreAssets(supabase, rpcStore)) as Store;
+                  storeResolutionCache.set(cleanLower, { store: mapped, timestamp: Date.now() });
+                  storeResolutionCache.set(mapped.id, { store: mapped, timestamp: Date.now() });
+                  return mapped;
+                }
+              } catch {}
+            }
+
             let storeQuery = supabase.from('stores').select(await storeCols(supabase));
             if (isUUID(clean)) {
               storeQuery = storeQuery.eq('id', clean);
@@ -3849,6 +3876,19 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
             }
           } catch {}
         }
+
+        // 🛡️ فحص دالة الكوبونات العامة get_public_customer_coupons لزوار محفظة PWA
+        try {
+          const { data: pubCoupons, error: pubErr } = await (supabase as any).rpc('get_public_customer_coupons', {
+            p_store_id: resolvedStoreId,
+            p_phone: customerPhone || null,
+            p_customer_id: isUUID(customerId) ? customerId : null,
+          });
+          if (!pubErr && Array.isArray(pubCoupons) && pubCoupons.length > 0) {
+            return pubCoupons as CustomerCoupon[];
+          }
+        } catch {}
+
         const couponKey = `${resolvedStoreId}:${customerId}`;
         let query = supabase
           .from('customer_coupons')
@@ -4868,8 +4908,29 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
             } as Customer;
           }
         } catch {
-          /* Fallback to direct query below for staff token */
+          /* Fallback to get_public_customer_profile */
         }
+
+        try {
+          const { data: profRes, error: profErr } = await (supabase as any).rpc('get_public_customer_profile', {
+            p_store_id: resolvedId,
+            p_phone: cleanPhone,
+          });
+          if (!profErr && profRes && profRes.id) {
+            return {
+              id: profRes.id,
+              store_id: profRes.store_id,
+              phone: profRes.phone,
+              name: profRes.name || 'عميل مميز',
+              wallet_balance: Number(profRes.wallet_balance) || 0,
+              lifetime_xp: Number(profRes.lifetime_xp) || 0,
+              last_visit_date: profRes.last_visit_date ? profRes.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
+              is_active: profRes.is_active !== undefined ? profRes.is_active : true,
+              visits_count: profRes.visits_count || 1,
+              created_at: profRes.created_at,
+            } as Customer;
+          }
+        } catch {}
         const candidatePhones = Array.from(
           new Set([
             cleanPhone,
@@ -7216,11 +7277,26 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
     if (supabase && isUUID(resolvedStoreId)) {
       try {
-        const { data, error } = await supabase
-          .from('catalog_items')
-          .select('*')
-          .eq('store_id', resolvedStoreId)
-          .order('created_at', { ascending: false });
+        let data: any[] | null = null;
+        let error: any = null;
+
+        // 🛡️ فحص الدالة العامة get_public_catalog_items أولاً لزوار المنيو وعملاء الطاولات
+        try {
+          const rpcRes = await (supabase as any).rpc('get_public_catalog_items', { p_store_id: resolvedStoreId });
+          if (!rpcRes.error && Array.isArray(rpcRes.data) && rpcRes.data.length > 0) {
+            data = rpcRes.data;
+          }
+        } catch {}
+
+        if (!data) {
+          const directRes = await supabase
+            .from('catalog_items')
+            .select('*')
+            .eq('store_id', resolvedStoreId)
+            .order('created_at', { ascending: false });
+          data = directRes.data;
+          error = directRes.error;
+        }
 
         if (!error && Array.isArray(data)) {
           // 2. دمج ذكي معزول: أصناف السيرفر لهذا المتجر + الأصناف المحلية لهذا المتجر حصراً
@@ -7984,6 +8060,15 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        // 🛡️ فحص الدالة العامة get_public_store_specialists لزوار صفحة الحجوزات
+        try {
+          const rpcRes = await (supabase as any).rpc('get_public_store_specialists', { p_store_id: resolvedStoreId });
+          if (!rpcRes.error && Array.isArray(rpcRes.data) && rpcRes.data.length > 0) {
+            saveLocalData(STORAGE_KEYS.LOCAL_SPECIALISTS, rpcRes.data);
+            return rpcRes.data as StoreSpecialist[];
+          }
+        } catch {}
+
         const { data, error } = await (supabase as any)
           .from('store_specialists')
           .select('*')
@@ -8904,12 +8989,19 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const [pRes, aRes, rpcCheck] = await Promise.all([
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        const [pRes, aRes, rpcCheck, tenantRpc] = await Promise.all([
           Promise.resolve(supabase.from('partner_accounts').select('id, referral_code, slug').or(`referral_code.ilike.${clean},slug.ilike.${clean}`).limit(1).maybeSingle()).catch(() => ({ data: null })),
           Promise.resolve(supabase.from('affiliates').select('id, referral_code').ilike('referral_code', clean).limit(1).maybeSingle()).catch(() => ({ data: null })),
           Promise.resolve((supabase.rpc as any)('check_referral_code', { p_code: clean })).catch(() => ({ data: null })),
+          Promise.resolve((supabase.rpc as any)('verify_partner_referral_code', { p_code: clean, p_host: host })).catch(() => ({ data: null })),
         ]);
 
+        if (tenantRpc?.data && tenantRpc.data.id) {
+          if (!currentPartnerId || tenantRpc.data.id !== currentPartnerId) {
+            return { available: false, reason: 'الكود مستخدم مسبقاً لشريك آخر ❌' };
+          }
+        }
         if (rpcCheck?.data && rpcCheck.data.valid === true) {
           return { available: false, reason: 'الكود مستخدم مسبقاً لشريك آخر ❌' };
         }
@@ -9562,10 +9654,36 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       updated_at: new Date().toISOString(),
     };
 
-    // 1. Submit via Secure Server-Side Atomic RPC
+    // 1. Submit via Secure Server-Side Atomic RPC (Public & Multi-Tenant Aware)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        // 🛡️ استدعاء submit_merchant_lead_rpc العامة لربط الوكيل تلقائياً
+        const { data: rpcLead, error: rpcLeadErr } = await (supabase.rpc as any)('submit_merchant_lead_rpc', {
+          p_payload: {
+            store_name: cleanStore,
+            merchant_name: cleanStore,
+            manager_name: cleanManager,
+            phone: cleanPhone,
+            city: payload.city || 'الرياض',
+            business_type: payload.business_type || 'RETAIL',
+            referral_code: refCode,
+            notes: payload.notes || (refCode ? `إحالة شريك: ${refCode}` : 'طلب انضمام مباشر من صفحة الهبوط'),
+          },
+          p_host: host,
+        });
+
+        if (!rpcLeadErr && rpcLead && (rpcLead as any).success) {
+          const leadId = (rpcLead as any).lead_id;
+          newLead.id = leadId;
+          invalidateLeadsCache();
+          invalidatePartnersCache();
+          LoyaltyEvents.emit({ type: 'LEAD_UPDATED', storeId: 'global' });
+          LoyaltyEvents.emit({ type: 'PARTNER_UPDATED', storeId: 'global' });
+          return { success: true, lead_id: leadId };
+        }
+
         const { data, error } = await (supabase.rpc as any)('submit_merchant_lead_internal', {
           p_store_name: cleanStore,
           p_manager_name: cleanManager,
@@ -9600,6 +9718,10 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     }
 
     return { success: false, error: 'تعذر الاتصال بقاعدة البيانات السحابية' };
+  },
+
+  async createMerchantLead(payload: any): Promise<{ success: boolean; lead_id?: string; error?: string }> {
+    return this.submitLead(payload);
   },
 
   async updateLeadStatus(leadId: string, newStatus: LeadStatus, notes?: string): Promise<{ success: boolean; error?: string }> {
@@ -10568,10 +10690,26 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('billing_plans')
-          .select(await planCols(supabase))
-          .order('amount', { ascending: true });
+        let data: any[] | null = null;
+        let error: any = null;
+
+        // 🛡️ استدعاء دالة باقات الوكيل بحسب الدومين get_public_billing_plans (عزل تام لكل وكيل)
+        try {
+          const host = typeof window !== 'undefined' ? window.location.hostname : '';
+          const rpcRes = await (supabase as any).rpc('get_public_billing_plans', { p_host: host });
+          if (!rpcRes.error && Array.isArray(rpcRes.data) && rpcRes.data.length > 0) {
+            data = rpcRes.data;
+          }
+        } catch {}
+
+        if (!data) {
+          const directRes = await supabase
+            .from('billing_plans')
+            .select(await planCols(supabase))
+            .order('amount', { ascending: true });
+          data = directRes.data;
+          error = directRes.error;
+        }
 
         if (!error && data && data.length > 0) {
           const formatted: BillingPlan[] = data.map((p: any) => {
