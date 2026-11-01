@@ -56,35 +56,23 @@ export const RadarQuickSwitcher: React.FC<RadarQuickSwitcherProps> = ({
   const handleClearTestCache = () => {
     setIsResetting(true);
     try {
-      // 1. Remove all lingering session tokens and sticky store slugs
-      const keysToRemove = [
-        'radar_unified_auth_user',
-        'radar_partner_session',
-        'radar_last_store_slug',
-        'radar_last_portal',
-        'radar_last_store_name',
-        'radar_captured_ref',
-        'radar_cashier_token',
-        'RADAR_SUPER_ADMIN_AUTH',
-        'RADAR_PARTNER_AUTH_TOKEN',
-      ];
-
-      keysToRemove.forEach((key) => localStorage.removeItem(key));
+      localStorage.clear();
       sessionStorage.clear();
-
-      // Clear any cashier pin storage keys
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const key = localStorage.key(i);
-        if (key && (key.startsWith('radar_session_') || key.startsWith('radar_local_customer_phone'))) {
-          localStorage.removeItem(key);
-        }
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          keys.forEach((k) => caches.delete(k));
+        });
+      }
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((r) => r.unregister());
+        });
       }
 
       setResetSuccess(true);
       setTimeout(() => {
-        // Full clean redirect to root
         window.location.href = window.location.origin + '/';
-      }, 700);
+      }, 500);
     } catch (e) {
       console.error('Failed to clear cache:', e);
       setIsResetting(false);

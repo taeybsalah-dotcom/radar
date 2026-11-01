@@ -152,6 +152,40 @@ function parseRouteParams() {
   const pathname = (window.location.pathname || '').toLowerCase();
   const rawHash = window.location.hash ? window.location.hash.replace(/^#\/?/, '').trim() : '';
 
+  // 0. Sovereign Clean Reset / Logout Route (/logout, /clean, ?reset=true)
+  if (pathname === '/logout' || pathname === '/logout/' || pathname === '/clean' || urlParams.has('reset')) {
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          keys.forEach((k) => caches.delete(k));
+        });
+      }
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((r) => r.unregister());
+        });
+      }
+      if ('indexedDB' in window && (indexedDB as any).databases) {
+        (indexedDB as any).databases().then((dbs: any[]) => {
+          dbs.forEach((db) => {
+            if (db.name) indexedDB.deleteDatabase(db.name);
+          });
+        });
+      }
+    } catch {}
+    if (typeof window !== 'undefined') {
+      window.location.replace('/');
+    }
+    return {
+      portal: 'join' as const,
+      isPreview: false,
+      storeSlug: null,
+      partnerSlug: null,
+    };
+  }
+
   // 1. Check Partner Portal (/partner, /partner/, portal=partner, #partner)
   const isPartnerPortal =
     pathname === '/partner' ||

@@ -831,7 +831,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const handleLogout = () => {
     LoyaltyService.clearStaffSession(store.id, 'admin', store.slug);
     clearAllInboxNotifications({ portal: 'store', storeId: store.id });
+    try {
+      localStorage.removeItem('radar_last_store_slug');
+      localStorage.removeItem('radar_unified_auth_user');
+    } catch {}
     setAuthenticatedAdmin(null);
+    window.location.href = '/';
   };
 
   const copyToClipboard = (text: string, key: string) => {
