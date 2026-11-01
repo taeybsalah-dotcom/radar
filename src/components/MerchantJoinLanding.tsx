@@ -532,7 +532,7 @@ export const MerchantJoinLanding: React.FC = () => {
               <span className="text-[#CCFF00] font-black">+</span>
               <span className="px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10">تطبيق المناديب (0% عمولة)</span>
               <span className="text-[#CCFF00] font-black">+</span>
-              <span className="px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10">رادار الإنقاذ بالواتساب</span>
+              <span className="px-3.5 py-1.5 rounded-full bg-white/5 border border-white/10">{tenant.brandName === 'رادار' ? 'رادار الإنقاذ بالواتساب' : 'منظومة الإنقاذ بالواتساب'}</span>
               <span className="text-[#CCFF00] font-black">=</span>
               <span className="px-4 py-1.5 rounded-full bg-[#CCFF00] text-slate-950 font-black shadow-md">
                 {tenant.brandName}
@@ -1107,7 +1107,7 @@ export const MerchantJoinLanding: React.FC = () => {
                 <li className="flex items-center gap-2">✓ نظام الحجوزات والمواعيد الذكي</li>
                 <li className="flex items-center gap-2">✓ محفظة Apple & Google Wallet كاملة</li>
                 <li className="flex items-center gap-2">✓ كرت أختام ورتب VIP وكاش باك</li>
-                <li className="flex items-center gap-2">✓ رادار استعادة العملاء المنقطعين بالواتساب</li>
+                <li className="flex items-center gap-2">✓ {tenant.brandName === 'رادار' ? 'رادار استعادة العملاء المنقطعين بالواتساب' : 'استعادة العملاء المنقطعين بالواتساب'}</li>
                 <li className="flex items-center gap-2">✓ شاشة تحضير المطبخ والبار (KDS)</li>
               </ul>
             </div>

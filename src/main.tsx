@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { AuthProvider } from './context/AuthContext.tsx';
-import { getActiveTenantConfig, applyTenantBranding } from './config/tenant.ts';
+import { getActiveTenantConfig, applyTenantBranding, subscribeTenantBranding, WhiteLabelTenantConfig } from './config/tenant.ts';
 import { ResellerSuspendedScreen } from './components/ResellerSuspendedScreen.tsx';
 import { getSupabaseClient } from './lib/supabase.ts';
 import './index.css';
@@ -25,42 +25,28 @@ if (typeof window !== 'undefined') {
 const RootApp: React.FC = () => {
   const [isSuspended, setIsSuspended] = useState(false);
   const [suspensionReason, setSuspensionReason] = useState<string | null>(null);
+  const [tenantConfig, setTenantConfig] = useState<WhiteLabelTenantConfig>(getActiveTenantConfig());
 
   useEffect(() => {
+    // 🔔 Subscribe to live branding updates so React re-renders cleanly
+    const unsubscribeBranding = subscribeTenantBranding((newConfig) => {
+      setTenantConfig({ ...newConfig });
+    });
+
     const supabase = getSupabaseClient();
-    if (!supabase) return;
+    if (!supabase) return unsubscribeBranding;
 
     // 1. Fetch Dynamic Tenant Branding via domain RPC (Al-Athar Core Multi-Tenant Engine)
     const host = typeof window !== 'undefined' ? window.location.hostname : '';
     (supabase as any)
       .rpc('get_active_tenant_by_domain', { p_host: host })
-      .then(({ data }: any) => {
-        if (data && data.brand_name) {
+      .then(({ data, error }: any) => {
+        if (!error && data && (data.brand_name || data.name)) {
           applyTenantBranding(data);
-        } else {
-          // Fallback to legacy tenant_branding table
-          (supabase as any)
-            .from('tenant_branding')
-            .select('*')
-            .eq('key', 'default')
-            .maybeSingle()
-            .then(({ data: fallbackData }: any) => {
-              if (fallbackData) applyTenantBranding(fallbackData);
-            })
-            .catch(() => {});
         }
       })
-      .catch(() => {
-        // Fallback to legacy tenant_branding table if RPC fails or not yet applied
-        (supabase as any)
-          .from('tenant_branding')
-          .select('*')
-          .eq('key', 'default')
-          .maybeSingle()
-          .then(({ data: fallbackData }: any) => {
-            if (fallbackData) applyTenantBranding(fallbackData);
-          })
-          .catch(() => {});
+      .catch((err: any) => {
+        console.warn('[Tenant Engine] Could not fetch dynamic branding for domain:', host, err);
       });
 
     // 2. Initial Check on platform_system_config
@@ -101,27 +87,15 @@ const RootApp: React.FC = () => {
             }
           }
         )
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'tenant_branding',
-            filter: 'key=eq.default',
-          },
-          (payload: any) => {
-            if (payload.new) {
-              applyTenantBranding(payload.new);
-            }
-          }
-        )
         .subscribe();
 
       return () => {
+        unsubscribeBranding();
         supabase.removeChannel(channel);
       };
     } catch (err) {
       console.warn('[RootApp] Realtime listener error:', err);
+      return unsubscribeBranding;
     }
   }, []);
 
@@ -132,7 +106,7 @@ const RootApp: React.FC = () => {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <App />
+        <App key={tenantConfig.brandName} />
       </AuthProvider>
     </ErrorBoundary>
   );
