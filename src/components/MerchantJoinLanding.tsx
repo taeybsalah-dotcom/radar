@@ -79,7 +79,7 @@ export const MerchantJoinLanding: React.FC = () => {
   const formRef = useRef<HTMLDivElement | null>(null);
 
   // 🏷️ Dynamic White-Label Billing Plans fetched directly from get_public_billing_plans RPC
-  const [dynamicPlans, setDynamicPlans] = useState<BillingPlan[]>([]);
+  const [dynamicPlans, setDynamicPlans] = useState<BillingPlan[]>(() => LoyaltyService.getAllSubscriptionPlansSync());
 
   useEffect(() => {
     const loadPlans = () => {
@@ -1182,20 +1182,15 @@ export const MerchantJoinLanding: React.FC = () => {
           const imadPlan = sourcePlans.find(p => (p.tier_level ?? 0) === 2 || p.code === 'ADVANCED') || sourcePlans[1] || fallbackPlans[1];
           const sarhPlan = sourcePlans.find(p => (p.tier_level ?? 0) === 3 || p.code === 'PRO') || sourcePlans[2] || fallbackPlans[2];
 
-          // Helpers
+          // Helpers (Clean & dynamic without hardcoded truncation)
           const cleanName = (name: string | undefined | null, fallback: string) => {
-            if (!name) return fallback;
-            const m = name.match(/\(([^)]+)\)/);
-            if (m && m[1]) return m[1].trim();
-            if (name.includes('الأساسية') || name.includes('أساس') || name.toUpperCase().includes('BASIC')) return 'أساس';
-            if (name.includes('النمو') || name.includes('عماد') || name.includes('المتقدمة') || name.toUpperCase().includes('ADVANCED')) return 'عماد';
-            if (name.includes('الاحترافية') || name.includes('صرح') || name.toUpperCase().includes('PRO')) return 'صرح';
+            if (!name || !name.trim()) return fallback;
             return name.trim();
           };
 
           const cleanDesc = (desc: string | undefined | null, fallback: string) => {
-            if (!desc) return fallback;
-            return desc.split(' - ')[0].trim() || fallback;
+            if (!desc || !desc.trim()) return fallback;
+            return desc.trim();
           };
 
           // Basic calculations
@@ -1229,10 +1224,206 @@ export const MerchantJoinLanding: React.FC = () => {
           const allImadChips = [...basicFeats, ...imadFeats];
 
           return (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8 items-stretch pt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8 items-stretch pt-6" dir="rtl">
 
               {/* ============================================================== */}
-              {/* 🏛️ CARD 3: صرح (Leftmost column in RTL) */}
+              {/* 🏢 CARD 1: أساس (Right Column in RTL - First child in DOM) */}
+              {/* ============================================================== */}
+              <div className="flex flex-col">
+                {/* Decorative Foundation Outline (Architecture line-art) */}
+                <svg className="w-20 h-10 mx-auto opacity-40 stroke-current text-white mb-3 hidden lg:block" viewBox="0 0 80 40" fill="none" strokeWidth="1.5">
+                  <path d="M10 28h60M15 28V14h50v14M10 14h60M25 14V6h30v8" />
+                  <line x1="20" y1="20" x2="20" y2="28" />
+                  <line x1="30" y1="20" x2="30" y2="28" />
+                  <line x1="40" y1="20" x2="40" y2="28" />
+                  <line x1="50" y1="20" x2="50" y2="28" />
+                  <line x1="60" y1="20" x2="60" y2="28" />
+                </svg>
+
+                <div className="rounded-[36px] bg-white text-slate-950 p-7 sm:p-9 shadow-2xl flex flex-col justify-between flex-1 border border-slate-200/90 hover:border-slate-300 transition-all duration-300">
+                  <div>
+                    {/* Top Badges Row */}
+                    <div className="flex items-center justify-between min-h-[32px]">
+                      <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-black shrink-0">
+                        {basicFeats.length} مزايا
+                      </span>
+                      <span className="text-transparent select-none">-</span>
+                    </div>
+
+                    {/* Title & Subtitle */}
+                    <div className="mt-4">
+                      <h3 className="text-3xl sm:text-4xl font-black text-slate-950 tracking-tight">
+                        {cleanName(basicPlan.name, 'أساس')}
+                      </h3>
+                      <p className="text-xs text-slate-500 font-medium mt-1.5 leading-relaxed">
+                        {cleanDesc(basicPlan.description, 'تبيع، وتطبع، وتقفّل يومك')}
+                      </p>
+                    </div>
+
+                    {/* Price Block */}
+                    <div className="mt-7 mb-6">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-5xl sm:text-6xl font-black font-mono tracking-tight text-slate-950">
+                          {(billingPeriod === 'ANNUAL' ? basicYearly : basicMonthly).toLocaleString()}
+                        </span>
+                        <div className="text-xs font-bold text-slate-500 leading-tight">
+                          <span className="block font-sans text-sm text-slate-900 font-black">﷼</span>
+                          <span>{billingPeriod === 'ANNUAL' ? 'سنوياً' : 'شهرياً'}</span>
+                        </div>
+                      </div>
+
+                      {billingPeriod === 'ANNUAL' && (
+                        <div className="mt-2.5">
+                          <span className="inline-block px-3 py-1 rounded-full bg-[#CCFF00] text-slate-950 text-xs font-black shadow-sm">
+                            وفّر {basicSavings > 0 ? basicSavings.toLocaleString() : (basicMonthly * 2).toLocaleString()} بالسنة
+                          </span>
+                        </div>
+                      )}
+
+                      <p className="text-xs text-slate-500 font-medium mt-2">
+                        فرع واحد + {billingPeriod === 'ANNUAL' ? (basicBranch * 10).toLocaleString() : basicBranch.toLocaleString()} لكل فرع زيادة
+                      </p>
+                    </div>
+
+                    {/* CTA Button (Directly under Price!) */}
+                    <button
+                      type="button"
+                      onClick={scrollToForm}
+                      className="w-full py-3.5 rounded-full border-2 border-slate-950 text-slate-950 hover:bg-slate-950 hover:text-white font-black text-sm transition-all duration-200 shadow-sm active:scale-[0.98]"
+                    >
+                      ابدأ مجاناً
+                    </button>
+
+                    {/* Features List */}
+                    <div className="mt-8 pt-6 border-t border-slate-200/80 space-y-3">
+                      <ul className="space-y-3 text-xs text-slate-700 font-bold">
+                        {basicFeats.map((f, i) => (
+                          <li key={i} className="flex items-center gap-2.5">
+                            <span className="text-slate-400 font-black text-sm">✓</span>
+                            <span>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Card Footer */}
+                  <div className="mt-8 pt-4 text-center border-t border-slate-100">
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-bold text-slate-500 hover:text-slate-900 transition"
+                    >
+                      عندك سؤال؟ كلّمنا
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+
+              {/* ============================================================== */}
+              {/* ⚡ CARD 2: عماد (Middle Column in RTL - Second child in DOM) */}
+              {/* ============================================================== */}
+              <div className="flex flex-col">
+                {/* Decorative Pillar Outline (Architecture line-art) */}
+                <svg className="w-16 h-12 mx-auto opacity-50 stroke-current text-[#CCFF00] mb-3 hidden lg:block" viewBox="0 0 64 48" fill="none" strokeWidth="1.5">
+                  <path d="M16 8h32M20 8v32M44 8v32M14 40h36M26 8v32M38 8v32M12 44h40" />
+                  <path d="M18 12c4 2 24 2 28 0M18 36c4-2 24-2 28 0" strokeDasharray="2 2" />
+                </svg>
+
+                <div className="rounded-[36px] bg-[#CCFF00] text-slate-950 p-7 sm:p-9 shadow-2xl flex flex-col justify-between flex-1 border-2 border-[#CCFF00] relative lg:-translate-y-4">
+                  <div>
+                    {/* Top Badges Row (Clean separated metadata row) */}
+                    <div className="flex items-center justify-between min-h-[32px]">
+                      <span className="px-3 py-1 rounded-full bg-slate-950/10 text-slate-950 text-xs font-black shrink-0">
+                        {basicFeats.length + imadFeats.length} ميزة
+                      </span>
+                      <span className="px-3.5 py-1 rounded-full bg-slate-950 text-[#CCFF00] text-xs font-black shadow-md flex items-center gap-1.5 border border-slate-900">
+                        <span>{imadPlan.badge_text ? imadPlan.badge_text.replace(/[👑⭐]/g, '').trim() : 'الأكثر طلباً'}</span>
+                        <span>⭐</span>
+                      </span>
+                    </div>
+
+                    {/* Title & Subtitle */}
+                    <div className="mt-4">
+                      <h3 className="text-3xl sm:text-4xl font-black text-slate-950 tracking-tight">
+                        {cleanName(imadPlan.name, 'عماد')}
+                      </h3>
+                      <p className="text-xs text-slate-900 font-bold mt-1.5 leading-relaxed">
+                        {cleanDesc(imadPlan.description, 'تعرف وش تكسب، والعميل يرجع لك')}
+                      </p>
+                    </div>
+
+                    {/* Price Block */}
+                    <div className="mt-7 mb-6">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-5xl sm:text-6xl font-black font-mono tracking-tight text-slate-950">
+                          {(billingPeriod === 'ANNUAL' ? imadYearly : imadMonthly).toLocaleString()}
+                        </span>
+                        <div className="text-xs font-black text-slate-800 leading-tight">
+                          <span className="block font-sans text-sm text-slate-950 font-black">﷼</span>
+                          <span>{billingPeriod === 'ANNUAL' ? 'سنوياً' : 'شهرياً'}</span>
+                        </div>
+                      </div>
+
+                      {billingPeriod === 'ANNUAL' && (
+                        <div className="mt-2.5">
+                          <span className="inline-block px-3 py-1 rounded-full bg-slate-950 text-white text-xs font-black shadow-sm">
+                            وفّر {imadSavings > 0 ? imadSavings.toLocaleString() : (imadMonthly * 2).toLocaleString()} بالسنة
+                          </span>
+                        </div>
+                      )}
+
+                      <p className="text-xs text-slate-800 font-bold mt-2">
+                        فرع واحد + {billingPeriod === 'ANNUAL' ? (imadBranch * 10).toLocaleString() : imadBranch.toLocaleString()} لكل فرع زيادة
+                      </p>
+                    </div>
+
+                    {/* CTA Button (Directly under Price!) */}
+                    <button
+                      type="button"
+                      onClick={scrollToForm}
+                      className="w-full py-3.5 rounded-full bg-slate-950 hover:bg-slate-900 text-[#CCFF00] font-black text-sm transition-all duration-200 shadow-xl hover:shadow-2xl active:scale-[0.98]"
+                    >
+                      ابدأ مجاناً
+                    </button>
+
+                    {/* Features List */}
+                    <div className="mt-8 pt-6 border-t border-slate-950/20 space-y-3">
+                      <span className="text-xs font-black text-slate-950 block">
+                        {imadPlan.cumulative_note || 'كل اللي في أساس، وفوقها:'}
+                      </span>
+                      <ul className="space-y-3 text-xs text-slate-950 font-black">
+                        {imadFeats.map((f, i) => (
+                          <li key={i} className="flex items-center gap-2.5">
+                            <span className="w-4 h-4 rounded-full bg-slate-950 text-[#CCFF00] text-[10px] font-black flex items-center justify-center shrink-0">
+                              ✓
+                            </span>
+                            <span>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  {/* Card Footer */}
+                  <div className="mt-8 pt-4 text-center border-t border-slate-950/15">
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-black text-slate-800 hover:text-slate-950 transition"
+                    >
+                      عندك سؤال؟ كلّمنا
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+
+              {/* ============================================================== */}
+              {/* 🏛️ CARD 3: صرح (Left Column in RTL - Third child in DOM) */}
               {/* ============================================================== */}
               <div className="flex flex-col">
                 {/* Decorative Temple Outline (Architecture line-art) */}
@@ -1245,8 +1436,8 @@ export const MerchantJoinLanding: React.FC = () => {
 
                 <div className="rounded-[36px] bg-[#121028] text-white p-7 sm:p-9 shadow-2xl border border-purple-500/30 flex flex-col justify-between flex-1 hover:border-purple-500/50 transition-all duration-300">
                   <div>
-                    {/* Top Badges Row (No overlap - clean separated metadata row) */}
-                    <div className="flex items-center justify-between">
+                    {/* Top Badges Row (Clean separated metadata row) */}
+                    <div className="flex items-center justify-between min-h-[32px]">
                       <span className="px-3 py-1 rounded-full bg-white/10 text-purple-200 text-xs font-black shrink-0">
                         {allImadChips.length + sarhFeats.length} ميزة
                       </span>
@@ -1258,7 +1449,7 @@ export const MerchantJoinLanding: React.FC = () => {
 
                     {/* Title & Subtitle */}
                     <div className="mt-4">
-                      <h3 className="text-4xl sm:text-5xl font-black text-white tracking-tight">
+                      <h3 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
                         {cleanName(sarhPlan.name, 'صرح')}
                       </h3>
                       <p className="text-xs text-slate-300 font-medium mt-1.5 leading-relaxed">
@@ -1342,202 +1533,6 @@ export const MerchantJoinLanding: React.FC = () => {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs font-bold text-slate-400 hover:text-white transition"
-                    >
-                      عندك سؤال؟ كلّمنا
-                    </a>
-                  </div>
-                </div>
-              </div>
-
-
-              {/* ============================================================== */}
-              {/* ⚡ CARD 2: عماد (Hero Column in RTL - Middle) */}
-              {/* ============================================================== */}
-              <div className="flex flex-col">
-                {/* Decorative Pillar Outline (Architecture line-art) */}
-                <svg className="w-16 h-12 mx-auto opacity-50 stroke-current text-[#CCFF00] mb-3 hidden lg:block" viewBox="0 0 64 48" fill="none" strokeWidth="1.5">
-                  <path d="M16 8h32M20 8v32M44 8v32M14 40h36M26 8v32M38 8v32M12 44h40" />
-                  <path d="M18 12c4 2 24 2 28 0M18 36c4-2 24-2 28 0" strokeDasharray="2 2" />
-                </svg>
-
-                <div className="rounded-[36px] bg-[#CCFF00] text-slate-950 p-7 sm:p-9 shadow-2xl flex flex-col justify-between flex-1 border-2 border-[#CCFF00] relative lg:-translate-y-4">
-                  <div>
-                    {/* Top Badges Row (No overlap - clean separated metadata row) */}
-                    <div className="flex items-center justify-between">
-                      <span className="px-3 py-1 rounded-full bg-slate-950/10 text-slate-950 text-xs font-black shrink-0">
-                        {basicFeats.length + imadFeats.length} ميزة
-                      </span>
-                      <span className="px-3.5 py-1 rounded-full bg-slate-950 text-[#CCFF00] text-xs font-black shadow-md flex items-center gap-1.5 border border-slate-900">
-                        <span>{imadPlan.badge_text ? imadPlan.badge_text.replace(/[👑⭐]/g, '').trim() : 'الأكثر طلباً'}</span>
-                        <span>⭐</span>
-                      </span>
-                    </div>
-
-                    {/* Title & Subtitle */}
-                    <div className="mt-4">
-                      <h3 className="text-4xl sm:text-5xl font-black text-slate-950 tracking-tight">
-                        {cleanName(imadPlan.name, 'عماد')}
-                      </h3>
-                      <p className="text-xs text-slate-900 font-bold mt-1.5 leading-relaxed">
-                        {cleanDesc(imadPlan.description, 'تعرف وش تكسب، والعميل يرجع لك')}
-                      </p>
-                    </div>
-
-                    {/* Price Block */}
-                    <div className="mt-7 mb-6">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-5xl sm:text-6xl font-black font-mono tracking-tight text-slate-950">
-                          {(billingPeriod === 'ANNUAL' ? imadYearly : imadMonthly).toLocaleString()}
-                        </span>
-                        <div className="text-xs font-black text-slate-800 leading-tight">
-                          <span className="block font-sans text-sm text-slate-950 font-black">﷼</span>
-                          <span>{billingPeriod === 'ANNUAL' ? 'سنوياً' : 'شهرياً'}</span>
-                        </div>
-                      </div>
-
-                      {billingPeriod === 'ANNUAL' && (
-                        <div className="mt-2.5">
-                          <span className="inline-block px-3 py-1 rounded-full bg-slate-950 text-white text-xs font-black shadow-sm">
-                            وفّر {imadSavings > 0 ? imadSavings.toLocaleString() : (imadMonthly * 2).toLocaleString()} بالسنة
-                          </span>
-                        </div>
-                      )}
-
-                      <p className="text-xs text-slate-800 font-bold mt-2">
-                        فرع واحد + {billingPeriod === 'ANNUAL' ? (imadBranch * 10).toLocaleString() : imadBranch.toLocaleString()} لكل فرع زيادة
-                      </p>
-                    </div>
-
-                    {/* CTA Button (Directly under Price!) */}
-                    <button
-                      type="button"
-                      onClick={scrollToForm}
-                      className="w-full py-3.5 rounded-full bg-slate-950 hover:bg-slate-900 text-[#CCFF00] font-black text-sm transition-all duration-200 shadow-xl hover:shadow-2xl active:scale-[0.98]"
-                    >
-                      ابدأ مجاناً
-                    </button>
-
-                    {/* Features List */}
-                    <div className="mt-8 pt-6 border-t border-slate-950/20 space-y-3">
-                      <span className="text-xs font-black text-slate-950 block">
-                        {imadPlan.cumulative_note || 'كل اللي في أساس، وفوقها:'}
-                      </span>
-                      <ul className="space-y-3 text-xs text-slate-950 font-black">
-                        {imadFeats.map((f, i) => (
-                          <li key={i} className="flex items-center gap-2.5">
-                            <span className="w-4 h-4 rounded-full bg-slate-950 text-[#CCFF00] text-[10px] font-black flex items-center justify-center shrink-0">
-                              ✓
-                            </span>
-                            <span>{f}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-
-                  {/* Card Footer */}
-                  <div className="mt-8 pt-4 text-center border-t border-slate-950/15">
-                    <a
-                      href={whatsappUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-black text-slate-800 hover:text-slate-950 transition"
-                    >
-                      عندك سؤال؟ كلّمنا
-                    </a>
-                  </div>
-                </div>
-              </div>
-
-
-              {/* ============================================================== */}
-              {/* 🏢 CARD 1: أساس (Rightmost column in RTL) */}
-              {/* ============================================================== */}
-              <div className="flex flex-col">
-                {/* Decorative Foundation Outline (Architecture line-art) */}
-                <svg className="w-20 h-10 mx-auto opacity-40 stroke-current text-white mb-3 hidden lg:block" viewBox="0 0 80 40" fill="none" strokeWidth="1.5">
-                  <path d="M10 28h60M15 28V14h50v14M10 14h60M25 14V6h30v8" />
-                  <line x1="20" y1="20" x2="20" y2="28" />
-                  <line x1="30" y1="20" x2="30" y2="28" />
-                  <line x1="40" y1="20" x2="40" y2="28" />
-                  <line x1="50" y1="20" x2="50" y2="28" />
-                  <line x1="60" y1="20" x2="60" y2="28" />
-                </svg>
-
-                <div className="rounded-[36px] bg-white text-slate-950 p-7 sm:p-9 shadow-2xl flex flex-col justify-between flex-1 border border-slate-200/90 hover:border-slate-300 transition-all duration-300">
-                  <div>
-                    {/* Top Badges Row */}
-                    <div className="flex items-center justify-between">
-                      <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-black shrink-0">
-                        {basicFeats.length} مزايا
-                      </span>
-                      <span className="text-transparent select-none">-</span>
-                    </div>
-
-                    {/* Title & Subtitle */}
-                    <div className="mt-4">
-                      <h3 className="text-4xl sm:text-5xl font-black text-slate-950 tracking-tight">
-                        {cleanName(basicPlan.name, 'أساس')}
-                      </h3>
-                      <p className="text-xs text-slate-500 font-medium mt-1.5 leading-relaxed">
-                        {cleanDesc(basicPlan.description, 'تبيع، وتطبع، وتقفّل يومك')}
-                      </p>
-                    </div>
-
-                    {/* Price Block */}
-                    <div className="mt-7 mb-6">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-5xl sm:text-6xl font-black font-mono tracking-tight text-slate-950">
-                          {(billingPeriod === 'ANNUAL' ? basicYearly : basicMonthly).toLocaleString()}
-                        </span>
-                        <div className="text-xs font-bold text-slate-500 leading-tight">
-                          <span className="block font-sans text-sm text-slate-900 font-black">﷼</span>
-                          <span>{billingPeriod === 'ANNUAL' ? 'سنوياً' : 'شهرياً'}</span>
-                        </div>
-                      </div>
-
-                      {billingPeriod === 'ANNUAL' && (
-                        <div className="mt-2.5">
-                          <span className="inline-block px-3 py-1 rounded-full bg-[#CCFF00] text-slate-950 text-xs font-black shadow-sm">
-                            وفّر {basicSavings > 0 ? basicSavings.toLocaleString() : (basicMonthly * 2).toLocaleString()} بالسنة
-                          </span>
-                        </div>
-                      )}
-
-                      <p className="text-xs text-slate-500 font-medium mt-2">
-                        فرع واحد + {billingPeriod === 'ANNUAL' ? (basicBranch * 10).toLocaleString() : basicBranch.toLocaleString()} لكل فرع زيادة
-                      </p>
-                    </div>
-
-                    {/* CTA Button (Directly under Price!) */}
-                    <button
-                      type="button"
-                      onClick={scrollToForm}
-                      className="w-full py-3.5 rounded-full border-2 border-slate-950 text-slate-950 hover:bg-slate-950 hover:text-white font-black text-sm transition-all duration-200 shadow-sm active:scale-[0.98]"
-                    >
-                      ابدأ مجاناً
-                    </button>
-
-                    {/* Features List */}
-                    <div className="mt-8 pt-6 border-t border-slate-200/80 space-y-3">
-                      <ul className="space-y-3 text-xs text-slate-700 font-bold">
-                        {basicFeats.map((f, i) => (
-                          <li key={i} className="flex items-center gap-2.5">
-                            <span className="text-slate-400 font-black text-sm">✓</span>
-                            <span>{f}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-
-                  {/* Card Footer */}
-                  <div className="mt-8 pt-4 text-center border-t border-slate-100">
-                    <a
-                      href={whatsappUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-bold text-slate-500 hover:text-slate-900 transition"
                     >
                       عندك سؤال؟ كلّمنا
                     </a>

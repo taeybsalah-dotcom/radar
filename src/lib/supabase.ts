@@ -10693,15 +10693,20 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
   // 💳 إدارة خطط الاشتراك الديناميكية (Dynamic Subscription Plans)
   // ==============================================================================
   getAllSubscriptionPlansSync(): BillingPlan[] {
+    const host = typeof window !== 'undefined' ? window.location.hostname.toLowerCase() : '';
+    const isSadeem = host.includes('sdeem') || host.includes('sadim');
+    const baseBasicMonthly = isSadeem ? 79 : 99;
+    const baseBasicYearly = isSadeem ? 790 : 990;
+
     const DEFAULT_PLANS: BillingPlan[] = [
       {
-        id: '8371f0bb-b52e-4198-a5e9-bc51390174f0',
+        id: isSadeem ? 'efee81c8-43dd-40e5-bcda-3cd784130376' : '8371f0bb-b52e-4198-a5e9-bc51390174f0',
         code: 'BASIC',
         name: 'أساس',
         description: 'تبيع، وتطبع، وتقفّل يومك',
-        amount: 99,
-        monthly_amount: 99,
-        yearly_amount: 990,
+        amount: baseBasicMonthly,
+        monthly_amount: baseBasicMonthly,
+        yearly_amount: baseBasicYearly,
         extra_branch_price: 49,
         extra_branch_yearly_price: 490,
         tier_level: 1,
@@ -10724,7 +10729,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         active: true,
       },
       {
-        id: 'fad2e3cf-141c-4e0e-9432-194615a3ef37',
+        id: isSadeem ? 'f460f377-1e21-432a-80cc-9df915da0525' : 'fad2e3cf-141c-4e0e-9432-194615a3ef37',
         code: 'ADVANCED',
         name: 'عماد',
         description: 'تعرف وش تكسب، والعميل يرجع لك',
@@ -10755,7 +10760,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         active: true,
       },
       {
-        id: 'a418c6e7-5749-4186-92ce-c46d721fe9ba',
+        id: isSadeem ? '55eb9232-2c44-432e-82b4-8634acffbbe2' : 'a418c6e7-5749-4186-92ce-c46d721fe9ba',
         code: 'PRO',
         name: 'صرح',
         description: 'يطلبون منك مباشرة، وتكبر لأكثر من فرع',
@@ -10780,11 +10785,14 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         active: true,
       },
     ];
-    const local = getLocalData<BillingPlan[]>(STORAGE_KEYS.LOCAL_BILLING_PLANS, DEFAULT_PLANS);
+    const cleanHost = host.replace(/[^a-z0-9]/g, '_');
+    const storageKey = cleanHost ? `radar_local_billing_plans_${cleanHost}` : STORAGE_KEYS.LOCAL_BILLING_PLANS;
+    const local = getLocalData<BillingPlan[]>(storageKey, DEFAULT_PLANS);
     return local && local.length > 0 ? local : DEFAULT_PLANS;
   },
 
   async getAllSubscriptionPlans(): Promise<BillingPlan[]> {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
     // 1. استعلام Supabase المباشر كمصدر وحيد للحقيقة (Single Source of Truth)
     const supabase = getSupabaseClient();
     if (supabase) {
@@ -10794,7 +10802,6 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
         // 🛡️ استدعاء دالة باقات الوكيل بحسب الدومين get_public_billing_plans (عزل تام لكل وكيل)
         try {
-          const host = typeof window !== 'undefined' ? window.location.hostname : '';
           const rpcRes = await (supabase as any).rpc('get_public_billing_plans', { p_host: host });
           if (!rpcRes.error && Array.isArray(rpcRes.data) && rpcRes.data.length > 0) {
             data = rpcRes.data;
@@ -10851,7 +10858,9 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           });
 
           // تحديث الذاكرة المحلية لتطابق قاعدة البيانات بدقة ومنع أي تعارض
-          saveLocalData(STORAGE_KEYS.LOCAL_BILLING_PLANS, formatted);
+          const cleanHost = host.replace(/[^a-z0-9]/g, '_');
+          const storageKey = cleanHost ? `radar_local_billing_plans_${cleanHost}` : STORAGE_KEYS.LOCAL_BILLING_PLANS;
+          saveLocalData(storageKey, formatted);
           return formatted;
         }
       } catch (e) {

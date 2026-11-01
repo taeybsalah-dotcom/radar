@@ -8,11 +8,12 @@ const client = new Client({
 async function main() {
   await client.connect();
   const res = await client.query(`
-    SELECT proname, pg_get_functiondef(oid) as def
+    SELECT pg_get_functiondef(oid) 
     FROM pg_proc 
-    WHERE proname = 'get_public_billing_plans'
+    WHERE proname = 'get_public_billing_plans';
   `);
-  console.log(res.rows[0]?.def);
+  console.log(res.rows[0].pg_get_functiondef);
   await client.end();
 }
-main();
+
+main().catch(console.error);
