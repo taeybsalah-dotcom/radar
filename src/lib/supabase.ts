@@ -1665,17 +1665,16 @@ export const LoyaltyService = {
         if (supabase) {
           try {
             // 🛡️ فحص الدالة العامة get_public_store_by_slug أولاً لزوار المنيو والواجهة العامة
-            if (!isUUID(clean)) {
-              try {
-                const { data: rpcStore, error: rpcErr } = await (supabase as any).rpc('get_public_store_by_slug', { p_slug: cleanLower });
-                if (!rpcErr && rpcStore && rpcStore.id) {
-                  const mapped = normalizeStore(await attachStoreAssets(supabase, rpcStore)) as Store;
-                  storeResolutionCache.set(cleanLower, { store: mapped, timestamp: Date.now() });
-                  storeResolutionCache.set(mapped.id, { store: mapped, timestamp: Date.now() });
-                  return mapped;
-                }
-              } catch {}
-            }
+            try {
+              const { data: rpcStore, error: rpcErr } = await (supabase as any).rpc('get_public_store_by_slug', { p_slug: cleanLower });
+              if (!rpcErr && rpcStore && rpcStore.id) {
+                const mapped = normalizeStore(await attachStoreAssets(supabase, rpcStore)) as Store;
+                storeResolutionCache.set(cleanLower, { store: mapped, timestamp: Date.now() });
+                storeResolutionCache.set(mapped.id, { store: mapped, timestamp: Date.now() });
+                if (mapped.slug) storeResolutionCache.set(mapped.slug.toLowerCase(), { store: mapped, timestamp: Date.now() });
+                return mapped;
+              }
+            } catch {}
 
             let storeQuery = supabase.from('stores').select(await storeCols(supabase));
             if (isUUID(clean)) {
@@ -6921,17 +6920,16 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       store.latest_paid_invoice
     );
 
+    const targetStoreId = isUUID(storeId) ? storeId : (store?.id && isUUID(store.id)) ? store.id : null;
     const supabase = getSupabaseClient();
-    if (supabase && isUUID(store.id)) {
+    if (supabase && targetStoreId) {
       try {
         const { data, error } = await supabase.rpc('check_and_update_store_subscription', {
-          p_store_id: store.id,
+          p_store_id: targetStoreId,
         });
         if (!error && data) {
           const isSuspendedFinal =
-            store.subscription_active === false ||
-            store.status === 'suspended' ||
-            store.subscription_status === 'suspended'
+            store.id && (store.subscription_active === false || store.status === 'suspended' || store.subscription_status === 'suspended')
               ? true
               : Boolean(data.is_suspended);
 

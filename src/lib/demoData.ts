@@ -28,7 +28,7 @@ export const INITIAL_STORE: Store = {
   background_color: '#F8FAFC',
   card_color: '#FFFFFF',
   points_per_riyal: 1.0,
-  subscription_active: false,
+  subscription_active: true,
   status: 'trial',
   subscription_status: 'trial',
   subscription_plan: 'trial',

@@ -634,19 +634,17 @@ export function App() {
   const debouncedSyncAppStore = useMemo(
     () =>
       debounce((currentStoreId?: string, currentSlug?: string) => {
-        LoyaltyService.getAllStores(true).then((all) => {
-          const updated = all.find((s) => (currentStoreId && s.id === currentStoreId) || (currentSlug && s.slug === currentSlug) || (store?.id && s.id === store.id) || (store?.slug && s.slug === store.slug));
-          if (updated) {
+        const targetIdentifier = currentStoreId || currentSlug || store?.id || store?.slug;
+        if (!targetIdentifier) return;
+        LoyaltyService.resolveStore(targetIdentifier).then((updated) => {
+          if (updated && updated.id) {
             setStore(updated);
             updateDynamicPWA(updated, activeTab);
             saveActiveStoreBranding(updated);
-          } else if (all.length === 0) {
-            setStore(null);
-            updateDynamicPWA(null, 'super-admin');
           }
-        });
+        }).catch(() => {});
       }, 300),
-    [activeTab, store]
+    [activeTab, store?.id, store?.slug]
   );
 
   useEffect(() => {

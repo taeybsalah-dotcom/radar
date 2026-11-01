@@ -1167,7 +1167,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         LoyaltyService.getAllStoreCoupons(currentStore.id),
         LoyaltyService.getStoreWallet(currentStore.id),
         LoyaltyService.getStoreInvoices(currentStore.id),
-        LoyaltyService.checkAndUpdateStoreSubscription(currentStore.id),
+        LoyaltyService.checkAndUpdateStoreSubscription(currentStore.id, currentStore),
         LoyaltyService.getStoreBranches(currentStore.id),
       ]);
       const activeStore = normalizeStore(s || currentStore);
