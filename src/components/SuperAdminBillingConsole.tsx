@@ -1504,20 +1504,20 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
           {/* Ledger Table */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl backdrop-blur-xl">
             <div className="overflow-x-auto">
-              <table className="w-full text-right border-collapse">
+              <table className="w-full text-right border-collapse min-w-[980px]">
                 <thead>
-                  <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 text-[11px] font-bold">
-                    <th className="p-4">رقم العملية (TX ID)</th>
-                    <th className="p-4">نوع القيد</th>
-                    <th className="p-4">المتجر / الشريك</th>
-                    <th className="p-4 text-left">المبلغ الإجمالي</th>
-                    <th className="p-4 text-left">ضريبة 15%</th>
-                    <th className="p-4 text-left">رسوم البوابة</th>
-                    <th className="p-4 text-left">حصة المسوق</th>
-                    <th className="p-4 text-left">صافي المنصة</th>
-                    <th className="p-4">الحالة</th>
-                    <th className="p-4">التاريخ</th>
-                    <th className="p-4 text-center">التدقيق</th>
+                  <tr className="border-b border-slate-800 bg-slate-950/80 text-slate-400 text-xs font-bold">
+                    <th className="py-4 px-4">رقم القيد / المرجع</th>
+                    <th className="py-4 px-3">نوع العملية</th>
+                    <th className="py-4 px-4">الجهة / الشريك</th>
+                    <th className="py-4 px-3 text-left">إجمالي القيد</th>
+                    <th className="py-4 px-3 text-left">الضريبة (15%)</th>
+                    <th className="py-4 px-3 text-left">رسوم البوابة</th>
+                    <th className="py-4 px-3 text-left">حصة المسوق</th>
+                    <th className="py-4 px-3 text-left">صافي المنصة</th>
+                    <th className="py-4 px-3 text-center">الحالة</th>
+                    <th className="py-4 px-3 text-center">التاريخ</th>
+                    <th className="py-4 px-4 text-center">التدقيق</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-xs">
@@ -1528,80 +1528,146 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
                       </td>
                     </tr>
                   ) : (
-                    filteredLedger.map((entry) => (
-                      <tr key={entry.id} className="hover:bg-slate-800/40 transition">
-                        <td className="p-4 font-mono font-bold text-slate-300">
-                          {entry.transaction_id}
-                          {entry.refund_of && (
-                            <span className="block text-[10px] text-rose-400 font-mono">
-                              استرداد لـ: {entry.refund_of}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-4">
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                              entry.transaction_type === 'PAYMENT'
-                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                    filteredLedger.map((entry) => {
+                      const displayTxId = entry.transaction_id.startsWith('tx_payout_PAY-')
+                        ? `PAY-${entry.transaction_id.replace('tx_payout_PAY-', '')}`
+                        : entry.transaction_id.startsWith('tx_rev_PAY-')
+                        ? `REV-${entry.transaction_id.replace('tx_rev_PAY-', '')}`
+                        : entry.transaction_id.startsWith('tx_SANDBOX_pay_')
+                        ? `TX-${entry.transaction_id.split('_').pop()?.slice(-8).toUpperCase() || 'SANDBOX'}`
+                        : entry.transaction_id.length > 20
+                        ? `${entry.transaction_id.slice(0, 10)}...${entry.transaction_id.slice(-6)}`
+                        : entry.transaction_id;
+
+                      return (
+                        <tr key={entry.id} className="hover:bg-slate-800/40 transition group">
+                          {/* Transaction ID with Quick Copy */}
+                          <td className="py-4 px-4">
+                            <div className="flex items-center gap-1.5 font-mono font-bold text-slate-300">
+                              <span title={entry.transaction_id} className="cursor-pointer hover:text-emerald-400 transition">
+                                {displayTxId}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(entry.transaction_id);
+                                  setActionSuccess(`تم نسخ رقم العملية: ${displayTxId} 📋`);
+                                  setTimeout(() => setActionSuccess(null), 2500);
+                                }}
+                                title="نسخ رقم العملية كاملاً"
+                                className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-slate-800 transition"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                            </div>
+                            {entry.reversal_of && (
+                              <span className="block text-[10px] text-amber-400 font-mono mt-0.5">
+                                تسوية عكسية لـ: {entry.reversal_of.slice(-12)}
+                              </span>
+                            )}
+                            {entry.refund_of && (
+                              <span className="block text-[10px] text-rose-400 font-mono mt-0.5">
+                                استرداد لـ: {entry.refund_of.slice(-12)}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Transaction Type Badge */}
+                          <td className="py-4 px-3">
+                            <span
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border inline-flex items-center gap-1 ${
+                                entry.transaction_type === 'PAYMENT'
+                                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                  : entry.transaction_type === 'REFUND'
+                                  ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                  : entry.transaction_type === 'ADJUSTMENT'
+                                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                  : 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                              }`}
+                            >
+                              {entry.transaction_type === 'PAYMENT'
+                                ? 'دفع واشتراك 💳'
                                 : entry.transaction_type === 'REFUND'
-                                ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                                ? 'إشعار دائن 🔄'
                                 : entry.transaction_type === 'ADJUSTMENT'
-                                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                                : 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-                            }`}
-                          >
-                            {entry.transaction_type === 'PAYMENT'
-                              ? 'دفع واشتراك 💳'
-                              : entry.transaction_type === 'REFUND'
-                              ? 'إشعار دائن 🔄'
-                              : entry.transaction_type === 'ADJUSTMENT'
-                              ? 'تسوية يدوية ⚖️'
-                              : 'صرف مستحقات 💸'}
-                          </span>
-                        </td>
-                        <td className="p-4">
-                          <span className="font-bold text-white block">
-                            {entry.store_name || entry.affiliate_name || 'المنصة الرئيسية'}
-                          </span>
-                          {entry.affiliate_name && entry.store_name && (
-                            <span className="text-[10px] text-emerald-400 block">
-                              شريك: {entry.affiliate_name}
+                                ? 'تسوية محاسبية ⚖️'
+                                : 'صرف مستحقات 💸'}
                             </span>
-                          )}
-                        </td>
-                        <td className="p-4 text-left font-mono font-bold text-white" dir="ltr">
-                          {entry.gross_amount > 0 ? `+${entry.gross_amount.toFixed(2)}` : entry.gross_amount.toFixed(2)} SAR
-                        </td>
-                        <td className="p-4 text-left font-mono text-amber-400" dir="ltr">
-                          {entry.vat_amount.toFixed(2)} SAR
-                        </td>
-                        <td className="p-4 text-left font-mono text-purple-400" dir="ltr">
-                          {entry.gateway_fee.toFixed(2)} SAR
-                        </td>
-                        <td className="p-4 text-left font-mono text-emerald-400" dir="ltr">
-                          {entry.affiliate_commission.toFixed(2)} SAR
-                        </td>
-                        <td className="p-4 text-left font-mono font-bold text-cyan-400" dir="ltr">
-                          {entry.net_platform_amount > 0 ? `+${entry.net_platform_amount.toFixed(2)}` : entry.net_platform_amount.toFixed(2)} SAR
-                        </td>
-                        <td className="p-4">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                            مؤكد ومثبت ✅
-                          </span>
-                        </td>
-                        <td className="p-4 text-[11px] text-slate-400 font-mono">
-                          {new Date(entry.created_at).toLocaleDateString('ar-SA')}
-                        </td>
-                        <td className="p-4 text-center">
-                          <button
-                            onClick={() => setSelectedLedgerAudit(entry)}
-                            className="px-3 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-bold transition"
-                          >
-                            تتبع التدقيق 🔍
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                          </td>
+
+                          {/* Store / Partner */}
+                          <td className="py-4 px-4">
+                            <span className="font-bold text-white block">
+                              {entry.store_name || entry.affiliate_name || 'المنصة الرئيسية'}
+                            </span>
+                            {entry.affiliate_name && entry.store_name && (
+                              <span className="text-[10px] text-emerald-400 block mt-0.5 font-bold">
+                                شريك: {entry.affiliate_name}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Gross Amount */}
+                          <td className="py-4 px-3 text-left font-mono font-bold" dir="ltr">
+                            <span className={entry.gross_amount < 0 ? 'text-rose-400' : 'text-white'}>
+                              {entry.gross_amount > 0 ? `+${entry.gross_amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : entry.gross_amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                            <span className="text-[10px] text-slate-500 ml-1">ر.س</span>
+                          </td>
+
+                          {/* VAT */}
+                          <td className="py-4 px-3 text-left font-mono text-sky-400" dir="ltr">
+                            <span>{entry.vat_amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="text-[10px] text-slate-500 ml-1">ر.س</span>
+                          </td>
+
+                          {/* Gateway Fee */}
+                          <td className="py-4 px-3 text-left font-mono text-purple-400" dir="ltr">
+                            <span>{entry.gateway_fee.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="text-[10px] text-slate-500 ml-1">ر.س</span>
+                          </td>
+
+                          {/* Affiliate Commission */}
+                          <td className="py-4 px-3 text-left font-mono font-bold" dir="ltr">
+                            <span className={entry.affiliate_commission < 0 ? 'text-rose-400' : entry.affiliate_commission > 0 ? 'text-amber-400' : 'text-slate-400'}>
+                              {entry.affiliate_commission > 0 ? `+${entry.affiliate_commission.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : entry.affiliate_commission.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                            <span className="text-[10px] text-slate-500 ml-1">ر.س</span>
+                          </td>
+
+                          {/* Net Platform Amount */}
+                          <td className="py-4 px-3 text-left font-mono font-bold" dir="ltr">
+                            <span className={entry.net_platform_amount > 0 ? 'text-emerald-400 font-black' : entry.net_platform_amount < 0 ? 'text-rose-400' : 'text-slate-400'}>
+                              {entry.net_platform_amount > 0 ? `+${entry.net_platform_amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : entry.net_platform_amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                            <span className="text-[10px] text-slate-500 ml-1">ر.س</span>
+                          </td>
+
+                          {/* Status */}
+                          <td className="py-4 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                              مؤكد ومثبت ✅
+                            </span>
+                          </td>
+
+                          {/* Date */}
+                          <td className="py-4 px-3 text-center text-[11px] text-slate-400 font-mono">
+                            {new Date(entry.created_at).toLocaleDateString('ar-SA')}
+                          </td>
+
+                          {/* Audit Action Button */}
+                          <td className="py-4 px-4 text-center">
+                            <button
+                              onClick={() => setSelectedLedgerAudit(entry)}
+                              className="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-bold transition flex items-center justify-center gap-1 mx-auto"
+                            >
+                              <Search className="w-3 h-3 text-amber-400" />
+                              <span>تدقيق</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
