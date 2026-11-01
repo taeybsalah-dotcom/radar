@@ -2928,7 +2928,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         <div className="flex items-center space-x-3 rtl:space-x-reverse min-w-0">
           {/* Merchant Brand Logo replacing generic customer avatar */}
           <div
-            className="w-11 h-11 rounded-2xl overflow-hidden flex items-center justify-center shrink-0 border shadow-lg relative p-0.5"
+            className="w-11 h-11 rounded-full overflow-hidden flex items-center justify-center shrink-0 border shadow-lg relative p-0.5"
             style={{
               borderColor: `${brandSecondary}60`,
               background: `radial-gradient(circle, ${brandSecondary}25 0%, rgba(15,23,42,0.9) 100%)`,
@@ -2938,7 +2938,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <img
                 src={store.logo_url}
                 alt={store.name}
-                className="w-full h-full object-cover rounded-xl"
+                className="w-full h-full object-cover rounded-full"
               />
             ) : (
               <span className="font-serif font-black text-lg" style={{ color: brandSecondary }}>

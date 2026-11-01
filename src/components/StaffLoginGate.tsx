@@ -316,15 +316,15 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
         {/* Header Branding */}
         <div className="text-center space-y-3 pb-6 border-b border-slate-800 relative">
           {store.logo_url ? (
-            <div className="mx-auto w-20 h-20 rounded-3xl p-1 bg-slate-950 border-2 border-amber-500/40 shadow-xl shadow-amber-500/10 flex items-center justify-center overflow-hidden">
+            <div className="mx-auto w-20 h-20 rounded-full p-1 bg-slate-950 border-2 border-amber-500/40 shadow-xl shadow-amber-500/10 flex items-center justify-center overflow-hidden">
               <img
                 src={store.logo_url}
                 alt={store.name}
-                className="w-full h-full object-cover rounded-2xl"
+                className="w-full h-full object-cover rounded-full"
               />
             </div>
           ) : (
-            <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-slate-800 to-slate-900 border-2 border-amber-500/40 flex items-center justify-center text-3xl mx-auto shadow-xl shadow-amber-500/10">
+            <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-slate-800 to-slate-900 border-2 border-amber-500/40 flex items-center justify-center text-3xl mx-auto shadow-xl shadow-amber-500/10">
               {requiredRole === 'admin' ? '💼' : '⚡'}
             </div>
           )}

@@ -64,7 +64,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center space-x-3 rtl:space-x-reverse">
             {activeTab === 'super-admin' ? (
               <div
-                className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-extrabold text-xl sm:text-2xl shadow-lg border bg-amber-500 border-amber-400 text-black shrink-0"
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-extrabold text-xl sm:text-2xl shadow-lg border bg-amber-500 border-amber-400 text-black shrink-0"
               >
                 👑
               </div>
@@ -72,12 +72,12 @@ export const Navbar: React.FC<NavbarProps> = ({
               <img
                 src={store.logo_url}
                 alt={store.name}
-                className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl object-cover shadow-lg border bg-slate-900 shrink-0"
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover shadow-lg border bg-slate-900 shrink-0"
                 style={{ borderColor: store.secondary_color || '#F59E0B' }}
               />
             ) : (
               <div
-                className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-extrabold text-xl sm:text-2xl shadow-lg border shrink-0"
+                className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center font-extrabold text-xl sm:text-2xl shadow-lg border shrink-0"
                 style={{
                   backgroundColor: store.primary_color || '#0F172A',
                   borderColor: store.secondary_color || '#F59E0B',

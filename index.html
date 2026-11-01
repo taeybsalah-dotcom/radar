@@ -29,16 +29,25 @@
               var fav = document.getElementById('app-favicon');
               if (fav) {
                 var iconUrl = b.favicon_url || b.logo_url;
-                fav.href = iconUrl;
-                if (iconUrl.indexOf('.jpg') !== -1 || iconUrl.indexOf('.jpeg') !== -1) {
-                  fav.type = 'image/jpeg';
-                } else if (iconUrl.indexOf('.png') !== -1) {
-                  fav.type = 'image/png';
-                } else if (iconUrl.indexOf('.svg') !== -1) {
-                  fav.type = 'image/svg+xml';
-                } else {
-                  fav.removeAttribute('type');
-                }
+                var img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = function() {
+                  try {
+                    var c = document.createElement('canvas');
+                    c.width = 64; c.height = 64;
+                    var ctx = c.getContext('2d');
+                    if (ctx) {
+                      ctx.beginPath();
+                      ctx.arc(32, 32, 32, 0, Math.PI * 2);
+                      ctx.closePath();
+                      ctx.clip();
+                      ctx.drawImage(img, 0, 0, 64, 64);
+                      fav.href = c.toDataURL('image/png');
+                      fav.type = 'image/png';
+                    }
+                  } catch(e) { fav.href = iconUrl; }
+                };
+                img.src = iconUrl;
               }
             }
           }

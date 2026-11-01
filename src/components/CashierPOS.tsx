@@ -2025,14 +2025,14 @@ ${portalUrl}`;
             <img
               src={store.logo_url}
               alt={store.name}
-              className={`w-12 h-12 rounded-2xl object-cover border shrink-0 shadow-sm ${
+              className={`w-12 h-12 rounded-full object-cover border shrink-0 shadow-sm ${
                 isDarkTheme ? 'bg-slate-950 border-slate-800' : 'bg-slate-100 border-slate-200'
               }`}
               style={{ borderColor: `${brandColors.secondary}50` }}
             />
           ) : (
             <div
-              className="w-12 h-12 rounded-2xl border flex items-center justify-center font-bold text-xl shrink-0 shadow-sm"
+              className="w-12 h-12 rounded-full border flex items-center justify-center font-bold text-xl shrink-0 shadow-sm"
               style={{
                 backgroundColor: brandColors.primary,
                 borderColor: brandColors.secondary,

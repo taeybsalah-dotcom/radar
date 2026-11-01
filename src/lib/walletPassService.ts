@@ -39,11 +39,16 @@ async function rasterizeLogoToPngDataUrl(logoUrl: string): Promise<string | null
             h = Math.round(h * scale);
           }
           const canvas = document.createElement('canvas');
-          canvas.width = Math.max(w, 20);
-          canvas.height = Math.max(h, 20);
+          const size = Math.max(Math.min(w, h), 20);
+          canvas.width = size;
+          canvas.height = size;
           const ctx = canvas.getContext('2d');
           if (!ctx) return resolve(null);
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          ctx.beginPath();
+          ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+          ctx.closePath();
+          ctx.clip();
+          ctx.drawImage(img, 0, 0, size, size);
           const dataUrl = canvas.toDataURL('image/png');
           resolve(dataUrl);
         } catch {

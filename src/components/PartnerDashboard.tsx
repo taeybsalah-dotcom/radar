@@ -822,8 +822,8 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       <div className="max-w-md mx-auto py-12 px-4 animate-fade-in" dir="rtl">
         <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl backdrop-blur-xl">
           <div className="text-center space-y-3">
-            <div className="w-20 h-20 mx-auto rounded-3xl p-1 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-2xl shadow-cyan-500/20">
-              <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-[22px]" />
+            <div className="w-20 h-20 mx-auto rounded-full p-1 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-2xl shadow-cyan-500/20 overflow-hidden">
+              <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-full" />
             </div>
             <div>
               <h2 className="text-xl font-black text-white">بوابة شركاء المبيعات | Partner Portal</h2>
@@ -911,8 +911,8 @@ export const PartnerDashboard: React.FC<PartnerDashboardProps> = ({ onBackToApp 
       {/* 1. Partner Header & Identity Bar */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl p-0.5 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-lg shadow-cyan-500/20 flex-shrink-0">
-            <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-[14px]" />
+          <div className="w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-cyan-400 via-emerald-400 to-amber-400 shadow-lg shadow-cyan-500/20 flex-shrink-0 overflow-hidden">
+            <img src={getActiveTenantConfig().logoUrl || "/favicon.png"} alt={getActiveTenantConfig().brandName} className="w-full h-full object-cover rounded-full" />
           </div>
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">

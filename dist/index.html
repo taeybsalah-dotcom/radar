@@ -29,16 +29,25 @@
               var fav = document.getElementById('app-favicon');
               if (fav) {
                 var iconUrl = b.favicon_url || b.logo_url;
-                fav.href = iconUrl;
-                if (iconUrl.indexOf('.jpg') !== -1 || iconUrl.indexOf('.jpeg') !== -1) {
-                  fav.type = 'image/jpeg';
-                } else if (iconUrl.indexOf('.png') !== -1) {
-                  fav.type = 'image/png';
-                } else if (iconUrl.indexOf('.svg') !== -1) {
-                  fav.type = 'image/svg+xml';
-                } else {
-                  fav.removeAttribute('type');
-                }
+                var img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = function() {
+                  try {
+                    var c = document.createElement('canvas');
+                    c.width = 64; c.height = 64;
+                    var ctx = c.getContext('2d');
+                    if (ctx) {
+                      ctx.beginPath();
+                      ctx.arc(32, 32, 32, 0, Math.PI * 2);
+                      ctx.closePath();
+                      ctx.clip();
+                      ctx.drawImage(img, 0, 0, 64, 64);
+                      fav.href = c.toDataURL('image/png');
+                      fav.type = 'image/png';
+                    }
+                  } catch(e) { fav.href = iconUrl; }
+                };
+                img.src = iconUrl;
               }
             }
           }
@@ -75,8 +84,8 @@
         });
       }
     </script>
-    <script type="module" crossorigin src="/assets/index-e0GuNLCi.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-6gD6sy_M.css">
+    <script type="module" crossorigin src="/assets/index-CWrXJ_Fg.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-B3n1bpFA.css">
   </head>
   <body class="bg-[#0B0F17] text-slate-100 font-sans min-h-screen antialiased selection:bg-amber-500 selection:text-black">
     <div id="root">

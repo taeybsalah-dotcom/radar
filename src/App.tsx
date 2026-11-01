@@ -950,7 +950,7 @@ export function App() {
                 <img
                   src={activeBranding.logo_url}
                   alt={activeBranding.name}
-                  className="w-full h-full object-cover rounded-3xl"
+                  className="w-full h-full object-cover rounded-full"
                   onError={(e) => {
                     (e.target as HTMLElement).style.display = 'none';
                   }}
@@ -995,7 +995,7 @@ export function App() {
     return (
       <div className="min-h-screen bg-[#080B11] flex flex-col items-center justify-center text-slate-100 selection:bg-amber-500 selection:text-black">
         <div className="flex flex-col items-center gap-4 text-center px-4 animate-fade-in">
-          <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 text-3xl shadow-xl shadow-emerald-500/20 font-black animate-pulse overflow-hidden">
+          <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 text-3xl shadow-xl shadow-emerald-500/20 font-black animate-pulse overflow-hidden">
             {tenant.logoUrl ? (
               <img src={tenant.logoUrl} alt={tenant.brandName} className="w-full h-full object-cover" />
             ) : (

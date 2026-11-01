@@ -1165,11 +1165,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     return (
       <div className="max-w-md mx-auto py-12 px-4 animate-fade-in text-center">
         <div className="rounded-3xl p-8 bg-slate-900/90 border-2 border-amber-500/40 shadow-2xl backdrop-blur-2xl space-y-6">
-          <div className="w-24 h-24 mx-auto rounded-2xl p-2 bg-slate-950/80 border border-slate-700/80 shadow-xl flex items-center justify-center overflow-hidden">
+          <div className="w-24 h-24 mx-auto rounded-full p-2 bg-slate-950/80 border border-slate-700/80 shadow-xl flex items-center justify-center overflow-hidden">
             <img
               src={getActiveTenantConfig().logoUrl || "/sadeem-logo.jpg"}
               alt={getActiveTenantConfig().brandName}
-              className="max-w-full max-h-full object-contain"
+              className="w-full h-full object-cover rounded-full"
               onError={(e) => {
                 (e.target as any).src = 'https://zagpvflyizbmzsbmhnts.supabase.co/storage/v1/object/public/store-assets/logos/sadeem-official-logo.jpg';
               }}
@@ -1279,12 +1279,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
           
           {/* Right Side: Dynamic White-Label Brand Info */}
           <div className="flex items-center gap-3.5 sm:gap-4 min-w-0 flex-1">
-            <div className="w-14 h-14 sm:w-16 sm:h-16 min-w-[56px] max-w-[56px] sm:min-w-[64px] sm:max-w-[64px] h-[56px] min-h-[56px] max-h-[56px] sm:h-[64px] sm:min-h-[64px] sm:max-h-[64px] rounded-2xl p-1 bg-slate-950/80 border border-white/15 shadow-lg flex items-center justify-center overflow-hidden shrink-0">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 min-w-[56px] max-w-[56px] sm:min-w-[64px] sm:max-w-[64px] h-[56px] min-h-[56px] max-h-[56px] sm:h-[64px] sm:min-h-[64px] sm:max-h-[64px] rounded-full p-1 bg-slate-950/80 border border-white/15 shadow-lg flex items-center justify-center overflow-hidden shrink-0">
               {getActiveTenantConfig().logoUrl ? (
                 <img
                   src={getActiveTenantConfig().logoUrl}
                   alt={getActiveTenantConfig().brandName}
-                  className="w-full h-full object-cover rounded-xl"
+                  className="w-full h-full object-cover rounded-full"
                 />
               ) : (
                 <span className="w-full h-full bg-slate-950 text-[#CCFF00] rounded-xl flex items-center justify-center font-black text-lg">

@@ -169,12 +169,12 @@ export const CustomerLoginGate: React.FC<CustomerLoginGateProps> = ({
             <img
               src={store.logo_url}
               alt={store.name}
-              className="w-14 h-14 rounded-2xl object-cover border-2 shadow-xl bg-slate-950 mx-auto"
+              className="w-14 h-14 rounded-full object-cover border-2 shadow-xl bg-slate-950 mx-auto"
               style={{ borderColor: `${store.secondary_color || '#d4af37'}50` }}
             />
           ) : (
             <div
-              className="w-14 h-14 rounded-2xl border-2 flex items-center justify-center text-2xl mx-auto shadow-lg font-black"
+              className="w-14 h-14 rounded-full border-2 flex items-center justify-center text-2xl mx-auto shadow-lg font-black"
               style={{
                 backgroundColor: `${store.secondary_color || '#d4af37'}15`,
                 borderColor: `${store.secondary_color || '#d4af37'}40`,

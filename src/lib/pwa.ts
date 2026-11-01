@@ -16,6 +16,47 @@ function generateStoreSvgIcon(storeName: string, primaryColor: string, secondary
 }
 
 /**
+ * ⚡ Generates and sets a perfectly circular favicon (like Apple & Google)
+ */
+export function setCircularFavicon(url: string) {
+  if (typeof window === 'undefined' || !url) return;
+  let favicon = (document.getElementById('app-favicon') || document.querySelector('link[rel="icon"]')) as HTMLLinkElement;
+  if (!favicon) {
+    favicon = document.createElement('link');
+    favicon.rel = 'icon';
+    document.head.appendChild(favicon);
+  }
+
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    try {
+      const size = 64;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, size, size);
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(img, 0, 0, size, size);
+        favicon.href = canvas.toDataURL('image/png');
+        favicon.type = 'image/png';
+        return;
+      }
+    } catch {}
+    favicon.href = url;
+  };
+  img.onerror = () => {
+    favicon.href = url;
+  };
+  img.src = url;
+}
+
+/**
  * Updates dynamic PWA manifest, Apple touch icon, meta tags, and title based on current store & portal.
  * Respects Active Tenant Branding (White-Label) across all portals.
  */
@@ -234,23 +275,8 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
   }
   appleTouchIcon.href = storeIconUrl;
 
-  // 4. Favicon - Strictly sets the tab icon to the tenant's uploaded logo!
-  let favicon = (document.getElementById('app-favicon') || document.querySelector('link[rel="icon"]')) as HTMLLinkElement;
-  if (!favicon) {
-    favicon = document.createElement('link');
-    favicon.rel = 'icon';
-    document.head.appendChild(favicon);
-  }
-  favicon.href = storeIconUrl;
-  if (storeIconUrl.includes('.jpg') || storeIconUrl.includes('.jpeg')) {
-    favicon.type = 'image/jpeg';
-  } else if (storeIconUrl.includes('.png')) {
-    favicon.type = 'image/png';
-  } else if (storeIconUrl.includes('.svg')) {
-    favicon.type = 'image/svg+xml';
-  } else {
-    favicon.removeAttribute('type');
-  }
+  // 4. Favicon - Strictly sets the tab icon to a perfectly circular logo (like Apple & Google)!
+  setCircularFavicon(storeIconUrl);
 
   // 5. Apple Mobile Web App Title
   let appleTitleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]') as HTMLMetaElement;

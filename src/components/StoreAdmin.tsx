@@ -3503,14 +3503,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
           {/* Manager & Store Info */}
           <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
-            <div className={`w-12 h-12 rounded-2xl border flex items-center justify-center shadow-inner shrink-0 overflow-hidden ${
+            <div className={`w-12 h-12 rounded-full border flex items-center justify-center shadow-inner shrink-0 overflow-hidden ${
               isDarkTheme ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-100 border-slate-200'
             }`}>
               {store.logo_url ? (
                 <img
                   src={store.logo_url}
                   alt={store.name}
-                  className="w-full h-full object-cover rounded-2xl"
+                  className="w-full h-full object-cover rounded-full"
                 />
               ) : (
                 <div className="w-full h-full bg-gradient-to-tr from-amber-500 to-amber-300 flex items-center justify-center text-slate-950 font-black text-lg">
