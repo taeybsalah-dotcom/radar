@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LoyaltyService, getSupabaseClient, getSovereignMasterToken, invalidatePartnersCache } from '../lib/supabase';
+import { getActiveTenantConfig } from '../config/tenant';
 import { generateSafeSlug } from '../lib/slugUtils';
 import confetti from 'canvas-confetti';
 import {
@@ -567,6 +568,7 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
       }
 
       const masterToken = getSovereignMasterToken();
+      const activeTenant = getActiveTenantConfig();
 
       // 1. استدعاء الـ RPC مع فحص كامل
       const { data, error: rpcError } = await (supabase.rpc as any)('admin_create_partner_full_atomic', {
@@ -580,6 +582,7 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
         p_recurring_commission_rate: decimalRecurring,
         p_monthly_target: target,
         p_master_token: masterToken,
+        p_tenant_id: activeTenant.tenantId || null,
       });
 
       // فحص كامل لنتيجة الـ RPC: خطأ شبكة أو رفض من قاعدة البيانات

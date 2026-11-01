@@ -69,7 +69,7 @@ export function verifyAttributionToken(
 
     const now = Date.now();
     const ageMs = now - payload.ts;
-    const maxAgeMs = 30 * 24 * 60 * 60 * 1000; // 30 days window
+    const maxAgeMs = 60 * 24 * 60 * 60 * 1000; // 60 days window
 
     // Clock skew allowance (60s into future)
     if (ageMs < -60000) {
@@ -212,7 +212,7 @@ export default async function handler(req: any, res: any) {
 
     // 8. Secure Cookie Configuration
     const isProduction = process.env.NODE_ENV === 'production' || req.headers?.['x-forwarded-proto'] === 'https';
-    const maxAgeSeconds = 30 * 24 * 60 * 60; // 30 days
+    const maxAgeSeconds = 60 * 24 * 60 * 60; // 60 days
     const secureFlag = isProduction ? '; Secure' : '';
     const cookieHeader = `radar_aff_token=${encodeURIComponent(signedToken)}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly${secureFlag}; SameSite=Lax`;
 

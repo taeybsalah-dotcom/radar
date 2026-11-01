@@ -9106,6 +9106,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     }
 
     const masterTok = getSovereignMasterToken();
+    const activeTenant = getActiveTenantConfig();
     const { data: atomicRes, error: atomicErr } = await (supabase.rpc as any)('admin_create_partner_full_atomic', {
       p_name: cleanName,
       p_phone: cleanPhone,
@@ -9117,6 +9118,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_recurring_commission_rate: recurringRate,
       p_monthly_target: payload.target_value || 20,
       p_master_token: masterTok,
+      p_tenant_id: activeTenant.tenantId || null,
     });
 
     if (atomicErr) {
