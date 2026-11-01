@@ -35,6 +35,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyEvents, type LoyaltyEventPayload } from '../lib/events';
 import type { BillingPlan } from '../types';
 import { getActiveTenantConfig } from '../config/tenant';
 import confetti from 'canvas-confetti';
@@ -81,18 +82,37 @@ export const MerchantJoinLanding: React.FC = () => {
   const [dynamicPlans, setDynamicPlans] = useState<BillingPlan[]>([]);
 
   useEffect(() => {
-    LoyaltyService.getAllSubscriptionPlans()
-      .then((plans) => {
-        if (plans && plans.length > 0) {
-          const active = plans
-            .filter((p) => p.active !== false)
-            .sort((a, b) => (a.tier_level ?? 1) - (b.tier_level ?? 1));
-          if (active.length > 0) {
-            setDynamicPlans(active);
+    const loadPlans = () => {
+      LoyaltyService.getAllSubscriptionPlans()
+        .then((plans) => {
+          if (plans && plans.length > 0) {
+            const active = plans
+              .filter((p) => p.active !== false)
+              .sort((a, b) => (a.tier_level ?? 1) - (b.tier_level ?? 1));
+            if (active.length > 0) {
+              setDynamicPlans(active);
+            }
           }
-        }
-      })
-      .catch((err) => console.warn('[MerchantJoinLanding] Error loading dynamic billing plans:', err));
+        })
+        .catch((err) => console.warn('[MerchantJoinLanding] Error loading dynamic billing plans:', err));
+    };
+
+    loadPlans();
+
+    // 🔄 Live re-sync when plans are updated in Super Admin or when tab regains focus
+    const unsub = LoyaltyEvents.listen((event: LoyaltyEventPayload) => {
+      if (event.type === 'STORE_UPDATED') {
+        loadPlans();
+      }
+    });
+
+    const handleFocus = () => loadPlans();
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      unsub();
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   // Dynamic White-Label Tenant Configuration
@@ -1022,45 +1042,45 @@ export const MerchantJoinLanding: React.FC = () => {
       </section>
 
       {/* ==================================================================== */}
-      {/* 🏷️ PRICING TIERS SECTION (من الأساس إلى الصرح) */}
+      {/* 🏷️ PRICING TIERS SECTION (من الأساس إلى الصرح - تصميم ركين الأنيق) */}
       {/* ==================================================================== */}
-      <section id="pricing" className="relative z-20 max-w-6xl mx-auto px-4 sm:px-6 py-20 space-y-12">
+      <section id="pricing" className="relative z-20 max-w-6xl mx-auto px-4 sm:px-6 py-24 space-y-12" dir="rtl">
         
-        <div className="text-center space-y-3">
-          <span className="px-3 py-1 rounded-full bg-[#CCFF00] text-slate-950 text-xs font-black">
-            الباقات والاشتراكات
-          </span>
-          <h2 className="text-3xl sm:text-5xl font-black text-white">
+        {/* Section Header */}
+        <div className="text-center space-y-4 max-w-2xl mx-auto">
+          <h2 className="text-4xl sm:text-6xl font-black text-white tracking-tight">
             من الأساس.. إلى الصرح.
           </h2>
-          <p className="text-sm text-slate-400 max-w-xl mx-auto">
-            أول 30 يوماً مجاناً بالكامل. جرّب كل شيء بدون ما تدفع ريال وبلا عقد ولا التزام.
+          <p className="text-sm sm:text-base text-slate-400 font-medium leading-relaxed">
+            أول 30 يوماً مجاناً بكل المزايا: ما تدفع ولا ريال، ولا توقّع أي عقد.
           </p>
 
           {/* Monthly / Annual Period Switch */}
-          <div className="pt-4 flex items-center justify-center">
-            <div className="p-1 rounded-full bg-[#121B24] border border-white/10 flex items-center text-xs font-bold">
+          <div className="pt-3 flex items-center justify-center">
+            <div className="p-1 rounded-full bg-slate-900/90 border border-slate-800 flex items-center text-xs font-bold shadow-2xl backdrop-blur-md">
               <button
+                type="button"
                 onClick={() => setBillingPeriod('MONTHLY')}
-                className={`px-5 py-2 rounded-full transition ${
+                className={`px-6 py-2.5 rounded-full transition-all duration-200 ${
                   billingPeriod === 'MONTHLY'
-                    ? 'bg-white/10 text-white font-black'
+                    ? 'bg-slate-800 text-white font-black shadow-md'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
                 شهري
               </button>
               <button
+                type="button"
                 onClick={() => setBillingPeriod('ANNUAL')}
-                className={`px-5 py-2 rounded-full transition flex items-center gap-1.5 ${
+                className={`px-6 py-2.5 rounded-full transition-all duration-200 flex items-center gap-2 ${
                   billingPeriod === 'ANNUAL'
-                    ? 'bg-[#CCFF00] text-slate-950 font-black shadow-md'
+                    ? 'bg-[#CCFF00] text-slate-950 font-black shadow-lg shadow-[#CCFF00]/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <span>سنوي</span>
-                <span className="text-[10px] bg-slate-950 text-[#CCFF00] px-1.5 py-0.5 rounded-full">
-                  وفر شهرين
+                <span className="text-[10px] bg-slate-950 text-[#CCFF00] px-2 py-0.5 rounded-full font-black">
+                  شهرين مجاناً
                 </span>
               </button>
             </div>
@@ -1069,259 +1089,462 @@ export const MerchantJoinLanding: React.FC = () => {
 
         {/* 3 Pricing Cards (Dynamic per-tenant via get_public_billing_plans) */}
         {(() => {
-          const fallbackPlans: Partial<BillingPlan>[] = [
+          const fallbackPlans: BillingPlan[] = [
             {
+              id: 'plan_basic_fb',
               code: 'BASIC',
               name: 'أساس',
-              description: 'للبدايات الواثقة',
+              description: 'تبيع، وتطبع، وتقفّل يومك',
+              amount: 99,
               monthly_amount: 99,
               yearly_amount: 990,
               extra_branch_price: 49,
+              extra_branch_yearly_price: 490,
               tier_level: 1,
               badge_text: null,
               cumulative_note: null,
+              currency: 'ر.س',
+              duration_months: 1,
+              billing_interval: 'MONTHLY',
+              trial_days: 14,
               features_list: [
-                'كاشير سحابي متكامل يبيع أوفلاين',
-                'فواتير ضريبية معتمدة مع رمز الزكاة QR',
-                'بطاقات ولاء رقمية أساسية',
-                'تقارير مبيعات وورديات يومية'
-              ]
+                'الكاشير',
+                'الفاتورة الضريبية',
+                'العمل بدون إنترنت',
+                'إغلاق الوردية',
+                'المنيو',
+                'الطلبات والاسترجاع',
+                'التقرير اليومي',
+                'الموظفين'
+              ],
+              active: true
             },
             {
+              id: 'plan_advanced_fb',
               code: 'ADVANCED',
               name: 'عماد',
-              description: 'للمحلات النشطة',
+              description: 'تعرف وش تكسب، والعميل يرجع لك',
+              amount: 179,
               monthly_amount: 179,
               yearly_amount: 1790,
               extra_branch_price: 89,
+              extra_branch_yearly_price: 890,
               tier_level: 2,
-              badge_text: 'الأكثر طلباً ⭐',
-              cumulative_note: 'كل ما في باقة أساس، وفوقها:',
+              badge_text: 'الأكثر طلباً',
+              cumulative_note: 'كل اللي في أساس، وفوقها:',
+              currency: 'ر.س',
+              duration_months: 1,
+              billing_interval: 'MONTHLY',
+              trial_days: 14,
               features_list: [
-                'نظام الحجوزات والمواعيد الذكي',
-                'محفظة Apple & Google Wallet كاملة',
-                'كرت أختام ورتب VIP وكاش باك',
-                tenant.brandName === 'رادار' ? 'رادار استعادة العملاء المنقطعين بالواتساب' : 'استعادة العملاء المنقطعين بالواتساب',
-                'شاشة تحضير المطبخ والبار (KDS)'
-              ]
+                'شاشة المطبخ وطباعته',
+                'شاشة العميل',
+                'المخزون والوصفات والتنبيهات',
+                'قراءة فواتير الموردين بالتصوير',
+                'تكلفة الأطباق وصافي الربح',
+                'برنامج الولاء وبطاقة الجوال',
+                'الطاولات والحجوزات',
+                'تطبيقات التوصيل',
+                'صلاحيات الموظفين',
+                'التقارير الكاملة وExcel'
+              ],
+              active: true
             },
             {
+              id: 'plan_pro_fb',
               code: 'PRO',
               name: 'صرح',
-              description: 'للفروع والسلاسل',
+              description: 'يطلبون منك مباشرة، وتكبر لأكثر من فرع',
+              amount: 279,
               monthly_amount: 279,
               yearly_amount: 2790,
               extra_branch_price: 139,
+              extra_branch_yearly_price: 1390,
               tier_level: 3,
-              badge_text: 'الأشمل 👑',
-              cumulative_note: 'كل ما في باقة عماد، وفوقها:',
+              badge_text: 'الأشمل',
+              cumulative_note: 'كل اللي في عماد، وفوقها:',
+              currency: 'ر.س',
+              duration_months: 1,
+              billing_interval: 'MONTHLY',
+              trial_days: 14,
               features_list: [
-                'بوابة وتطبيق خاص بمناديب التوصيل 🛵',
-                'دعم فروع متعددة ومستودعات مركزية',
-                'صلاحيات مخصصة لكل كاشير وموظف',
-                'متجر إلكتروني للطلبات بدون عمولة',
-                'مدير حساب ودعم تقني مباشر 24/7'
-              ]
+                'متجر إلكتروني بدون عمولة',
+                'صفحة حجز المواعيد',
+                'تعدد الفروع وتقارير لكل فرع',
+                'دعم أولوية'
+              ],
+              active: true
             }
           ];
 
-          const plansToRender = dynamicPlans.length >= 3 ? dynamicPlans : fallbackPlans;
+          const sourcePlans = dynamicPlans && dynamicPlans.length >= 3 ? dynamicPlans : fallbackPlans;
+          const basicPlan = sourcePlans.find(p => (p.tier_level ?? 0) === 1 || p.code === 'BASIC') || sourcePlans[0] || fallbackPlans[0];
+          const imadPlan = sourcePlans.find(p => (p.tier_level ?? 0) === 2 || p.code === 'ADVANCED') || sourcePlans[1] || fallbackPlans[1];
+          const sarhPlan = sourcePlans.find(p => (p.tier_level ?? 0) === 3 || p.code === 'PRO') || sourcePlans[2] || fallbackPlans[2];
+
+          // Helpers
+          const cleanName = (name: string | undefined | null, fallback: string) => {
+            if (!name) return fallback;
+            const m = name.match(/\(([^)]+)\)/);
+            if (m && m[1]) return m[1].trim();
+            if (name.includes('الأساسية') || name.includes('أساس') || name.toUpperCase().includes('BASIC')) return 'أساس';
+            if (name.includes('النمو') || name.includes('عماد') || name.includes('المتقدمة') || name.toUpperCase().includes('ADVANCED')) return 'عماد';
+            if (name.includes('الاحترافية') || name.includes('صرح') || name.toUpperCase().includes('PRO')) return 'صرح';
+            return name.trim();
+          };
+
+          const cleanDesc = (desc: string | undefined | null, fallback: string) => {
+            if (!desc) return fallback;
+            return desc.split(' - ')[0].trim() || fallback;
+          };
+
+          // Basic calculations
+          const basicMonthly = Number(basicPlan.monthly_amount) || Number(basicPlan.amount) || 99;
+          const basicYearly = Number(basicPlan.yearly_amount) || (basicMonthly * 10);
+          const basicBranch = Number(basicPlan.extra_branch_price) || 49;
+          const basicSavings = Math.max(0, (basicMonthly * 12) - basicYearly);
+          const basicFeats = (basicPlan.features_list && basicPlan.features_list.length > 0)
+            ? basicPlan.features_list
+            : (basicPlan.features || fallbackPlans[0].features_list || []);
+
+          // Imad calculations
+          const imadMonthly = Number(imadPlan.monthly_amount) || Number(imadPlan.amount) || 179;
+          const imadYearly = Number(imadPlan.yearly_amount) || (imadMonthly * 10);
+          const imadBranch = Number(imadPlan.extra_branch_price) || 89;
+          const imadSavings = Math.max(0, (imadMonthly * 12) - imadYearly);
+          const imadFeats = (imadPlan.features_list && imadPlan.features_list.length > 0)
+            ? imadPlan.features_list
+            : (imadPlan.features || fallbackPlans[1].features_list || []);
+
+          // Sarh calculations
+          const sarhMonthly = Number(sarhPlan.monthly_amount) || Number(sarhPlan.amount) || 279;
+          const sarhYearly = Number(sarhPlan.yearly_amount) || (sarhMonthly * 10);
+          const sarhBranch = Number(sarhPlan.extra_branch_price) || 139;
+          const sarhSavings = Math.max(0, (sarhMonthly * 12) - sarhYearly);
+          const sarhFeats = (sarhPlan.features_list && sarhPlan.features_list.length > 0)
+            ? sarhPlan.features_list
+            : (sarhPlan.features || fallbackPlans[2].features_list || []);
+
+          // Cumulative chips for Sarh box (all Imad + Basic features)
+          const allImadChips = [...basicFeats, ...imadFeats];
 
           return (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
-              {plansToRender.map((plan, idx) => {
-                const tier = plan.tier_level ?? (idx + 1);
-                const isPro = tier === 2 || plan.code === 'ADVANCED';
-                const isEnterprise = tier === 3 || plan.code === 'PRO';
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8 items-stretch pt-6">
 
-                const monthly = Number(plan.monthly_amount) || Number(plan.amount) || (tier === 1 ? 99 : tier === 2 ? 179 : 279);
-                const yearly = Number(plan.yearly_amount) || (monthly * 10);
-                const savings = Math.max(0, (monthly * 12) - yearly);
-                const extraBranch = Number(plan.extra_branch_price) || (tier === 1 ? 49 : tier === 2 ? 89 : 139);
+              {/* ============================================================== */}
+              {/* 🏛️ CARD 3: صرح (Leftmost column in RTL) */}
+              {/* ============================================================== */}
+              <div className="flex flex-col">
+                {/* Decorative Temple Outline (Architecture line-art) */}
+                <svg className="w-20 h-14 mx-auto opacity-40 stroke-current text-purple-300 mb-3 hidden lg:block" viewBox="0 0 80 56" fill="none" strokeWidth="1.5">
+                  <path d="M40 4L12 18h56L40 4z" />
+                  <circle cx="40" cy="11" r="2" />
+                  <path d="M16 18v28M28 18v28M40 18v28M52 18v28M64 18v28" />
+                  <path d="M10 46h60M6 52h68" />
+                </svg>
 
-                const feats = (plan.features_list && plan.features_list.length > 0)
-                  ? plan.features_list
-                  : (plan.features && plan.features.length > 0)
-                  ? plan.features
-                  : [];
-
-                if (isPro) {
-                  return (
-                    <div
-                      key={plan.id || plan.code || idx}
-                      className="rounded-3xl p-7 bg-[#CCFF00] text-slate-950 space-y-6 flex flex-col justify-between shadow-2xl relative transform md:-translate-y-2 border-2 border-white"
-                    >
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-xl font-black">{plan.name}</h3>
-                            <span className="px-2.5 py-0.5 rounded-full bg-slate-950 text-[#CCFF00] text-[10px] font-black">
-                              {plan.badge_text || 'الأكثر طلباً ⭐'}
-                            </span>
-                          </div>
-                          <span className="text-xs font-bold text-slate-800">{plan.description || 'للمحلات النشطة'}</span>
-                        </div>
-
-                        <div>
-                          <span className="text-4xl font-black font-mono">
-                            {billingPeriod === 'ANNUAL' ? yearly.toLocaleString() : monthly.toLocaleString()}
-                          </span>
-                          <span className="text-xs font-bold text-slate-800">
-                            {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
-                          </span>
-                          {billingPeriod === 'ANNUAL' ? (
-                            <p className="text-[11px] text-slate-950 font-black pt-1">
-                              وفّر {savings > 0 ? savings.toLocaleString() : (monthly * 2).toLocaleString()} ريال بالسنة (شهرين مجاناً 🎁)
-                            </p>
-                          ) : (
-                            <p className="text-[11px] text-slate-800 pt-1">فرع واحد + {extraBranch} لكل فرع زيادة</p>
-                          )}
-                        </div>
-
-                        {plan.cumulative_note && (
-                          <div className="pt-1">
-                            <span className="text-xs font-black text-slate-950 block">{plan.cumulative_note}</span>
-                          </div>
-                        )}
-
-                        <ul className="space-y-2.5 text-xs text-slate-950 font-black pt-2 border-t border-slate-900/20">
-                          {feats.map((feat, fIdx) => (
-                            <li key={fIdx} className="flex items-center gap-2">
-                              ✓ {feat}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <button
-                        onClick={scrollToForm}
-                        className="w-full py-3.5 rounded-2xl bg-slate-950 hover:bg-slate-900 text-[#CCFF00] font-black text-xs transition shadow-lg hover:scale-[1.01] active:scale-[0.99]"
-                      >
-                        ابدأ تجربتك المجانية الآن 🚀
-                      </button>
+                <div className="rounded-[36px] bg-[#121028] text-white p-7 sm:p-9 shadow-2xl border border-purple-500/30 flex flex-col justify-between flex-1 hover:border-purple-500/50 transition-all duration-300">
+                  <div>
+                    {/* Top Badges Row (No overlap - clean separated metadata row) */}
+                    <div className="flex items-center justify-between">
+                      <span className="px-3 py-1 rounded-full bg-white/10 text-purple-200 text-xs font-black shrink-0">
+                        {allImadChips.length + sarhFeats.length} ميزة
+                      </span>
+                      <span className="px-3.5 py-1 rounded-full bg-indigo-600 text-white text-xs font-black shadow-md flex items-center gap-1.5 border border-indigo-400/30">
+                        <span>{sarhPlan.badge_text ? sarhPlan.badge_text.replace(/[👑⭐]/g, '').trim() : 'الأشمل'}</span>
+                        <span>👑</span>
+                      </span>
                     </div>
-                  );
-                }
 
-                if (isEnterprise) {
-                  return (
-                    <div
-                      key={plan.id || plan.code || idx}
-                      className="rounded-3xl p-7 bg-[#0E1620] border border-white/20 text-white space-y-6 flex flex-col justify-between shadow-2xl"
-                    >
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-xl font-black">{plan.name}</h3>
-                            {plan.badge_text && (
-                              <span className="px-2 py-0.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-black">
-                                {plan.badge_text}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-xs text-purple-400 font-bold">{plan.description || 'للفروع والسلاسل'}</span>
-                        </div>
-
-                        <div>
-                          <span className="text-4xl font-black font-mono">
-                            {billingPeriod === 'ANNUAL' ? yearly.toLocaleString() : monthly.toLocaleString()}
-                          </span>
-                          <span className="text-xs font-bold text-slate-400">
-                            {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
-                          </span>
-                          {billingPeriod === 'ANNUAL' ? (
-                            <p className="text-[11px] text-purple-300 font-bold pt-1">
-                              وفّر {savings > 0 ? savings.toLocaleString() : (monthly * 2).toLocaleString()} ريال بالسنة (شهرين مجاناً 🎁)
-                            </p>
-                          ) : (
-                            <p className="text-[11px] text-slate-400 pt-1">فرعين مشمولة + {extraBranch} لكل فرع زيادة</p>
-                          )}
-                        </div>
-
-                        {plan.cumulative_note && (
-                          <div className="pt-1">
-                            <span className="text-xs font-black text-amber-400 block">{plan.cumulative_note}</span>
-                          </div>
-                        )}
-
-                        <ul className="space-y-2.5 text-xs text-slate-300 font-bold pt-2 border-t border-white/10">
-                          {feats.map((feat, fIdx) => (
-                            <li key={fIdx} className="flex items-center gap-2">
-                              ✓ {feat}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <button
-                        onClick={scrollToForm}
-                        className="w-full py-3.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-black text-xs transition border border-white/20 hover:scale-[1.01] active:scale-[0.99]"
-                      >
-                        ابدأ مجاناً
-                      </button>
+                    {/* Title & Subtitle */}
+                    <div className="mt-4">
+                      <h3 className="text-4xl sm:text-5xl font-black text-white tracking-tight">
+                        {cleanName(sarhPlan.name, 'صرح')}
+                      </h3>
+                      <p className="text-xs text-slate-300 font-medium mt-1.5 leading-relaxed">
+                        {cleanDesc(sarhPlan.description, 'يطلبون منك مباشرة، وتكبر لأكثر من فرع')}
+                      </p>
                     </div>
-                  );
-                }
 
-                // Tier 1 (Starter)
-                return (
-                  <div
-                    key={plan.id || plan.code || idx}
-                    className="rounded-3xl p-7 bg-white text-slate-950 space-y-6 flex flex-col justify-between shadow-2xl"
-                  >
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <h3 className="text-xl font-black">{plan.name}</h3>
-                          {plan.badge_text && (
-                            <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-800 text-[10px] font-black">
-                              {plan.badge_text}
-                            </span>
-                          )}
+                    {/* Price Block */}
+                    <div className="mt-7 mb-6">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-5xl sm:text-6xl font-black font-mono tracking-tight text-white">
+                          {(billingPeriod === 'ANNUAL' ? sarhYearly : sarhMonthly).toLocaleString()}
+                        </span>
+                        <div className="text-xs font-bold text-slate-300 leading-tight">
+                          <span className="block font-sans text-sm text-white font-black">﷼</span>
+                          <span>{billingPeriod === 'ANNUAL' ? 'سنوياً' : 'شهرياً'}</span>
                         </div>
-                        <span className="text-xs text-slate-500 font-bold">{plan.description || 'للبدايات الواثقة'}</span>
                       </div>
 
-                      <div>
-                        <span className="text-4xl font-black font-mono">
-                          {billingPeriod === 'ANNUAL' ? yearly.toLocaleString() : monthly.toLocaleString()}
-                        </span>
-                        <span className="text-xs font-bold text-slate-500">
-                          {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
-                        </span>
-                        {billingPeriod === 'ANNUAL' ? (
-                          <p className="text-[11px] text-emerald-600 font-bold pt-1">
-                            وفّر {savings > 0 ? savings.toLocaleString() : (monthly * 2).toLocaleString()} ريال بالسنة (شهرين مجاناً 🎁)
-                          </p>
-                        ) : (
-                          <p className="text-[11px] text-slate-400 pt-1">فرع واحد + {extraBranch} لكل فرع زيادة</p>
-                        )}
-                      </div>
-
-                      {plan.cumulative_note && (
-                        <div className="pt-1">
-                          <span className="text-xs font-bold text-slate-600 block">{plan.cumulative_note}</span>
+                      {billingPeriod === 'ANNUAL' && (
+                        <div className="mt-2.5">
+                          <span className="inline-block px-3 py-1 rounded-full bg-[#CCFF00] text-slate-950 text-xs font-black shadow-sm">
+                            وفّر {sarhSavings > 0 ? sarhSavings.toLocaleString() : (sarhMonthly * 2).toLocaleString()} بالسنة
+                          </span>
                         </div>
                       )}
 
-                      <ul className="space-y-2.5 text-xs text-slate-700 font-bold pt-2 border-t border-slate-200">
-                        {feats.map((feat, fIdx) => (
-                          <li key={fIdx} className="flex items-center gap-2">
-                            ✓ {feat}
+                      <p className="text-xs text-slate-300 font-medium mt-2">
+                        فرعين مشمولة + {billingPeriod === 'ANNUAL' ? (sarhBranch * 10).toLocaleString() : sarhBranch.toLocaleString()} لكل فرع زيادة
+                      </p>
+                    </div>
+
+                    {/* CTA Button (Directly under Price!) */}
+                    <button
+                      type="button"
+                      onClick={scrollToForm}
+                      className="w-full py-3.5 rounded-full bg-white hover:bg-slate-100 text-slate-950 font-black text-sm transition-all duration-200 shadow-xl hover:shadow-2xl active:scale-[0.98]"
+                    >
+                      ابدأ مجاناً
+                    </button>
+
+                    {/* Features List */}
+                    <div className="mt-8 pt-6 border-t border-white/10 space-y-3.5">
+                      <span className="text-xs font-black text-purple-300 block">
+                        {sarhPlan.cumulative_note || 'كل اللي في عماد، وفوقها:'}
+                      </span>
+                      <ul className="space-y-3 text-xs text-slate-200 font-bold">
+                        {sarhFeats.map((f, i) => (
+                          <li key={i} className="flex items-center gap-2.5">
+                            <span className="w-4 h-4 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[10px] font-black flex items-center justify-center shrink-0">
+                              ✓
+                            </span>
+                            <span>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      {/* Cumulative Tags Box (Exact Rakeen Feature) */}
+                      <div className="p-4 rounded-2xl bg-black/40 border border-white/10 space-y-2.5 mt-5">
+                        <span className="text-[11px] font-bold text-slate-400 block">
+                          ومعها كل مزايا عماد ({allImadChips.length} ميزة):
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {allImadChips.map((chip, cIdx) => (
+                            <span
+                              key={cIdx}
+                              className="px-2 py-0.5 rounded-lg bg-white/[0.07] border border-white/5 text-[10px] text-slate-300 font-medium"
+                            >
+                              {chip}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card Footer */}
+                  <div className="mt-8 pt-4 text-center border-t border-white/10">
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-bold text-slate-400 hover:text-white transition"
+                    >
+                      عندك سؤال؟ كلّمنا
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+
+              {/* ============================================================== */}
+              {/* ⚡ CARD 2: عماد (Hero Column in RTL - Middle) */}
+              {/* ============================================================== */}
+              <div className="flex flex-col">
+                {/* Decorative Pillar Outline (Architecture line-art) */}
+                <svg className="w-16 h-12 mx-auto opacity-50 stroke-current text-[#CCFF00] mb-3 hidden lg:block" viewBox="0 0 64 48" fill="none" strokeWidth="1.5">
+                  <path d="M16 8h32M20 8v32M44 8v32M14 40h36M26 8v32M38 8v32M12 44h40" />
+                  <path d="M18 12c4 2 24 2 28 0M18 36c4-2 24-2 28 0" strokeDasharray="2 2" />
+                </svg>
+
+                <div className="rounded-[36px] bg-[#CCFF00] text-slate-950 p-7 sm:p-9 shadow-2xl flex flex-col justify-between flex-1 border-2 border-[#CCFF00] relative lg:-translate-y-4">
+                  <div>
+                    {/* Top Badges Row (No overlap - clean separated metadata row) */}
+                    <div className="flex items-center justify-between">
+                      <span className="px-3 py-1 rounded-full bg-slate-950/10 text-slate-950 text-xs font-black shrink-0">
+                        {basicFeats.length + imadFeats.length} ميزة
+                      </span>
+                      <span className="px-3.5 py-1 rounded-full bg-slate-950 text-[#CCFF00] text-xs font-black shadow-md flex items-center gap-1.5 border border-slate-900">
+                        <span>{imadPlan.badge_text ? imadPlan.badge_text.replace(/[👑⭐]/g, '').trim() : 'الأكثر طلباً'}</span>
+                        <span>⭐</span>
+                      </span>
+                    </div>
+
+                    {/* Title & Subtitle */}
+                    <div className="mt-4">
+                      <h3 className="text-4xl sm:text-5xl font-black text-slate-950 tracking-tight">
+                        {cleanName(imadPlan.name, 'عماد')}
+                      </h3>
+                      <p className="text-xs text-slate-900 font-bold mt-1.5 leading-relaxed">
+                        {cleanDesc(imadPlan.description, 'تعرف وش تكسب، والعميل يرجع لك')}
+                      </p>
+                    </div>
+
+                    {/* Price Block */}
+                    <div className="mt-7 mb-6">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-5xl sm:text-6xl font-black font-mono tracking-tight text-slate-950">
+                          {(billingPeriod === 'ANNUAL' ? imadYearly : imadMonthly).toLocaleString()}
+                        </span>
+                        <div className="text-xs font-black text-slate-800 leading-tight">
+                          <span className="block font-sans text-sm text-slate-950 font-black">﷼</span>
+                          <span>{billingPeriod === 'ANNUAL' ? 'سنوياً' : 'شهرياً'}</span>
+                        </div>
+                      </div>
+
+                      {billingPeriod === 'ANNUAL' && (
+                        <div className="mt-2.5">
+                          <span className="inline-block px-3 py-1 rounded-full bg-slate-950 text-white text-xs font-black shadow-sm">
+                            وفّر {imadSavings > 0 ? imadSavings.toLocaleString() : (imadMonthly * 2).toLocaleString()} بالسنة
+                          </span>
+                        </div>
+                      )}
+
+                      <p className="text-xs text-slate-800 font-bold mt-2">
+                        فرع واحد + {billingPeriod === 'ANNUAL' ? (imadBranch * 10).toLocaleString() : imadBranch.toLocaleString()} لكل فرع زيادة
+                      </p>
+                    </div>
+
+                    {/* CTA Button (Directly under Price!) */}
+                    <button
+                      type="button"
+                      onClick={scrollToForm}
+                      className="w-full py-3.5 rounded-full bg-slate-950 hover:bg-slate-900 text-[#CCFF00] font-black text-sm transition-all duration-200 shadow-xl hover:shadow-2xl active:scale-[0.98]"
+                    >
+                      ابدأ مجاناً
+                    </button>
+
+                    {/* Features List */}
+                    <div className="mt-8 pt-6 border-t border-slate-950/20 space-y-3">
+                      <span className="text-xs font-black text-slate-950 block">
+                        {imadPlan.cumulative_note || 'كل اللي في أساس، وفوقها:'}
+                      </span>
+                      <ul className="space-y-3 text-xs text-slate-950 font-black">
+                        {imadFeats.map((f, i) => (
+                          <li key={i} className="flex items-center gap-2.5">
+                            <span className="w-4 h-4 rounded-full bg-slate-950 text-[#CCFF00] text-[10px] font-black flex items-center justify-center shrink-0">
+                              ✓
+                            </span>
+                            <span>{f}</span>
                           </li>
                         ))}
                       </ul>
                     </div>
+                  </div>
 
+                  {/* Card Footer */}
+                  <div className="mt-8 pt-4 text-center border-t border-slate-950/15">
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-black text-slate-800 hover:text-slate-950 transition"
+                    >
+                      عندك سؤال؟ كلّمنا
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+
+              {/* ============================================================== */}
+              {/* 🏢 CARD 1: أساس (Rightmost column in RTL) */}
+              {/* ============================================================== */}
+              <div className="flex flex-col">
+                {/* Decorative Foundation Outline (Architecture line-art) */}
+                <svg className="w-20 h-10 mx-auto opacity-40 stroke-current text-white mb-3 hidden lg:block" viewBox="0 0 80 40" fill="none" strokeWidth="1.5">
+                  <path d="M10 28h60M15 28V14h50v14M10 14h60M25 14V6h30v8" />
+                  <line x1="20" y1="20" x2="20" y2="28" />
+                  <line x1="30" y1="20" x2="30" y2="28" />
+                  <line x1="40" y1="20" x2="40" y2="28" />
+                  <line x1="50" y1="20" x2="50" y2="28" />
+                  <line x1="60" y1="20" x2="60" y2="28" />
+                </svg>
+
+                <div className="rounded-[36px] bg-white text-slate-950 p-7 sm:p-9 shadow-2xl flex flex-col justify-between flex-1 border border-slate-200/90 hover:border-slate-300 transition-all duration-300">
+                  <div>
+                    {/* Top Badges Row */}
+                    <div className="flex items-center justify-between">
+                      <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-black shrink-0">
+                        {basicFeats.length} مزايا
+                      </span>
+                      <span className="text-transparent select-none">-</span>
+                    </div>
+
+                    {/* Title & Subtitle */}
+                    <div className="mt-4">
+                      <h3 className="text-4xl sm:text-5xl font-black text-slate-950 tracking-tight">
+                        {cleanName(basicPlan.name, 'أساس')}
+                      </h3>
+                      <p className="text-xs text-slate-500 font-medium mt-1.5 leading-relaxed">
+                        {cleanDesc(basicPlan.description, 'تبيع، وتطبع، وتقفّل يومك')}
+                      </p>
+                    </div>
+
+                    {/* Price Block */}
+                    <div className="mt-7 mb-6">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-5xl sm:text-6xl font-black font-mono tracking-tight text-slate-950">
+                          {(billingPeriod === 'ANNUAL' ? basicYearly : basicMonthly).toLocaleString()}
+                        </span>
+                        <div className="text-xs font-bold text-slate-500 leading-tight">
+                          <span className="block font-sans text-sm text-slate-900 font-black">﷼</span>
+                          <span>{billingPeriod === 'ANNUAL' ? 'سنوياً' : 'شهرياً'}</span>
+                        </div>
+                      </div>
+
+                      {billingPeriod === 'ANNUAL' && (
+                        <div className="mt-2.5">
+                          <span className="inline-block px-3 py-1 rounded-full bg-[#CCFF00] text-slate-950 text-xs font-black shadow-sm">
+                            وفّر {basicSavings > 0 ? basicSavings.toLocaleString() : (basicMonthly * 2).toLocaleString()} بالسنة
+                          </span>
+                        </div>
+                      )}
+
+                      <p className="text-xs text-slate-500 font-medium mt-2">
+                        فرع واحد + {billingPeriod === 'ANNUAL' ? (basicBranch * 10).toLocaleString() : basicBranch.toLocaleString()} لكل فرع زيادة
+                      </p>
+                    </div>
+
+                    {/* CTA Button (Directly under Price!) */}
                     <button
+                      type="button"
                       onClick={scrollToForm}
-                      className="w-full py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs transition hover:scale-[1.01] active:scale-[0.99]"
+                      className="w-full py-3.5 rounded-full border-2 border-slate-950 text-slate-950 hover:bg-slate-950 hover:text-white font-black text-sm transition-all duration-200 shadow-sm active:scale-[0.98]"
                     >
                       ابدأ مجاناً
                     </button>
+
+                    {/* Features List */}
+                    <div className="mt-8 pt-6 border-t border-slate-200/80 space-y-3">
+                      <ul className="space-y-3 text-xs text-slate-700 font-bold">
+                        {basicFeats.map((f, i) => (
+                          <li key={i} className="flex items-center gap-2.5">
+                            <span className="text-slate-400 font-black text-sm">✓</span>
+                            <span>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
-                );
-              })}
+
+                  {/* Card Footer */}
+                  <div className="mt-8 pt-4 text-center border-t border-slate-100">
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-bold text-slate-500 hover:text-slate-900 transition"
+                    >
+                      عندك سؤال؟ كلّمنا
+                    </a>
+                  </div>
+                </div>
+              </div>
+
             </div>
           );
         })()}
