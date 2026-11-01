@@ -1060,10 +1060,16 @@ export const MerchantJoinLanding: React.FC = () => {
               </div>
               <div>
                 <span className="text-4xl font-black font-mono">
-                  {billingPeriod === 'ANNUAL' ? '79' : '99'}
+                  {billingPeriod === 'ANNUAL' ? '990' : '99'}
                 </span>
-                <span className="text-xs font-bold text-slate-500"> ر.س / شهرياً</span>
-                <p className="text-[11px] text-slate-400 pt-1">تُدفع سنوياً أو شهرياً بمرونة</p>
+                <span className="text-xs font-bold text-slate-500">
+                  {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
+                </span>
+                {billingPeriod === 'ANNUAL' ? (
+                  <p className="text-[11px] text-emerald-600 font-bold pt-1">وفّر 198 ريال بالسنة (شهرين مجاناً)</p>
+                ) : (
+                  <p className="text-[11px] text-slate-400 pt-1">فرع واحد + 49 لكل فرع زيادة</p>
+                )}
               </div>
 
               <ul className="space-y-2.5 text-xs text-slate-700 font-bold pt-2 border-t border-slate-200">
@@ -1096,10 +1102,16 @@ export const MerchantJoinLanding: React.FC = () => {
               </div>
               <div>
                 <span className="text-4xl font-black font-mono">
-                  {billingPeriod === 'ANNUAL' ? '149' : '179'}
+                  {billingPeriod === 'ANNUAL' ? '1,790' : '179'}
                 </span>
-                <span className="text-xs font-bold text-slate-800"> ر.س / شهرياً</span>
-                <p className="text-[11px] text-slate-800 pt-1">شامل كل الميزات المتقدمة</p>
+                <span className="text-xs font-bold text-slate-800">
+                  {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
+                </span>
+                {billingPeriod === 'ANNUAL' ? (
+                  <p className="text-[11px] text-slate-950 font-black pt-1">وفّر 358 ريال بالسنة (شهرين مجاناً)</p>
+                ) : (
+                  <p className="text-[11px] text-slate-800 pt-1">فرع واحد + 89 لكل فرع زيادة</p>
+                )}
               </div>
 
               <ul className="space-y-2.5 text-xs text-slate-950 font-black pt-2 border-t border-slate-900/20">
@@ -1129,10 +1141,16 @@ export const MerchantJoinLanding: React.FC = () => {
               </div>
               <div>
                 <span className="text-4xl font-black font-mono">
-                  {billingPeriod === 'ANNUAL' ? '229' : '279'}
+                  {billingPeriod === 'ANNUAL' ? '2,790' : '279'}
                 </span>
-                <span className="text-xs font-bold text-slate-400"> ر.س / شهرياً</span>
-                <p className="text-[11px] text-slate-400 pt-1">إدارة مركزية متعددة الفروع</p>
+                <span className="text-xs font-bold text-slate-400">
+                  {billingPeriod === 'ANNUAL' ? ' ر.س / سنوياً' : ' ر.س / شهرياً'}
+                </span>
+                {billingPeriod === 'ANNUAL' ? (
+                  <p className="text-[11px] text-purple-300 font-bold pt-1">وفّر 558 ريال بالسنة (شهرين مجاناً)</p>
+                ) : (
+                  <p className="text-[11px] text-slate-400 pt-1">فرعين مشمولة + 139 لكل فرع زيادة</p>
+                )}
               </div>
 
               <ul className="space-y-2.5 text-xs text-slate-300 font-bold pt-2 border-t border-white/10">

@@ -1265,6 +1265,14 @@ export interface BillingPlan {
   features?: string[];
   active?: boolean;
   created_at?: string;
+  monthly_amount?: number;
+  yearly_amount?: number;
+  extra_branch_price?: number;
+  extra_branch_yearly_price?: number;
+  tier_level?: number;
+  badge_text?: string | null;
+  cumulative_note?: string | null;
+  features_list?: string[];
 }
 
 export function getPlanDurationLabel(plan?: Partial<BillingPlan> | null): string {

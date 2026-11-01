@@ -880,7 +880,7 @@ const TIER_COLS = 'id, store_id, tier_name, required_xp, badge_color, created_at
 const PRIVILEGE_COLS = 'id, store_id, required_tier_id, title, description, image_url, cost_points, quantity_limit, per_customer_limit, redeemed_count, valid_start_time, valid_end_time, is_active, is_hidden, created_at';
 const LEDGER_COLS = 'id, transaction_id, invoice_id, store_id, affiliate_id, payment_id, transaction_type, gross_amount, vat_amount, gateway_fee, affiliate_commission, net_platform_amount, status, reversal_of, refund_of, created_by, metadata, effective_at, created_at';
 const LEAD_COLS = 'id, store_name, manager_name, phone, normalized_phone, city, business_type, attribution_source, referral_code, affiliate_id, status, conversion_started_at, conversion_error, converted_store_id, notes, created_at, updated_at';
-const PLAN_COLS = 'id, code, name, description, amount, currency, billing_interval, trial_days, active, provider_price_id, metadata, created_at, updated_at';
+const PLAN_COLS = 'id, code, name, description, amount, currency, billing_interval, trial_days, active, provider_price_id, metadata, monthly_amount, yearly_amount, extra_branch_price, extra_branch_yearly_price, tier_level, badge_text, cumulative_note, features_list, created_at, updated_at';
 const walletCols = (s: any) => probeCols(s, 'store_wallets', WALLET_COLS, '*');
 const staffCols = (s: any) => probeCols(s, 'store_staff', STAFF_COLS, '*');
 const tierCols = (s: any) => probeCols(s, 'tiers', TIER_COLS, '*');
@@ -6117,26 +6117,67 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     };
   },
 
+  // 🧮 استدعاء دالة الترقية السحابية المركزية calculate_subscription_upgrade (Proration Engine)
+  async calculateSubscriptionUpgradeRpc(
+    storeId: string,
+    targetPlanId: string,
+    targetCycle: 'MONTHLY' | 'YEARLY' = 'MONTHLY'
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    net_amount?: number;
+    unused_credit?: number;
+    vat_amount?: number;
+    net_before_vat?: number;
+    target_plan?: any;
+    current_plan?: any;
+    is_trial?: boolean;
+    remaining_days?: number;
+    has_discount?: boolean;
+  }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { success: false, error: 'تعذر الاتصال بالخادم' };
+    try {
+      const { data, error } = await (supabase as any).rpc('calculate_subscription_upgrade', {
+        p_store_id: storeId,
+        p_target_plan_id: targetPlanId,
+        p_target_cycle: targetCycle,
+      });
+      if (error) return { success: false, error: error.message };
+      return data;
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'خطأ أثناء حساب الترقية' };
+    }
+  },
+
   // 🧮 حساب ترقية الباقات المباشرة وفروقات الأسعار (Tier Difference Upgrade Engine)
   calculateProratedUpgrade(
     store: Store,
     currentPlan: BillingPlan | null,
-    newPlan: BillingPlan
+    newPlan: BillingPlan,
+    targetCycle: 'MONTHLY' | 'YEARLY' = 'MONTHLY'
   ): ProratedUpgradeCalculation {
     const now = Date.now();
     const currentEndMs = store.subscription_end_date ? new Date(store.subscription_end_date).getTime() : 0;
     const remainingMs = Math.max(0, currentEndMs - now);
     const remainingDays = Math.ceil(remainingMs / 86400000);
 
+    const targetPrice = targetCycle === 'YEARLY'
+      ? (newPlan.yearly_amount ?? (newPlan.monthly_amount ? newPlan.monthly_amount * 10 : newPlan.amount * 10))
+      : (newPlan.monthly_amount ?? newPlan.amount);
+
     let unusedCredit = 0;
     let dailyRateCurrent = 0;
-    let netUpgradeAmount = newPlan.amount;
+    let netUpgradeAmount = targetPrice;
 
     // 🛡️ احتساب ترقية الباقة ودفع فرق الباقة (الصافي) حصراً عند الترقية لباقة أعلى سعراً
-    if (store.setup_fee_paid && currentPlan && newPlan.amount > currentPlan.amount) {
-      unusedCredit = currentPlan.amount;
-      netUpgradeAmount = Math.max(0, Math.round((newPlan.amount - currentPlan.amount) * 100) / 100);
-      dailyRateCurrent = Math.round((currentPlan.amount / 30) * 100) / 100;
+    if (store.setup_fee_paid && currentPlan) {
+      const currentPrice = currentPlan.monthly_amount ?? currentPlan.amount;
+      if (targetPrice > currentPrice && remainingDays > 0) {
+        dailyRateCurrent = Math.round((currentPrice / 30) * 100) / 100;
+        unusedCredit = Math.min(currentPrice, Math.round(dailyRateCurrent * remainingDays * 100) / 100);
+        netUpgradeAmount = Math.max(0, Math.round((targetPrice - unusedCredit) * 100) / 100);
+      }
     }
 
     return {
@@ -6145,7 +6186,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       remainingDays,
       dailyRateCurrent,
       unusedCredit,
-      newPlanAmount: newPlan.amount,
+      newPlanAmount: targetPrice,
       netUpgradeAmount,
       hasProrationDiscount: unusedCredit > 0,
     };
@@ -10646,53 +10687,89 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         id: '8371f0bb-b52e-4198-a5e9-bc51390174f0',
         code: 'BASIC',
         name: 'الباقة الأساسية',
-        description: 'برنامج الولاء الذكي المتكامل ونقاط المكافآت مع كاشير رقمي وبطاقة ولاء PWA',
-        amount: 690,
+        description: 'تبيع، وتطبع، وتقفّل يومك - كاشير سريع وفاتورة ضريبية متوافقة',
+        amount: 99,
+        monthly_amount: 99,
+        yearly_amount: 990,
+        extra_branch_price: 49,
+        extra_branch_yearly_price: 490,
+        tier_level: 1,
+        badge_text: null,
+        cumulative_note: null,
         currency: 'ر.س',
-        duration_months: 3,
+        duration_months: 1,
         billing_interval: 'MONTHLY',
-        trial_days: 7,
+        trial_days: 14,
         features: [
-          'بطاقات ولاء رقمية (PWA) بدون تحميل تطبيق',
-          'كاشير سريع لمسح الباركود وتجميع النقاط',
-          'نظام الرتب والمستويات الذكي (Tiers)',
-          'سجل العمليات والفواتير الفورية',
+          'كاشير سحابي سريع (POS) متوافق 100% مع هيئة الزكاة',
+          'فواتير ضريبية مبسطة مع رمز الاستجابة السريع QR',
+          'العمل عند انقطاع الإنترنت (Offline Mode)',
+          'إغلاق الورديات وتقفيل الصندوق واليوميات',
+          'إدارة المنيو والتصنيفات والمنتجات غير المحدودة',
+          'إدارة الطلبات والاسترجاع وسجل العمليات',
+          'تقارير المبيعات اليومية والشهرية',
+          'إدارة الموظفين وصلاحيات الكاشير',
+          'يشمل فرع واحد رئيسي',
         ],
         active: true,
       },
       {
         id: 'fad2e3cf-141c-4e0e-9432-194615a3ef37',
         code: 'ADVANCED',
-        name: 'الباقة المتقدمة',
-        description: 'برنامج الولاء المتقدم مع المستويات Tiers والامتيازات المخصصة وحملات الواتساب واستعادة العملاء',
-        amount: 1190,
+        name: 'باقة النمو (عماد)',
+        description: 'تعرف وش تكسب، والعميل يرجع لك - تشغيل كامل وبرنامج ولاء ذكي',
+        amount: 179,
+        monthly_amount: 179,
+        yearly_amount: 1790,
+        extra_branch_price: 89,
+        extra_branch_yearly_price: 890,
+        tier_level: 2,
+        badge_text: 'الأكثر طلباً ⭐',
+        cumulative_note: 'كل اللي في الأساسية، وفوقها:',
         currency: 'ر.س',
-        duration_months: 6,
+        duration_months: 1,
         billing_interval: 'MONTHLY',
-        trial_days: 7,
+        trial_days: 14,
         features: [
-          'كافة مميزات الباقة الأساسية',
-          'حملات إعادة التنشيط الذكية واستعادة العملاء المنقطعين',
-          'إدارة الامتيازات والعروض الترويجية الحصرية',
-          'دعم فني أولوية عبر الواتساب',
+          'شاشة المطبخ KDS المباشرة وطباعة البونات التلقائية',
+          'شاشة العميل الذكية بالرمز السريع',
+          'برنامج الولاء ومحفظة البطاقات الرسمية (Apple Wallet & Google Wallet)',
+          'إدارة المخزون والوصفات وحساب التكاليف ونواقص المواد',
+          'قراءة فواتير الموردين بالتصوير الذكي',
+          'حساب تكلفة الأطباق وهامش صافي الربح في كل عملية',
+          'إدارة الطاولات والحجوزات والطلبات الداخلية',
+          'ربط تطبيقات التوصيل وتطبيق كابتن التوصيل 🛵',
+          'حملات إعادة استهداف العملاء عبر الواتساب',
+          'تصدير التقارير المالية التفصيلية Excel',
+          'يشمل فرع واحد رئيسي',
         ],
         active: true,
       },
       {
         id: 'a418c6e7-5749-4186-92ce-c46d721fe9ba',
         code: 'PRO',
-        name: 'الباقة الاحترافية',
-        description: 'الحل الشامل لشبكات المتاجر والفروع مع تحليلات متقدمة، كوبونات ديناميكية وربط مخصص',
-        amount: 1890,
+        name: 'الباقة الاحترافية (صرح)',
+        description: 'يطلبون منك مباشرة، وتكبر لأكثر من فرع - توسع وهوية سيادية بدون عمولات',
+        amount: 279,
+        monthly_amount: 279,
+        yearly_amount: 2790,
+        extra_branch_price: 139,
+        extra_branch_yearly_price: 1390,
+        tier_level: 3,
+        badge_text: 'الأشمل 👑',
+        cumulative_note: 'كل اللي في باقة النمو، وفوقها:',
         currency: 'ر.س',
-        duration_months: 12,
-        billing_interval: 'YEARLY',
-        trial_days: 7,
+        duration_months: 1,
+        billing_interval: 'MONTHLY',
+        trial_days: 14,
         features: [
-          'كافة مميزات الباقة المتقدمة',
-          'دعم الفروع المتعددة والموظفين غير المحدود',
-          'إدارة الكوبونات والهدايا التسويقية المتقدمة',
-          'تخصيص كامل للهوية البصرية والدومين الخاص',
+          'متجر إلكتروني ذكي للطلب والاستلام المباشر (صفر عمولة مبيعات)',
+          'صفحة حجز المواعيد والخدمات والطاولات أونلاين',
+          'تعدد الفروع مع تقارير مركزية موحدة لكل فروعك',
+          'ربط دومين مخصص خاص بمتجرك (Custom Domain)',
+          'بوابات دفع إلكترونية تابعة للتاجر (ميسر / تاب / تابي)',
+          'أولوية قصوى ودعم فني مخصص على مدار الساعة',
+          'يشمل فرعين مجاناً',
         ],
         active: true,
       },
@@ -10722,7 +10799,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           const directRes = await supabase
             .from('billing_plans')
             .select(await planCols(supabase))
-            .order('amount', { ascending: true });
+            .order('tier_level', { ascending: true });
           data = directRes.data;
           error = directRes.error;
         }
@@ -10730,7 +10807,9 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         if (!error && data && data.length > 0) {
           const formatted: BillingPlan[] = data.map((p: any) => {
             const meta = p.metadata && typeof p.metadata === 'object' ? p.metadata : {};
-            const features = Array.isArray(p.features)
+            const features = Array.isArray(p.features_list) && p.features_list.length > 0
+              ? p.features_list
+              : Array.isArray(p.features)
               ? p.features
               : Array.isArray(meta.features)
               ? meta.features
@@ -10746,12 +10825,20 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
               code: p.code || p.id,
               name: p.name,
               description: p.description || '',
-              amount: Number(p.amount) || 0,
+              amount: Number(p.amount) || Number(p.monthly_amount) || 0,
+              monthly_amount: Number(p.monthly_amount) || Number(p.amount) || 99,
+              yearly_amount: Number(p.yearly_amount) || (Number(p.monthly_amount || p.amount) * 10) || 990,
+              extra_branch_price: Number(p.extra_branch_price) || 49,
+              extra_branch_yearly_price: Number(p.extra_branch_yearly_price) || 490,
+              tier_level: Number(p.tier_level) || 1,
+              badge_text: p.badge_text || null,
+              cumulative_note: p.cumulative_note || null,
               currency: p.currency || 'ر.س',
               duration_months: durationMonths,
               billing_interval: p.billing_interval || (durationMonths === 12 ? 'YEARLY' : 'MONTHLY'),
-              trial_days: Number(p.trial_days) ?? 7,
+              trial_days: Number(p.trial_days) ?? 14,
               features,
+              features_list: features,
               active: p.active !== false,
               created_at: p.created_at,
             };
@@ -10880,15 +10967,24 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       if (updates.name !== undefined) updatePayload.name = updates.name.trim();
       if (updates.description !== undefined) updatePayload.description = updates.description;
       if (updates.amount !== undefined) updatePayload.amount = Number(updates.amount);
+      if (updates.monthly_amount !== undefined) updatePayload.monthly_amount = Number(updates.monthly_amount);
+      if (updates.yearly_amount !== undefined) updatePayload.yearly_amount = Number(updates.yearly_amount);
+      if (updates.extra_branch_price !== undefined) updatePayload.extra_branch_price = Number(updates.extra_branch_price);
+      if (updates.extra_branch_yearly_price !== undefined) updatePayload.extra_branch_yearly_price = Number(updates.extra_branch_yearly_price);
+      if (updates.tier_level !== undefined) updatePayload.tier_level = Number(updates.tier_level);
+      if (updates.badge_text !== undefined) updatePayload.badge_text = updates.badge_text;
+      if (updates.cumulative_note !== undefined) updatePayload.cumulative_note = updates.cumulative_note;
       if (updates.currency !== undefined) updatePayload.currency = updates.currency;
       if (updates.trial_days !== undefined) updatePayload.trial_days = Number(updates.trial_days);
       if (updates.active !== undefined) updatePayload.active = Boolean(updates.active);
       if (updates.duration_months !== undefined || updates.billing_interval !== undefined) {
         updatePayload.billing_interval = durationMonths === 12 ? 'YEARLY' : 'MONTHLY';
       }
-      if (updates.features !== undefined || updates.duration_months !== undefined) {
+      if (updates.features !== undefined || updates.duration_months !== undefined || updates.features_list !== undefined) {
+        const feats = updates.features_list || updates.features || existing?.features || [];
+        updatePayload.features_list = feats;
         updatePayload.metadata = {
-          features: updates.features || existing?.features || [],
+          features: feats,
           duration_months: durationMonths,
         };
       }
@@ -10924,11 +11020,19 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       name: updatedDbPlan?.name || updates.name || existing?.name || 'باقة اشتراك',
       description: updatedDbPlan?.description || updates.description || existing?.description || '',
       amount: updatedDbPlan?.amount !== undefined ? Number(updatedDbPlan.amount) : (updates.amount !== undefined ? Number(updates.amount) : existing?.amount || 0),
+      monthly_amount: updatedDbPlan?.monthly_amount !== undefined ? Number(updatedDbPlan.monthly_amount) : (updates.monthly_amount !== undefined ? Number(updates.monthly_amount) : existing?.monthly_amount || 99),
+      yearly_amount: updatedDbPlan?.yearly_amount !== undefined ? Number(updatedDbPlan.yearly_amount) : (updates.yearly_amount !== undefined ? Number(updates.yearly_amount) : existing?.yearly_amount || 990),
+      extra_branch_price: updatedDbPlan?.extra_branch_price !== undefined ? Number(updatedDbPlan.extra_branch_price) : (updates.extra_branch_price !== undefined ? Number(updates.extra_branch_price) : existing?.extra_branch_price || 49),
+      extra_branch_yearly_price: updatedDbPlan?.extra_branch_yearly_price !== undefined ? Number(updatedDbPlan.extra_branch_yearly_price) : (updates.extra_branch_yearly_price !== undefined ? Number(updates.extra_branch_yearly_price) : existing?.extra_branch_yearly_price || 490),
+      tier_level: updatedDbPlan?.tier_level !== undefined ? Number(updatedDbPlan.tier_level) : (updates.tier_level !== undefined ? Number(updates.tier_level) : existing?.tier_level || 1),
+      badge_text: updatedDbPlan?.badge_text !== undefined ? updatedDbPlan.badge_text : (updates.badge_text !== undefined ? updates.badge_text : existing?.badge_text || null),
+      cumulative_note: updatedDbPlan?.cumulative_note !== undefined ? updatedDbPlan.cumulative_note : (updates.cumulative_note !== undefined ? updates.cumulative_note : existing?.cumulative_note || null),
       currency: updatedDbPlan?.currency || updates.currency || existing?.currency || 'ر.س',
       duration_months: finalDurationMonths,
       billing_interval: updatedDbPlan?.billing_interval || (finalDurationMonths === 12 ? 'YEARLY' : 'MONTHLY'),
       trial_days: updatedDbPlan?.trial_days !== undefined ? Number(updatedDbPlan.trial_days) : (updates.trial_days !== undefined ? Number(updates.trial_days) : 7),
       features: Array.isArray(meta.features) ? meta.features : (updates.features || existing?.features || []),
+      features_list: Array.isArray(meta.features) ? meta.features : (updates.features || existing?.features || []),
       active: updatedDbPlan?.active !== undefined ? updatedDbPlan.active : (updates.active !== undefined ? updates.active : true),
       created_at: updatedDbPlan?.created_at || existing?.created_at,
     };

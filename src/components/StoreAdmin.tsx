@@ -567,6 +567,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [updatingSettings, setUpdatingSettings] = useState(false);
   const [settingsSavedMessage, setSettingsSavedMessage] = useState<string | null>(null);
   const [allPlans, setAllPlans] = useState<BillingPlan[]>(() => LoyaltyService.getAllSubscriptionPlansSync());
+  const [merchantBillingCycle, setMerchantBillingCycle] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1290,47 +1291,41 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     });
   };
 
-  const handleUpgradePlan = (plan: BillingPlan) => {
-    const isPaid = isPaidActive;
+  const handleUpgradePlan = async (plan: BillingPlan) => {
+    const planKey = plan.id || plan.code || plan.name;
+    setIsUpgradingPlanId(planKey);
+    try {
+      const targetCycle = merchantBillingCycle;
+      const upgradeRes = await LoyaltyService.calculateSubscriptionUpgradeRpc(
+        store.id,
+        plan.id || plan.code || '',
+        targetCycle
+      );
 
-    const currentPlan = isPaid
-      ? allPlans.find(
-          (p) =>
-            (p.id && (p.id === (store as any).subscription_plan_id || p.id === (store as any).plan_id)) ||
-            (p.code && (p.code === (store as any).plan_code || p.code === (store as any).plan_id)) ||
-            (p.name && (store as any).subscription_plan && (p.name === (store as any).subscription_plan || (store as any).subscription_plan.includes(p.name) || p.name.includes((store as any).subscription_plan))) ||
-            (p.amount && (store as any).renewal_amount && p.amount === (store as any).renewal_amount)
-        ) || (allPlans.length > 0 ? allPlans[0] : null)
-      : null;
-
-    // 🛡️ صمام أمان حتمي: منع ترقية المتجر إلى باقته الحالية أو أي باقة سابقة/أدنى سعراً
-    if (isPaid && currentPlan) {
-      const isCurrent =
-        (plan.id && (plan.id === currentPlan.id || plan.id === (store as any).subscription_plan_id)) ||
-        (plan.code && (plan.code === currentPlan.code || plan.code === (store as any).plan_code)) ||
-        plan.name === currentPlan.name;
-      if (isCurrent || plan.amount <= currentPlan.amount) {
+      if (!upgradeRes.success) {
+        alert(upgradeRes.error || 'تعذر معالجة طلب الترقية.');
         return;
       }
+
+      const netAmount = upgradeRes.net_amount ?? (targetCycle === 'YEARLY' ? (plan.yearly_amount ?? plan.amount * 10) : (plan.monthly_amount ?? plan.amount));
+      const hasCredit = (upgradeRes.unused_credit ?? 0) > 0;
+      const desc = hasCredit
+        ? `ترقية إلى "${plan.name}" ودفع فرق الباقة (${netAmount.toLocaleString()} ر.س مع خصم ${upgradeRes.unused_credit?.toLocaleString()} ر.س قيمة باقتك السابقة)`
+        : `تفعيل باقة "${plan.name}" ومميزاتها المتقدمة (${targetCycle === 'YEARLY' ? 'سنوي - شامل شهرين مجاناً 🎁' : 'شهري'})`;
+
+      setSandboxPaymentConfig({
+        isOpen: true,
+        title: `ترقية باقة المتجر إلى ${plan.name} (${targetCycle === 'YEARLY' ? 'سنوي' : 'شهري'})`,
+        itemDescription: desc,
+        amount: netAmount,
+        invoiceType: 'upgrade',
+        planId: plan.id || plan.code,
+      });
+    } catch (e: any) {
+      alert(e?.message || 'حدث خطأ أثناء بدء عملية الترقية');
+    } finally {
+      setIsUpgradingPlanId(null);
     }
-
-    const proration = currentPlan
-      ? LoyaltyService.calculateProratedUpgrade(store, currentPlan, plan)
-      : null;
-
-    const finalAmount = proration && proration.hasProrationDiscount ? proration.netUpgradeAmount : plan.amount;
-    const desc = proration && proration.hasProrationDiscount
-      ? `ترقية إلى "${plan.name}" ودفع فرق الباقة (${proration.netUpgradeAmount.toLocaleString()} ر.س مع خصم ${proration.unusedCredit.toLocaleString()} ر.س قيمة الباقة السابقة)`
-      : `تفعيل باقة "${plan.name}" ومميزاتها المتقدمة`;
-
-    setSandboxPaymentConfig({
-      isOpen: true,
-      title: `ترقية باقة المتجر إلى ${plan.name}`,
-      itemDescription: desc,
-      amount: finalAmount,
-      invoiceType: 'upgrade',
-      planId: plan.id || plan.code,
-    });
   };
 
   const handleNavigateToBilling = () => {
@@ -11164,7 +11159,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               );
             })()}
 
-            {/* 🚀 Active Plans Comparison & Upgrade Section (عرض الباقات المتاحة للترقية) */}
+            {/* 🚀 Active Plans Comparison & Upgrade Section (عرض الباقات المتاحة للترقية بتصميم ركين المرن) */}
             <div id="merchant-billing-packages" className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 shadow-xl space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
                 <div className="flex items-center space-x-3.5 rtl:space-x-reverse">
@@ -11185,6 +11180,35 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     </p>
                   </div>
                 </div>
+
+                {/* 🔄 Billing Cycle Switcher (شهري / سنوي - شهرين مجاناً) */}
+                <div className="p-1 rounded-full bg-slate-950 border border-slate-800 flex items-center text-xs font-bold self-center sm:self-auto shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => setMerchantBillingCycle('MONTHLY')}
+                    className={`px-5 py-2 rounded-full transition-all duration-200 ${
+                      merchantBillingCycle === 'MONTHLY'
+                        ? 'bg-amber-500 text-slate-950 font-black shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    شهري
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMerchantBillingCycle('YEARLY')}
+                    className={`px-5 py-2 rounded-full transition-all duration-200 flex items-center gap-1.5 ${
+                      merchantBillingCycle === 'YEARLY'
+                        ? 'bg-emerald-500 text-slate-950 font-black shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <span>سنوي</span>
+                    <span className="text-[10px] bg-slate-950 text-emerald-400 px-2 py-0.5 rounded-full font-black">
+                      شهرين مجاناً 🎁
+                    </span>
+                  </button>
+                </div>
               </div>
 
               {activePlans.length === 0 ? (
@@ -11194,33 +11218,43 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {activePlans.map((plan) => {
+                    const isYearly = merchantBillingCycle === 'YEARLY';
+                    const planDisplayPrice = isYearly
+                      ? (plan.yearly_amount ?? ((plan.monthly_amount || plan.amount) * 10))
+                      : (plan.monthly_amount ?? plan.amount);
+
                     const isCurrent =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
                       currentPaidPlan !== null &&
                       (plan.id === currentPaidPlan.id || (Boolean(plan.code) && plan.code === currentPaidPlan.code) || plan.name === currentPaidPlan.name);
 
+                    const currentPlanTier = currentPaidPlan?.tier_level ?? 1;
+                    const thisPlanTier = plan.tier_level ?? 1;
+
                     const isLowerTier =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
                       currentPaidPlan !== null &&
                       !isCurrent &&
-                      plan.amount < currentPaidPlan.amount;
+                      thisPlanTier <= currentPlanTier;
 
                     const isHigherTier =
                       !isTrial &&
                       Boolean(store.setup_fee_paid) &&
                       currentPaidPlan !== null &&
                       !isCurrent &&
-                      plan.amount > currentPaidPlan.amount;
+                      thisPlanTier > currentPlanTier;
 
                     const planKey = plan.id || plan.code || plan.name;
                     const isUpgradingThis = isUpgradingPlanId === planKey;
 
                     const proration =
                       isHigherTier && currentPaidPlan
-                        ? LoyaltyService.calculateProratedUpgrade(store, currentPaidPlan, plan)
+                        ? LoyaltyService.calculateProratedUpgrade(store, currentPaidPlan, plan, merchantBillingCycle)
                         : null;
+
+                    const isFeatured = plan.code === 'ADVANCED' || Boolean(plan.badge_text);
 
                     return (
                       <div
@@ -11228,23 +11262,29 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         className={`rounded-3xl p-6 sm:p-7 space-y-6 flex flex-col justify-between transition-all duration-300 relative ${
                           isCurrent
                             ? 'bg-gradient-to-b from-slate-900 to-slate-950 border-2 border-emerald-500 shadow-2xl shadow-emerald-500/20 ring-2 ring-emerald-500/30'
+                            : isFeatured
+                            ? 'bg-gradient-to-b from-slate-900 to-slate-950 border-2 border-amber-500/60 shadow-xl shadow-amber-500/10'
                             : isLowerTier
                             ? 'bg-slate-950/50 border border-slate-800/80 opacity-75'
                             : 'bg-slate-950/80 border border-slate-800 hover:border-amber-500/40 hover:shadow-lg'
                         }`}
                       >
-                        {isCurrent && (
+                        {isCurrent ? (
                           <div className="absolute -top-3.5 right-6 px-4 py-1.5 rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 text-slate-950 text-xs font-black shadow-lg shadow-emerald-500/30 flex items-center gap-1.5 animate-bounce">
                             <CheckCircle2 className="w-4 h-4 text-slate-950 stroke-[2.5]" />
                             <span>باقتك الحالية النشطة ✅</span>
                           </div>
-                        )}
+                        ) : plan.badge_text ? (
+                          <div className="absolute -top-3.5 right-6 px-3.5 py-1 rounded-full bg-gradient-to-r from-amber-500 to-amber-300 text-slate-950 text-[11px] font-black shadow-lg shadow-amber-500/20">
+                            {plan.badge_text}
+                          </div>
+                        ) : null}
 
                         <div className="space-y-4">
-                          {/* Plan Duration Badge */}
+                          {/* Plan Duration / Tier Badge */}
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 font-mono">
-                              🗓️ {getPlanDurationLabel(plan)}
+                              {isYearly ? '🗓️ اشتراك سنوي (12 شهر)' : '🗓️ اشتراك شهري'}
                             </span>
 
                             {isLowerTier ? (
@@ -11257,7 +11297,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                               </span>
                             ) : plan.trial_days && plan.trial_days > 0 ? (
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                                تجربة {plan.trial_days} أيام
+                                تجربة {plan.trial_days} يوم
                               </span>
                             ) : null}
                           </div>
@@ -11291,27 +11331,53 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                               <div className="pt-2 border-t border-slate-800/80 space-y-1 text-[11px]">
                                 <div className="flex items-center justify-between text-slate-400">
-                                  <span>السعر الأساسي للباقة:</span>
-                                  <span className="font-mono">{plan.amount.toLocaleString()} ر.س</span>
+                                  <span>السعر الأساسي ({isYearly ? 'سنوي' : 'شهري'}):</span>
+                                  <span className="font-mono">{planDisplayPrice.toLocaleString()} ر.س</span>
                                 </div>
                                 <div className="flex items-center justify-between text-emerald-400 font-bold">
-                                  <span>💡 خصم قيمة الباقة السابقة:</span>
+                                  <span>💡 رصيد باقتك السابقة المخصوم:</span>
                                   <span className="font-mono">-{proration.unusedCredit.toLocaleString()} ر.س</span>
                                 </div>
                               </div>
                             </div>
                           ) : (
-                            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 flex items-baseline justify-between">
-                              <div>
-                                <span className={`text-3xl font-black font-mono ${isLowerTier ? 'text-slate-400' : 'text-amber-400'}`}>
-                                  {plan.amount.toLocaleString()}
-                                </span>
-                                <span className="text-xs text-slate-400 font-bold mr-1.5">
-                                  {plan.currency || 'ر.س'}
+                            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800/90 space-y-1.5">
+                              <div className="flex items-baseline justify-between">
+                                <div>
+                                  <span className={`text-3xl font-black font-mono ${isLowerTier ? 'text-slate-400' : 'text-amber-400'}`}>
+                                    {planDisplayPrice.toLocaleString()}
+                                  </span>
+                                  <span className="text-xs text-slate-400 font-bold mr-1.5">
+                                    {plan.currency || 'ر.س'}
+                                  </span>
+                                </div>
+                                <span className="text-xs text-slate-400 font-medium">
+                                  / {isYearly ? 'سنوياً' : 'شهرياً'}
                                 </span>
                               </div>
-                              <span className="text-xs text-slate-400 font-medium">
-                                / {getPlanPriceSuffix(plan)}
+                              {isYearly && (
+                                <div className="text-[10px] text-emerald-400 font-bold flex items-center justify-between">
+                                  <span>وفرت قيمة شهرين كاملين 🎉</span>
+                                  <span className="font-mono">توفير {(plan.monthly_amount ? plan.monthly_amount * 2 : 198)} ر.س</span>
+                                </div>
+                              )}
+                              {(plan.extra_branch_price !== undefined && plan.extra_branch_price > 0) && (
+                                <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-800/60 flex items-center justify-between">
+                                  <span>فرع إضافي:</span>
+                                  <span className="font-mono text-slate-300">
+                                    +{isYearly ? (plan.extra_branch_yearly_price ?? plan.extra_branch_price * 10) : plan.extra_branch_price} ر.س / {isYearly ? 'سنوياً' : 'شهرياً'}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Cumulative Note (e.g. "كل اللي في الأساسية، وفوقها:") */}
+                          {plan.cumulative_note && (
+                            <div className="pt-2">
+                              <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                                <span>⚡</span>
+                                <span>{plan.cumulative_note}</span>
                               </span>
                             </div>
                           )}
@@ -11320,7 +11386,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                           <div className="space-y-2 pt-2 border-t border-slate-800/60">
                             <span className="text-[11px] font-bold text-slate-400 block">المميزات المضمنة:</span>
                             <ul className="space-y-2 text-xs text-slate-300">
-                              {(plan.features || []).map((feat, fIdx) => (
+                              {(plan.features_list && plan.features_list.length > 0 ? plan.features_list : (plan.features || [])).map((feat, fIdx) => (
                                 <li key={fIdx} className="flex items-start gap-2 leading-relaxed">
                                   <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
                                   <span>{feat}</span>
@@ -11352,22 +11418,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                               {isUpgradingThis ? (
                                 <>
                                   <RefreshCw className="w-4 h-4 animate-spin" />
-                                  <span>جاري المعالجة...</span>
+                                  <span>جاري حساب الترقية...</span>
                                 </>
                               ) : isTrial ? (
                                 <>
                                   <Zap className="w-4 h-4" />
                                   <span>الاشتراك وتفعيل هذه الباقة 🚀</span>
                                 </>
-                              ) : proration && proration.hasProrationDiscount ? (
+                              ) : isHigherTier ? (
                                 <>
                                   <Zap className="w-4 h-4" />
-                                  <span>ترقية وسداد فرق الباقة ({proration.netUpgradeAmount.toLocaleString()} ر.س) 🚀</span>
+                                  <span>ترقية الآن (ادفع الفرق فقط ⚡)</span>
                                 </>
                               ) : (
                                 <>
                                   <Zap className="w-4 h-4" />
-                                  <span>ترقية إلى هذه الباقة ({plan.amount.toLocaleString()} ر.س) 🚀</span>
+                                  <span>تفعيل هذه الباقة 🚀</span>
                                 </>
                               )}
                             </button>

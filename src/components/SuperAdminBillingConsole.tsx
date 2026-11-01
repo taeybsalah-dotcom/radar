@@ -162,13 +162,18 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
   const [isRefundModalOpen, setIsRefundModalOpen] = useState(false);
   const [selectedInvoiceForRefund, setSelectedInvoiceForRefund] = useState<StoreInvoice | null>(null);
 
-  // Plan Form State
+  // Plan Form State (Modern Rakeen-Style Flexible Tiering)
   const [planName, setPlanName] = useState('');
-  const [planDurationMonths, setPlanDurationMonths] = useState<number | ''>(1);
-  const [planAmount, setPlanAmount] = useState<number | ''>(195);
+  const [planMonthlyAmount, setPlanMonthlyAmount] = useState<number | ''>(99);
+  const [planYearlyAmount, setPlanYearlyAmount] = useState<number | ''>(990);
+  const [planExtraBranchPrice, setPlanExtraBranchPrice] = useState<number | ''>(49);
+  const [planExtraBranchYearlyPrice, setPlanExtraBranchYearlyPrice] = useState<number | ''>(490);
+  const [planTierLevel, setPlanTierLevel] = useState<number | ''>(1);
+  const [planBadgeText, setPlanBadgeText] = useState('');
+  const [planCumulativeNote, setPlanCumulativeNote] = useState('');
   const [planFeaturesText, setPlanFeaturesText] = useState('');
   const [planDescription, setPlanDescription] = useState('');
-  const [planTrialDays, setPlanTrialDays] = useState<number | ''>(7);
+  const [planTrialDays, setPlanTrialDays] = useState<number | ''>(14);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
 
   // Manual Adjustment Form State
@@ -350,31 +355,41 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
   const handleOpenAddPlan = () => {
     setEditingPlan(null);
     setPlanName('');
-    setPlanDurationMonths(1);
-    setPlanAmount(195);
-    setPlanDescription('');
+    setPlanMonthlyAmount(99);
+    setPlanYearlyAmount(990);
+    setPlanExtraBranchPrice(49);
+    setPlanExtraBranchYearlyPrice(490);
+    setPlanTierLevel(1);
+    setPlanBadgeText('');
+    setPlanCumulativeNote('');
+    setPlanDescription('تبيع، وتطبع، وتقفّل يومك - كاشير سريع وفاتورة ضريبية متوافقة');
     setPlanFeaturesText(
-      'بطاقات ولاء رقمية (PWA) بدون تحميل تطبيق\nكاشير سريع لمسح الباركود وصرف النقاط\nنظام رتب ومستويات (Tiers) ذكي\nاستهداف العملاء المنقطعين تلقائياً\nدعم فني مخصص'
+      'كاشير سحابي سريع (POS) متوافق 100% مع هيئة الزكاة\nفواتير ضريبية مبسطة مع رمز الاستجابة السريع QR\nالعمل عند انقطاع الإنترنت (Offline Mode)\nإغلاق الورديات وتقفيل الصندوق واليوميات\nإدارة المنيو والتصنيفات والمنتجات غير المحدودة'
     );
-    setPlanTrialDays(7);
+    setPlanTrialDays(14);
     setIsPlanModalOpen(true);
   };
 
   const handleOpenEditPlan = (plan: BillingPlan) => {
     setEditingPlan(plan);
     setPlanName(plan.name);
-    const months = plan.duration_months ?? (plan.billing_interval === 'YEARLY' ? 12 : 1);
-    setPlanDurationMonths(months);
-    setPlanAmount(plan.amount);
+    setPlanMonthlyAmount(plan.monthly_amount ?? plan.amount);
+    setPlanYearlyAmount(plan.yearly_amount ?? (plan.monthly_amount ? plan.monthly_amount * 10 : plan.amount * 10));
+    setPlanExtraBranchPrice(plan.extra_branch_price ?? 49);
+    setPlanExtraBranchYearlyPrice(plan.extra_branch_yearly_price ?? 490);
+    setPlanTierLevel(plan.tier_level ?? 1);
+    setPlanBadgeText(plan.badge_text || '');
+    setPlanCumulativeNote(plan.cumulative_note || '');
     setPlanDescription(plan.description || '');
-    setPlanFeaturesText((plan.features || []).join('\n'));
-    setPlanTrialDays(plan.trial_days ?? 7);
+    const feats = plan.features_list && plan.features_list.length > 0 ? plan.features_list : (plan.features || []);
+    setPlanFeaturesText(feats.join('\n'));
+    setPlanTrialDays(plan.trial_days ?? 14);
     setIsPlanModalOpen(true);
   };
 
   const handleSavePlanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!planName.trim() || planAmount === '' || planDurationMonths === '') return;
+    if (!planName.trim() || planMonthlyAmount === '' || planYearlyAmount === '') return;
 
     setIsSavingPlan(true);
     try {
@@ -383,17 +398,26 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
         .map((f) => f.trim())
         .filter((f) => f.length > 0);
 
-      const months = Math.max(1, Math.floor(Number(planDurationMonths)));
-      const interval = months === 12 ? 'YEARLY' : 'MONTHLY';
+      const mAmount = Number(planMonthlyAmount);
+      const yAmount = Number(planYearlyAmount);
+      const bPrice = Number(planExtraBranchPrice) || 0;
+      const bYPrice = Number(planExtraBranchYearlyPrice) || (bPrice * 10);
+      const tLevel = Number(planTierLevel) || 1;
 
       if (editingPlan && editingPlan.id) {
         const updated = await LoyaltyService.updateSubscriptionPlan(editingPlan.id, {
           name: planName.trim(),
-          duration_months: months,
-          billing_interval: interval,
-          amount: Number(planAmount),
+          amount: mAmount,
+          monthly_amount: mAmount,
+          yearly_amount: yAmount,
+          extra_branch_price: bPrice,
+          extra_branch_yearly_price: bYPrice,
+          tier_level: tLevel,
+          badge_text: planBadgeText.trim() || null,
+          cumulative_note: planCumulativeNote.trim() || null,
           description: planDescription.trim(),
           features: cleanFeatures,
+          features_list: cleanFeatures,
           trial_days: Number(planTrialDays) || 0,
         });
         setPlans(plans.map((p) => (p.id === editingPlan.id ? updated : p)));
@@ -401,12 +425,18 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
       } else {
         const created = await LoyaltyService.addSubscriptionPlan({
           name: planName.trim(),
-          duration_months: months,
-          billing_interval: interval,
-          amount: Number(planAmount),
+          amount: mAmount,
+          monthly_amount: mAmount,
+          yearly_amount: yAmount,
+          extra_branch_price: bPrice,
+          extra_branch_yearly_price: bYPrice,
+          tier_level: tLevel,
+          badge_text: planBadgeText.trim() || null,
+          cumulative_note: planCumulativeNote.trim() || null,
           currency: 'ر.س',
           description: planDescription.trim(),
           features: cleanFeatures,
+          features_list: cleanFeatures,
           trial_days: Number(planTrialDays) || 0,
           active: true,
         });
@@ -1796,9 +1826,16 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
               >
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl border bg-amber-500/10 text-amber-300 border-amber-500/30 font-mono">
-                      🗓️ {getPlanDurationLabel(plan)}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl border bg-amber-500/10 text-amber-300 border-amber-500/30 font-mono">
+                        المستوى {plan.tier_level ?? 1}
+                      </span>
+                      {plan.badge_text && (
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                          {plan.badge_text}
+                        </span>
+                      )}
+                    </div>
                     <span
                       className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${
                         plan.active !== false
@@ -1813,17 +1850,41 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
 
                   <div>
                     <h5 className="text-lg font-black text-white">{plan.name}</h5>
+                    {plan.cumulative_note && (
+                      <p className="text-[11px] text-amber-400 font-bold mt-0.5">{plan.cumulative_note}</p>
+                    )}
                     {plan.description && (
                       <p className="text-xs text-slate-400 mt-1 line-clamp-2 leading-relaxed">{plan.description}</p>
                     )}
                   </div>
 
-                  <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-baseline justify-between">
-                    <div>
-                      <span className="text-3xl font-black text-amber-400 font-mono">{plan.amount.toLocaleString()}</span>
-                      <span className="text-xs text-slate-400 font-bold mr-1.5">{plan.currency || 'ر.س'}</span>
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-baseline justify-between">
+                      <div>
+                        <span className="text-2xl font-black text-amber-400 font-mono">
+                          {(plan.monthly_amount ?? plan.amount).toLocaleString()}
+                        </span>
+                        <span className="text-xs text-slate-400 font-bold mr-1.5">{plan.currency || 'ر.س'}</span>
+                      </div>
+                      <span className="text-xs text-slate-400 font-medium">/ شهرياً</span>
                     </div>
-                    <span className="text-xs text-slate-400 font-medium">/ {getPlanPriceSuffix(plan)}</span>
+
+                    <div className="flex items-baseline justify-between pt-1.5 border-t border-slate-800/80">
+                      <div>
+                        <span className="text-xl font-black text-emerald-400 font-mono">
+                          {(plan.yearly_amount ?? ((plan.monthly_amount || plan.amount) * 10)).toLocaleString()}
+                        </span>
+                        <span className="text-xs text-slate-400 font-bold mr-1.5">{plan.currency || 'ر.س'}</span>
+                      </div>
+                      <span className="text-xs text-emerald-400/90 font-medium">/ سنوياً (وفر شهرين)</span>
+                    </div>
+
+                    {(plan.extra_branch_price !== undefined && plan.extra_branch_price > 0) && (
+                      <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-800/60 flex items-center justify-between">
+                        <span>فرع إضافي:</span>
+                        <span className="font-mono text-white">+{plan.extra_branch_price} ر.س / شهرياً</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2 pt-1">
@@ -2780,42 +2841,121 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
             </div>
 
             <form onSubmit={handleSavePlanSubmit} className="space-y-4 text-xs">
-              <div>
-                <label className="text-slate-400 font-bold block mb-1.5">اسم الباقة (Plan Name):</label>
-                <input
-                  type="text"
-                  value={planName}
-                  onChange={(e) => setPlanName(e.target.value)}
-                  placeholder="مثال: باقة النمو VIP (3 أشهر)"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-amber-500 font-bold"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-slate-400 font-bold block mb-1.5">المدة بالأشهر:</label>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="text-slate-400 font-bold block mb-1.5">اسم الباقة (Plan Name):</label>
                   <input
-                    type="number"
-                    min="1"
-                    dir="ltr"
-                    value={planDurationMonths}
-                    onChange={(e) => setPlanDurationMonths(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono font-bold outline-none focus:border-amber-500 text-right"
+                    type="text"
+                    value={planName}
+                    onChange={(e) => setPlanName(e.target.value)}
+                    placeholder="مثال: باقة النمو (عماد)"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white outline-none focus:border-amber-500 font-bold"
                     required
                   />
                 </div>
-
                 <div>
-                  <label className="text-slate-400 font-bold block mb-1.5">السعر الإجمالي (ر.س):</label>
+                  <label className="text-slate-400 font-bold block mb-1.5">المستوى (Tier):</label>
+                  <select
+                    value={planTierLevel}
+                    onChange={(e) => setPlanTierLevel(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-amber-400 font-bold outline-none focus:border-amber-500"
+                  >
+                    <option value={1}>1 (أساس)</option>
+                    <option value={2}>2 (عماد)</option>
+                    <option value={3}>3 (صرح)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Monthly vs Yearly Pricing */}
+              <div className="grid grid-cols-2 gap-4 p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">السعر الشهري (ر.س):</label>
                   <input
                     type="number"
                     min="0"
                     dir="ltr"
-                    value={planAmount}
-                    onChange={(e) => setPlanAmount(e.target.value ? Number(e.target.value) : '')}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-amber-400 font-mono font-bold outline-none focus:border-amber-500 text-right"
+                    value={planMonthlyAmount}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : '';
+                      setPlanMonthlyAmount(val);
+                      if (val !== '' && typeof val === 'number') {
+                        setPlanYearlyAmount(val * 10); // Auto 2 months free calculation
+                      }
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-amber-400 font-mono font-bold outline-none focus:border-amber-500 text-right"
                     required
+                  />
+                  <span className="text-[10px] text-slate-500 mt-1 block">دورة فوترة شهرية</span>
+                </div>
+
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">السعر السنوي (ر.س):</label>
+                  <input
+                    type="number"
+                    min="0"
+                    dir="ltr"
+                    value={planYearlyAmount}
+                    onChange={(e) => setPlanYearlyAmount(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-slate-900 border border-emerald-500/40 rounded-xl px-3 py-2 text-emerald-400 font-mono font-bold outline-none focus:border-emerald-500 text-right"
+                    required
+                  />
+                  <span className="text-[10px] text-emerald-500 mt-1 block">شامل خصم شهرين مجاناً 🎁</span>
+                </div>
+              </div>
+
+              {/* Extra Branch Prices */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">سعر الفرع الإضافي شهرياً (ر.س):</label>
+                  <input
+                    type="number"
+                    min="0"
+                    dir="ltr"
+                    value={planExtraBranchPrice}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : '';
+                      setPlanExtraBranchPrice(val);
+                      if (val !== '' && typeof val === 'number') {
+                        setPlanExtraBranchYearlyPrice(val * 10);
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-amber-500 text-right"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">سعر الفرع الإضافي سنوياً (ر.س):</label>
+                  <input
+                    type="number"
+                    min="0"
+                    dir="ltr"
+                    value={planExtraBranchYearlyPrice}
+                    onChange={(e) => setPlanExtraBranchYearlyPrice(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono outline-none focus:border-amber-500 text-right"
+                  />
+                </div>
+              </div>
+
+              {/* Badge & Cumulative Note */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">وسام التمييز (Badge):</label>
+                  <input
+                    type="text"
+                    value={planBadgeText}
+                    onChange={(e) => setPlanBadgeText(e.target.value)}
+                    placeholder="مثلاً: الأكثر طلباً ⭐"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 font-bold block mb-1.5">الملاحظة التراكمية:</label>
+                  <input
+                    type="text"
+                    value={planCumulativeNote}
+                    onChange={(e) => setPlanCumulativeNote(e.target.value)}
+                    placeholder="مثلاً: كل اللي في الأساسية، وفوقها:"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white outline-none focus:border-amber-500"
                   />
                 </div>
               </div>
@@ -2828,7 +2968,7 @@ export const SuperAdminBillingConsole: React.FC<SuperAdminBillingConsoleProps> =
                   dir="ltr"
                   value={planTrialDays}
                   onChange={(e) => setPlanTrialDays(e.target.value ? Number(e.target.value) : '')}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-white font-mono outline-none focus:border-amber-500 text-right"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 text-white font-mono outline-none focus:border-amber-500 text-right"
                 />
               </div>
 
