@@ -8918,6 +8918,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         recruited_by_partner_id: p.recruited_by_partner_id || null,
         stores_count: p.stores_count || 0,
         sub_partners_count: p.sub_partners_count || 0,
+        sub_partners_stores_count: p.sub_partners_stores_count || 0,
         target_value: p.target_value || localPartnerMatch?.target_value || 20,
         created_at: p.created_at || localPartnerMatch?.created_at || new Date().toISOString(),
         affiliates: {
@@ -8971,6 +8972,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
               recruited_by_partner_id: item.recruited_by_partner_id ?? localMatch?.recruited_by_partner_id ?? null,
               stores_count: item.stores_count ?? localMatch?.stores_count ?? 0,
               sub_partners_count: item.sub_partners_count ?? localMatch?.sub_partners_count ?? 0,
+              sub_partners_stores_count: item.sub_partners_stores_count ?? localMatch?.sub_partners_stores_count ?? 0,
               target_value: item.target_value ?? localMatch?.target_value ?? 20,
               active: item.active !== false && item.status !== 'SUSPENDED' && localMatch?.active !== false,
               created_at: item.created_at || localMatch?.created_at || new Date().toISOString(),

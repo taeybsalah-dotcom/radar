@@ -1373,7 +1373,7 @@ ${origin}/join?ref=${refCode}`;
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span 
                           className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-black text-xs flex items-center gap-1"
-                          title={`عدد المتاجر المحققة: ${p.stores_count || 0}`}
+                          title={`عدد المتاجر المباشرة: ${p.stores_count || 0}`}
                         >
                           <span>🏪</span>
                           <span>{p.stores_count || 0}</span>
@@ -1384,6 +1384,13 @@ ${origin}/join?ref=${refCode}`;
                         >
                           <span>👥</span>
                           <span>{p.sub_partners_count || 0}</span>
+                        </span>
+                        <span 
+                          className="px-2 py-0.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-black text-xs flex items-center gap-1"
+                          title={`متاجر الشركاء المستقطبين (شبكة الفريق): ${p.sub_partners_stores_count || 0}`}
+                        >
+                          <span>🏬</span>
+                          <span>{p.sub_partners_stores_count || 0}</span>
                         </span>
                       </div>
                     </div>
@@ -1782,11 +1789,14 @@ ${origin}/join?ref=${refCode}`;
 
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-bold text-xs" title="عدد المتاجر المحققة">
+                          <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-bold text-xs" title="عدد المتاجر المباشرة">
                             🏪 {p.stores_count || 0}
                           </span>
                           <span className="px-2 py-0.5 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono font-bold text-xs" title="عدد الشركاء المستقطبين">
                             👥 {p.sub_partners_count || 0}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono font-bold text-xs" title="متاجر الشركاء المستقطبين (الفريق)">
+                            🏬 {p.sub_partners_stores_count || 0}
                           </span>
                         </div>
                         <span className="text-[10px] text-slate-400 font-mono block mt-1">
