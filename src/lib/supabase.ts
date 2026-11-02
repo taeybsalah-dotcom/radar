@@ -1939,6 +1939,22 @@ export const LoyaltyService = {
     const supabase = getSupabaseClient();
     if (!supabase) return defaultCfg;
     try {
+      // 🛡️ استعلام سيرفري مؤمن عبر RPC لتخطي أي قيود RLS على platform_integrations
+      const { data: rpcData, error: rpcErr } = await (supabase.rpc as any)('get_platform_integrations_secure');
+      if (!rpcErr && rpcData) {
+        return {
+          ...defaultCfg,
+          ...rpcData,
+          whatsapp_tier_1000_price: rpcData.whatsapp_tier_1000_price !== undefined && rpcData.whatsapp_tier_1000_price !== null
+            ? Number(rpcData.whatsapp_tier_1000_price)
+            : localPrice,
+          apple_pass_type_id: rpcData.apple_pass_type_id || defaultCfg.apple_pass_type_id,
+          apple_team_id: rpcData.apple_team_id || defaultCfg.apple_team_id,
+          google_issuer_id: rpcData.google_issuer_id || defaultCfg.google_issuer_id,
+          google_client_email: rpcData.google_client_email || defaultCfg.google_client_email,
+        };
+      }
+
       const { data, error } = await (supabase.from as any)('platform_integrations').select('*').limit(1).maybeSingle();
       if (error || !data) return defaultCfg;
       return { 
@@ -2087,6 +2103,15 @@ export const LoyaltyService = {
         };
         localStorage.setItem('radar_platform_wallet_credentials', JSON.stringify(publicWalletFields));
       } catch {}
+
+      // 🛡️ حفظ وتحديث سيرفري موثوق عبر RPC مؤمن (يتجاوز قيود RLS بأمان تام للسيادة)
+      const { data: rpcSaveRes, error: rpcSaveErr } = await (supabase.rpc as any)('save_platform_integrations_secure', {
+        p_config: updated,
+      });
+
+      if (!rpcSaveErr && rpcSaveRes && rpcSaveRes.success) {
+        return { success: true, bot_username: rpcSaveRes.bot_username || updated.telegram_bot_username };
+      }
 
       const { error } = await (supabase.from as any)('platform_integrations').upsert(updated);
 

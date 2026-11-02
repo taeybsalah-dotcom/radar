@@ -170,44 +170,40 @@ export class WalletPassService {
   /**
    * حفظ وتحديث إعدادات بطاقة المحفظة (حفظ محلي فوري + مزامنة سحابية في Supabase)
    */
-  static saveWalletConfig(storeId: string, partial: Partial<StoreWalletPassConfig>): StoreWalletPassConfig {
-    const current = this.getWalletConfig({ id: storeId, name: '' } as any);
+  static saveWalletConfig(
+    storeOrId: Store | string,
+    partial: Partial<StoreWalletPassConfig>,
+    existingConfig?: StoreWalletPassConfig
+  ): StoreWalletPassConfig {
+    const storeId = typeof storeOrId === 'string' ? storeOrId : storeOrId?.id;
+    const storeSlug = typeof storeOrId === 'object' ? storeOrId?.slug : undefined;
+    const storeObj = typeof storeOrId === 'object' ? storeOrId : ({ id: storeId, name: '' } as Store);
+
+    const current = existingConfig || this.getWalletConfig(storeObj);
     const updated: StoreWalletPassConfig = {
       ...current,
       ...partial,
       updated_at: new Date().toISOString(),
     };
 
-    // 1. Fast synchronous local storage update
+    // 1. Fast synchronous local storage update (both ID and Slug keys)
     try {
-      localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(updated));
+      if (storeId) localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(updated));
+      if (storeSlug) localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeSlug}`, JSON.stringify(updated));
     } catch (e) {
       console.warn('Failed to save wallet pass config locally:', e);
     }
 
-    // 2. Asynchronous Cloud Sync with Supabase (Dual-write redundancy)
+    // 2. Asynchronous Cloud Sync with Supabase via secure RPC
     const supabase = getSupabaseClient();
-    if (supabase && storeId) {
-      // A. Write directly via secure RPC into stores.fulfillment_settings
+    const targetKey = storeId || storeSlug;
+    if (supabase && targetKey) {
       (supabase as any).rpc('update_store_fulfillment_settings', {
-        p_store_id: storeId,
+        p_store_id: targetKey,
         p_fulfillment_settings: { wallet_pass_config: updated },
       }).catch((rpcErr: any) => {
         console.warn('update_store_fulfillment_settings error:', rpcErr);
       });
-
-      // B. Update local cache and active store record
-      LoyaltyService.getStoreById(storeId).then((storeData) => {
-        if (storeData) {
-          const prevFulfillment = (storeData as any).fulfillment_settings || {};
-          LoyaltyService.updateStoreSettings(storeId, {
-            fulfillment_settings: {
-              ...prevFulfillment,
-              wallet_pass_config: updated,
-            },
-          } as any).catch(() => {});
-        }
-      }).catch(() => {});
     }
 
     return updated;

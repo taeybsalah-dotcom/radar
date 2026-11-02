@@ -230,9 +230,24 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [isCompressing, setIsCompressing] = useState(false);
   
   // 💳 إعدادات بطاقة المحفظة الرقمية ونمط الولاء الموحد
-  const currentWalletConfig = WalletPassService.getWalletConfig(store);
+  const [walletPassConfig, setWalletPassConfig] = useState<StoreWalletPassConfig>(() =>
+    WalletPassService.getWalletConfig(currentStore)
+  );
+  const currentWalletConfig = walletPassConfig;
+
+  // مزامنة حالة البطاقة إذا تم تحديث المتجر خارجياً
+  useEffect(() => {
+    if (store?.fulfillment_settings?.wallet_pass_config) {
+      setWalletPassConfig((prev) => ({
+        ...prev,
+        ...store.fulfillment_settings!.wallet_pass_config,
+      }));
+    }
+  }, [store?.id]);
+
   const updateWalletSettings = (partial: Partial<StoreWalletPassConfig>) => {
-    const updated = WalletPassService.saveWalletConfig(store.id, partial);
+    const updated = WalletPassService.saveWalletConfig(store, partial, walletPassConfig);
+    setWalletPassConfig(updated);
     setStore((prev: any) => ({
       ...prev,
       fulfillment_settings: {
@@ -240,7 +255,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         wallet_pass_config: updated,
       },
     }));
-    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: store.id });
   };
   
   // Welcome Gift Settings State
@@ -912,10 +926,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     []
   );
 
-  // Sync state if initialStore prop updates from parent
+  // Sync state if initialStore prop updates from parent (with safe preservation of local fulfillment state)
   useEffect(() => {
-    if (initialStore) {
-      setStore(initialStore);
+    if (initialStore && initialStore.id) {
+      setStore((prev) => {
+        if (prev && prev.id === initialStore.id) {
+          return normalizeStore({
+            ...initialStore,
+            fulfillment_settings: {
+              ...(initialStore.fulfillment_settings || {}),
+              ...(prev.fulfillment_settings || {}),
+              wallet_pass_config: {
+                ...((initialStore.fulfillment_settings as any)?.wallet_pass_config || {}),
+                ...((prev.fulfillment_settings as any)?.wallet_pass_config || {}),
+              },
+            },
+          });
+        }
+        return initialStore;
+      });
       saveActiveStoreBranding(initialStore);
     }
   }, [initialStore]);
@@ -4380,7 +4409,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               isStamps ? (
                 /* Stamps Mode Hub Grid (Zero Confusion) */
                 <SubTabsHubGrid<'stamps_card' | 'gamification' | 'coupons'>
-                  activeTab={'stamps_card'}
+                  activeTab={'' as any}
                   onSelectTab={(sec) => {
                     setLoyaltySection(sec);
                     window.scrollTo({ top: 150, behavior: 'smooth' });
@@ -4428,7 +4457,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               ) : (
                 /* Points & VIP Mode Hub Grid */
                 <SubTabsHubGrid<'tiers' | 'perks' | 'gamification' | 'coupons'>
-                  activeTab={'tiers'}
+                  activeTab={'' as any}
                   onSelectTab={(sec) => {
                     setLoyaltySection(sec);
                     window.scrollTo({ top: 150, behavior: 'smooth' });
@@ -4971,15 +5000,26 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       </div>
                     </div>
 
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(currentWalletConfig.enable_spin_wheel)}
-                        onChange={(e) => updateWalletSettings({ enable_spin_wheel: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
-                    </label>
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => updateWalletSettings({ enable_spin_wheel: !currentWalletConfig.enable_spin_wheel })}
+                        className={`w-12 h-6.5 rounded-full p-0.5 transition-colors duration-200 flex items-center cursor-pointer ${
+                          currentWalletConfig.enable_spin_wheel ? 'bg-emerald-500 justify-start' : 'bg-slate-800 justify-end'
+                        }`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateWalletSettings({ enable_spin_wheel: !currentWalletConfig.enable_spin_wheel })}
+                        className={`text-[11px] font-bold cursor-pointer ${
+                          currentWalletConfig.enable_spin_wheel ? 'text-emerald-400' : 'text-slate-500'
+                        }`}
+                      >
+                        {currentWalletConfig.enable_spin_wheel ? 'مفعل ✓' : 'معطل'}
+                      </button>
+                    </div>
                   </div>
 
                   {currentWalletConfig.enable_spin_wheel && (
@@ -5054,15 +5094,26 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       </div>
                     </div>
 
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(currentWalletConfig.enable_scratch_card)}
-                        onChange={(e) => updateWalletSettings({ enable_scratch_card: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
-                    </label>
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => updateWalletSettings({ enable_scratch_card: !currentWalletConfig.enable_scratch_card })}
+                        className={`w-12 h-6.5 rounded-full p-0.5 transition-colors duration-200 flex items-center cursor-pointer ${
+                          currentWalletConfig.enable_scratch_card ? 'bg-emerald-500 justify-start' : 'bg-slate-800 justify-end'
+                        }`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateWalletSettings({ enable_scratch_card: !currentWalletConfig.enable_scratch_card })}
+                        className={`text-[11px] font-bold cursor-pointer ${
+                          currentWalletConfig.enable_scratch_card ? 'text-emerald-400' : 'text-slate-500'
+                        }`}
+                      >
+                        {currentWalletConfig.enable_scratch_card ? 'مفعل ✓' : 'معطل'}
+                      </button>
+                    </div>
                   </div>
 
                   {currentWalletConfig.enable_scratch_card && (
@@ -5118,15 +5169,26 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       </div>
                     </div>
 
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(currentWalletConfig.enable_streaks)}
-                        onChange={(e) => updateWalletSettings({ enable_streaks: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
-                    </label>
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => updateWalletSettings({ enable_streaks: !currentWalletConfig.enable_streaks })}
+                        className={`w-12 h-6.5 rounded-full p-0.5 transition-colors duration-200 flex items-center cursor-pointer ${
+                          currentWalletConfig.enable_streaks ? 'bg-emerald-500 justify-start' : 'bg-slate-800 justify-end'
+                        }`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateWalletSettings({ enable_streaks: !currentWalletConfig.enable_streaks })}
+                        className={`text-[11px] font-bold cursor-pointer ${
+                          currentWalletConfig.enable_streaks ? 'text-emerald-400' : 'text-slate-500'
+                        }`}
+                      >
+                        {currentWalletConfig.enable_streaks ? 'مفعل ✓' : 'معطل'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
