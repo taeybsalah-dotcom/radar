@@ -972,7 +972,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         }
 
         if (event.type === 'CUSTOMER_UPDATED') {
-          LoyaltyService.getAllCustomers(currentStore.id).then(setCustomers);
+          debouncedSyncPointsAndCustomers(currentStore.id);
           return;
         }
 

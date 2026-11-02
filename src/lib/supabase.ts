@@ -2490,22 +2490,20 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     let totalPoints = 0;
     let staffCount = 0;
 
-    if (supabase && isUUID(resolvedStoreId)) {
+    if (isUUID(resolvedStoreId)) {
       try {
-        const [custRes, logRes, staffRes] = await Promise.all([
-          supabase.from('store_customers').select('id', { count: 'exact', head: true }).eq('store_id', resolvedStoreId),
-          supabase.from('audit_logs').select('purchase_amount, points_changed').eq('store_id', resolvedStoreId),
-          supabase.from('store_staff').select('id', { count: 'exact', head: true }).eq('store_id', resolvedStoreId),
+        const [custs, logs, staff] = await Promise.all([
+          this.getAllCustomers(resolvedStoreId),
+          this.getAuditLogs(resolvedStoreId),
+          this.getStoreStaff(resolvedStoreId),
         ]);
 
-        customerCount = custRes.count || 0;
-        staffCount = staffRes.count || 0;
-        if (logRes.data) {
-          totalSales = logRes.data.reduce((sum, item: any) => sum + (Number(item.purchase_amount) || 0), 0);
-          totalPoints = logRes.data.reduce((sum, item: any) => sum + (Number(item.points_changed) > 0 ? Number(item.points_changed) : 0), 0);
-        }
+        customerCount = custs.length;
+        staffCount = staff.length;
+        totalSales = logs.reduce((sum, item: any) => sum + (Number(item.purchase_amount) || Number(item.amount) || 0), 0);
+        totalPoints = logs.reduce((sum, item: any) => sum + (Number(item.points_changed || item.points_delta) > 0 ? Number(item.points_changed || item.points_delta) : 0), 0);
       } catch (e) {
-        console.warn('Supabase getStoreFullAnalytics failed, using local fallback', e);
+        console.warn('getStoreFullAnalytics failed, using local fallback', e);
       }
     }
 
@@ -2869,6 +2867,16 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        // 🛡️ [SEC-STAFF] جلب آمن ومؤكد عبر RPC معزول لطاقم المتجر
+        const { data: rpcData, error: rpcErr } = await (supabase as any).rpc('get_store_staff_secure', {
+          p_store_id: resolvedStoreId,
+        });
+
+        if (!rpcErr && Array.isArray(rpcData)) {
+          saveLocalData(STORAGE_KEYS.LOCAL_STAFF + '_' + resolvedStoreId, rpcData);
+          return rpcData as StoreStaff[];
+        }
+
         const { data, error } = await supabase
           .from('store_staff')
           .select(await staffCols(supabase))
@@ -3979,6 +3987,33 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        // 🛡️ [SEC-COUPONS] جلب آمن ومؤكد عبر RPC معزول للكوبونات
+        const { data: rpcData, error: rpcErr } = await (supabase as any).rpc('get_all_store_coupons_secure', {
+          p_store_id: resolvedStoreId,
+        });
+
+        if (!rpcErr && Array.isArray(rpcData)) {
+          return rpcData.map((c: any) => ({
+            id: c.id,
+            coupon_code: c.coupon_code,
+            customer_id: c.customer_id,
+            customer_phone: c.customer_phone,
+            customer_name: c.customer_name,
+            store_id: c.store_id,
+            privilege_id: c.privilege_id,
+            privilege_title: c.privilege_title,
+            privilege_image_url: c.privilege_image_url,
+            cost_points: Number(c.cost_points) || 0,
+            status: c.status,
+            valid_start_time: c.valid_start_time,
+            valid_end_time: c.valid_end_time,
+            purchased_at: c.purchased_at,
+            used_at: c.used_at,
+            cashier_name: c.cashier_name,
+            branch_id: c.branch_id || null,
+          })) as CustomerCoupon[];
+        }
+
         const { data, error } = await supabase
           .from('customer_coupons')
           .select(await couponCols(supabase))
@@ -5057,6 +5092,30 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedId)) {
       try {
+        // 🛡️ [SEC-CRM] جلب آمن ومؤكد عبر RPC معزول للعملاء
+        const { data: rpcData, error: rpcErr } = await (supabase as any).rpc('get_store_customers_secure', {
+          p_store_id: resolvedId,
+        });
+
+        if (!rpcErr && Array.isArray(rpcData)) {
+          const mapped: Customer[] = rpcData.map((c: any) => ({
+            id: c.id,
+            store_id: c.store_id,
+            phone: c.phone,
+            name: c.name || 'عميل مميز',
+            special_date: c.special_date || null,
+            special_date_type: c.special_date_type || null,
+            wallet_balance: Number(c.wallet_balance) || 0,
+            lifetime_xp: Number(c.lifetime_xp) || 0,
+            last_visit_date: c.last_visit_date ? String(c.last_visit_date).split('T')[0] : new Date().toISOString().split('T')[0],
+            is_active: c.is_active !== undefined ? c.is_active : true,
+            visits_count: c.visits_count || 1,
+            created_at: c.created_at,
+          }));
+          saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, mapped);
+          return mapped;
+        }
+
         const cols = await customerCols(supabase);
         const { data, error } = await supabase
           .from('store_customers')
@@ -5073,7 +5132,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
             special_date_type: c.special_date_type || null,
             wallet_balance: Number(c.wallet_balance) || 0,
             lifetime_xp: Number(c.lifetime_xp) || 0,
-            last_visit_date: c.last_visit_date ? c.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
+            last_visit_date: c.last_visit_date ? String(c.last_visit_date).split('T')[0] : new Date().toISOString().split('T')[0],
             is_active: c.is_active !== undefined ? c.is_active : true,
             visits_count: c.visits_count || 1,
             created_at: c.created_at,
@@ -5826,6 +5885,23 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     if (supabase && isUUID(resolvedStoreId)) {
       try {
+        // 🛡️ [SEC-AUDIT] جلب آمن ومؤكد عبر RPC معزول لسجل العمليات
+        const { data: rpcData, error: rpcErr } = await (supabase as any).rpc('get_store_audit_logs_secure', {
+          p_store_id: resolvedStoreId,
+          p_limit: 150,
+        });
+
+        if (!rpcErr && Array.isArray(rpcData)) {
+          return rpcData.map((l: any) => ({
+            ...l,
+            branch_id: l.branch_id || l.metadata?.branch_id || null,
+            branch_name: l.branch_name || l.metadata?.branch_name || null,
+            entry_method: l.entry_method || 'qr_scan',
+            customer_phone: l.customer_phone,
+            customer_name: l.customer_name || l.metadata?.customer_name,
+          })) as AuditLog[];
+        }
+
         const { data, error } = await supabase
           .from('audit_logs')
           .select('*, store_customers(phone, name)')
