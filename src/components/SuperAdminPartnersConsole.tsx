@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { LoyaltyService, getSupabaseClient, getSovereignMasterToken, invalidatePartnersCache } from '../lib/supabase';
 import { getActiveTenantConfig } from '../config/tenant';
 import { generateSafeSlug } from '../lib/slugUtils';
+import { MerchantLead } from '../types';
 import confetti from 'canvas-confetti';
 import {
   Users,
@@ -67,6 +68,8 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
   const [recurringCommissionRate, setRecurringCommissionRate] = useState<number>(10);
   const [recruitedByPartnerId, setRecruitedByPartnerId] = useState<string>('');
   const [subPartnerCommissionRate, setSubPartnerCommissionRate] = useState<number>(5);
+  const [partnerApplicants, setPartnerApplicants] = useState<MerchantLead[]>([]);
+  const [applicantLeadId, setApplicantLeadId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Referral code live check & auto-generation state
@@ -166,9 +169,18 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
   const fetchPartners = useCallback(async () => {
     setError(null);
     try {
-      const list = await LoyaltyService.getAllPartners();
+      const [list, allLeads] = await Promise.all([
+        LoyaltyService.getAllPartners(),
+        LoyaltyService.getAllLeads(),
+      ]);
       if (list && Array.isArray(list)) {
         setPartners(list);
+      }
+      if (allLeads && Array.isArray(allLeads)) {
+        const pending = allLeads.filter(
+          (l) => l.business_type === 'PARTNER_APPLICANT' && l.status !== 'CONVERTED'
+        );
+        setPartnerApplicants(pending);
       }
     } catch (err: any) {
       console.error('[SuperAdminPartnersConsole] Fetch error:', err);
@@ -246,6 +258,7 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
   };
 
   const openNewPartnerModal = async () => {
+    setApplicantLeadId(null);
     setModalError(null);
     setPartnerName('');
     setPartnerPhone('');
@@ -266,6 +279,50 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
       setReferralCode(initialCode);
       setCodeStatus('available');
       setCodeStatusMsg('كود تلقائي مبدئي متاح (يمكنك تعديله أو كتابة كود مخصص)');
+    } catch {
+      const fallback = `r${Math.floor(1000 + Math.random() * 9000)}`;
+      setReferralCode(fallback);
+      setCodeStatus('available');
+    }
+  };
+
+  const openApproveApplicantModal = async (lead: MerchantLead) => {
+    setApplicantLeadId(lead.id);
+    setModalError(null);
+    const applicantName = (lead.manager_name || lead.store_name.replace('طلب انضمام شريك:', '')).trim();
+    setPartnerName(applicantName);
+    setPartnerPhone(lead.phone || '');
+    setPinCode('1234');
+    setPartnerSlug('');
+    setRegion(lead.city || '');
+    setMonthlyTarget('');
+    setCommissionRate(20);
+    setRecurringCommissionRate(10);
+    setSubPartnerCommissionRate(5);
+
+    if (lead.referral_code) {
+      const cleanRef = lead.referral_code.trim().toLowerCase();
+      const sponsor = partners.find(
+        (p) => (p.referral_code || p.slug || '').trim().toLowerCase() === cleanRef
+      );
+      if (sponsor) {
+        setRecruitedByPartnerId(sponsor.id);
+      } else {
+        setRecruitedByPartnerId('');
+      }
+    } else {
+      setRecruitedByPartnerId('');
+    }
+
+    setCodeStatus('checking');
+    setCodeStatusMsg('جاري تحضير كود فريد للمسوق...');
+    setIsModalOpen(true);
+
+    try {
+      const initialCode = await LoyaltyService.generateUniqueReferralCode(applicantName);
+      setReferralCode(initialCode);
+      setCodeStatus('available');
+      setCodeStatusMsg('كود تلقائي مقترح متاح (يمكنك تعديله أو كتابة كود مخصص)');
     } catch {
       const fallback = `r${Math.floor(1000 + Math.random() * 9000)}`;
       setReferralCode(fallback);
@@ -629,6 +686,15 @@ export const SuperAdminPartnersConsole: React.FC<SuperAdminPartnersConsoleProps>
       }
 
       // 2. نجاح مؤكد من قاعدة البيانات (DB Confirmation)
+      if (applicantLeadId) {
+        try {
+          await LoyaltyService.updateLeadStatus(applicantLeadId, 'CONVERTED');
+        } catch (e) {
+          console.warn('Failed to update applicant lead status:', e);
+        }
+        setApplicantLeadId(null);
+      }
+
       setSuccess(`تم بنجاح إضافة المسوق [${cleanName}] بنسبة عمولة أول اشتراك: ${commissionRate}%، وتجديد: ${recurringCommissionRate}%، وكود: ${cleanCode} والرمز السري (PIN): ${cleanPin} 🎉`);
       setIsModalOpen(false);
       setPartnerName('');
@@ -963,6 +1029,104 @@ ${origin}/join?ref=${refCode}`;
         <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
           <span>{success}</span>
+        </div>
+      )}
+
+      {/* 📥 New Partner Applications / Leads Section */}
+      {partnerApplicants.length > 0 && (
+        <div className={`p-5 rounded-3xl border shadow-xl relative overflow-hidden transition space-y-3.5 ${
+          isDark
+            ? 'bg-gradient-to-r from-purple-950/40 via-slate-900 to-amber-950/30 border-purple-500/40'
+            : 'bg-gradient-to-r from-purple-50 via-white to-amber-50 border-purple-200'
+        }`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-500/40 text-purple-400 flex items-center justify-center text-lg font-bold shadow-inner">
+                👥
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className={`text-sm font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    طلبات انضمام الشركاء الواردة عبر صفحة الهبوط
+                  </h4>
+                  <span className="px-2.5 py-0.5 rounded-full bg-purple-500 text-white font-mono font-black text-xs animate-pulse shadow-sm">
+                    {partnerApplicants.length} طلب بحاجة للاعتماد
+                  </span>
+                </div>
+                <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                  طلبات تسجيل كشريك نجاح ومسوق استُقبلت عبر روابط الإحالة وتنتظر اعتمادك لربطها بالشريك الراعي.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {partnerApplicants.map((lead) => {
+              const cleanRef = (lead.referral_code || '').trim().toLowerCase();
+              const sponsor = partners.find(
+                (p) => (p.referral_code || p.slug || '').trim().toLowerCase() === cleanRef
+              );
+              const applicantName = (lead.manager_name || lead.store_name.replace('طلب انضمام شريك:', '')).trim();
+
+              return (
+                <div
+                  key={lead.id}
+                  className={`p-4 rounded-2xl border transition flex flex-col justify-between gap-3 shadow-md ${
+                    isDark
+                      ? 'bg-slate-950/80 border-purple-500/30 hover:border-purple-400'
+                      : 'bg-white border-purple-200 hover:border-purple-300'
+                  }`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">🤝</span>
+                        <h5 className={`font-black text-sm ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                          {applicantName}
+                        </h5>
+                      </div>
+                      <span className="px-2.5 py-0.5 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[10px] font-bold">
+                        متقدم كشريك جديد
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      <span className="font-mono text-amber-400 font-bold" dir="ltr">
+                        📞 {lead.phone}
+                      </span>
+                      {lead.city && (
+                        <span className={isDark ? 'text-slate-400' : 'text-slate-500'}>
+                          📍 {lead.city}
+                        </span>
+                      )}
+                      <span className={`text-[10px] font-mono ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                        📅 {new Date(lead.created_at || Date.now()).toLocaleDateString('ar-SA')}
+                      </span>
+                    </div>
+
+                    {lead.referral_code && (
+                      <div className="pt-1 border-t border-white/5 flex items-center gap-1.5 text-xs">
+                        <span className={`text-[11px] ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                          مستقطب عبر كود:
+                        </span>
+                        <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold font-mono text-[11px]">
+                          {sponsor ? `${sponsor.display_name} (${lead.referral_code})` : lead.referral_code}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => openApproveApplicantModal(lead)}
+                    className="w-full mt-1 bg-gradient-to-r from-purple-600 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white font-black py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg transition transform active:scale-98"
+                  >
+                    <span>اعتماد وتفعيل كشريك نجاح 🚀</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

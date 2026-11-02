@@ -2643,11 +2643,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className={`px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${
-                            isDark ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' : 'bg-blue-50 text-blue-800 border-blue-200'
-                          }`}>
-                            طلب تاجر جديد 📥
-                          </span>
+                          {l.business_type === 'PARTNER_APPLICANT' ? (
+                            <span className="px-2.5 py-0.5 rounded-full border text-[10px] font-black bg-purple-500/20 text-purple-300 border-purple-500/40 flex items-center gap-1">
+                              <span>👥</span>
+                              <span>طلب انضمام شريك مسوق</span>
+                            </span>
+                          ) : (
+                            <span className={`px-2.5 py-0.5 rounded-full border text-[10px] font-bold ${
+                              isDark ? 'bg-blue-500/20 text-blue-300 border-blue-500/40' : 'bg-blue-50 text-blue-800 border-blue-200'
+                            }`}>
+                              طلب تاجر جديد 📥
+                            </span>
+                          )}
                           <h4 className={`font-bold text-base ${isDark ? 'text-white' : 'text-slate-900'}`}>{l.store_name}</h4>
                           <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1 ${stageInfo.badgeClass}`}>
                             <span>{stageInfo.icon}</span>
@@ -2688,14 +2695,24 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           <option value="مشترك مدفوع">مشترك مدفوع 👑</option>
                         </select>
 
-                        {/* Founding Button */}
-                        <button
-                          onClick={() => handleFoundStoreFromLead(l)}
-                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs transition flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
-                        >
-                          <Sparkles className="w-3.5 h-3.5" />
-                          <span>تأسيس المتجر الآن 🚀</span>
-                        </button>
+                        {/* Founding Button / Partner Activation */}
+                        {l.business_type === 'PARTNER_APPLICANT' ? (
+                          <button
+                            type="button"
+                            onClick={() => handleSubTabChange('partners')}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-amber-500 hover:from-purple-500 hover:to-amber-400 text-white font-black text-xs transition flex items-center gap-1.5 shadow-md shadow-purple-500/20"
+                          >
+                            <span>👥 اعتماد وتفعيل كشريك الآن</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleFoundStoreFromLead(l)}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs transition flex items-center gap-1.5 shadow-md shadow-emerald-500/20"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>تأسيس المتجر الآن 🚀</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
