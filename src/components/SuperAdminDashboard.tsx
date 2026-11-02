@@ -916,6 +916,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     return allLeads.filter((l) => {
       if (l.is_demo === true) return false;
       if (l.referral_code?.toLowerCase().startsWith('demo-')) return false;
+      if (l.business_type === 'PARTNER_APPLICANT' && l.status === 'CONVERTED') return false;
       if (l.converted_store_id && storeIds.has(l.converted_store_id)) return false;
       if (l.phone && storePhones.has(normalizePhone(l.phone))) return false;
       if (l.store_name && storeNames.has(l.store_name.trim().toLowerCase())) return false;
