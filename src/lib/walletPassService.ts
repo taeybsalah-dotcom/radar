@@ -187,25 +187,16 @@ export class WalletPassService {
 
     // 2. Asynchronous Cloud Sync with Supabase (Dual-write redundancy)
     const supabase = getSupabaseClient();
-    if (supabase) {
-      // A. Write to dedicated store_wallet_pass_configs table
-      (supabase.from as any)('store_wallet_pass_configs')
-        .upsert(
-          {
-            store_id: storeId,
-            ...updated,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'store_id' }
-        )
-        .then(({ error }: any) => {
-          if (error) {
-            console.warn('store_wallet_pass_configs sync notice:', error.message);
-          }
-        })
-        .catch(() => {});
+    if (supabase && storeId) {
+      // A. Write directly via secure RPC into stores.fulfillment_settings
+      (supabase as any).rpc('update_store_fulfillment_settings', {
+        p_store_id: storeId,
+        p_fulfillment_settings: { wallet_pass_config: updated },
+      }).catch((rpcErr: any) => {
+        console.warn('update_store_fulfillment_settings error:', rpcErr);
+      });
 
-      // B. Write to stores.fulfillment_settings.wallet_pass_config as backup
+      // B. Update local cache and active store record
       LoyaltyService.getStoreById(storeId).then((storeData) => {
         if (storeData) {
           const prevFulfillment = (storeData as any).fulfillment_settings || {};
@@ -226,21 +217,18 @@ export class WalletPassService {
    * جلب الإعدادات من السحابة مباشرة (Supabase)
    */
   static async fetchCloudWalletConfig(storeId: string): Promise<StoreWalletPassConfig | null> {
-    const supabase = getSupabaseClient();
-    if (!supabase) return null;
+    if (!storeId) return null;
     try {
-      const { data, error } = await (supabase.from as any)('store_wallet_pass_configs')
-        .select('*')
-        .eq('store_id', storeId)
-        .limit(1)
-        .maybeSingle();
-
-      if (data && !error) {
-        localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(data));
-        return data as StoreWalletPassConfig;
+      const freshStore = await LoyaltyService.resolveStore(storeId, true);
+      if (freshStore) {
+        const config = this.getWalletConfig(freshStore);
+        try {
+          localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(config));
+        } catch {}
+        return config;
       }
     } catch (e) {
-      console.warn('Failed to fetch store_wallet_pass_configs from cloud:', e);
+      console.warn('Failed to fetch store wallet pass config from cloud:', e);
     }
     return null;
   }

@@ -240,6 +240,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         wallet_pass_config: updated,
       },
     }));
+    LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: store.id });
   };
   
   // Welcome Gift Settings State

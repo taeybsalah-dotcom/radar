@@ -648,6 +648,9 @@ export interface StoreFulfillmentSettings {
 
   // 💳 تكوين بوابات الدفع والدفع باللمس الموحد
   payment_config?: StorePaymentConfig;
+
+  // 🎯 إعدادات بطاقة المحفظة الرقمية ونمط الولاء (Stamps / Points / Cashback)
+  wallet_pass_config?: StoreWalletPassConfig;
 }
 
 // ==========================================

@@ -628,7 +628,9 @@ export function normalizeStore(s: any): Store {
     owner_enable_loyalty: s.owner_enable_loyalty !== false,
     fulfillment_settings: (() => {
       let raw = parsedFulfill;
+      const rawConfig = raw?.wallet_pass_config || (localExistingStore?.fulfillment_settings as any)?.wallet_pass_config;
       return {
+        ...(typeof raw === 'object' && raw !== null ? raw : {}),
         allow_dine_in: raw?.allow_dine_in !== false,
         allow_takeaway: raw?.allow_takeaway !== false,
         allow_delivery: raw?.allow_delivery !== false,
@@ -643,6 +645,7 @@ export function normalizeStore(s: any): Store {
         card_color: effectiveCardColor,
         card_text_color: effectiveCardTextColor,
         theme_preset: effectiveThemePreset,
+        wallet_pass_config: rawConfig,
       };
     })(),
   };
@@ -2641,6 +2644,18 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         const res = isUUID(currentStore.id)
           ? await query.eq('id', currentStore.id).select(await storeCols(supabase)).maybeSingle()
           : await query.eq('slug', currentStore.slug).select(await storeCols(supabase)).maybeSingle();
+
+        // 🛡️ مزامنة سيرفرية موثوقة لـ fulfillment_settings عبر RPC لضمان حفظها 100%
+        if (isUUID(currentStore.id) && mergedFulfillment) {
+          try {
+            await (supabase as any).rpc('update_store_fulfillment_settings', {
+              p_store_id: currentStore.id,
+              p_fulfillment_settings: mergedFulfillment,
+            });
+          } catch (rpcErr) {
+            console.warn('update_store_fulfillment_settings RPC notice:', rpcErr);
+          }
+        }
 
         if (!res.error && res.data) {
           updatedSupabaseStore = { ...(res.data as any), ...pickStoreAssets(safeDbUpdates), ...themePayload } as Store;

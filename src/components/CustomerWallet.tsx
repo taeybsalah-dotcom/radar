@@ -108,6 +108,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     if (initialStore) {
       setStore(initialStore);
       saveActiveStoreBranding(initialStore);
+      const cfg = WalletPassService.getWalletConfig(initialStore);
+      setWalletConfig(cfg);
     }
   }, [initialStore]);
 
@@ -440,12 +442,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         if (cloudCfg) setWalletConfig(cloudCfg);
       });
     }
-  }, [store]);
+  }, [store?.id, store?.fulfillment_settings]);
 
   useEffect(() => {
     const unsub = LoyaltyEvents.listen((payload) => {
-      if (payload.type === 'STORE_UPDATED') {
-        LoyaltyService.getStoreById(store.id).then((freshStore) => {
+      if (payload.type === 'STORE_UPDATED' && (!payload.storeId || payload.storeId === store.id || payload.storeId === store.slug)) {
+        LoyaltyService.resolveStore(store.id, true).then((freshStore) => {
           if (freshStore) {
             setStore(freshStore);
             setWalletConfig(WalletPassService.getWalletConfig(freshStore));
@@ -456,7 +458,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     return () => {
       if (typeof unsub === 'function') unsub();
     };
-  }, [store.id]);
+  }, [store.id, store.slug]);
 
   const handleDirectAddAppleWallet = async () => {
     const effectiveCustomer: Customer = customer || {
