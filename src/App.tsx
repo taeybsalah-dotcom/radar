@@ -670,7 +670,7 @@ export function App() {
       debounce((currentStoreId?: string, currentSlug?: string) => {
         const targetIdentifier = currentStoreId || currentSlug || store?.id || store?.slug;
         if (!targetIdentifier) return;
-        LoyaltyService.resolveStore(targetIdentifier).then((updated) => {
+        LoyaltyService.resolveStore(targetIdentifier, true).then((updated) => {
           if (updated && updated.id) {
             setStore(updated);
             updateDynamicPWA(updated, activeTab);

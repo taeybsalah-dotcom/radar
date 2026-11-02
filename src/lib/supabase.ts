@@ -6163,8 +6163,11 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const now = Date.now();
     const currentEndMs = store.subscription_end_date ? new Date(store.subscription_end_date).getTime() : 0;
     const remainingMs = Math.max(0, currentEndMs - now);
-    // جبر اليوم الحالي لصالح التاجر (Math.ceil) مع تحديد سقف 30 يوماً للدورة الشهرية
-    const totalDays = 30;
+    const isCurrentAnnual = Boolean(
+      (store as any)?.subscription_duration_months >= 12 ||
+      (currentEndMs - now > 60 * 86400000)
+    );
+    const totalDays = isCurrentAnnual ? 365 : 30;
     const remainingDays = Math.min(totalDays, Math.max(0, Math.ceil(remainingMs / 86400000)));
 
     const targetPrice = targetCycle === 'YEARLY'
@@ -6179,7 +6182,9 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     // حماية التجربة المجانية: لا يُحسب أي رصيد مخصوم إذا كان المتجر في تجربة مجانية أو غير مسدد للرسوم
     const isStoreInTrial = !store.setup_fee_paid || store.subscription_status === 'trial' || store.status === 'trial';
     if (!isStoreInTrial && store.setup_fee_paid && currentPlan) {
-      const currentPrice = Math.round(currentPlan.monthly_amount ?? currentPlan.amount);
+      const currentPrice = isCurrentAnnual
+        ? Math.round(currentPlan.yearly_amount ?? ((currentPlan.monthly_amount || currentPlan.amount) * 10))
+        : Math.round(currentPlan.monthly_amount ?? currentPlan.amount);
       if (targetPrice > currentPrice && remainingDays > 0) {
         dailyRateCurrent = currentPrice / totalDays;
         unusedCredit = Math.min(currentPrice, Math.round(dailyRateCurrent * remainingDays));

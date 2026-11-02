@@ -567,7 +567,26 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [updatingSettings, setUpdatingSettings] = useState(false);
   const [settingsSavedMessage, setSettingsSavedMessage] = useState<string | null>(null);
   const [allPlans, setAllPlans] = useState<BillingPlan[]>(() => LoyaltyService.getAllSubscriptionPlansSync());
-  const [merchantBillingCycle, setMerchantBillingCycle] = useState<'MONTHLY' | 'YEARLY'>('MONTHLY');
+
+  // 🗓️ استنتاج دورة الفوترة الفعلية للمتجر (سنوي إذا كان متبقياً أكثر من 60 يوماً أو كان مدفوعاً سنوياً)
+  const isStoreAnnual = useMemo(() => {
+    if ((store as any)?.subscription_duration_months >= 12) return true;
+    if (!store?.subscription_end_date) return false;
+    const startMs = store.subscription_start_date ? new Date(store.subscription_start_date).getTime() : Date.now();
+    const endMs = new Date(store.subscription_end_date).getTime();
+    const totalDays = Math.round((endMs - startMs) / 86400000);
+    if (totalDays > 60) return true;
+    const daysLeft = Math.round((endMs - Date.now()) / 86400000);
+    return daysLeft > 60;
+  }, [store?.subscription_start_date, store?.subscription_end_date]);
+
+  const [merchantBillingCycle, setMerchantBillingCycle] = useState<'MONTHLY' | 'YEARLY'>(() => (isStoreAnnual ? 'YEARLY' : 'MONTHLY'));
+
+  useEffect(() => {
+    if (isStoreAnnual) {
+      setMerchantBillingCycle('YEARLY');
+    }
+  }, [isStoreAnnual]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1183,20 +1202,23 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
     try {
       // 🚀 المرحلة 1: التحميل الفوري للوحة التحكم الأساسية (Core Dashboard Tier)
+      const targetStoreId = store?.id || currentStore.id;
       const [s, c, t, staff, p, cpn, wallet, invs, subInfo, brs] = await Promise.all([
-        LoyaltyService.resolveStore(currentStore.id),
-        LoyaltyService.getAllCustomers(currentStore.id),
-        LoyaltyService.getTiers(currentStore.id),
-        LoyaltyService.getStoreStaff(currentStore.id),
-        LoyaltyService.getPrivileges(currentStore.id),
-        LoyaltyService.getAllStoreCoupons(currentStore.id),
-        LoyaltyService.getStoreWallet(currentStore.id),
-        LoyaltyService.getStoreInvoices(currentStore.id),
-        LoyaltyService.checkAndUpdateStoreSubscription(currentStore.id, currentStore),
-        LoyaltyService.getStoreBranches(currentStore.id),
+        LoyaltyService.resolveStore(targetStoreId, true),
+        LoyaltyService.getAllCustomers(targetStoreId),
+        LoyaltyService.getTiers(targetStoreId),
+        LoyaltyService.getStoreStaff(targetStoreId),
+        LoyaltyService.getPrivileges(targetStoreId),
+        LoyaltyService.getAllStoreCoupons(targetStoreId),
+        LoyaltyService.getStoreWallet(targetStoreId),
+        LoyaltyService.getStoreInvoices(targetStoreId),
+        LoyaltyService.checkAndUpdateStoreSubscription(targetStoreId),
+        LoyaltyService.getStoreBranches(targetStoreId),
       ]);
-      const activeStore = normalizeStore(s || currentStore);
+      const activeStore = normalizeStore(s || store || currentStore);
       setStore(activeStore);
+      if (subInfo) setSubscriptionInfo(subInfo);
+      if (invs) setInvoices(invs);
       setStoreName(activeStore.name || '');
       setStoreSlug(activeStore.slug || '');
       setCustomDomain(activeStore.custom_domain || '');
@@ -1405,8 +1427,17 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
 
       // 1. مزامنة الحالة المعتمدة مباشرة بالسطر المؤكد من قاعدة البيانات
+      const targetStore = res.store || store;
       if (res.store) {
         setStore(res.store);
+        const isAnnualPaid = Boolean(
+          (sandboxPaymentConfig.billingCycle || merchantBillingCycle) === 'YEARLY' ||
+          (res.store.subscription_end_date &&
+           Math.round((new Date(res.store.subscription_end_date).getTime() - Date.now()) / 86400000) > 60)
+        );
+        if (isAnnualPaid) {
+          setMerchantBillingCycle('YEARLY');
+        }
       }
       setSandboxPaymentConfig(null);
       if (res.invoice) {
@@ -1414,15 +1445,20 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       }
 
       // 2. تحديث مؤشرات الاشتراك استناداً للسجل المؤكد
-      const targetStore = res.store || store;
       const sub = await LoyaltyService.checkAndUpdateStoreSubscription(targetStore.id, targetStore);
-      setSubscriptionInfo(sub);
+      if (sub) {
+        setSubscriptionInfo(sub);
+      }
 
       const invs = await LoyaltyService.getStoreInvoices(targetStore.id);
-      setInvoices(invs);
+      if (invs) {
+        setInvoices(invs);
+      }
 
-      // 3. إعادة تحميل البيانات الشاملة من قاعدة البيانات للتحقق التام
-      await loadAdminData();
+      // 3. تحديث الكاش المحلي وضمان نشر الحدث لحظياً لكافة المكونات بدون الحاجة لريفرش
+      saveActiveStoreBranding(targetStore);
+      LoyaltyEvents.emit({ type: 'STORE_UPDATED', storeId: targetStore.id });
+      LoyaltyEvents.emit({ type: 'SUBSCRIPTION_UPDATED', storeId: targetStore.id });
 
       confetti({ particleCount: 140, spread: 80, origin: { y: 0.6 } });
     } catch (err: any) {
@@ -11091,9 +11127,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               const planTrialDays = Number(currentPaidPlan?.trial_days) || 0;
               const totalCycleDays = isTrial
                 ? 14
-                : currentPaidPlan
-                ? Math.max(1, (currentPaidPlan.duration_months || (currentPaidPlan.billing_interval === 'YEARLY' ? 12 : 1)) * 30 + planTrialDays)
-                : 30;
+                : isStoreAnnual
+                ? (365 + planTrialDays)
+                : (30 + planTrialDays);
               const daysLeft = Math.max(0, Math.ceil(subscriptionInfo?.daysLeft ?? (isTrial ? 14 : totalCycleDays)));
               const progressPercent = Math.min(100, Math.max(0, Math.round((daysLeft / totalCycleDays) * 100)));
 
@@ -11121,12 +11157,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                   : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                               }`}
                             >
-                              {!isTrial && currentPaidPlan ? `🟢 ${currentPaidPlan.name.startsWith('باقة') || currentPaidPlan.name.startsWith('الباقة') ? currentPaidPlan.name : `باقة ${currentPaidPlan.name}`}` : '🎁 فترة التجربة المجانية (14 يوم)'}
+                              {!isTrial && currentPaidPlan
+                                ? `🟢 ${currentPaidPlan.name.startsWith('باقة') || currentPaidPlan.name.startsWith('الباقة') ? currentPaidPlan.name : `باقة ${currentPaidPlan.name}`} (${isStoreAnnual ? 'سنوي 🗓️' : 'شهري 🗓️'})`
+                                : '🎁 فترة التجربة المجانية (14 يوم)'}
                             </span>
                           </div>
                           <p className="text-xs text-slate-400 mt-0.5">
                             {!isTrial && currentPaidPlan
-                              ? `اشتراكك مفعل على (${currentPaidPlan.name}) بسعر ${currentPaidPlan.amount} ${currentPaidPlan.currency || 'ر.س'} / ${getPlanPriceSuffix(currentPaidPlan)}`
+                              ? `اشتراكك مفعل على (${currentPaidPlan.name}) بسعر ${
+                                  isStoreAnnual
+                                    ? (currentPaidPlan.yearly_amount ?? (currentPaidPlan.amount * 10)).toLocaleString()
+                                    : (currentPaidPlan.monthly_amount ?? currentPaidPlan.amount).toLocaleString()
+                                } ${currentPaidPlan.currency || 'ر.س'} / ${isStoreAnnual ? 'سنوياً (12 شهر - شامل شهرين مجاناً 🎁)' : 'شهرياً'}`
                               : 'أنت الآن تستمتع بفترة التجربة المجانية مع كامل المميزات المفتوحة. اشترك في إحدى الباقات لتثبيت الحساب والاستمرار دون انقطاع.'}
                           </p>
                         </div>
@@ -11275,7 +11317,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                     const currentPlanTier = currentPaidPlan?.tier_level ?? 1;
                     const thisPlanTier = plan.tier_level ?? 1;
-                    const isStoreAnnual = Boolean((store as any).subscription_duration_months >= 12);
 
                     // Exact match: current plan AND current cycle
                     const isExactCurrent = isSamePlan && (isYearly ? isStoreAnnual : !isStoreAnnual);
@@ -11353,7 +11394,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
                                 ⚡ ترقية متاحة
                               </span>
-                            ) : plan.trial_days && plan.trial_days > 0 ? (
+                            ) : !store.setup_fee_paid && isTrial && plan.trial_days && plan.trial_days > 0 ? (
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                 تجربة {plan.trial_days} يوم
                               </span>
@@ -11537,14 +11578,29 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         <tr key={inv.id} className="hover:bg-slate-800/30 transition">
                           <td className="py-3 px-3 font-bold text-white select-all">{inv.invoice_number}</td>
                           <td className="py-3 px-3 font-sans">
+                            {inv.invoice_type === 'upgrade' && (
+                              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                <span>⚡</span>
+                                <span>ترقية باقة {inv.metadata?.billing_cycle === 'YEARLY' ? '(سنوي)' : '(شهري)'}</span>
+                              </span>
+                            )}
                             {inv.invoice_type === 'setup' && (
-                              <span className="text-blue-400 font-bold">رسوم تأسيس المتجر</span>
+                              <span className="text-blue-400 font-bold flex items-center gap-1">
+                                <span>🚀</span>
+                                <span>اشتراك تأسيس {inv.metadata?.billing_cycle === 'YEARLY' ? '(سنوي)' : '(شهري)'}</span>
+                              </span>
                             )}
                             {inv.invoice_type === 'renewal' && (
-                              <span className="text-amber-400 font-bold">تجديد اشتراك شهري</span>
+                              <span className="text-amber-400 font-bold flex items-center gap-1">
+                                <span>🔄</span>
+                                <span>تجديد اشتراك {inv.metadata?.billing_cycle === 'YEARLY' ? '(سنوي)' : '(شهري)'}</span>
+                              </span>
                             )}
                             {inv.invoice_type === 'extra_cashier' && (
                               <span className="text-purple-400 font-bold">مقعد كاشير إضافي</span>
+                            )}
+                            {!['upgrade', 'setup', 'renewal', 'extra_cashier'].includes(inv.invoice_type || '') && (
+                              <span className="text-slate-300 font-bold">{inv.invoice_type || 'سداد اشتراك'}</span>
                             )}
                           </td>
                           <td className="py-3 px-3 font-bold text-amber-400 font-mono">
