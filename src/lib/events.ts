@@ -35,6 +35,7 @@ export interface LoyaltyEventPayload {
   storeId: string;
   eventId?: string;
   senderId?: string;
+  client_id?: string;
   phone?: string;
   gameType?: 'spin' | 'scratch';
   points?: number;
@@ -58,7 +59,7 @@ export interface LoyaltyEventPayload {
   cashMovementData?: any;
 }
 
-const CLIENT_INSTANCE_ID =
+export const CLIENT_INSTANCE_ID =
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `client_${Math.random().toString(36).substring(2)}_${Date.now().toString(36)}`;
@@ -182,10 +183,12 @@ export const LoyaltyEvents = {
 
   emit(payload: LoyaltyEventPayload) {
     const eventId = payload.eventId || `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const effectiveClientId = payload.client_id || payload.senderId || CLIENT_INSTANCE_ID;
     const eventWithSender: LoyaltyEventPayload = {
       ...payload,
       eventId,
-      senderId: payload.senderId || CLIENT_INSTANCE_ID,
+      senderId: effectiveClientId,
+      client_id: effectiveClientId,
     };
 
     // Mark as processed on current emitter client to prevent echo loops

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Store, UserRole } from './types';
 import { LoyaltyService } from './lib/supabase';
-import { LoyaltyEvents } from './lib/events';
+import { LoyaltyEvents, CLIENT_INSTANCE_ID } from './lib/events';
 import { debounce } from './lib/debounce';
 import { INITIAL_STORE } from './lib/demoData';
 import { isDemoStoreSlug } from './lib/slugUtils';
@@ -683,6 +683,14 @@ export function App() {
 
   useEffect(() => {
     const unsubscribe = LoyaltyEvents.listen((event) => {
+      // 🛡️ Optimistic UI: Ignore self-emitted store updates to prevent refetch loops in current window
+      if (
+        (event.client_id && event.client_id === CLIENT_INSTANCE_ID) ||
+        (event.senderId && event.senderId === CLIENT_INSTANCE_ID)
+      ) {
+        return;
+      }
+
       if (event.type === 'STORE_UPDATED') {
         debouncedSyncAppStore(event.storeId || store?.id, store?.slug);
       }

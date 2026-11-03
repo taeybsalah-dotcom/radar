@@ -34,7 +34,7 @@ import {
 } from '../types';
 import { LoyaltyService, normalizeStore, getSupabaseClient } from '../lib/supabase';
 import { getActiveTenantConfig } from '../config/tenant';
-import { LoyaltyEvents } from '../lib/events';
+import { LoyaltyEvents, CLIENT_INSTANCE_ID } from '../lib/events';
 import { saveActiveStoreBranding, BRAND_PRESETS, BrandThemePreset } from '../lib/storeBranding';
 import { debounce } from '../lib/debounce';
 import { INITIAL_STORE } from '../lib/demoData';
@@ -229,24 +229,27 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [logoStats, setLogoStats] = useState<CompressionResult | null>(null);
   const [isCompressing, setIsCompressing] = useState(false);
   
-  // 💳 إعدادات بطاقة المحفظة الرقمية ونمط الولاء الموحد
+  // 💳 إعدادات بطاقة المحفظة الرقمية ونمط الولاء الموحد (Optimistic UI)
   const [walletPassConfig, setWalletPassConfig] = useState<StoreWalletPassConfig>(() =>
     WalletPassService.getWalletConfig(currentStore)
   );
   const currentWalletConfig = walletPassConfig;
 
-  // مزامنة حالة البطاقة إذا تم تحديث المتجر خارجياً أو من السحابة
+  // مزامنة حالة البطاقة فقط عند تبديل هوية المتجر لتفادي مسح نقرات التاجر اللحظية
   useEffect(() => {
-    if (store?.fulfillment_settings?.wallet_pass_config) {
-      setWalletPassConfig((prev) => ({
-        ...prev,
-        ...store.fulfillment_settings!.wallet_pass_config,
-      }));
+    if (store?.id) {
+      const cfg = WalletPassService.getWalletConfig(store);
+      setWalletPassConfig(cfg);
     }
-  }, [store?.id, JSON.stringify(store?.fulfillment_settings?.wallet_pass_config)]);
+  }, [store?.id]);
 
   const updateWalletSettings = (partial: Partial<StoreWalletPassConfig>) => {
-    const updated = WalletPassService.saveWalletConfig(store, partial, walletPassConfig);
+    // 1. الاستجابة الفورية (Optimistic UI): تثبيت حالة الزر فوراً في الواجهة
+    const updated: StoreWalletPassConfig = {
+      ...walletPassConfig,
+      ...partial,
+      updated_at: new Date().toISOString(),
+    };
     setWalletPassConfig(updated);
     setStore((prev: any) => ({
       ...prev,
@@ -255,6 +258,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         wallet_pass_config: updated,
       },
     }));
+
+    // 2. الحفظ المحلي والمزامنة السحابية المؤجلة مع عزل المتصفح الحالي
+    WalletPassService.saveWalletConfig(store, partial, updated);
   };
   
   // Welcome Gift Settings State
@@ -899,7 +905,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       debounce((storeId: string) => {
         LoyaltyService.resolveStore(storeId, true).then((s) => {
           if (s) {
-            setStore(s);
+            setStore((prev) =>
+              normalizeStore({
+                ...s,
+                fulfillment_settings: {
+                  ...(s.fulfillment_settings || {}),
+                  ...(prev?.fulfillment_settings || {}),
+                  wallet_pass_config: {
+                    ...((s.fulfillment_settings as any)?.wallet_pass_config || {}),
+                    ...((prev?.fulfillment_settings as any)?.wallet_pass_config || {}),
+                  },
+                },
+              })
+            );
             LoyaltyService.checkAndUpdateStoreSubscription(storeId, s).then(setSubscriptionInfo);
           }
         });
@@ -975,6 +993,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     loadAdminData();
 
     const unsubscribe = LoyaltyEvents.listen((event) => {
+      // 🛡️ Optimistic UI: Ignore self-emitted store updates to prevent refetch loops in current window
+      if (
+        (event.client_id && event.client_id === CLIENT_INSTANCE_ID) ||
+        (event.senderId && event.senderId === CLIENT_INSTANCE_ID)
+      ) {
+        return;
+      }
+
       if (event.storeId === currentStore.id || event.storeId === currentStore.slug || event.storeId === 'global') {
         // 🎯 Targeted refetching only:
         if (event.type === 'SUBSCRIPTION_UPDATED' || event.type === 'PAYMENT_COMPLETED' || event.type === 'STORE_UPDATED') {

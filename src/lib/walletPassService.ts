@@ -1,6 +1,7 @@
 import { Store, Customer, Tier, StoreBranch, StoreWalletPassConfig, ProximityDistanceResult, WalletDeviceRegistration, SpinWheelPrize } from '../types';
 import { getSupabaseClient, LoyaltyService } from './supabase';
 import { uploadImageBlob } from './imageCompressor';
+import { LoyaltyEvents, CLIENT_INSTANCE_ID } from './events';
 
 const WALLET_CONFIG_STORAGE_KEY_PREFIX = 'radar_wallet_pass_config_';
 const WALLET_DEVICES_STORAGE_KEY_PREFIX = 'radar_wallet_device_registrations_';
@@ -211,16 +212,31 @@ export class WalletPassService {
       console.warn('Failed to save wallet pass config locally:', e);
     }
 
-    // 2. Asynchronous Cloud Sync with Supabase via secure RPC
+    // 2. Asynchronous Cloud Sync with Supabase via secure RPC, then broadcast to other devices
     const supabase = getSupabaseClient();
     const targetKey = storeId || storeSlug;
     if (supabase && targetKey) {
-      (supabase as any).rpc('update_store_fulfillment_settings', {
-        p_store_id: targetKey,
-        p_fulfillment_settings: { wallet_pass_config: updated },
-      }).catch((rpcErr: any) => {
-        console.warn('update_store_fulfillment_settings error:', rpcErr);
-      });
+      (supabase as any)
+        .rpc('update_store_fulfillment_settings', {
+          p_store_id: targetKey,
+          p_fulfillment_settings: { wallet_pass_config: updated },
+        })
+        .then(({ error }: any) => {
+          if (!error) {
+            // 📡 Broadcast AFTER successful cloud save so other windows and customer devices sync smoothly
+            LoyaltyEvents.emit({
+              type: 'STORE_UPDATED',
+              storeId: storeId || storeSlug || '',
+              senderId: CLIENT_INSTANCE_ID,
+              client_id: CLIENT_INSTANCE_ID,
+            });
+          } else {
+            console.warn('update_store_fulfillment_settings error:', error);
+          }
+        })
+        .catch((rpcErr: any) => {
+          console.warn('update_store_fulfillment_settings error:', rpcErr);
+        });
     }
 
     return updated;
