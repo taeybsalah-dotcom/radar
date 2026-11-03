@@ -26,6 +26,11 @@ function getSecureLogoUrl(url?: string | null): string {
   if (!url || typeof url !== 'string') return fallback;
   const trimmed = url.trim();
   if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return fallback;
+  // Google Wallet strictly requires PNG or JPG format - reject WEBP/SVG/GIF
+  const lower = trimmed.toLowerCase();
+  if (lower.includes('.webp') || lower.includes('.svg') || lower.includes('.gif')) {
+    return fallback;
+  }
   if (trimmed.startsWith('https://')) return trimmed;
   if (trimmed.startsWith('http://')) return trimmed.replace(/^http:\/\//, 'https://');
   if (trimmed.startsWith('//')) return `https:${trimmed}`;
@@ -168,9 +173,13 @@ export default async function handler(req: any, res: any) {
       const jwtPayload = {
         iss: clientEmail,
         aud: 'google',
-        typ: 'savetogooglewallet',
+        typ: 'savetowallet',
         iat: now,
-        origins: [],
+        origins: [
+          'https://sdeemalathr.com',
+          'https://myradar.sarl',
+          'https://sadim-alathir.pages.dev',
+        ],
         payload: {
           loyaltyClasses: [
             {

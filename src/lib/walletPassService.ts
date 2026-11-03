@@ -602,9 +602,10 @@ export class WalletPassService {
     }
 
     const rawLogo = store.logo_url || '';
-    const logoUrl = (rawLogo && rawLogo.startsWith('https://'))
+    const isWebp = rawLogo.toLowerCase().includes('.webp') || rawLogo.toLowerCase().includes('.svg');
+    const logoUrl = (!isWebp && rawLogo && rawLogo.startsWith('https://'))
       ? rawLogo
-      : (rawLogo && rawLogo.startsWith('http://'))
+      : (!isWebp && rawLogo && rawLogo.startsWith('http://'))
         ? rawLogo.replace(/^http:\/\//, 'https://')
         : 'https://sdeemalathr.com/assets/default-logo.png';
 
