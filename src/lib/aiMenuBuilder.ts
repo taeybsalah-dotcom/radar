@@ -135,37 +135,115 @@ export async function compressMenuImageForAi(file: File): Promise<CompressedImag
   });
 }
 
-/**
- * إرسال الصورة للسيرفر الخلفي /api/ai/parse-menu
- */
-export async function parseMenuWithAi(
+function sanitizeGeminiModel(rawModel?: string): string {
+  if (!rawModel || typeof rawModel !== 'string') return 'gemini-3.8-flash';
+  const trimmed = rawModel.trim().toLowerCase();
+  if (
+    trimmed.includes('1.5') ||
+    trimmed.includes('2.0') ||
+    trimmed.includes('2.5') ||
+    trimmed.includes('3.1') ||
+    trimmed === 'gemini-flash-latest' ||
+    trimmed === 'gemini-flash-lite-latest'
+  ) {
+    return 'gemini-3.8-flash';
+  }
+  return trimmed;
+}
+
+async function callGeminiDirectClient(
+  apiKey: string,
   base64Data: string,
-  mimeType: string = 'image/jpeg'
+  mimeType: string,
+  modelName: string
 ): Promise<ParseMenuResponse> {
-  const response = await fetch('/api/ai/parse-menu', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  const cleanModel = sanitizeGeminiModel(modelName);
+  const cleanBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
+
+  const prompt = `أنت خبير محترف في رقمنة وقراءة قوائم الطعام والخدمات (Menu Digitizer).
+قم بتحليل صورة المنيو بدقة بالغة واستخرج كافة الأصناف والمنتجات والخدمات الموجودة.
+لكل صنف استخرج:
+1. name: اسم الصنف بدقة كما هو مكتوب بالعربية أو الإنجليزية.
+2. category: اسم القسم المناسب (مثل: أطباق رئيسية، برجر، مقبلات، مشروبات، حلويات، خدمات عامة، إلخ).
+3. price: السعر كرقم مجرد فقط بدون علامات العملة، وإذا لم يوجد سعر ضعه 0.
+4. description: وصف الصنف أو مكوناته إن وجدت، أو اتركه فارغاً.
+5. item_type: حدد هل هو "product" (طعام، مشروبات، سلع) أو "service" (خدمات، غسيل، حلاقة، مساج، إلخ).
+استخرج أيضاً قائمة بجميع الأقسام الفرعية المميزة في categories.`;
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          { text: prompt },
+          {
+            inline_data: {
+              mime_type: mimeType,
+              data: cleanBase64,
+            },
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          categories: {
+            type: 'ARRAY',
+            items: { type: 'STRING' },
+            description: 'قائمة الأقسام المستخرجة من المنيو',
+          },
+          items: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                name: { type: 'STRING', description: 'اسم الصنف' },
+                category: { type: 'STRING', description: 'القسم أو التصنيف' },
+                price: { type: 'NUMBER', description: 'السعر كرقم مجرد' },
+                description: { type: 'STRING', description: 'الوصف أو المكونات' },
+                item_type: {
+                  type: 'STRING',
+                  enum: ['product', 'service'],
+                  description: 'نوع الصنف',
+                },
+              },
+              required: ['name', 'category', 'price', 'item_type'],
+            },
+          },
+        },
+        required: ['categories', 'items'],
+      },
     },
-    body: JSON.stringify({
-      imageBase64: base64Data,
-      mimeType,
-    }),
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   });
 
-  const resJson: any = await response.json().catch(() => ({}));
-
-  if (!response.ok || !resJson.success) {
-    return {
-      success: false,
-      categories: [],
-      items: [],
-      code: resJson.code,
-      error: resJson.error || 'حدث خطأ أثناء قراءة المنيو بالذكاء الاصطناعي.',
-    };
+  if (!response.ok) {
+    const errText = await response.text();
+    let errJson: any = null;
+    try { errJson = JSON.parse(errText); } catch {}
+    const msg = errJson?.error?.message || errText;
+    throw new Error(`خطأ خدمة الذكاء الاصطناعي (${response.status}): ${msg}`);
   }
 
-  const items: ParsedMenuItem[] = (resJson.items || []).map((it: any, index: number) => ({
+  const resJson: any = await response.json();
+  const rawText = resJson?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!rawText) {
+    throw new Error('لم يتم استخراج أي بيانات من الصورة، يرجى التأكد من وضوح الصورة وتجربة زاوية أخرى.');
+  }
+
+  const parsed = JSON.parse(rawText);
+  const rawItems = Array.isArray(parsed?.items) ? parsed.items : [];
+
+  const items: ParsedMenuItem[] = rawItems.map((it: any, index: number) => ({
     id: `ai-item-${Date.now()}-${index}`,
     name: String(it.name || '').trim(),
     category: String(it.category || 'عام').trim(),
@@ -175,14 +253,111 @@ export async function parseMenuWithAi(
     selected: true,
   }));
 
-  const categories: string[] = Array.isArray(resJson.categories) && resJson.categories.length > 0
-    ? resJson.categories
-    : Array.from(new Set(items.map((i) => i.category)));
+  const categories: string[] =
+    Array.isArray(parsed?.categories) && parsed.categories.length > 0
+      ? parsed.categories
+      : Array.from(new Set(items.map((i) => i.category)));
 
   return {
     success: true,
     categories,
     items,
+  };
+}
+
+/**
+ * إرسال الصورة للسيرفر الخلفي /api/ai/parse-menu مع توفير بديل مباشر
+ */
+export async function parseMenuWithAi(
+  base64Data: string,
+  mimeType: string = 'image/jpeg'
+): Promise<ParseMenuResponse> {
+  // 1. جلب تكاملات المنصة لاستخراج المفتاح والموديل المعتمدين
+  let apiKey: string | undefined;
+  let model: string = 'gemini-3.8-flash';
+
+  try {
+    const integrations = await LoyaltyService.getPlatformIntegrations().catch(() => null);
+    if (integrations?.gemini_api_key) {
+      apiKey = integrations.gemini_api_key.trim();
+    }
+    if (integrations?.gemini_model) {
+      model = sanitizeGeminiModel(integrations.gemini_model);
+    }
+  } catch {}
+
+  // 2. إذا كان مفتاح الـ API متاحاً، ننفذ الاستدعاء المباشر عبر Google Vision API لتفادي مهلات البروكسي والسيرفر السحابي
+  if (apiKey) {
+    try {
+      return await callGeminiDirectClient(apiKey, base64Data, mimeType, model);
+    } catch (directErr: any) {
+      console.warn('Direct Gemini call failed, falling back to server route:', directErr);
+    }
+  }
+
+  // 3. محاولة الاستدعاء عبر مسار السيرفر الخلفي /api/ai/parse-menu
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch('/api/ai/parse-menu', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        imageBase64: base64Data,
+        mimeType,
+        apiKey,
+        model,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (response.ok) {
+      const resJson: any = await response.json().catch(() => ({}));
+      if (resJson && resJson.success) {
+        const items: ParsedMenuItem[] = (resJson.items || []).map((it: any, index: number) => ({
+          id: `ai-item-${Date.now()}-${index}`,
+          name: String(it.name || '').trim(),
+          category: String(it.category || 'عام').trim(),
+          price: cleanPrice(it.price),
+          description: it.description ? String(it.description).trim() : undefined,
+          item_type: it.item_type === 'service' ? 'service' : 'product',
+          selected: true,
+        }));
+
+        const categories: string[] =
+          Array.isArray(resJson.categories) && resJson.categories.length > 0
+            ? resJson.categories
+            : Array.from(new Set(items.map((i) => i.category)));
+
+        return {
+          success: true,
+          categories,
+          items,
+        };
+      } else if (resJson?.error) {
+        return {
+          success: false,
+          categories: [],
+          items: [],
+          code: resJson.code,
+          error: resJson.error,
+        };
+      }
+    }
+  } catch (netErr: any) {
+    console.warn('Network call to /api/ai/parse-menu failed:', netErr);
+  }
+
+  return {
+    success: false,
+    categories: [],
+    items: [],
+    code: 'GEMINI_API_KEY_MISSING',
+    error: 'مفتاح Gemini API غير مضبوط أو تعذر الاتصال بخدمة الذكاء الاصطناعي. يرجى تفعيله عبر مركز التكاملات في لوحة المالك.',
   };
 }
 

@@ -235,7 +235,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   );
   const currentWalletConfig = walletPassConfig;
 
-  // مزامنة حالة البطاقة إذا تم تحديث المتجر خارجياً
+  // مزامنة حالة البطاقة إذا تم تحديث المتجر خارجياً أو من السحابة
   useEffect(() => {
     if (store?.fulfillment_settings?.wallet_pass_config) {
       setWalletPassConfig((prev) => ({
@@ -243,7 +243,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         ...store.fulfillment_settings!.wallet_pass_config,
       }));
     }
-  }, [store?.id]);
+  }, [store?.id, JSON.stringify(store?.fulfillment_settings?.wallet_pass_config)]);
 
   const updateWalletSettings = (partial: Partial<StoreWalletPassConfig>) => {
     const updated = WalletPassService.saveWalletConfig(store, partial, walletPassConfig);
@@ -5004,16 +5004,21 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       <button
                         type="button"
                         onClick={() => updateWalletSettings({ enable_spin_wheel: !currentWalletConfig.enable_spin_wheel })}
-                        className={`w-12 h-6.5 rounded-full p-0.5 transition-colors duration-200 flex items-center cursor-pointer ${
-                          currentWalletConfig.enable_spin_wheel ? 'bg-emerald-500 justify-start' : 'bg-slate-800 justify-end'
+                        className={`relative w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer p-0.5 ${
+                          currentWalletConfig.enable_spin_wheel ? 'bg-emerald-500' : 'bg-slate-800'
                         }`}
+                        title={currentWalletConfig.enable_spin_wheel ? 'تعطيل عجلة الحظ' : 'تفعيل عجلة الحظ'}
                       >
-                        <div className="w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200" />
+                        <span
+                          className={`block w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200 ${
+                            currentWalletConfig.enable_spin_wheel ? '-translate-x-6' : 'translate-x-0'
+                          }`}
+                        />
                       </button>
                       <button
                         type="button"
                         onClick={() => updateWalletSettings({ enable_spin_wheel: !currentWalletConfig.enable_spin_wheel })}
-                        className={`text-[11px] font-bold cursor-pointer ${
+                        className={`text-[11px] font-bold cursor-pointer transition-colors ${
                           currentWalletConfig.enable_spin_wheel ? 'text-emerald-400' : 'text-slate-500'
                         }`}
                       >
@@ -5098,16 +5103,21 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       <button
                         type="button"
                         onClick={() => updateWalletSettings({ enable_scratch_card: !currentWalletConfig.enable_scratch_card })}
-                        className={`w-12 h-6.5 rounded-full p-0.5 transition-colors duration-200 flex items-center cursor-pointer ${
-                          currentWalletConfig.enable_scratch_card ? 'bg-emerald-500 justify-start' : 'bg-slate-800 justify-end'
+                        className={`relative w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer p-0.5 ${
+                          currentWalletConfig.enable_scratch_card ? 'bg-emerald-500' : 'bg-slate-800'
                         }`}
+                        title={currentWalletConfig.enable_scratch_card ? 'تعطيل كرت اكشط واربح' : 'تفعيل كرت اكشط واربح'}
                       >
-                        <div className="w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200" />
+                        <span
+                          className={`block w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200 ${
+                            currentWalletConfig.enable_scratch_card ? '-translate-x-6' : 'translate-x-0'
+                          }`}
+                        />
                       </button>
                       <button
                         type="button"
                         onClick={() => updateWalletSettings({ enable_scratch_card: !currentWalletConfig.enable_scratch_card })}
-                        className={`text-[11px] font-bold cursor-pointer ${
+                        className={`text-[11px] font-bold cursor-pointer transition-colors ${
                           currentWalletConfig.enable_scratch_card ? 'text-emerald-400' : 'text-slate-500'
                         }`}
                       >
@@ -5173,16 +5183,21 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       <button
                         type="button"
                         onClick={() => updateWalletSettings({ enable_streaks: !currentWalletConfig.enable_streaks })}
-                        className={`w-12 h-6.5 rounded-full p-0.5 transition-colors duration-200 flex items-center cursor-pointer ${
-                          currentWalletConfig.enable_streaks ? 'bg-emerald-500 justify-start' : 'bg-slate-800 justify-end'
+                        className={`relative w-12 h-6 rounded-full transition-colors duration-200 cursor-pointer p-0.5 ${
+                          currentWalletConfig.enable_streaks ? 'bg-emerald-500' : 'bg-slate-800'
                         }`}
+                        title={currentWalletConfig.enable_streaks ? 'تعطيل سلسلة الزيارات' : 'تفعيل سلسلة الزيارات'}
                       >
-                        <div className="w-5 h-5 rounded-full bg-white shadow-md transform transition-all duration-200" />
+                        <span
+                          className={`block w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200 ${
+                            currentWalletConfig.enable_streaks ? '-translate-x-6' : 'translate-x-0'
+                          }`}
+                        />
                       </button>
                       <button
                         type="button"
                         onClick={() => updateWalletSettings({ enable_streaks: !currentWalletConfig.enable_streaks })}
-                        className={`text-[11px] font-bold cursor-pointer ${
+                        className={`text-[11px] font-bold cursor-pointer transition-colors ${
                           currentWalletConfig.enable_streaks ? 'text-emerald-400' : 'text-slate-500'
                         }`}
                       >

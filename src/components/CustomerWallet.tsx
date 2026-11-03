@@ -438,7 +438,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
     if (store?.id) {
       const cfg = WalletPassService.getWalletConfig(store);
       setWalletConfig(cfg);
-      WalletPassService.fetchCloudWalletConfig(store.id).then((cloudCfg) => {
+      WalletPassService.fetchCloudWalletConfig(store.id || store.slug).then((cloudCfg) => {
         if (cloudCfg) setWalletConfig(cloudCfg);
       });
     }

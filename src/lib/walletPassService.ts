@@ -186,10 +186,27 @@ export class WalletPassService {
       updated_at: new Date().toISOString(),
     };
 
-    // 1. Fast synchronous local storage update (both ID and Slug keys)
+    // 1. Fast synchronous local storage update (both ID and Slug keys, and radar_stores cache)
     try {
       if (storeId) localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(updated));
       if (storeSlug) localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeSlug}`, JSON.stringify(updated));
+
+      const rawStores = localStorage.getItem('radar_stores');
+      if (rawStores) {
+        const localStores = JSON.parse(rawStores);
+        if (Array.isArray(localStores)) {
+          const idx = localStores.findIndex(
+            (s: any) => (storeId && s.id === storeId) || (storeSlug && s.slug === storeSlug)
+          );
+          if (idx >= 0) {
+            localStores[idx].fulfillment_settings = {
+              ...(localStores[idx].fulfillment_settings || {}),
+              wallet_pass_config: updated,
+            };
+            localStorage.setItem('radar_stores', JSON.stringify(localStores));
+          }
+        }
+      }
     } catch (e) {
       console.warn('Failed to save wallet pass config locally:', e);
     }
@@ -220,6 +237,9 @@ export class WalletPassService {
         const config = this.getWalletConfig(freshStore);
         try {
           localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${storeId}`, JSON.stringify(config));
+          if (freshStore.slug) {
+            localStorage.setItem(`${WALLET_CONFIG_STORAGE_KEY_PREFIX}${freshStore.slug}`, JSON.stringify(config));
+          }
         } catch {}
         return config;
       }

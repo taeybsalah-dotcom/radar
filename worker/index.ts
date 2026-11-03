@@ -488,12 +488,29 @@ export function cleanPrice(raw: any): number {
   return 0;
 }
 
+function resolveModelName(rawModel?: string): string {
+  if (!rawModel || typeof rawModel !== 'string') return 'gemini-3.8-flash';
+  const trimmed = rawModel.trim().toLowerCase();
+  if (
+    trimmed.includes('1.5') ||
+    trimmed.includes('2.0') ||
+    trimmed.includes('2.5') ||
+    trimmed.includes('3.1') ||
+    trimmed === 'gemini-flash-latest' ||
+    trimmed === 'gemini-flash-lite-latest'
+  ) {
+    return 'gemini-3.8-flash';
+  }
+  return trimmed;
+}
+
 async function callGeminiVision(
   apiKey: string,
   base64Data: string,
   mimeType: string,
-  modelName: string = 'gemini-flash-lite-latest'
+  rawModelName: string = 'gemini-3.8-flash'
 ): Promise<ParsedMenuResult> {
+  const modelName = resolveModelName(rawModelName);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
   const prompt = `أنت خبير محترف في رقمنة قوائم الطعام والخدمات (Menu Digitizer).
@@ -599,10 +616,32 @@ async function handleParseMenu(request: Request, env: Env): Promise<Response> {
     body = await request.json();
   } catch {}
 
-  const apiKey =
+  let apiKey =
     body?.apiKey && typeof body.apiKey === 'string' && body.apiKey.trim()
       ? body.apiKey.trim()
       : env.GEMINI_API_KEY;
+
+  if (!apiKey || apiKey.trim() === '') {
+    try {
+      const supaUrl = env.SUPABASE_URL || 'https://zagpvflyizbmzsbmhnts.supabase.co';
+      const supaKey = env.SUPABASE_ANON_KEY || 'sb_publishable_Bx1NGkxLxilvNA3RgcioVQ_t8zlk72H';
+      const rpcRes = await fetch(`${supaUrl}/rest/v1/rpc/get_platform_integrations_secure`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: supaKey,
+          Authorization: `Bearer ${supaKey}`,
+        },
+        body: JSON.stringify({}),
+      });
+      if (rpcRes.ok) {
+        const rpcJson: any = await rpcRes.json();
+        if (rpcJson?.gemini_api_key) {
+          apiKey = rpcJson.gemini_api_key.trim();
+        }
+      }
+    } catch {}
+  }
 
   if (!apiKey || apiKey.trim() === '') {
     return jsonResponse(
