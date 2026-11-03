@@ -14,6 +14,25 @@ function base64UrlEncode(strOrBuffer: string | Buffer): string {
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function cleanTextNoEmoji(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F018}-\u{1F270}\u{2388}\u{2B05}\u{2B06}\u{2B07}\u{2B1B}\u{2B1C}\u{2B50}\u{2B55}\u{FE00}-\u{FE0F}]/gu, '')
+    .trim();
+}
+
+function getSecureLogoUrl(url?: string | null): string {
+  const fallback = 'https://sdeemalathr.com/assets/default-logo.png';
+  if (!url || typeof url !== 'string') return fallback;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return fallback;
+  if (trimmed.startsWith('https://')) return trimmed;
+  if (trimmed.startsWith('http://')) return trimmed.replace(/^http:\/\//, 'https://');
+  if (trimmed.startsWith('//')) return `https:${trimmed}`;
+  if (trimmed.startsWith('/')) return `https://sdeemalathr.com${trimmed}`;
+  return fallback;
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
@@ -41,28 +60,58 @@ export default async function handler(req: any, res: any) {
     // 2. Fetch Store Details
     const { data: store } = await supabase
       .from('stores')
-      .select('id, name, primary_color, secondary_color, logo_url')
+      .select('id, name, slug, primary_color, secondary_color, logo_url, fulfillment_settings')
       .eq('id', store_id)
       .limit(1)
       .maybeSingle();
 
-    // 3. Fetch Customer Details
+    // 3. Fetch Wallet Config (Table or Embedded)
+    let walletConfig: any = null;
+    try {
+      const { data: passConfig } = await supabase
+        .from('store_wallet_pass_configs')
+        .select('*')
+        .eq('store_id', store_id)
+        .limit(1)
+        .maybeSingle();
+
+      const embeddedConfig = (store as any)?.fulfillment_settings?.wallet_pass_config || null;
+      if (passConfig && embeddedConfig) {
+        const tableTime = new Date(passConfig.updated_at || 0).getTime();
+        const embeddedTime = new Date(embeddedConfig.updated_at || 0).getTime();
+        walletConfig = embeddedTime >= tableTime ? embeddedConfig : passConfig;
+      } else {
+        walletConfig = embeddedConfig || passConfig;
+      }
+    } catch {
+      walletConfig = (store as any)?.fulfillment_settings?.wallet_pass_config || null;
+    }
+
+    // 4. Fetch Customer Details
     let customer: any = null;
-    if (customer_id) {
+    if (customer_id && customer_id !== 'guest') {
       const { data: cust } = await supabase
-        .from('customers')
-        .select('id, name, phone, wallet_balance')
+        .from('store_customers')
+        .select('*')
         .eq('id', customer_id)
         .limit(1)
         .maybeSingle();
       customer = cust;
     }
 
-    const storeName = store?.name || 'متجر رادار';
-    const storeColor = store?.primary_color || '#110E05';
+    const rawStoreName = store?.name || 'متجر رادار';
+    const storeName = cleanTextNoEmoji(rawStoreName) || 'متجر رادار';
+    const storeColor = walletConfig?.background_color || store?.primary_color || '#110E05';
     const customerPhone = customer?.phone || 'VIP';
-    const customerName = customer?.name || 'عميل مميز';
-    const customerBalance = Number(customer?.wallet_balance || 0);
+    const customerName = cleanTextNoEmoji(customer?.name || 'عميل مميز') || 'عميل مميز';
+    const balance = Number(customer?.points_balance ?? customer?.wallet_balance ?? 0);
+
+    const loyaltyMode = walletConfig?.loyalty_mode || 'points';
+    const isStamps = loyaltyMode === 'stamps';
+    const stampsTarget = walletConfig?.stamps_target || 6;
+    const currentStamps = balance % stampsTarget;
+
+    const logoUrl = getSecureLogoUrl(store?.logo_url);
 
     const safeStoreId = (store?.id || store_id).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
     const safeCustId = (customer?.id || customer_id || 'guest').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
@@ -75,7 +124,33 @@ export default async function handler(req: any, res: any) {
 
     const classId = `${issuerId}.loyalty_${safeStoreId}`;
     const objectId = `${issuerId}.pass_${safeStoreId}_${safeCustId}`;
-    const qrData = `${storeCode}:LOYALTY:${store?.id || store_id}:${customer?.id || customer_id}:${customerPhone}:${Date.now()}`;
+    const qrData = `${storeCode}:LOYALTY:${store?.id || store_id}:${customer?.id || customer_id || 'GUEST'}:${customerPhone}:${Date.now()}`;
+
+    // حساب حقل الرصيد بحسب نمط الولاء - نصوص وأرقام فقط بدون إيموجيات
+    let loyaltyPointsPayload: any = {
+      label: 'رصيد النقاط',
+      balance: {
+        int: balance,
+      },
+    };
+
+    if (isStamps) {
+      loyaltyPointsPayload = {
+        label: 'الأختام المجمعة',
+        balance: {
+          string: `${currentStamps} من ${stampsTarget} أختام`,
+        },
+      };
+    } else if (loyaltyMode === 'cashback') {
+      loyaltyPointsPayload = {
+        label: 'الرصيد المشحون',
+        balance: {
+          string: `${balance.toFixed(2)} ر.س`,
+        },
+      };
+    }
+
+    const programName = isStamps ? `بطاقة أختام ${storeName}` : `برنامج ولاء ${storeName}`;
 
     // If private key is available, sign official Google JWT
     if (privateKey && privateKey.trim()) {
@@ -101,7 +176,18 @@ export default async function handler(req: any, res: any) {
             {
               id: classId,
               issuerName: storeName,
-              programName: `برنامج ولاء ${storeName}`,
+              programName: programName,
+              programLogo: {
+                sourceUri: {
+                  uri: logoUrl,
+                },
+                contentDescription: {
+                  defaultValue: {
+                    language: 'ar',
+                    value: 'شعار المتجر',
+                  },
+                },
+              },
               reviewStatus: 'UNDER_REVIEW',
               hexBackgroundColor: storeColor,
             },
@@ -113,12 +199,7 @@ export default async function handler(req: any, res: any) {
               state: 'ACTIVE',
               accountId: customerPhone,
               accountName: customerName,
-              loyaltyPoints: {
-                label: 'رصيد النقاط',
-                balance: {
-                  int: customerBalance,
-                },
-              },
+              loyaltyPoints: loyaltyPointsPayload,
               barcode: {
                 type: 'QR_CODE',
                 value: qrData,
@@ -149,7 +230,27 @@ export default async function handler(req: any, res: any) {
     }
 
     // Fallback if private key is not saved yet
-    const fallbackUrl = `https://pay.google.com/gp/v/save/${encodeURIComponent(JSON.stringify(payload || {}))}`;
+    const fallbackPayload = payload || {
+      id: objectId,
+      classId: classId,
+      state: 'ACTIVE',
+      accountId: customerPhone,
+      accountName: customerName,
+      loyaltyPoints: loyaltyPointsPayload,
+      barcode: {
+        type: 'QR_CODE',
+        value: qrData,
+        alternateText: customerPhone !== 'VIP' ? `VIP-${customerPhone.slice(-6)}` : 'VIP-MEMBER',
+      },
+      hexBackgroundColor: storeColor,
+      heroImage: {
+        sourceUri: {
+          uri: logoUrl,
+        },
+      },
+    };
+
+    const fallbackUrl = `https://pay.google.com/gp/v/save/${encodeURIComponent(JSON.stringify(fallbackPayload))}`;
     return res.status(200).json({
       success: true,
       saveUrl: fallbackUrl,

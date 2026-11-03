@@ -577,7 +577,6 @@ export class WalletPassService {
     const isStamps = config.loyalty_mode === 'stamps';
     const stampsTarget = config.stamps_target || 6;
     const currentStamps = (customer.wallet_balance || 0) % stampsTarget;
-    const stampsIcon = config.stamps_icon || '☕';
 
     let loyaltyPoints: any = {
       label: 'رصيد النقاط',
@@ -590,7 +589,7 @@ export class WalletPassService {
       loyaltyPoints = {
         label: 'الأختام المجمعة',
         balance: {
-          string: `${currentStamps} من ${stampsTarget} ${stampsIcon}`,
+          string: `${currentStamps} من ${stampsTarget} أختام`,
         },
       };
     } else if (config.loyalty_mode === 'cashback') {
@@ -602,12 +601,23 @@ export class WalletPassService {
       };
     }
 
+    const rawLogo = store.logo_url || '';
+    const logoUrl = (rawLogo && rawLogo.startsWith('https://'))
+      ? rawLogo
+      : (rawLogo && rawLogo.startsWith('http://'))
+        ? rawLogo.replace(/^http:\/\//, 'https://')
+        : 'https://sdeemalathr.com/assets/default-logo.png';
+
+    const cleanCustomerName = (customer.name || 'عميل مميز')
+      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F018}-\u{1F270}\u{2388}\u{2B05}\u{2B06}\u{2B07}\u{2B1B}\u{2B1C}\u{2B50}\u{2B55}\u{FE00}-\u{FE0F}]/gu, '')
+      .trim() || 'عميل مميز';
+
     return {
       id: `${config.google_issuer_id}.${passSerial}`,
       classId: `${config.google_issuer_id}.loyalty_tier_${tier?.id || 'standard'}`,
       state: 'ACTIVE',
       accountId: customer.phone || customer.id,
-      accountName: customer.name || 'عميل مميز',
+      accountName: cleanCustomerName,
       loyaltyPoints,
       barcode: {
         type: 'QR_CODE',
@@ -617,7 +627,7 @@ export class WalletPassService {
       hexBackgroundColor: config.background_color || '#110E05',
       heroImage: {
         sourceUri: {
-          uri: store.logo_url || 'https://sdeemalathr.com/logo.png',
+          uri: logoUrl,
         },
       },
     };

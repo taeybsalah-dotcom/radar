@@ -39,6 +39,25 @@ function pemToBinary(pem: string): Uint8Array {
   return u8;
 }
 
+function cleanTextNoEmoji(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F018}-\u{1F270}\u{2388}\u{2B05}\u{2B06}\u{2B07}\u{2B1B}\u{2B1C}\u{2B50}\u{2B55}\u{FE00}-\u{FE0F}]/gu, '')
+    .trim();
+}
+
+function getSecureLogoUrl(url?: string | null): string {
+  const fallback = 'https://sdeemalathr.com/assets/default-logo.png';
+  if (!url || typeof url !== 'string') return fallback;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return fallback;
+  if (trimmed.startsWith('https://')) return trimmed;
+  if (trimmed.startsWith('http://')) return trimmed.replace(/^http:\/\//, 'https://');
+  if (trimmed.startsWith('//')) return `https:${trimmed}`;
+  if (trimmed.startsWith('/')) return `https://sdeemalathr.com${trimmed}`;
+  return fallback;
+}
+
 async function restGet(supabaseUrl: string, serviceKey: string, path: string): Promise<any[]> {
   const res = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
     headers: {
@@ -145,18 +164,19 @@ export async function onRequestPost(context: any): Promise<Response> {
     const privateKey = (platformData?.google_private_key || '').trim();
     const isGoogleEnabled = Boolean(platformData?.google_wallet_enabled);
 
-    const storeName = store?.name || 'متجر رادار';
+    const rawStoreName = store?.name || 'متجر رادار';
+    const storeName = cleanTextNoEmoji(rawStoreName) || 'متجر رادار';
     const bgColor = walletConfig?.background_color || store?.primary_color || '#110E05';
     const customerPhone = customer?.phone || 'VIP';
-    const customerName = customer?.name || 'عميل مميز';
+    const customerName = cleanTextNoEmoji(customer?.name || 'عميل مميز') || 'عميل مميز';
     const balance = Number(customer?.points_balance ?? customer?.wallet_balance ?? 0);
 
     const loyaltyMode = walletConfig?.loyalty_mode || 'points';
     const isStamps = loyaltyMode === 'stamps';
     const stampsTarget = walletConfig?.stamps_target || 6;
     const currentStamps = balance % stampsTarget;
-    const stampsIcon = walletConfig?.stamps_icon || '☕';
-    const rewardTitle = walletConfig?.stamps_reward_title || 'مكافأة خاصة 🎁';
+
+    const logoUrl = getSecureLogoUrl(store?.logo_url);
 
     const safeStoreId = String(store?.id || store_id).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
     const safeCustId = String(customer?.id || customer_id || 'guest').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
@@ -171,7 +191,7 @@ export async function onRequestPost(context: any): Promise<Response> {
     const objectId = `${issuerId}.pass_${safeStoreId}_${safeCustId}`;
     const qrData = `${storeCode}:LOYALTY:${store?.id || store_id}:${customer?.id || customer_id || 'GUEST'}:${customerPhone}:${Date.now()}`;
 
-    // حساب حقل الرصيد بحسب نمط الولاء
+    // حساب حقل الرصيد بحسب نمط الولاء (نصوص وأرقام فقط بدون إيموجيات نهائياً)
     let loyaltyPointsPayload: any = {
       label: 'رصيد النقاط',
       balance: { int: balance },
@@ -180,7 +200,7 @@ export async function onRequestPost(context: any): Promise<Response> {
     if (isStamps) {
       loyaltyPointsPayload = {
         label: 'الأختام المجمعة',
-        balance: { string: `${currentStamps} من ${stampsTarget} ${stampsIcon}` },
+        balance: { string: `${currentStamps} من ${stampsTarget} أختام` },
       };
     } else if (loyaltyMode === 'cashback') {
       loyaltyPointsPayload = {
@@ -188,6 +208,8 @@ export async function onRequestPost(context: any): Promise<Response> {
         balance: { string: `${balance.toFixed(2)} ر.س` },
       };
     }
+
+    const programName = isStamps ? `بطاقة أختام ${storeName}` : `برنامج ولاء ${storeName}`;
 
     // 5. إذا كانت شهادة قوقل الخاصة متوفرة ومفعلة، نوقع JWT رسمي فوراً عبر WebCrypto
     if (isGoogleEnabled && privateKey && clientEmail) {
@@ -215,7 +237,18 @@ export async function onRequestPost(context: any): Promise<Response> {
               {
                 id: classId,
                 issuerName: storeName,
-                programName: isStamps ? `بطاقة أختام ${storeName}` : `برنامج ولاء ${storeName}`,
+                programName: programName,
+                programLogo: {
+                  sourceUri: {
+                    uri: logoUrl,
+                  },
+                  contentDescription: {
+                    defaultValue: {
+                      language: 'ar',
+                      value: 'شعار المتجر',
+                    },
+                  },
+                },
                 reviewStatus: 'UNDER_REVIEW',
                 hexBackgroundColor: bgColor,
               },
@@ -274,6 +307,11 @@ export async function onRequestPost(context: any): Promise<Response> {
         alternateText: customerPhone !== 'VIP' ? `VIP-${customerPhone.slice(-6)}` : 'VIP-MEMBER',
       },
       hexBackgroundColor: bgColor,
+      heroImage: {
+        sourceUri: {
+          uri: logoUrl,
+        },
+      },
     };
 
     const fallbackUrl = `https://pay.google.com/gp/v/save/${encodeURIComponent(JSON.stringify(fallbackPayload))}`;
