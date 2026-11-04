@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Store, StoreStaff, StoreBranch, POSShift } from '../types';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, cleanBranchUUID } from '../lib/supabase';
 import { playBeepSound } from '../lib/sound';
 import confetti from 'canvas-confetti';
 import {
@@ -89,7 +89,7 @@ export const CashierShiftCloseModal: React.FC<CashierShiftCloseModalProps> = ({
         const summary = await LoyaltyService.getShiftOrdersSummary(
           store.id,
           active.opened_at,
-          activeBranch?.id || activeStaff.branch_id
+          cleanBranchUUID(activeBranch?.id || activeStaff.branch_id)
         );
         if (!isMounted) return;
 

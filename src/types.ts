@@ -403,6 +403,7 @@ export interface Store {
   store_code?: string; // كود العرض المختصر للمتجر مثل RD-1001 للتعريف السريع
   tax_number?: string; // الرقم الضريبي للمتجر لدى هيئة الزكاة والضريبة والجمارك (ZATCA)
   vat_number?: string;
+  cr_number?: string; // رقم السجل التجاري (10 أرقام)
   phone?: string;
   is_demo?: boolean;
   logo_url: string | null;
@@ -582,6 +583,9 @@ export interface CatalogItem {
   description?: string | null;
   category: string; // مثال: "وجبات رئيسية", "مشروبات", "خدمات VIP", "عناية"
   price: number;
+  cost_price?: number;
+  barcode?: string;
+  vat_rate?: number;
   image_url?: string | null;
   item_type: 'product' | 'service'; // 'product' = وجبة/منتج، 'service' = خدمة تتطلب حضور وموعد
   duration_minutes?: number; // مدة الخدمة بالدقائق (إن وجدت)
@@ -651,6 +655,17 @@ export interface StoreFulfillmentSettings {
 
   // 🎯 إعدادات بطاقة المحفظة الرقمية ونمط الولاء (Stamps / Points / Cashback)
   wallet_pass_config?: StoreWalletPassConfig;
+
+  // 🍽️ الطاولات والبيانات الضريبية والتجارية الموسعة
+  dining_tables?: DiningTable[];
+  cr_number?: string;
+  tax_number?: string;
+  vat_number?: string;
+  theme_mode?: string;
+  background_color?: string;
+  card_color?: string;
+  theme_preset?: string;
+  [key: string]: any;
 }
 
 // ==========================================
@@ -1562,11 +1577,12 @@ export interface DiningTable {
   zone: DiningTableZone | string;
   capacity: number; // عدد المقاعد: 2، 4، 6، 8
   shape?: 'round' | 'square' | 'rectangle';
+  status?: string;
   is_active: boolean;
   notes?: string;
   qr_code_url?: string;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 // ==========================================

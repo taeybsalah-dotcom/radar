@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Store, Customer, Tier, Privilege, DynamicQRToken, StoreStaff, CustomerCoupon, StoreBranch, getStoreActiveModules, StoreDriver, DriverWorkStatus } from '../types';
-import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
+import { LoyaltyService, normalizePhone, getSupabaseClient, cleanBranchUUID } from '../lib/supabase';
 import { getActiveTenantConfig } from '../config/tenant';
 import { QRScannerModal } from './QRScannerModal';
 import { StaffLoginGate } from './StaffLoginGate';
@@ -422,7 +422,9 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   // 📍 Interactive Branch Selection for Cashier and Manager
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(() => {
     try {
-      return localStorage.getItem(`radar_pos_active_branch_${store.id}`) || null;
+      const stored = localStorage.getItem(`radar_pos_active_branch_${store.id}`);
+      if (!stored || stored === 'ALL') return stored;
+      return cleanBranchUUID(stored) || stored;
     } catch {
       return null;
     }
@@ -436,7 +438,7 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
     if (isAdmin) return storeBranches;
     if (!effectiveStaff) return storeBranches;
     const assigned = Array.isArray(effectiveStaff.assigned_branch_ids) ? effectiveStaff.assigned_branch_ids : [];
-    const directBranch = effectiveStaff.branch_id;
+    const directBranch = cleanBranchUUID(effectiveStaff.branch_id) || effectiveStaff.branch_id;
     if (assigned.length === 0 && !directBranch) return storeBranches;
     return storeBranches.filter(b => assigned.includes(b.id) || b.id === directBranch);
   }, [isAdmin, effectiveStaff, storeBranches]);
@@ -448,17 +450,18 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
       if (selectedBranchId && storeBranches.some(b => b.id === selectedBranchId)) {
         return selectedBranchId;
       }
-      return effectiveStaff?.branch_id || (storeBranches.length > 0 ? storeBranches[0].id : null);
+      return cleanBranchUUID(effectiveStaff?.branch_id) || (storeBranches.length > 0 ? storeBranches[0].id : null);
     }
     // Cashier:
     if (selectedBranchId && allowedBranches.some(b => b.id === selectedBranchId)) {
       return selectedBranchId;
     }
-    return allowedBranches[0]?.id || effectiveStaff?.branch_id || storeBranches[0]?.id || null;
+    return allowedBranches[0]?.id || cleanBranchUUID(effectiveStaff?.branch_id) || storeBranches[0]?.id || null;
   }, [isAdmin, selectedBranchId, allowedBranches, effectiveStaff?.branch_id, storeBranches]);
 
   const isGeneralManager = isAdmin && (!effectiveBranchId || selectedBranchId === 'ALL');
-  const activeBranchId = isGeneralManager ? null : effectiveBranchId;
+  const rawActiveBranchId = isGeneralManager ? null : effectiveBranchId;
+  const activeBranchId = cleanBranchUUID(rawActiveBranchId) || rawActiveBranchId;
   const activeBranchObj = storeBranches.find(b => b.id === activeBranchId);
 
   const activeBranchIdRef = useRef<string | null>(activeBranchId);
@@ -727,10 +730,11 @@ ${portalUrl}`;
   };
 
   const handleSwitchBranch = (branchId: string | null) => {
-    setSelectedBranchId(branchId || 'ALL');
+    const clean = branchId && branchId !== 'ALL' ? (cleanBranchUUID(branchId) || branchId) : branchId;
+    setSelectedBranchId(clean || 'ALL');
     try {
-      if (branchId) {
-        localStorage.setItem(`radar_pos_active_branch_${store.id}`, branchId);
+      if (clean) {
+        localStorage.setItem(`radar_pos_active_branch_${store.id}`, clean);
       } else {
         localStorage.setItem(`radar_pos_active_branch_${store.id}`, 'ALL');
       }
@@ -1085,7 +1089,7 @@ ${portalUrl}`;
       setIncomingAlert(prev => prev?.orderId === orderId ? null : prev);
       setOrderActionError(null);
       const staffName = activeStaff?.name || authenticatedCashier?.name || 'الكاشير';
-      const effectiveBranchId = activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null;
+      const effectiveBranchId = cleanBranchUUID(activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id);
       const effectiveBranchName = activeBranchObj?.name || null;
 
       // Deduct raw materials from cloud inventory when an online order is accepted or completed
@@ -1124,7 +1128,7 @@ ${portalUrl}`;
       setIncomingAlert(prev => prev?.bookingId === bookingId ? null : prev);
       setOrderActionError(null);
       const staffName = activeStaff?.name || authenticatedCashier?.name || 'الكاشير';
-      const effectiveBranchId = activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null;
+      const effectiveBranchId = cleanBranchUUID(activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id);
       const effectiveBranchName = activeBranchObj?.name || null;
       await LoyaltyService.updateServiceBookingStatus(bookingId, status, staffName, effectiveBranchId, effectiveBranchName);
       setLiveBookings(prev => prev.map(o => o.id === bookingId ? { ...o, status } : o));
@@ -1433,7 +1437,7 @@ ${portalUrl}`;
           activeStaff?.id,
           activeStaff?.name,
           entryMethod,
-          activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null,
+          cleanBranchUUID(activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id) || null,
           activeBranchObj?.name || null
         );
 
@@ -1478,7 +1482,7 @@ ${portalUrl}`;
         activeStaff?.id,
         activeStaff?.name,
         entryMethod,
-        activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id || null,
+        cleanBranchUUID(activeBranchId || activeStaff?.branch_id || authenticatedCashier?.branch_id) || null,
         activeBranchObj?.name || null
       );
 
@@ -1592,7 +1596,7 @@ ${portalUrl}`;
         effectiveStaff?.id,
         effectiveStaff?.name,
         pendingCustomerScan.entryMethod,
-        activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id || null,
+        cleanBranchUUID(activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id) || null,
         activeBranchObj?.name || null
       );
 
@@ -1718,7 +1722,7 @@ ${portalUrl}`;
         effectiveStaff?.id,
         effectiveStaff?.name,
         pendingCustomerScan.entryMethod,
-        activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id || null,
+        cleanBranchUUID(activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id) || null,
         activeBranchObj?.name || null
       );
 

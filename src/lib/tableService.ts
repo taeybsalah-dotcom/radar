@@ -353,7 +353,7 @@ export class TableService {
   static generateTableQrUrl(storeSlug: string, tableNumber: string, branchId?: string | null): string {
     const base = typeof window !== 'undefined' ? window.location.origin : 'https://radar.taeybsalah.workers.dev';
     const params = new URLSearchParams();
-    params.set('store', String(storeSlug || 'demo-cafe').trim());
+    params.set('store', String(storeSlug || '').trim());
     params.set('portal', 'customer');
     params.set('table', String(tableNumber).trim());
     if (branchId) {

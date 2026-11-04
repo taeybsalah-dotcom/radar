@@ -103,21 +103,7 @@ type PortalTab =
 
 function getInitialStoreSync(targetSlug?: string | null): Store | null {
   if (typeof window === 'undefined') return null;
-  let clean = (targetSlug || '').trim().toLowerCase();
-  if (!clean) {
-    try {
-      const rawAuth = localStorage.getItem('radar_unified_auth_user');
-      if (rawAuth) {
-        const parsed = JSON.parse(rawAuth);
-        if (parsed?.storeSlug || parsed?.storeId) {
-          clean = String(parsed.storeSlug || parsed.storeId).trim().toLowerCase();
-        }
-      }
-      if (!clean) {
-        clean = (localStorage.getItem('radar_last_store_slug') || '').trim().toLowerCase();
-      }
-    } catch {}
-  }
+  const clean = (targetSlug || '').trim().toLowerCase();
   if (!clean) return null;
   if (clean === DEMO_STORE_SLUG || isDemoStoreSlug(clean)) {
     return INITIAL_DEMO_STORE;
@@ -285,15 +271,13 @@ function parseRouteParams() {
             resolvedAdminSlug = parsed.storeSlug || parsed.storeId;
           }
         }
-        if (!resolvedAdminSlug) {
-          resolvedAdminSlug = localStorage.getItem('radar_last_store_slug');
-        }
+        // Do not force sticky store if accessing portal without storeParam
       } catch {}
     }
     return {
       portal: 'admin' as const,
       isPreview: previewParam,
-      storeSlug: resolvedAdminSlug,
+      storeSlug: resolvedAdminSlug || null,
       partnerSlug: null,
     };
   }
@@ -320,15 +304,12 @@ function parseRouteParams() {
             resolvedCashierSlug = parsed.storeSlug || parsed.storeId;
           }
         }
-        if (!resolvedCashierSlug) {
-          resolvedCashierSlug = localStorage.getItem('radar_last_store_slug');
-        }
       } catch {}
     }
     return {
       portal: 'cashier' as const,
       isPreview: previewParam,
-      storeSlug: resolvedCashierSlug,
+      storeSlug: resolvedCashierSlug || null,
       partnerSlug: null,
     };
   }
@@ -356,15 +337,12 @@ function parseRouteParams() {
             resolvedKDSSlug = parsed.storeSlug || parsed.storeId;
           }
         }
-        if (!resolvedKDSSlug) {
-          resolvedKDSSlug = localStorage.getItem('radar_last_store_slug');
-        }
       } catch {}
     }
     return {
       portal: 'kds' as const,
       isPreview: previewParam,
-      storeSlug: resolvedKDSSlug,
+      storeSlug: resolvedKDSSlug || null,
       partnerSlug: null,
     };
   }
@@ -387,15 +365,12 @@ function parseRouteParams() {
             resolvedDriverSlug = parsed.storeSlug || parsed.storeId;
           }
         }
-        if (!resolvedDriverSlug) {
-          resolvedDriverSlug = localStorage.getItem('radar_last_store_slug') || 'demo-cafe';
-        }
       } catch {}
     }
     return {
       portal: 'driver' as const,
       isPreview: previewParam,
-      storeSlug: resolvedDriverSlug,
+      storeSlug: resolvedDriverSlug || null,
       partnerSlug: null,
     };
   }
@@ -544,8 +519,7 @@ function parseRouteParams() {
     }
   } catch {}
 
-  const savedSlug = localStorage.getItem('radar_last_store_slug');
-  const storeSlug = slugParam || (portalParam ? savedSlug : null);
+  const storeSlug = slugParam || null;
 
   if (!portalParam && !hasSession && slugParam) {
     resolvedRolePortal = 'customer';
@@ -911,15 +885,15 @@ export function App() {
         }
       }
 
-      // 7. Resolving default store if portal is cashier, admin, customer, kds, or driver without slug
-      if (config.portal && ['cashier', 'customer', 'admin', 'kds', 'driver'].includes(config.portal)) {
-        const defaultStore = await LoyaltyService.getStore();
-        if (defaultStore) {
-          setStore(defaultStore);
+      // 7. Resolving target store if portal is cashier, admin, customer, kds, or driver with slug
+      if (config.portal && config.storeSlug && ['cashier', 'customer', 'admin', 'kds', 'driver'].includes(config.portal)) {
+        const targetStore = await LoyaltyService.resolveStore(config.storeSlug);
+        if (targetStore) {
+          setStore(targetStore);
           setActiveTab(config.portal);
-          updateDynamicPWA(defaultStore, config.portal);
-          saveActiveStoreBranding(defaultStore);
-          localStorage.setItem('radar_last_store_slug', defaultStore.slug || defaultStore.id);
+          updateDynamicPWA(targetStore, config.portal);
+          saveActiveStoreBranding(targetStore);
+          localStorage.setItem('radar_last_store_slug', targetStore.slug || targetStore.id);
           localStorage.setItem('radar_last_portal', config.portal);
           setLoading(false);
           return;

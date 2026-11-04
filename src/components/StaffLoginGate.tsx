@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Store, StoreStaff, StoreBranch } from '../types';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, cleanBranchUUID } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
 import { ensureAudioUnlocked } from '../lib/sound';
@@ -51,14 +51,15 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
         .then((brs) => {
           if (Array.isArray(brs) && brs.length > 0) {
             setBranches(brs);
-            const savedBranch =
+            const rawSavedBranch =
               localStorage.getItem(`radar_pos_active_branch_${store.id}`) ||
               (store.slug ? localStorage.getItem(`radar_pos_active_branch_${store.slug}`) : null);
+            const savedBranch = cleanBranchUUID(rawSavedBranch) || rawSavedBranch;
             if (savedBranch && brs.some((b) => b.id === savedBranch)) {
               setSelectedBranchId(savedBranch);
             } else {
               const main = brs.find((b) => b.is_main) || brs[0];
-              setSelectedBranchId(main.id);
+              setSelectedBranchId(cleanBranchUUID(main.id) || main.id);
             }
           }
         })
@@ -156,11 +157,14 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
         }
 
         // تثبيت الفرع المعتمد لجلسة الكاشير الحالية
-        staff.branch_id = selectedBranchId;
+        const cleanSelected = cleanBranchUUID(selectedBranchId) || selectedBranchId;
+        staff.branch_id = cleanSelected;
         try {
-          localStorage.setItem(`radar_pos_active_branch_${store.id}`, selectedBranchId);
-          if (store.slug) {
-            localStorage.setItem(`radar_pos_active_branch_${store.slug}`, selectedBranchId);
+          if (cleanSelected) {
+            localStorage.setItem(`radar_pos_active_branch_${store.id}`, cleanSelected);
+            if (store.slug) {
+              localStorage.setItem(`radar_pos_active_branch_${store.slug}`, cleanSelected);
+            }
           }
         } catch {}
       }

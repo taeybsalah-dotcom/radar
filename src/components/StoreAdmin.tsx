@@ -40,6 +40,7 @@ import { debounce } from '../lib/debounce';
 import { INITIAL_STORE } from '../lib/demoData';
 import { compressImage, CompressionResult } from '../lib/imageCompressor';
 import { StaffLoginGate } from './StaffLoginGate';
+import { useAuth } from '../context/AuthContext';
 import { StoreAnalyticsView } from './merchant/StoreAnalyticsView';
 import { SandboxPaymentModal } from './SandboxPaymentModal';
 import { NotificationBell } from './NotificationBell';
@@ -171,6 +172,9 @@ type SettingsSection =
   | 'wallet_passes';
 
 export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) => {
+  const { role: authRole } = useAuth();
+  const isSuperAdminSession = authRole === 'super_admin';
+
   const currentStore = initialStore || INITIAL_STORE;
   const [store, setStore] = useState<Store>(currentStore);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -196,9 +200,59 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [showQuickLinksModal, setShowQuickLinksModal] = useState(false);
 
   // Authentication & Session State
-  const [authenticatedAdmin, setAuthenticatedAdmin] = useState<StoreStaff | null>(() =>
-    currentStore?.id ? LoyaltyService.getStaffSession(currentStore.id, 'admin', currentStore.slug) : null
-  );
+  const [authenticatedAdmin, setAuthenticatedAdmin] = useState<StoreStaff | null>(() => {
+    if (!currentStore?.id) return null;
+    const existing = LoyaltyService.getStaffSession(currentStore.id, 'admin', currentStore.slug);
+    if (existing) return existing;
+    if (isSuperAdminSession) {
+      return {
+        id: `sa_${currentStore.id}`,
+        store_id: currentStore.id,
+        name: 'مالك المنصة (Super Admin)',
+        phone: '0500000000',
+        role: 'admin',
+        is_active: true,
+        can_manual_input_phone: true,
+      };
+    }
+    return null;
+  });
+
+  // 🔄 Synchronize StoreAdmin state whenever initialStore prop changes
+  useEffect(() => {
+    if (initialStore && initialStore.id && initialStore.id !== store?.id) {
+      setStore(initialStore);
+      setStoreName(initialStore.name || '');
+      setStoreSlug(initialStore.slug || '');
+      setCustomDomain(initialStore.custom_domain || '');
+      setManagerName(initialStore.manager_name || '');
+      setManagerContact(initialStore.manager_contact || '');
+      setPrimaryColor(initialStore.primary_color || '#0F172A');
+      setSecondaryColor(initialStore.secondary_color || '#F59E0B');
+      setThemeMode((initialStore.theme_mode as any) || 'light');
+      setBackgroundColor(initialStore.background_color || '#F8FAFC');
+      setCardColor(initialStore.card_color || '#FFFFFF');
+      setPointsPerRiyal(initialStore.points_per_riyal || 1.0);
+      setStoreLogoUrl(initialStore.logo_url || '');
+
+      const existing = LoyaltyService.getStaffSession(initialStore.id, 'admin', initialStore.slug);
+      if (existing) {
+        setAuthenticatedAdmin(existing);
+      } else if (isSuperAdminSession) {
+        setAuthenticatedAdmin({
+          id: `sa_${initialStore.id}`,
+          store_id: initialStore.id,
+          name: 'مالك المنصة (Super Admin)',
+          phone: '0500000000',
+          role: 'admin',
+          is_active: true,
+          can_manual_input_phone: true,
+        });
+      } else {
+        setAuthenticatedAdmin(null);
+      }
+    }
+  }, [initialStore?.id, initialStore?.slug, isSuperAdminSession]);
 
   // Settings & Loyalty Modifier State
   const [storeName, setStoreName] = useState<string>(currentStore?.name || '');

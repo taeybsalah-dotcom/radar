@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Store, StoreBranch, StoreStaff, ServiceBooking, StoreSpecialist, CatalogItem, Customer } from '../types';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, cleanBranchUUID } from '../lib/supabase';
 import { playBeepSound } from '../lib/sound';
 import {
   Calendar,
@@ -227,7 +227,7 @@ export const CashierAppointmentsModal: React.FC<CashierAppointmentsModalProps> =
         bookingId,
         nextStatus,
         activeStaff.name,
-        activeBranch?.id || null,
+        cleanBranchUUID(activeBranch?.id) || null,
         activeBranch?.name || null
       );
       playBeepSound('success');
@@ -286,7 +286,7 @@ export const CashierAppointmentsModal: React.FC<CashierAppointmentsModalProps> =
       const bookingPayload: any = {
         store_id: store.id,
         store_name: store.name,
-        branch_id: activeBranch?.id || null,
+        branch_id: cleanBranchUUID(activeBranch?.id) || null,
         branch_name: activeBranch?.name || 'الفرع الرئيسي',
         booking_number: bookingNumber,
         customer_id: matchedCustomer?.id || `phone-cust-${Date.now()}`,

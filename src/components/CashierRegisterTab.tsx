@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Store, StoreStaff, StoreBranch, Customer, CatalogItem, Tier, POSCartDiscount, POSCashMovement, POSShift, StoreSpecialist, ServiceBooking, getStoreActiveModules } from '../types';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, cleanBranchUUID } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
 import { playBeepSound } from '../lib/sound';
 import { generateZatcaTLVQR } from '../lib/zatcaQR';
@@ -805,7 +805,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
       const orderPayload: any = {
         store_id: store.id,
         store_name: store.name,
-        branch_id: activeBranch?.id || null,
+        branch_id: cleanBranchUUID(activeBranch?.id) || null,
         branch_name: activeBranch?.name || 'الفرع الرئيسي',
         order_number: orderNumber,
         app_order_number: transferredMetadata?.appOrderNumber || null,
@@ -880,7 +880,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             driver_name: orderType === 'delivery' && selectedDriver ? selectedDriver.name : undefined,
             driver_phone: orderType === 'delivery' && selectedDriver ? selectedDriver.phone : undefined,
             delivery_status: orderType === 'delivery' ? (selectedDriverId ? 'assigned' : 'unassigned') : undefined,
-            branch_id: activeBranch?.id || null,
+            branch_id: cleanBranchUUID(activeBranch?.id) || null,
             branch_name: activeBranch?.name || null,
           };
           if (transferredMetadata?.fulfillmentDetails || transferredMetadata?.deliveryAddress || transferredMetadata?.deliveryGpsLink) {
@@ -944,7 +944,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
           for (const sItem of serviceCartItems) {
             await LoyaltyService.createServiceBooking({
               store_id: store.id,
-              branch_id: activeBranch?.id || null,
+              branch_id: cleanBranchUUID(activeBranch?.id) || null,
               branch_name: activeBranch?.name || null,
               customer_id: customer?.id || undefined,
               customer_name: customer?.name || 'عميل كاشير مباشر',
@@ -979,7 +979,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
           cartGrandTotal,
           paymentMethod,
           activeStaff: { id: activeStaff.id, name: activeStaff.name },
-          branchId: activeBranch?.id || null,
+          branchId: cleanBranchUUID(activeBranch?.id) || null,
           branchName: activeBranch?.name || null,
           itemsCount: cartItems.reduce((s, it) => s + it.quantity, 0),
           queuedAt: nowIso,
@@ -1017,7 +1017,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             activeStaff.id,
             activeStaff.name,
             'qr_scan',
-            activeBranch?.id || null,
+            cleanBranchUUID(activeBranch?.id) || null,
             activeBranch?.name || null
           );
           if (purchaseRes && purchaseRes.customer) {
@@ -1108,7 +1108,7 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
             transferredMetadata.originalOrderId,
             'confirmed',
             activeStaff.name,
-            activeBranch?.id || null,
+            cleanBranchUUID(activeBranch?.id) || null,
             activeBranch?.name || null
           );
         } catch (syncOrigErr) {

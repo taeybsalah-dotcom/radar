@@ -17,3 +17,7 @@ secure_backups/
 *.backup
 *.sql.enc
 scratch/
+.env.local
+.env.staging
+.env.production
+.env.sadim-alathir

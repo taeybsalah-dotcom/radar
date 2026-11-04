@@ -1975,7 +1975,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               </div>
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h4 className={`text-base sm:text-lg font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>متجر التجربة التفاعلي (Demo Cafe)</h4>
+                  <h4 className={`text-base sm:text-lg font-black ${isDark ? 'text-white' : 'text-slate-900'}`}>سديم كافيه ومخبوزات (Demo Cafe)</h4>
                   <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border font-bold ${
                     isDark ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-cyan-100 text-cyan-800 border-cyan-200'
                   }`}>
@@ -1988,7 +1988,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                   </span>
                 </div>
                 <p className={`text-xs max-w-2xl leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
-                  متجر تجريبي متكامل وجاهز للاختبار والعرض (منيو، موظفين، خدمات، عملاء، ونقاط). يمكنك تجربته أو تصفير بياناته في أي لحظة.
+                  متجر تجريبي واقعي متكامل (سديم كافيه ومخبوزات - فرعان، منيو 19 منتجاً، طاولات، موظفون، وسجل مبيعات حية). يمكنك تجربته أو تصفير بياناته في أي لحظة.
                 </p>
               </div>
             </div>

@@ -59,6 +59,13 @@ function getInitialAuthSync(): { user: AuthUser | null; role: UserRole | null; i
         if (parsed && parsed.role && parsed.id) {
           // 🛡️ SECURITY GATE: Super Admin role CANNOT be established from localStorage!
           if (parsed.role !== 'super_admin') {
+            // 🛡️ Store Isolation: Check if URL explicitly requests a specific store
+            const params = new URLSearchParams(window.location.search);
+            const urlStore = (params.get('store') || '').toLowerCase().trim();
+            if (urlStore && parsed.storeSlug && parsed.storeSlug.toLowerCase() !== urlStore && parsed.storeId !== urlStore) {
+              // Current URL belongs to a different store -> do not bleed old store session into new store
+              return { user: null, role: null, isAuthenticated: false };
+            }
             return { user: parsed, role: parsed.role, isAuthenticated: true };
           }
         }

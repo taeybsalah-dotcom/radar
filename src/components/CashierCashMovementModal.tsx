@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Store, StoreStaff, StoreBranch, POSShift, POSCashMovement } from '../types';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, cleanBranchUUID } from '../lib/supabase';
 import { playBeepSound } from '../lib/sound';
 import confetti from 'canvas-confetti';
 import {
@@ -100,7 +100,7 @@ export const CashierCashMovementModal: React.FC<CashierCashMovementModalProps> =
     setLoadingHistory(true);
     try {
       const data = await LoyaltyService.getStoreCashMovements(store.id, {
-        branchId: activeBranch?.id || activeStaff.branch_id || null,
+        branchId: cleanBranchUUID(activeBranch?.id || activeStaff.branch_id),
         shiftOpenedAt: activeShift?.opened_at,
         limit: 20,
       });

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Store, StoreStaff, StoreBranch, POSShift, POSRefund, POSRefundItem } from '../types';
-import { LoyaltyService } from '../lib/supabase';
+import { LoyaltyService, cleanBranchUUID } from '../lib/supabase';
 import { playBeepSound } from '../lib/sound';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -84,7 +84,7 @@ export const CashierRefundModal: React.FC<CashierRefundModalProps> = ({
         const results = await LoyaltyService.searchOrdersForRefund(
           store.id,
           searchQuery,
-          activeBranch?.id
+          cleanBranchUUID(activeBranch?.id)
         );
         if (isMounted) {
           setOrdersList(results);

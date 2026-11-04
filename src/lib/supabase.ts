@@ -89,12 +89,14 @@ import {
   INITIAL_DEMO_WALLET,
   INITIAL_DEMO_COUPONS,
   INITIAL_DEMO_AUDIT_LOGS,
+  INITIAL_DEMO_BRANCHES,
 } from './demoStoreSeed';
 
 const STORAGE_KEYS = {
   URL: 'radar_supabase_url',
   ANON_KEY: 'radar_supabase_anon_key',
   LOCAL_STORES: 'radar_local_stores',
+  LOCAL_BRANCHES: 'radar_local_branches',
   LOCAL_CUSTOMERS: 'radar_local_customers',
   LOCAL_LOGS: 'radar_local_logs',
   LOCAL_STAFF: 'radar_local_staff',
@@ -370,6 +372,30 @@ export function toUUID(str?: string | null): string {
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+/**
+ * 🧹 دالة تنظيف وتجريد معرف الفرع من أي بادئات (مثل branch-main-)
+ * وإرجاع الـ UUID الصافي فقط لضمان التوافق التام مع قيود قاعدة البيانات.
+ */
+export function cleanBranchUUID(branchId?: string | null): string | null {
+  if (!branchId || typeof branchId !== 'string') return null;
+  const trimmed = branchId.trim();
+  if (!trimmed || trimmed === 'ALL' || trimmed === 'default') return null;
+
+  // 1. إزالة أي بادئة مثل branch-main- أو branch-
+  const stripped = trimmed.replace(/^(branch-main-|branch-)/i, '').trim();
+  if (isUUID(stripped)) {
+    return stripped.toLowerCase();
+  }
+
+  // 2. إذا كان يحتوي على UUID في أي مكان داخل النص (RegEx Match)
+  const match = trimmed.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (match && isUUID(match[0])) {
+    return match[0].toLowerCase();
+  }
+
+  return null;
 }
 
 export function normalizePhone(rawPhone?: string | null): string {
@@ -1532,12 +1558,20 @@ export const LoyaltyService = {
       return existing;
     }
 
-    // 1. Store
+    // 1. Store (place at the END so it never hijacks index 0 from real stores)
     const updatedStores = [
-      INITIAL_DEMO_STORE,
       ...localStores.filter((s) => s && s.id !== DEMO_STORE_ID && s.slug !== DEMO_STORE_SLUG),
+      INITIAL_DEMO_STORE,
     ];
     saveLocalData(STORAGE_KEYS.LOCAL_STORES, updatedStores);
+
+    // 1b. Branches
+    const localBranches = getLocalData<StoreBranch[]>(STORAGE_KEYS.LOCAL_BRANCHES, []);
+    const updatedBranches = [
+      ...localBranches.filter((b) => b.store_id !== DEMO_STORE_ID),
+      ...INITIAL_DEMO_BRANCHES,
+    ];
+    saveLocalData(STORAGE_KEYS.LOCAL_BRANCHES, updatedBranches);
 
     // 2. Tiers
     const localTiers = getLocalData<Tier[]>(STORAGE_KEYS.LOCAL_TIERS, []);
@@ -4455,7 +4489,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_staff_token: staffToken || null,
       p_staff_id: isUUID(staffId) ? staffId : null,
       p_staff_name: staffName || null,
-      p_branch_id: branchId && isUUID(branchId) ? branchId : null,
+      p_branch_id: cleanBranchUUID(branchId),
       p_branch_name: branchName || null,
       p_entry_method: entryMethod,
     });
@@ -4817,7 +4851,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         p_staff_token: staffToken || null,
         p_staff_id: isUUID(staffId) ? staffId : null,
         p_staff_name: staffName || null,
-        p_branch_id: branchId && isUUID(branchId) ? branchId : null,
+        p_branch_id: cleanBranchUUID(branchId),
         p_branch_name: branchName || null,
         p_entry_method: entryMethod,
       });
@@ -5655,7 +5689,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_purchase_amount: amount,
       p_invoice_number: note || null,
       p_entry_method: entryMethod,
-      p_branch_id: branchId && isUUID(branchId) ? branchId : null,
+      p_branch_id: cleanBranchUUID(branchId),
       p_branch_name: branchName || null,
     });
 
@@ -5836,7 +5870,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_staff_id: isUUID(staffId) ? staffId : null,
       p_staff_name: staffName || 'كاشير',
       p_entry_method: entryMethod,
-      p_branch_id: branchId && isUUID(branchId) ? branchId : null,
+      p_branch_id: cleanBranchUUID(branchId),
       p_branch_name: branchName || null,
     });
 
@@ -7878,7 +7912,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_fulfillment_type: payload.fulfillment_type || payload.order_type || 'dine_in',
       p_payment_method: payload.payment_method || (isDirectPOSOrder ? 'cash' : 'card'),
       p_order_source: resolvedOrderSource,
-      p_branch_id: isUUID(payload.branch_id) ? payload.branch_id : null,
+      p_branch_id: cleanBranchUUID(payload.branch_id),
       p_table_number: payload.fulfillment_details?.table_number || payload.table_number || null,
       p_notes: payload.notes || payload.fulfillment_details?.general_notes || '',
       p_delivery_address: payload.fulfillment_details?.delivery_address || payload.delivery_address || null,
@@ -7964,7 +7998,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_driver_phone: updates.driver_phone || null,
       p_delivery_status: updates.delivery_status || null,
       p_cashier_name: updates.cashier_name || null,
-      p_branch_id: updates.branch_id && isUUID(updates.branch_id) ? updates.branch_id : null,
+      p_branch_id: cleanBranchUUID(updates.branch_id),
     });
     const data = res.order;
     if (data) {
@@ -8217,7 +8251,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_order_id: orderId,
       p_status: status,
       p_cashier_name: cashierName || null,
-      p_branch_id: branchId && isUUID(branchId) ? branchId : null,
+      p_branch_id: cleanBranchUUID(branchId),
     });
     const data = res.order;
     if (data) {
@@ -8730,7 +8764,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         p_notes: dbPayload.customer_notes,
         p_points_to_earn: dbPayload.loyalty_points_earned,
         p_selected_modifiers: dbPayload.selected_modifiers,
-        p_branch_id: booking.branch_id && isUUID(booking.branch_id) ? booking.branch_id : null,
+        p_branch_id: cleanBranchUUID(booking.branch_id),
         p_booking_source: resolvedBookingSource,
         p_status: resolvedStatus,
       });
@@ -11392,15 +11426,19 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           .order('is_main', { ascending: false })
           .order('created_at', { ascending: true });
         if (!error && data && data.length > 0) {
-          return data as StoreBranch[];
+          return data.map((b: any) => ({
+            ...b,
+            id: cleanBranchUUID(b.id) || b.id,
+          })) as StoreBranch[];
         }
       } catch (err) {
         console.warn('Failed to fetch store branches from DB:', err);
       }
     }
+    const cleanMainId = isUUID(resolvedStoreId) ? resolvedStoreId : toUUID(resolvedStoreId);
     return [
       {
-        id: `branch-main-${resolvedStoreId}`,
+        id: cleanMainId,
         store_id: resolvedStoreId,
         branch_code: 'BR-01',
         name: 'الفرع الرئيسي',
@@ -11423,14 +11461,17 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         .select()
         .single();
       if (!error && data) {
-        return data as StoreBranch;
+        return {
+          ...data,
+          id: cleanBranchUUID(data.id) || data.id,
+        } as StoreBranch;
       }
       if (error) {
         throw new Error(error.message || 'تعذر إضافة الفرع');
       }
     }
     return {
-      id: `branch-${Date.now()}`,
+      id: toUUID(),
       ...branchData,
       store_id: resolvedStoreId,
     };
@@ -11438,18 +11479,22 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
   async updateStoreBranch(branchId: string, updates: Partial<StoreBranch>): Promise<StoreBranch | null> {
     const supabase = getSupabaseClient();
-    if (supabase && isUUID(branchId)) {
+    const cleanId = cleanBranchUUID(branchId) || branchId;
+    if (supabase && isUUID(cleanId)) {
       const { data, error } = await (supabase as any)
         .from('store_branches')
         .update({
           ...updates,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', branchId)
+        .eq('id', cleanId)
         .select()
         .single();
       if (!error && data) {
-        return data as StoreBranch;
+        return {
+          ...data,
+          id: cleanBranchUUID(data.id) || data.id,
+        } as StoreBranch;
       }
     }
     return null;
@@ -11457,11 +11502,12 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
   async deleteStoreBranch(branchId: string): Promise<boolean> {
     const supabase = getSupabaseClient();
-    if (supabase && isUUID(branchId)) {
+    const cleanId = cleanBranchUUID(branchId) || branchId;
+    if (supabase && isUUID(cleanId)) {
       const { error } = await (supabase as any)
         .from('store_branches')
         .delete()
-        .eq('id', branchId);
+        .eq('id', cleanId);
       return !error;
     }
     return false;
@@ -11566,7 +11612,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
   ): Promise<POSShift> {
     const supabase = getSupabaseClient();
     const resolvedStoreId = store.id;
-    const branchId = branch?.id || staff.branch_id || null;
+    const rawBranchId = branch?.id || staff.branch_id || null;
+    const branchId = cleanBranchUUID(rawBranchId);
     const staffId = staff.id;
 
     if (!supabase || !isUUID(resolvedStoreId)) {
@@ -11577,7 +11624,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const openRes = await this.callStage4Rpc('open_pos_shift_secure', {
       p_store_id: resolvedStoreId,
       p_opening_cash: Number(openingCashFloat) || 0,
-      p_branch_id: isUUID(branchId) ? branchId : null,
+      p_branch_id: branchId,
       p_branch_name: branch?.name || 'الفرع الرئيسي',
       p_staff_id: isUUID(staffId) ? staffId : null,
       p_staff_name: staff.name,
@@ -11612,6 +11659,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ? storeId
       : ((await this.resolveStore(storeId))?.id || storeId);
 
+    const cleanBranch = cleanBranchUUID(branchId);
+
     let orders: any[] = [];
     if (supabase && isUUID(resolvedStoreId)) {
       try {
@@ -11622,8 +11671,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           .gte('created_at', shiftOpenedAt)
           .neq('status', 'cancelled');
 
-        if (branchId) {
-          query = query.eq('branch_id', branchId);
+        if (cleanBranch) {
+          query = query.eq('branch_id', cleanBranch);
         }
 
         const { data, error } = await query;
@@ -11639,7 +11688,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
       orders = local.filter((o) => {
         const matchesStore = o.store_id === resolvedStoreId || o.store_id === storeId;
-        const matchesBranch = !branchId || o.branch_id === branchId;
+        const matchesBranch = !cleanBranch || cleanBranchUUID(o.branch_id) === cleanBranch;
         const isNotCancelled = o.status !== 'cancelled';
         const isAfterOpen = new Date(o.created_at).getTime() >= new Date(shiftOpenedAt).getTime();
         return matchesStore && matchesBranch && isNotCancelled && isAfterOpen;
@@ -11680,8 +11729,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           .eq('store_id', resolvedStoreId)
           .gte('created_at', shiftOpenedAt);
 
-        if (branchId) {
-          refQuery = refQuery.eq('branch_id', branchId);
+        if (cleanBranch) {
+          refQuery = refQuery.eq('branch_id', cleanBranch);
         }
 
         const { data: refData } = await refQuery;
@@ -11695,7 +11744,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       const localRef = getLocalData<any[]>('radar_pos_refunds', []);
       refunds = localRef.filter((r) => {
         const matchesStore = r.store_id === resolvedStoreId || r.store_id === storeId;
-        const matchesBranch = !branchId || r.branch_id === branchId;
+        const matchesBranch = !cleanBranch || cleanBranchUUID(r.branch_id) === cleanBranch;
         const isAfterOpen = new Date(r.created_at).getTime() >= new Date(shiftOpenedAt).getTime();
         return matchesStore && matchesBranch && isAfterOpen;
       });
@@ -11726,8 +11775,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           .eq('store_id', resolvedStoreId)
           .gte('created_at', shiftOpenedAt);
 
-        if (branchId) {
-          mvQuery = mvQuery.eq('branch_id', branchId);
+        if (cleanBranch) {
+          mvQuery = mvQuery.eq('branch_id', cleanBranch);
         }
 
         const { data: mvData } = await mvQuery;
@@ -11741,7 +11790,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       const localMv = getLocalData<any[]>('radar_pos_cash_movements', []);
       cashMovements = localMv.filter((m) => {
         const matchesStore = m.store_id === resolvedStoreId || m.store_id === storeId;
-        const matchesBranch = !branchId || m.branch_id === branchId;
+        const matchesBranch = !cleanBranch || cleanBranchUUID(m.branch_id) === cleanBranch;
         const isAfterOpen = new Date(m.created_at).getTime() >= new Date(shiftOpenedAt).getTime();
         return matchesStore && matchesBranch && isAfterOpen;
       });
@@ -12050,6 +12099,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       : ((await this.resolveStore(storeId))?.id || storeId);
 
     const cleanQuery = searchQuery.trim();
+    const cleanBranch = cleanBranchUUID(branchId);
     let orders: any[] = [];
 
     if (supabase && isUUID(resolvedStoreId)) {
@@ -12063,8 +12113,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           .order('created_at', { ascending: false })
           .limit(30);
 
-        if (branchId) {
-          query = query.eq('branch_id', branchId);
+        if (cleanBranch) {
+          query = query.eq('branch_id', cleanBranch);
         }
 
         if (cleanQuery) {
@@ -12090,7 +12140,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
       orders = local.filter((o) => {
         const matchesStore = o.store_id === resolvedStoreId || o.store_id === storeId;
-        const matchesBranch = !branchId || o.branch_id === branchId;
+        const matchesBranch = !cleanBranch || cleanBranchUUID(o.branch_id) === cleanBranch;
         const notCancelled = o.status !== 'cancelled' && o.refund_status !== 'full';
         if (!matchesStore || !matchesBranch || !notCancelled) return false;
         if (!cleanQuery) return true;
@@ -12171,7 +12221,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_refund_method: refundMethod,
       p_notes: notes || null,
       p_shift_id: activeShift && isUUID(activeShift.id) ? activeShift.id : null,
-      p_branch_id: activeBranch && isUUID(activeBranch.id) ? activeBranch.id : null,
+      p_branch_id: cleanBranchUUID(activeBranch?.id || (order as any)?.branch_id),
       p_branch_name: activeBranch?.name || null,
       p_cashier_id: activeStaff.id,
       p_cashier_name: activeStaff.name,
@@ -12271,6 +12321,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ? storeId
       : ((await this.resolveStore(storeId))?.id || storeId);
 
+    const cleanBranch = cleanBranchUUID(options?.branchId);
+
     if (supabase && isUUID(resolvedStoreId)) {
       try {
         let query = (supabase as any)
@@ -12280,8 +12332,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           .order('created_at', { ascending: false })
           .limit(options?.limit || 50);
 
-        if (options?.branchId) {
-          query = query.eq('branch_id', options.branchId);
+        if (cleanBranch) {
+          query = query.eq('branch_id', cleanBranch);
         }
 
         const { data, error } = await query;
@@ -12294,7 +12346,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const local = getLocalData<POSRefund[]>('radar_pos_refunds', []);
     return local.filter((r) => {
       const matchStore = r.store_id === resolvedStoreId || r.store_id === storeId;
-      const matchBranch = !options?.branchId || r.branch_id === options.branchId;
+      const matchBranch = !cleanBranch || cleanBranchUUID(r.branch_id) === cleanBranch;
       return matchStore && matchBranch;
     });
   },
@@ -12319,11 +12371,12 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ? store.id
       : ((await this.resolveStore(store.id))?.id || store.id);
 
+    const cleanBranch = cleanBranchUUID(activeBranch?.id || activeStaff.branch_id);
     const nowIso = new Date().toISOString();
     const movement: POSCashMovement = {
       id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `mv_${Date.now()}`,
       store_id: resolvedStoreId,
-      branch_id: activeBranch?.id || activeStaff.branch_id || null,
+      branch_id: cleanBranch,
       branch_name: activeBranch?.name || null,
       shift_id: activeShift?.id || null,
       staff_id: activeStaff.id,
@@ -12356,7 +12409,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       p_recipient_name: movement.recipient_name,
       p_invoice_ref: movement.invoice_ref,
       p_notes: movement.notes,
-      p_branch_id: isUUID(movement.branch_id) ? movement.branch_id : null,
+      p_branch_id: cleanBranch,
       p_branch_name: movement.branch_name,
       p_staff_id: activeStaff.id,
       p_staff_name: activeStaff.name,
@@ -12388,6 +12441,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ? storeId
       : ((await this.resolveStore(storeId))?.id || storeId);
 
+    const cleanBranch = cleanBranchUUID(options?.branchId);
+
     if (supabase && isUUID(resolvedStoreId)) {
       try {
         let query = (supabase as any)
@@ -12397,8 +12452,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           .order('created_at', { ascending: false })
           .limit(options?.limit || 50);
 
-        if (options?.branchId) {
-          query = query.eq('branch_id', options.branchId);
+        if (cleanBranch) {
+          query = query.eq('branch_id', cleanBranch);
         }
         if (options?.shiftOpenedAt) {
           query = query.gte('created_at', options.shiftOpenedAt);
@@ -12414,7 +12469,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const local = getLocalData<POSCashMovement[]>('radar_pos_cash_movements', []);
     return local.filter((m) => {
       const matchStore = m.store_id === resolvedStoreId || m.store_id === storeId;
-      const matchBranch = !options?.branchId || m.branch_id === options.branchId;
+      const matchBranch = !cleanBranch || cleanBranchUUID(m.branch_id) === cleanBranch;
       const matchDate = !options?.shiftOpenedAt || new Date(m.created_at).getTime() >= new Date(options.shiftOpenedAt).getTime();
       return matchStore && matchBranch && matchDate;
     });
@@ -12435,6 +12490,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ? storeId
       : ((await this.resolveStore(storeId))?.id || storeId);
 
+    const cleanBranch = cleanBranchUUID(options?.branchId);
+
     if (supabase && isUUID(resolvedStoreId)) {
       try {
         let query = (supabase as any)
@@ -12444,8 +12501,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           .order('opened_at', { ascending: false })
           .limit(options?.limit || 100);
 
-        if (options?.branchId) {
-          query = query.eq('branch_id', options.branchId);
+        if (cleanBranch) {
+          query = query.eq('branch_id', cleanBranch);
         }
         if (options?.staffId) {
           query = query.eq('staff_id', options.staffId);
@@ -12464,7 +12521,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const localHistory = getLocalData<POSShift[]>(`radar_pos_shift_history_${storeId}`, []);
     return localHistory.filter((s) => {
       const matchStore = s.store_id === resolvedStoreId || s.store_id === storeId;
-      const matchBranch = !options?.branchId || s.branch_id === options.branchId;
+      const matchBranch = !cleanBranch || cleanBranchUUID(s.branch_id) === cleanBranch;
       const matchStaff = !options?.staffId || s.staff_id === options.staffId;
       const matchStatus = !options?.status || options.status === 'all' || s.status === options.status;
       return matchStore && matchBranch && matchStaff && matchStatus;
