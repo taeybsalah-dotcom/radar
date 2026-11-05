@@ -12478,37 +12478,36 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
     if (supabase && isUUID(resolvedStoreId)) {
       try {
-        let query = (supabase as any)
-          .from('pos_shifts')
-          .select('*')
-          .eq('store_id', resolvedStoreId)
-          .order('opened_at', { ascending: false })
-          .limit(options?.limit || 100);
+        const { data, error } = await (supabase as any).rpc('get_store_shifts_secure', {
+          p_store_id: resolvedStoreId,
+          p_limit: options?.limit || 100,
+        });
 
-        if (cleanBranch) {
-          query = query.eq('branch_id', cleanBranch);
-        }
-        if (options?.staffId) {
-          query = query.eq('staff_id', options.staffId);
-        }
-        if (options?.status && options.status !== 'all') {
-          query = query.eq('status', options.status);
-        }
-
-        const { data, error } = await query;
         if (error) {
-          console.error('getStoreShifts Supabase Error:', error);
+          console.error('get_store_shifts_secure Error:', error);
           return [];
         }
-        return (data || []) as POSShift[];
+
+        let shifts = (data || []) as POSShift[];
+
+        if (cleanBranch) {
+          shifts = shifts.filter((s) => s.branch_id === cleanBranch);
+        }
+        if (options?.staffId) {
+          shifts = shifts.filter((s) => s.staff_id === options.staffId);
+        }
+        if (options?.status && options.status !== 'all') {
+          shifts = shifts.filter((s) => s.status === options.status);
+        }
+
+        return shifts;
       } catch (err) {
-        console.error('getStoreShifts DB Exception:', err);
+        console.error('getStoreShifts Exception:', err);
         return [];
       }
     }
 
     return [];
-
   },
 
   // صياغة سند قبض / صرف نقدية لواتساب
