@@ -11666,7 +11666,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       try {
         let query = (supabase as any)
           .from('store_orders')
-          .select('id, total_price, payment_method, branch_id, created_at, status')
+          .select('id, total_price, payment_method, branch_id, created_at, status, fulfillment_details')
           .eq('store_id', resolvedStoreId)
           .gte('created_at', shiftOpenedAt)
           .neq('status', 'cancelled');
