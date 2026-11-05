@@ -11684,16 +11684,6 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       }
     }
 
-    if (orders.length === 0) {
-      const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
-      orders = local.filter((o) => {
-        const matchesStore = o.store_id === resolvedStoreId || o.store_id === storeId;
-        const matchesBranch = !cleanBranch || cleanBranchUUID(o.branch_id) === cleanBranch;
-        const isNotCancelled = o.status !== 'cancelled';
-        const isAfterOpen = new Date(o.created_at).getTime() >= new Date(shiftOpenedAt).getTime();
-        return matchesStore && matchesBranch && isNotCancelled && isAfterOpen;
-      });
-    }
 
     let total_sales = 0;
     let cash_sales = 0;
@@ -12146,22 +12136,6 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       }
     }
 
-    if (orders.length === 0) {
-      const local = getLocalData<any[]>(STORAGE_KEYS.LOCAL_ORDERS, []);
-      orders = local.filter((o) => {
-        const matchesStore = o.store_id === resolvedStoreId || o.store_id === storeId;
-        const matchesBranch = !cleanBranch || cleanBranchUUID(o.branch_id) === cleanBranch;
-        const notCancelled = o.status !== 'cancelled' && o.refund_status !== 'full';
-        if (!matchesStore || !matchesBranch || !notCancelled) return false;
-        if (!cleanQuery) return true;
-        const q = cleanQuery.toLowerCase();
-        return (
-          (o.order_number && o.order_number.toLowerCase().includes(q)) ||
-          (o.customer_phone && o.customer_phone.includes(q)) ||
-          (o.customer_name && o.customer_name.toLowerCase().includes(q))
-        );
-      });
-    }
 
     return orders;
   },
