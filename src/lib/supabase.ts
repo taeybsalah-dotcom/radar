@@ -11702,7 +11702,6 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     let tax_amount = 0;
     let discount_amount = 0;
 
-    console.log('🔍 Shift Orders Data:', orders);
     orders.forEach((o) => {
       const total = Number(o.total_price || 0);
       total_sales += total;

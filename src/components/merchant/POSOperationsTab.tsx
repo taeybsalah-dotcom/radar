@@ -450,8 +450,8 @@ export const POSOperationsTab: React.FC<POSOperationsTabProps> = ({
             {metrics.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ﷼
           </p>
           <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800/80">
-            <span>كاش: {metrics.cashSales.toFixed(0)} ﷼</span>
-            <span>شبكة: {metrics.cardSales.toFixed(0)} ﷼</span>
+            <span>كاش: {metrics.cashSales.toFixed(2)} ﷼</span>
+            <span>شبكة: {metrics.cardSales.toFixed(2)} ﷼</span>
           </div>
         </div>
 
@@ -827,8 +827,8 @@ export const POSOperationsTab: React.FC<POSOperationsTabProps> = ({
 
                         {/* Sales Breakdown */}
                         <td className="py-3.5 px-3 text-[11px] font-mono text-slate-400 space-y-0.5">
-                          <div>💵 كاش: {Number(shift.cash_sales || 0).toFixed(0)} ﷼</div>
-                          <div>💳 شبكة: {Number(shift.card_sales || 0).toFixed(0)} ﷼</div>
+                          <div>💵 كاش: {Number(shift.cash_sales || 0).toFixed(2)} ﷼</div>
+                          <div>💳 شبكة: {Number(shift.card_sales || 0).toFixed(2)} ﷼</div>
                         </td>
 
                         {/* Expected Cash */}
