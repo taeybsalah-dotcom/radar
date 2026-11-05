@@ -345,27 +345,7 @@ export class DriverService {
             return list;
           } else {
             // Seed initial store drivers into Supabase if empty
-            const currentLocal = this.getDrivers(cleanStoreId);
-            if (currentLocal.length > 0) {
-              const suffix = resolvedStoreId.slice(0, 6);
-              const seedRows = currentLocal.map((d) => ({
-                id: d.id.startsWith('drv_demo_') ? `${d.id}_${suffix}` : d.id,
-                store_id: resolvedStoreId,
-                branch_id: d.branch_id || 'b1',
-                branch_name: d.branch_name || 'الفرع الرئيسي',
-                name: d.name,
-                phone: d.phone,
-                vehicle_type: d.vehicle_type || 'motorcycle',
-                plate_number: d.plate_number || '',
-                pin_code: d.pin_code || '1234',
-                is_active: d.is_active !== false,
-                status: d.status || 'available',
-                commission_per_order: Number(d.commission_per_order) || 0,
-                notes: d.notes || '',
-                updated_at: new Date().toISOString(),
-              }));
-              await (supabase as any).from('store_drivers').upsert(seedRows, { onConflict: 'id' });
-            }
+            
           }
         }
       }
