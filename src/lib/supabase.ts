@@ -11712,8 +11712,18 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         cash_sales += total;
       } else if (method === 'card' || method === 'mada' || method === 'credit_card') {
         card_sales += total;
-      } else if (method === 'split') {
-        split_sales += total;
+} else if (method === 'split') {  split_sales += total;
+
+  // تفكيك الدفع المجزأ وإضافة الكاش والشبكة لمجاميع الدرج
+  const details = typeof o.fulfillment_details === 'string'
+    ? JSON.parse(o.fulfillment_details || '{}')
+    : (o.fulfillment_details || {});
+
+  const splitCash = Number(details?.split_cash || 0);
+  const splitCard = Number(details?.split_card ?? (total - splitCash));
+
+  cash_sales += splitCash;
+  card_sales += splitCard;
       } else {
         card_sales += total;
       }

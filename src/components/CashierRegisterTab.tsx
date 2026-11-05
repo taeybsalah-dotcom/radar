@@ -831,6 +831,8 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         fulfillment_details: {
           table_number: orderType === 'dine_in' ? tableNumber.trim() || undefined : undefined,
           car_plate: orderType === 'car' ? carPlate.trim() || undefined : undefined,
+          split_cash: paymentMethod === 'split' ? Number(splitCashAmount || 0) : undefined,
+          split_card: paymentMethod === 'split' ? Number(splitCardAmount || 0) : undefined,
         },
         driver_id: orderType === 'delivery' && selectedDriverId ? selectedDriverId : undefined,
         driver_name: orderType === 'delivery' && selectedDriver ? selectedDriver.name : undefined,
