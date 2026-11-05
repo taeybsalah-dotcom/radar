@@ -1,7 +1,7 @@
 -- ==============================================================================
 -- 🚀 RADAR WHITE-LABEL COMPLETE RESELLER DATABASE BUNDLE
--- Generated At: 2026-10-28T23:15:50.667Z
--- Total Migrations: 52
+-- Generated At: 2026-11-05T03:04:42.440Z
+-- Total Migrations: 76
 -- ==============================================================================
 
 -- 0. Ensure pgcrypto extension exists for password hashing and tokens
@@ -5762,6 +5762,467 @@ GRANT EXECUTE ON FUNCTION public.process_store_payment_atomic TO anon, authentic
 
 
 -- ==============================================================================
+-- >>> FILE: 20261009_fin05_fix_plan_id_varchar_coalesce.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🚀 [FIN-05] FIX PLAN ID VARCHAR COALESCE IN ATOMIC RPC
+-- ==============================================================================
+-- Resolves: ERROR 42804: COALESCE types uuid and character varying cannot be matched
+-- Ensures all arguments in COALESCE for stores.subscription_plan_id are cast to TEXT
+-- since stores.subscription_plan_id is VARCHAR in the public schema.
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION public.process_store_payment_atomic(
+    p_store_id UUID,
+    p_invoice_type TEXT,
+    p_amount NUMERIC,
+    p_payment_method TEXT DEFAULT 'mada',
+    p_gateway TEXT DEFAULT 'moyasar',
+    p_gateway_payment_id TEXT DEFAULT NULL,
+    p_plan_id TEXT DEFAULT NULL,
+    p_plan_code TEXT DEFAULT NULL,
+    p_plan_name TEXT DEFAULT NULL,
+    p_duration_months INTEGER DEFAULT 1,
+    p_vat_rate NUMERIC DEFAULT 0.15,
+    p_gateway_fee NUMERIC DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_store RECORD;
+    v_lead RECORD;
+    v_partner RECORD;
+    v_existing_inv_id UUID;
+    v_existing_inv_num TEXT;
+    v_existing_ledg_id UUID;
+    
+    v_gw_payment_id TEXT;
+    v_invoice_num TEXT;
+    v_invoice_id UUID;
+    v_ledger_id UUID;
+    
+    v_gross NUMERIC(12, 2);
+    v_vat_rate NUMERIC(5, 4);
+    v_net_before_vat NUMERIC(12, 2);
+    v_vat_amount NUMERIC(12, 2);
+    v_gw_fee NUMERIC(12, 2);
+    v_comm_rate NUMERIC(5, 4) := 0.0000;
+    v_comm_amount NUMERIC(12, 2) := 0.00;
+    v_net_platform NUMERIC(12, 2);
+    
+    v_is_acquisition BOOLEAN;
+    v_comm_type VARCHAR(50);
+    v_partner_id UUID := NULL;
+    v_partner_name TEXT := NULL;
+    
+    v_duration_days INTEGER;
+    v_base_end TIMESTAMPTZ;
+    v_new_end TIMESTAMPTZ;
+    v_now TIMESTAMPTZ := clock_timestamp();
+    v_comm_id UUID;
+    v_idempotency_key TEXT;
+    v_gw_rate NUMERIC(5, 4);
+    v_gw_fixed NUMERIC(12, 2);
+    v_sub_plan_uuid UUID := NULL;
+BEGIN
+    -- 1. Validate Store
+    SELECT * INTO v_store FROM public.stores WHERE id = p_store_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'المتجر غير موجود');
+    END IF;
+
+    -- 2. Validate Amount
+    v_gross := ROUND(COALESCE(p_amount, 0.00), 2);
+    IF v_gross < 0 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'المبلغ لا يمكن أن يكون سالباً');
+    END IF;
+
+    -- Normalize Payment ID
+    v_gw_payment_id := COALESCE(NULLIF(TRIM(p_gateway_payment_id), ''), 'pay_' || p_gateway || '_' || replace(gen_random_uuid()::text, '-', ''));
+
+    -- 3. Idempotency Check
+    SELECT id, invoice_number INTO v_existing_inv_id, v_existing_inv_num
+    FROM public.store_invoices 
+    WHERE gateway_payment_id = v_gw_payment_id 
+    LIMIT 1;
+
+    SELECT id INTO v_existing_ledg_id 
+    FROM public.financial_ledger 
+    WHERE payment_id = v_gw_payment_id AND transaction_type = 'PAYMENT' 
+    LIMIT 1;
+
+    IF v_existing_inv_id IS NOT NULL AND v_existing_ledg_id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'idempotent', true,
+            'message', 'تمت معالجة هذه العملية مسبقاً (عملية مكررة آمنة)',
+            'invoice_id', v_existing_inv_id,
+            'invoice_number', v_existing_inv_num,
+            'ledger_id', v_existing_ledg_id,
+            'store_id', p_store_id
+        );
+    END IF;
+
+    -- 4. Calculate Unified ZATCA VAT & Net Amounts
+    v_vat_rate := GREATEST(0.0000, COALESCE(p_vat_rate, 0.1500));
+    IF v_vat_rate > 0 THEN
+        v_net_before_vat := ROUND(v_gross / (1.0000 + v_vat_rate), 2);
+        v_vat_amount := ROUND(v_gross - v_net_before_vat, 2);
+    ELSE
+        v_net_before_vat := v_gross;
+        v_vat_amount := 0.00;
+    END IF;
+
+    -- 5. Calculate Gateway Fee
+    IF p_gateway_fee IS NOT NULL AND p_gateway_fee >= 0 THEN
+        v_gw_fee := ROUND(p_gateway_fee, 2);
+    ELSE
+        IF lower(p_payment_method) = 'mada' THEN
+            v_gw_rate := 0.0100; v_gw_fixed := 1.00;
+        ELSIF lower(p_payment_method) IN ('credit_card', 'visa', 'mastercard') THEN
+            v_gw_rate := 0.0275; v_gw_fixed := 1.00;
+        ELSIF lower(p_payment_method) = 'apple_pay' THEN
+            v_gw_rate := 0.0220; v_gw_fixed := 1.00;
+        ELSIF lower(p_payment_method) = 'sandbox' THEN
+            v_gw_rate := 0.0000; v_gw_fixed := 0.00;
+        ELSE
+            v_gw_rate := 0.0150; v_gw_fixed := 1.00;
+        END IF;
+
+        IF v_gross > 0 AND lower(p_payment_method) <> 'sandbox' THEN
+            v_gw_fee := ROUND((v_gross * v_gw_rate) + v_gw_fixed, 2);
+        ELSE
+            v_gw_fee := 0.00;
+        END IF;
+    END IF;
+
+    -- 6. Partner & Commission Identification
+    SELECT * INTO v_lead 
+    FROM public.merchant_leads 
+    WHERE converted_store_id = p_store_id 
+       OR (v_store.manager_contact IS NOT NULL AND phone = v_store.manager_contact)
+    ORDER BY created_at DESC 
+    LIMIT 1;
+
+    IF v_lead.id IS NOT NULL THEN
+        IF v_lead.affiliate_id IS NOT NULL THEN
+            SELECT * INTO v_partner 
+            FROM public.partner_accounts 
+            WHERE id = v_lead.affiliate_id OR affiliate_id = v_lead.affiliate_id;
+        ELSIF v_lead.referral_code IS NOT NULL THEN
+            SELECT * INTO v_partner 
+            FROM public.partner_accounts 
+            WHERE lower(slug) = lower(trim(v_lead.referral_code));
+        END IF;
+    END IF;
+
+    -- Determine Commission Basis & Rate (Strictly against Net Before VAT)
+    v_is_acquisition := (p_invoice_type = 'setup' OR v_store.setup_fee_paid IS NOT TRUE);
+    
+    IF v_partner.id IS NOT NULL AND v_partner.active IS NOT FALSE THEN
+        v_partner_id := v_partner.id;
+        v_partner_name := v_partner.display_name;
+
+        IF v_is_acquisition THEN
+            v_comm_rate := COALESCE(v_partner.acquisition_commission_rate, v_partner.commission_rate, 0.2000);
+            v_comm_type := 'STORE_ACQUISITION';
+        ELSE
+            v_comm_rate := COALESCE(v_partner.recurring_commission_rate, 0.1000);
+            v_comm_type := CASE WHEN p_invoice_type = 'upgrade' THEN 'SUBSCRIPTION_UPGRADE' ELSE 'SUBSCRIPTION_RENEWAL' END;
+        END IF;
+
+        v_comm_amount := ROUND(v_net_before_vat * v_comm_rate, 2);
+    ELSE
+        v_comm_rate := 0.0000;
+        v_comm_amount := 0.00;
+        v_comm_type := 'NONE';
+    END IF;
+
+    -- 7. Net Platform Amount
+    v_net_platform := ROUND(v_gross - v_vat_amount - v_gw_fee - v_comm_amount, 2);
+
+    -- 8. Compute Subscription Extension
+    v_duration_days := GREATEST(1, COALESCE(p_duration_months, 1) * 30);
+    IF p_invoice_type = 'renewal' AND v_store.subscription_end_date IS NOT NULL AND v_store.subscription_end_date > v_now THEN
+        v_base_end := v_store.subscription_end_date;
+    ELSE
+        v_base_end := v_now;
+    END IF;
+    v_new_end := v_base_end + (v_duration_days || ' days')::INTERVAL;
+
+    -- 9. Generate Invoice Number
+    v_invoice_num := 'INV-' || to_char(v_now, 'YYYYMMDD') || '-' || upper(substr(md5(random()::text), 1, 5));
+
+    -- 10. Robust Plan UUID Resolution
+    v_sub_plan_uuid := NULL;
+    IF p_plan_id IS NOT NULL AND TRIM(p_plan_id) <> '' THEN
+        IF p_plan_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            v_sub_plan_uuid := p_plan_id::UUID;
+        ELSE
+            SELECT id INTO v_sub_plan_uuid 
+            FROM public.billing_plans 
+            WHERE lower(code) = lower(trim(p_plan_id)) 
+            LIMIT 1;
+        END IF;
+    END IF;
+
+    IF v_sub_plan_uuid IS NULL AND p_plan_code IS NOT NULL AND TRIM(p_plan_code) <> '' THEN
+        SELECT id INTO v_sub_plan_uuid 
+        FROM public.billing_plans 
+        WHERE lower(code) = lower(trim(p_plan_code)) 
+        LIMIT 1;
+    END IF;
+
+    -- 11. Insert into store_invoices
+    INSERT INTO public.store_invoices (
+        store_id,
+        invoice_number,
+        invoice_type,
+        amount,
+        vat_amount,
+        net_amount,
+        currency,
+        status,
+        payment_method,
+        gateway,
+        gateway_payment_id,
+        plan_id,
+        plan_name,
+        paid_at,
+        metadata
+    ) VALUES (
+        p_store_id,
+        v_invoice_num,
+        p_invoice_type,
+        v_gross,
+        v_vat_amount,
+        v_net_before_vat,
+        'SAR',
+        'paid',
+        p_payment_method,
+        p_gateway,
+        v_gw_payment_id,
+        COALESCE(v_sub_plan_uuid::text, NULLIF(TRIM(p_plan_id), '')),
+        COALESCE(p_plan_name, v_store.subscription_plan, 'باقة رادار المعتمدة'),
+        v_now,
+        jsonb_build_object(
+            'vat_rate', v_vat_rate,
+            'gateway_fee', v_gw_fee,
+            'commission_rate', v_comm_rate,
+            'commission_amount', v_comm_amount,
+            'duration_months', p_duration_months
+        )
+    )
+    RETURNING id INTO v_invoice_id;
+
+    -- 12. Insert into financial_ledger
+    INSERT INTO public.financial_ledger (
+        transaction_id,
+        invoice_id,
+        store_id,
+        affiliate_id,
+        payment_id,
+        transaction_type,
+        gross_amount,
+        vat_amount,
+        gateway_fee,
+        affiliate_commission,
+        net_platform_amount,
+        status,
+        created_by,
+        metadata,
+        effective_at,
+        created_at
+    ) VALUES (
+        'tx_' || v_gw_payment_id,
+        v_invoice_num,
+        p_store_id::text,
+        v_partner_id::text,
+        v_gw_payment_id,
+        'PAYMENT',
+        v_gross,
+        v_vat_amount,
+        v_gw_fee,
+        v_comm_amount,
+        v_net_platform,
+        'SETTLED',
+        'GATEWAY_ATOMIC_RPC',
+        jsonb_build_object(
+            'store_name', v_store.name,
+            'invoice_id', v_invoice_id,
+            'payment_method', p_payment_method,
+            'gateway', p_gateway,
+            'plan_name', COALESCE(p_plan_name, v_store.subscription_plan),
+            'commission_type', v_comm_type,
+            'vat_rate', v_vat_rate,
+            'base_amount', v_net_before_vat
+        ),
+        v_now,
+        v_now
+    )
+    RETURNING id INTO v_ledger_id;
+
+    -- 13. Update stores Subscription Status (Type-Safe: cast everything in COALESCE to TEXT)
+    UPDATE public.stores
+    SET 
+        status = 'active',
+        subscription_status = 'active',
+        subscription_active = true,
+        setup_fee_paid = true,
+        lifecycle_stage = 'مشترك مدفوع',
+        subscription_plan_id = COALESCE(v_sub_plan_uuid::text, NULLIF(TRIM(p_plan_id), ''), stores.subscription_plan_id),
+        plan_code = COALESCE(p_plan_code, stores.plan_code),
+        subscription_plan = COALESCE(p_plan_name, stores.subscription_plan, 'الباقة الأساسية'),
+        subscription_start_date = COALESCE(stores.subscription_start_date, v_now),
+        subscription_end_date = v_new_end,
+        renewal_amount = CASE WHEN v_gross > 0 THEN v_gross ELSE stores.renewal_amount END,
+        updated_at = v_now
+    WHERE id = p_store_id;
+
+    -- 14. Convert Lead if applicable
+    IF v_lead.id IS NOT NULL AND v_lead.status <> 'CONVERTED' THEN
+        UPDATE public.merchant_leads
+        SET 
+            status = 'CONVERTED',
+            converted_store_id = p_store_id,
+            updated_at = v_now
+        WHERE id = v_lead.id;
+    END IF;
+
+    -- 15. Record Partner Commission
+    IF v_partner_id IS NOT NULL AND v_comm_amount > 0 THEN
+        v_idempotency_key := 'comm_inv_' || v_invoice_num;
+
+        IF v_is_acquisition THEN
+            DELETE FROM public.partner_commissions 
+            WHERE store_id = p_store_id AND status = 'PENDING';
+        END IF;
+
+        INSERT INTO public.partner_commissions (
+            partner_account_id,
+            merchant_lead_id,
+            store_id,
+            commission_type,
+            basis_amount,
+            commission_rate,
+            commission_amount,
+            status,
+            qualifying_event,
+            idempotency_key,
+            invoice_id,
+            invoice_number,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_partner_id,
+            v_lead.id,
+            p_store_id,
+            v_comm_type,
+            v_net_before_vat,
+            v_comm_rate,
+            v_comm_amount,
+            'EARNED',
+            CASE 
+                WHEN v_comm_type = 'STORE_ACQUISITION' THEN 'سداد اشتراك متجر جديد'
+                WHEN v_comm_type = 'SUBSCRIPTION_UPGRADE' THEN 'ترقية باقة المتجر'
+                ELSE 'تجديد اشتراك المتجر الدوري'
+            END,
+            v_idempotency_key,
+            v_invoice_id::text,
+            v_invoice_num,
+            v_now,
+            v_now
+        )
+        ON CONFLICT (idempotency_key) DO UPDATE
+        SET 
+            basis_amount = EXCLUDED.basis_amount,
+            commission_amount = EXCLUDED.commission_amount,
+            status = 'EARNED',
+            updated_at = v_now
+        RETURNING id INTO v_comm_id;
+    END IF;
+
+    -- 16. Dual-Sync: Update merchant_subscriptions & billing_transactions if they exist in schema
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'merchant_subscriptions') THEN
+        UPDATE public.merchant_subscriptions 
+        SET 
+            status = 'ACTIVE',
+            current_period_start = v_now,
+            current_period_end = v_new_end,
+            updated_at = v_now
+        WHERE store_id = p_store_id;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'billing_transactions') THEN
+        INSERT INTO public.billing_transactions (
+            store_id,
+            plan_id,
+            type,
+            status,
+            amount,
+            currency,
+            provider,
+            provider_transaction_id,
+            idempotency_key,
+            paid_at,
+            metadata
+        ) VALUES (
+            p_store_id,
+            COALESCE(v_sub_plan_uuid, '00000000-0000-0000-0000-000000000000'::uuid),
+            CASE 
+                WHEN p_invoice_type = 'setup' THEN 'INITIAL_PAYMENT'
+                WHEN p_invoice_type = 'upgrade' THEN 'ADJUSTMENT'
+                ELSE 'RENEWAL'
+            END,
+            'PAID',
+            v_gross,
+            'SAR',
+            p_gateway,
+            v_gw_payment_id,
+            'btx_' || v_gw_payment_id,
+            v_now,
+            jsonb_build_object(
+                'invoice_id', v_invoice_id,
+                'invoice_number', v_invoice_num,
+                'ledger_id', v_ledger_id
+            )
+        )
+        ON CONFLICT (idempotency_key) DO NOTHING;
+    END IF;
+
+    -- 17. Return Unified Success Result
+    RETURN jsonb_build_object(
+        'success', true,
+        'message', 'تمت معالجة الدفع والاشتراك بنجاح تام وفق ضوابط ZATCA',
+        'invoice_id', v_invoice_id,
+        'invoice_number', v_invoice_num,
+        'ledger_id', v_ledger_id,
+        'store_id', p_store_id,
+        'gross_amount', v_gross,
+        'vat_amount', v_vat_amount,
+        'net_amount', v_net_before_vat,
+        'gateway_fee', v_gw_fee,
+        'commission_amount', v_comm_amount,
+        'commission_id', v_comm_id,
+        'partner_id', v_partner_id,
+        'subscription_end_date', v_new_end
+    );
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object(
+        'success', false,
+        'error', 'خطأ في معالجة المعاملة الذرية بالسيرفر: ' || SQLERRM
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.process_store_payment_atomic TO anon, authenticated, service_role;
+
+
+-- ==============================================================================
 -- >>> FILE: 20261009_fin05_payouts_and_commissions_rls.sql <<<
 -- ==============================================================================
 
@@ -9793,6 +10254,9176 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.platform_system_config;
 
 
 -- ==============================================================================
+-- >>> FILE: 20261029_fin06_robust_partner_matching_and_commissions.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🚀 [FIN-06] ROBUST PARTNER MATCHING & COMMISSIONS IN ATOMIC RPC
+-- ==============================================================================
+-- 1. Searches partner by referral_code OR slug in merchant_leads
+-- 2. Fallback to stores.partner_id and stores.referral_code
+-- 3. Injects merchant_name into partner_commissions
+-- 4. Injects affiliate_name and store_name into financial_ledger metadata
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION public.process_store_payment_atomic(
+    p_store_id UUID,
+    p_invoice_type TEXT,
+    p_amount NUMERIC,
+    p_payment_method TEXT DEFAULT 'mada',
+    p_gateway TEXT DEFAULT 'moyasar',
+    p_gateway_payment_id TEXT DEFAULT NULL,
+    p_plan_id TEXT DEFAULT NULL,
+    p_plan_code TEXT DEFAULT NULL,
+    p_plan_name TEXT DEFAULT NULL,
+    p_duration_months INTEGER DEFAULT 1,
+    p_vat_rate NUMERIC DEFAULT 0.15,
+    p_gateway_fee NUMERIC DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_store RECORD;
+    v_lead RECORD;
+    v_partner RECORD;
+    v_existing_inv_id UUID;
+    v_existing_inv_num TEXT;
+    v_existing_ledg_id UUID;
+    
+    v_gw_payment_id TEXT;
+    v_invoice_num TEXT;
+    v_invoice_id UUID;
+    v_ledger_id UUID;
+    
+    v_gross NUMERIC(12, 2);
+    v_vat_rate NUMERIC(5, 4);
+    v_net_before_vat NUMERIC(12, 2);
+    v_vat_amount NUMERIC(12, 2);
+    v_gw_fee NUMERIC(12, 2);
+    v_comm_rate NUMERIC(5, 4) := 0.0000;
+    v_comm_amount NUMERIC(12, 2) := 0.00;
+    v_net_platform NUMERIC(12, 2);
+    
+    v_is_acquisition BOOLEAN;
+    v_comm_type VARCHAR(50);
+    v_partner_id UUID := NULL;
+    v_partner_name TEXT := NULL;
+    
+    v_duration_days INTEGER;
+    v_base_end TIMESTAMPTZ;
+    v_new_end TIMESTAMPTZ;
+    v_now TIMESTAMPTZ := clock_timestamp();
+    v_comm_id UUID;
+    v_idempotency_key TEXT;
+    v_gw_rate NUMERIC(5, 4);
+    v_gw_fixed NUMERIC(12, 2);
+    v_sub_plan_uuid UUID := NULL;
+BEGIN
+    -- 1. Validate Store
+    SELECT * INTO v_store FROM public.stores WHERE id = p_store_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'المتجر غير موجود');
+    END IF;
+
+    -- 2. Validate Amount
+    v_gross := ROUND(COALESCE(p_amount, 0.00), 2);
+    IF v_gross < 0 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'المبلغ لا يمكن أن يكون سالباً');
+    END IF;
+
+    -- Normalize Payment ID
+    v_gw_payment_id := COALESCE(NULLIF(TRIM(p_gateway_payment_id), ''), 'pay_' || p_gateway || '_' || replace(gen_random_uuid()::text, '-', ''));
+
+    -- 3. Idempotency Check
+    SELECT id, invoice_number INTO v_existing_inv_id, v_existing_inv_num
+    FROM public.store_invoices 
+    WHERE gateway_payment_id = v_gw_payment_id 
+    LIMIT 1;
+
+    SELECT id INTO v_existing_ledg_id 
+    FROM public.financial_ledger 
+    WHERE payment_id = v_gw_payment_id AND transaction_type = 'PAYMENT' 
+    LIMIT 1;
+
+    IF v_existing_inv_id IS NOT NULL AND v_existing_ledg_id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'idempotent', true,
+            'message', 'تمت معالجة هذه العملية مسبقاً (عملية مكررة آمنة)',
+            'invoice_id', v_existing_inv_id,
+            'invoice_number', v_existing_inv_num,
+            'ledger_id', v_existing_ledg_id,
+            'store_id', p_store_id
+        );
+    END IF;
+
+    -- 4. Calculate Unified ZATCA VAT & Net Amounts
+    v_vat_rate := GREATEST(0.0000, COALESCE(p_vat_rate, 0.1500));
+    IF v_vat_rate > 0 THEN
+        v_net_before_vat := ROUND(v_gross / (1.0000 + v_vat_rate), 2);
+        v_vat_amount := ROUND(v_gross - v_net_before_vat, 2);
+    ELSE
+        v_net_before_vat := v_gross;
+        v_vat_amount := 0.00;
+    END IF;
+
+    -- 5. Calculate Gateway Fee
+    IF p_gateway_fee IS NOT NULL AND p_gateway_fee >= 0 THEN
+        v_gw_fee := ROUND(p_gateway_fee, 2);
+    ELSE
+        IF lower(p_payment_method) = 'mada' THEN
+            v_gw_rate := 0.0100; v_gw_fixed := 1.00;
+        ELSIF lower(p_payment_method) IN ('credit_card', 'visa', 'mastercard') THEN
+            v_gw_rate := 0.0275; v_gw_fixed := 1.00;
+        ELSIF lower(p_payment_method) = 'apple_pay' THEN
+            v_gw_rate := 0.0220; v_gw_fixed := 1.00;
+        ELSIF lower(p_payment_method) = 'sandbox' THEN
+            v_gw_rate := 0.0000; v_gw_fixed := 0.00;
+        ELSE
+            v_gw_rate := 0.0150; v_gw_fixed := 1.00;
+        END IF;
+
+        IF v_gross > 0 AND lower(p_payment_method) <> 'sandbox' THEN
+            v_gw_fee := ROUND((v_gross * v_gw_rate) + v_gw_fixed, 2);
+        ELSE
+            v_gw_fee := 0.00;
+        END IF;
+    END IF;
+
+    -- 6. Partner & Commission Identification
+    -- A. Match via merchant_leads
+    SELECT * INTO v_lead 
+    FROM public.merchant_leads 
+    WHERE converted_store_id = p_store_id 
+       OR (v_store.manager_contact IS NOT NULL AND phone = v_store.manager_contact)
+    ORDER BY created_at DESC 
+    LIMIT 1;
+
+    IF v_lead.id IS NOT NULL THEN
+        IF v_lead.affiliate_id IS NOT NULL THEN
+            SELECT * INTO v_partner 
+            FROM public.partner_accounts 
+            WHERE id = v_lead.affiliate_id OR affiliate_id = v_lead.affiliate_id;
+        ELSIF v_lead.referral_code IS NOT NULL AND TRIM(v_lead.referral_code) <> '' THEN
+            SELECT * INTO v_partner 
+            FROM public.partner_accounts 
+            WHERE lower(referral_code) = lower(trim(v_lead.referral_code))
+               OR lower(slug) = lower(trim(v_lead.referral_code))
+            LIMIT 1;
+        END IF;
+    END IF;
+
+    -- B. Match directly via stores table (partner_id or referral_code)
+    IF v_partner.id IS NULL THEN
+        IF v_store.partner_id IS NOT NULL THEN
+            SELECT * INTO v_partner 
+            FROM public.partner_accounts 
+            WHERE id = v_store.partner_id OR affiliate_id = v_store.partner_id
+            LIMIT 1;
+        ELSIF v_store.referral_code IS NOT NULL AND TRIM(v_store.referral_code) <> '' THEN
+            SELECT * INTO v_partner 
+            FROM public.partner_accounts 
+            WHERE lower(referral_code) = lower(trim(v_store.referral_code))
+               OR lower(slug) = lower(trim(v_store.referral_code))
+            LIMIT 1;
+        END IF;
+    END IF;
+
+    -- Determine Commission Basis & Rate (Strictly against Net Before VAT)
+    v_is_acquisition := (p_invoice_type = 'setup' OR v_store.setup_fee_paid IS NOT TRUE);
+    
+    IF v_partner.id IS NOT NULL AND v_partner.active IS NOT FALSE THEN
+        v_partner_id := v_partner.id;
+        v_partner_name := v_partner.display_name;
+
+        IF v_is_acquisition THEN
+            v_comm_rate := COALESCE(v_partner.acquisition_commission_rate, v_partner.commission_rate, 0.2000);
+            v_comm_type := 'STORE_ACQUISITION';
+        ELSE
+            v_comm_rate := COALESCE(v_partner.recurring_commission_rate, 0.1000);
+            v_comm_type := CASE WHEN p_invoice_type = 'upgrade' THEN 'SUBSCRIPTION_UPGRADE' ELSE 'SUBSCRIPTION_RENEWAL' END;
+        END IF;
+
+        v_comm_amount := ROUND(v_net_before_vat * v_comm_rate, 2);
+    ELSE
+        v_comm_rate := 0.0000;
+        v_comm_amount := 0.00;
+        v_comm_type := 'NONE';
+    END IF;
+
+    -- 7. Net Platform Amount
+    v_net_platform := ROUND(v_gross - v_vat_amount - v_gw_fee - v_comm_amount, 2);
+
+    -- 8. Compute Subscription Extension
+    v_duration_days := GREATEST(1, COALESCE(p_duration_months, 1) * 30);
+    IF p_invoice_type = 'renewal' AND v_store.subscription_end_date IS NOT NULL AND v_store.subscription_end_date > v_now THEN
+        v_base_end := v_store.subscription_end_date;
+    ELSE
+        v_base_end := v_now;
+    END IF;
+    v_new_end := v_base_end + (v_duration_days || ' days')::INTERVAL;
+
+    -- 9. Generate Invoice Number
+    v_invoice_num := 'INV-' || to_char(v_now, 'YYYYMMDD') || '-' || upper(substr(md5(random()::text), 1, 5));
+
+    -- 10. Robust Plan UUID Resolution
+    v_sub_plan_uuid := NULL;
+    IF p_plan_id IS NOT NULL AND TRIM(p_plan_id) <> '' THEN
+        IF p_plan_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            v_sub_plan_uuid := p_plan_id::UUID;
+        ELSE
+            SELECT id INTO v_sub_plan_uuid 
+            FROM public.billing_plans 
+            WHERE lower(code) = lower(trim(p_plan_id)) 
+            LIMIT 1;
+        END IF;
+    END IF;
+
+    IF v_sub_plan_uuid IS NULL AND p_plan_code IS NOT NULL AND TRIM(p_plan_code) <> '' THEN
+        SELECT id INTO v_sub_plan_uuid 
+        FROM public.billing_plans 
+        WHERE lower(code) = lower(trim(p_plan_code)) 
+        LIMIT 1;
+    END IF;
+
+    -- 11. Insert into store_invoices
+    INSERT INTO public.store_invoices (
+        store_id,
+        invoice_number,
+        invoice_type,
+        amount,
+        vat_amount,
+        net_amount,
+        currency,
+        status,
+        payment_method,
+        gateway,
+        gateway_payment_id,
+        plan_id,
+        plan_name,
+        paid_at,
+        metadata
+    ) VALUES (
+        p_store_id,
+        v_invoice_num,
+        p_invoice_type,
+        v_gross,
+        v_vat_amount,
+        v_net_before_vat,
+        'SAR',
+        'paid',
+        p_payment_method,
+        p_gateway,
+        v_gw_payment_id,
+        COALESCE(v_sub_plan_uuid::text, NULLIF(TRIM(p_plan_id), '')),
+        COALESCE(p_plan_name, v_store.subscription_plan, 'باقة رادار المعتمدة'),
+        v_now,
+        jsonb_build_object(
+            'vat_rate', v_vat_rate,
+            'gateway_fee', v_gw_fee,
+            'commission_rate', v_comm_rate,
+            'commission_amount', v_comm_amount,
+            'duration_months', p_duration_months
+        )
+    )
+    RETURNING id INTO v_invoice_id;
+
+    -- 12. Insert into financial_ledger
+    INSERT INTO public.financial_ledger (
+        transaction_id,
+        invoice_id,
+        store_id,
+        affiliate_id,
+        payment_id,
+        transaction_type,
+        gross_amount,
+        vat_amount,
+        gateway_fee,
+        affiliate_commission,
+        net_platform_amount,
+        status,
+        created_by,
+        metadata,
+        effective_at,
+        created_at
+    ) VALUES (
+        'tx_' || v_gw_payment_id,
+        v_invoice_num,
+        p_store_id::text,
+        v_partner_id::text,
+        v_gw_payment_id,
+        'PAYMENT',
+        v_gross,
+        v_vat_amount,
+        v_gw_fee,
+        v_comm_amount,
+        v_net_platform,
+        'SETTLED',
+        'GATEWAY_ATOMIC_RPC',
+        jsonb_build_object(
+            'store_name', v_store.name,
+            'affiliate_name', v_partner_name,
+            'invoice_id', v_invoice_id,
+            'payment_method', p_payment_method,
+            'gateway', p_gateway,
+            'plan_name', COALESCE(p_plan_name, v_store.subscription_plan),
+            'commission_type', v_comm_type,
+            'vat_rate', v_vat_rate,
+            'base_amount', v_net_before_vat
+        ),
+        v_now,
+        v_now
+    )
+    RETURNING id INTO v_ledger_id;
+
+    -- 13. Update stores Subscription Status (Type-Safe: cast everything in COALESCE to TEXT)
+    UPDATE public.stores
+    SET 
+        status = 'active',
+        subscription_status = 'active',
+        subscription_active = true,
+        setup_fee_paid = true,
+        lifecycle_stage = 'مشترك مدفوع',
+        subscription_plan_id = COALESCE(v_sub_plan_uuid::text, NULLIF(TRIM(p_plan_id), ''), stores.subscription_plan_id),
+        plan_code = COALESCE(p_plan_code, stores.plan_code),
+        subscription_plan = COALESCE(p_plan_name, stores.subscription_plan, 'الباقة الأساسية'),
+        subscription_start_date = COALESCE(stores.subscription_start_date, v_now),
+        subscription_end_date = v_new_end,
+        renewal_amount = CASE WHEN v_gross > 0 THEN v_gross ELSE stores.renewal_amount END,
+        updated_at = v_now
+    WHERE id = p_store_id;
+
+    -- 14. Convert Lead if applicable
+    IF v_lead.id IS NOT NULL AND v_lead.status <> 'CONVERTED' THEN
+        UPDATE public.merchant_leads
+        SET 
+            status = 'CONVERTED',
+            converted_store_id = p_store_id,
+            updated_at = v_now
+        WHERE id = v_lead.id;
+    END IF;
+
+    -- 15. Record Partner Commission
+    IF v_partner_id IS NOT NULL AND v_comm_amount > 0 THEN
+        v_idempotency_key := 'comm_inv_' || v_invoice_num;
+
+        IF v_is_acquisition THEN
+            DELETE FROM public.partner_commissions 
+            WHERE store_id = p_store_id AND status = 'PENDING';
+        END IF;
+
+        INSERT INTO public.partner_commissions (
+            partner_account_id,
+            merchant_lead_id,
+            store_id,
+            commission_type,
+            basis_amount,
+            commission_rate,
+            commission_amount,
+            status,
+            qualifying_event,
+            idempotency_key,
+            invoice_id,
+            invoice_number,
+            merchant_name,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_partner_id,
+            v_lead.id,
+            p_store_id,
+            v_comm_type,
+            v_net_before_vat,
+            v_comm_rate,
+            v_comm_amount,
+            'EARNED',
+            CASE 
+                WHEN v_comm_type = 'STORE_ACQUISITION' THEN 'سداد اشتراك متجر جديد'
+                WHEN v_comm_type = 'SUBSCRIPTION_UPGRADE' THEN 'ترقية باقة المتجر'
+                ELSE 'تجديد اشتراك المتجر الدوري'
+            END,
+            v_idempotency_key,
+            v_invoice_id::text,
+            v_invoice_num,
+            v_store.name,
+            v_now,
+            v_now
+        )
+        ON CONFLICT (idempotency_key) DO UPDATE
+        SET 
+            basis_amount = EXCLUDED.basis_amount,
+            commission_amount = EXCLUDED.commission_amount,
+            status = 'EARNED',
+            merchant_name = EXCLUDED.merchant_name,
+            updated_at = v_now
+        RETURNING id INTO v_comm_id;
+    END IF;
+
+    -- 16. Dual-Sync: Update merchant_subscriptions & billing_transactions if they exist in schema
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'merchant_subscriptions') THEN
+        UPDATE public.merchant_subscriptions 
+        SET 
+            status = 'ACTIVE',
+            current_period_start = v_now,
+            current_period_end = v_new_end,
+            updated_at = v_now
+        WHERE store_id = p_store_id;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'billing_transactions') THEN
+        INSERT INTO public.billing_transactions (
+            store_id,
+            plan_id,
+            type,
+            status,
+            amount,
+            currency,
+            provider,
+            provider_transaction_id,
+            idempotency_key,
+            paid_at,
+            metadata
+        ) VALUES (
+            p_store_id,
+            COALESCE(v_sub_plan_uuid, '00000000-0000-0000-0000-000000000000'::uuid),
+            CASE 
+                WHEN p_invoice_type = 'setup' THEN 'INITIAL_PAYMENT'
+                WHEN p_invoice_type = 'upgrade' THEN 'ADJUSTMENT'
+                ELSE 'RENEWAL'
+            END,
+            'PAID',
+            v_gross,
+            'SAR',
+            p_gateway,
+            v_gw_payment_id,
+            'btx_' || v_gw_payment_id,
+            v_now,
+            jsonb_build_object(
+                'invoice_id', v_invoice_id,
+                'invoice_number', v_invoice_num,
+                'ledger_id', v_ledger_id
+            )
+        )
+        ON CONFLICT (idempotency_key) DO NOTHING;
+    END IF;
+
+    -- 17. Return Unified Success Result
+    RETURN jsonb_build_object(
+        'success', true,
+        'message', 'تمت معالجة الدفع والاشتراك بنجاح تام وفق ضوابط ZATCA',
+        'invoice_id', v_invoice_id,
+        'invoice_number', v_invoice_num,
+        'ledger_id', v_ledger_id,
+        'store_id', p_store_id,
+        'gross_amount', v_gross,
+        'vat_amount', v_vat_amount,
+        'net_amount', v_net_before_vat,
+        'gateway_fee', v_gw_fee,
+        'commission_amount', v_comm_amount,
+        'commission_id', v_comm_id,
+        'partner_id', v_partner_id,
+        'subscription_end_date', v_new_end
+    );
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object(
+        'success', false,
+        'error', 'خطأ في معالجة المعاملة الذرية بالسيرفر: ' || SQLERRM
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.process_store_payment_atomic TO anon, authenticated, service_role;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261029_stage1_unify_sadim_with_radar.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🚀 MIGRATION: 20261029_stage1_unify_sadim_with_radar.sql
+-- 📅 DATE: 2026-10-29
+-- 🎯 STAGE 1: Unify Sadim Al-Athir (kspfiijorengpckdlymx) schema, types,
+--             functions, constraints, triggers, and RLS policies with Radar.
+-- ⚠️ TARGET: Sadim Al-Athir ONLY (Do NOT touch Radar).
+-- ==============================================================================
+
+-- ==============================================================================
+-- 1️⃣ SEQUENCES & MISSING TABLES (3 Tables from Radar: master_admins, pos_refunds, reseller_instances)
+-- ==============================================================================
+CREATE SEQUENCE IF NOT EXISTS public.store_code_seq START WITH 1001 INCREMENT BY 1;
+
+CREATE TABLE IF NOT EXISTS public.master_admins (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL,
+    email text NOT NULL,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT master_admins_pkey PRIMARY KEY (id),
+    CONSTRAINT master_admins_user_id_key UNIQUE (user_id)
+);
+ALTER TABLE public.master_admins ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.pos_refunds (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    store_id uuid NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
+    branch_id uuid REFERENCES public.store_branches(id) ON DELETE SET NULL,
+    branch_name text,
+    order_id uuid REFERENCES public.store_orders(id) ON DELETE SET NULL,
+    order_number text NOT NULL,
+    credit_note_number text NOT NULL,
+    refund_type text NOT NULL DEFAULT 'full'::text,
+    refund_reason text NOT NULL,
+    refund_method text NOT NULL DEFAULT 'cash'::text,
+    items jsonb NOT NULL DEFAULT '[]'::jsonb,
+    subtotal numeric(10,2) NOT NULL DEFAULT 0.00,
+    tax_amount numeric(10,2) NOT NULL DEFAULT 0.00,
+    total_refunded numeric(10,2) NOT NULL DEFAULT 0.00,
+    loyalty_points_deducted numeric(10,2) DEFAULT 0.00,
+    customer_id uuid REFERENCES public.store_customers(id) ON DELETE SET NULL,
+    customer_name text,
+    customer_phone text,
+    cashier_id text,
+    cashier_name text,
+    shift_id uuid REFERENCES public.pos_shifts(id) ON DELETE SET NULL,
+    zatca_qr text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT pos_refunds_pkey PRIMARY KEY (id),
+    CONSTRAINT pos_refunds_credit_note_number_key UNIQUE (credit_note_number)
+);
+ALTER TABLE public.pos_refunds ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.reseller_instances (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    name text NOT NULL,
+    slug text NOT NULL,
+    custom_domain text,
+    brand_logo_url text,
+    supabase_url text NOT NULL,
+    supabase_anon_key text NOT NULL,
+    service_role_key text NOT NULL,
+    admin_email text,
+    platform_status text NOT NULL DEFAULT 'active'::text,
+    suspension_reason text,
+    notes text,
+    created_at timestamp with time zone NOT NULL DEFAULT now(),
+    updated_at timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT reseller_instances_pkey PRIMARY KEY (id),
+    CONSTRAINT reseller_instances_slug_key UNIQUE (slug),
+    CONSTRAINT reseller_instances_custom_domain_key UNIQUE (custom_domain),
+    CONSTRAINT reseller_instances_platform_status_check CHECK (platform_status = ANY (ARRAY['active'::text, 'suspended'::text, 'maintenance'::text]))
+);
+ALTER TABLE public.reseller_instances ENABLE ROW LEVEL SECURITY;
+
+-- ==============================================================================
+-- 2️⃣ ADD ALL 96 MISSING COLUMNS FROM RADAR TO SADIM SHARED TABLES
+-- ==============================================================================
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS privilege_id uuid;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS cost_points integer DEFAULT 0;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS purchased_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS redeemed_by_staff_id uuid;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS branch_id uuid;
+ALTER TABLE public.service_bookings ADD COLUMN IF NOT EXISTS loyalty_points_earned integer DEFAULT 0;
+ALTER TABLE public.service_bookings ADD COLUMN IF NOT EXISTS branch_id uuid;
+ALTER TABLE public.service_bookings ADD COLUMN IF NOT EXISTS telegram_message_id bigint;
+ALTER TABLE public.tiers ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS required_tier_id uuid;
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS quantity_limit integer DEFAULT 100;
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS per_customer_limit integer DEFAULT 1;
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS redeemed_count integer DEFAULT 0;
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS is_hidden boolean DEFAULT false;
+ALTER TABLE public.partner_commissions ADD COLUMN IF NOT EXISTS affiliate_id uuid;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS customer_id uuid;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS total_price numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS loyalty_points_earned integer DEFAULT 0;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS branch_id uuid;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS telegram_message_id bigint;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS refunded_amount numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS refund_history jsonb DEFAULT '[]'::jsonb;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS delivery_fee numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS is_open boolean DEFAULT true;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS working_hours jsonb DEFAULT '[{"day": "sunday", "day_ar": "الأحد", "is_open": true, "open_time": "09:00", "close_time": "23:00"}, {"day": "monday", "day_ar": "الاثنين", "is_open": true, "open_time": "09:00", "close_time": "23:00"}, {"day": "tuesday", "day_ar": "الثلاثاء", "is_open": true, "open_time": "09:00", "close_time": "23:00"}, {"day": "wednesday", "day_ar": "الأربعاء", "is_open": true, "open_time": "09:00", "close_time": "23:00"}, {"day": "thursday", "day_ar": "الخميس", "is_open": true, "open_time": "09:00", "close_time": "00:00"}, {"day": "friday", "day_ar": "الجمعة", "is_open": true, "open_time": "13:00", "close_time": "00:00"}, {"day": "saturday", "day_ar": "السبت", "is_open": true, "open_time": "09:00", "close_time": "23:00"}]'::jsonb;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS busy_mode boolean DEFAULT false;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS pickup_available boolean DEFAULT true;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS delivery_available boolean DEFAULT true;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS dine_in_available boolean DEFAULT true;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS staff_id uuid;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS actual_cash numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS cash_difference numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS total_sales numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS cash_sales numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS card_sales numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS split_sales numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS tax_amount numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS discount_amount numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS orders_count integer DEFAULT 0;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS telegram_sent boolean DEFAULT false;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS metadata jsonb DEFAULT '{}'::jsonb;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS created_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS total_refunds numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS cash_refunds numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS card_refunds numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS refunds_count integer DEFAULT 0;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS total_cash_in numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS total_cash_out numeric(10,2) DEFAULT 0.00;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS cash_movements_count integer DEFAULT 0;
+ALTER TABLE public.pos_cash_movements ADD COLUMN IF NOT EXISTS branch_id uuid;
+ALTER TABLE public.partner_bonus_awards ADD COLUMN IF NOT EXISTS updated_at timestamp with time zone DEFAULT now();
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS payment_status text DEFAULT 'unpaid'::text;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS branch_name text;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS staff_name text DEFAULT ''::text;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS staff_phone text;
+ALTER TABLE public.pos_shifts ADD COLUMN IF NOT EXISTS notes text;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS notes text;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS telegram_chat_id text;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS refund_status text DEFAULT 'none'::text;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS status text DEFAULT 'active'::text;
+ALTER TABLE public.pos_cash_movements ADD COLUMN IF NOT EXISTS branch_name text;
+ALTER TABLE public.pos_cash_movements ADD COLUMN IF NOT EXISTS staff_id text DEFAULT ''::text;
+ALTER TABLE public.pos_cash_movements ADD COLUMN IF NOT EXISTS staff_name text DEFAULT ''::text;
+ALTER TABLE public.pos_cash_movements ADD COLUMN IF NOT EXISTS type text DEFAULT ''::text;
+ALTER TABLE public.pos_cash_movements ADD COLUMN IF NOT EXISTS notes text;
+ALTER TABLE public.pos_cash_movements ADD COLUMN IF NOT EXISTS recipient_name text;
+ALTER TABLE public.pos_cash_movements ADD COLUMN IF NOT EXISTS invoice_ref text;
+ALTER TABLE public.store_wallets ADD COLUMN IF NOT EXISTS meta_phone_number_id text;
+ALTER TABLE public.store_wallets ADD COLUMN IF NOT EXISTS meta_waba_id text;
+ALTER TABLE public.store_wallets ADD COLUMN IF NOT EXISTS meta_access_token text;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS manual_override text DEFAULT 'auto'::text;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS delivery_pricing_type text DEFAULT 'tiered'::text;
+ALTER TABLE public.catalog_items ADD COLUMN IF NOT EXISTS description text;
+ALTER TABLE public.catalog_items ADD COLUMN IF NOT EXISTS type text DEFAULT 'product'::text;
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS image_url text;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS order_type text DEFAULT ''::text;
+ALTER TABLE public.store_orders ADD COLUMN IF NOT EXISTS table_number text;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS coupon_code text DEFAULT ''::text;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS customer_phone text DEFAULT ''::text;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS customer_name text;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS privilege_title text DEFAULT ''::text;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS privilege_image_url text;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS valid_start_time text DEFAULT '00:00'::text;
+ALTER TABLE public.customer_coupons ADD COLUMN IF NOT EXISTS valid_end_time text DEFAULT '23:59'::text;
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS valid_start_time text DEFAULT '00:00'::text;
+ALTER TABLE public.privileges ADD COLUMN IF NOT EXISTS valid_end_time text DEFAULT '23:59'::text;
+ALTER TABLE public.store_customers ADD COLUMN IF NOT EXISTS special_date text;
+ALTER TABLE public.store_customers ADD COLUMN IF NOT EXISTS special_date_type text;
+ALTER TABLE public.service_bookings ADD COLUMN IF NOT EXISTS telegram_chat_id text;
+ALTER TABLE public.store_branches ADD COLUMN IF NOT EXISTS branch_code text DEFAULT 'BR-01'::text;
+ALTER TABLE public.service_bookings ADD COLUMN IF NOT EXISTS booking_source text DEFAULT 'customer_app'::text;
+ALTER TABLE public.store_staff ADD COLUMN IF NOT EXISTS telegram_chat_id text;
+
+-- Backfill renamed columns in Sadim so existing test rows remain valid
+UPDATE public.customer_coupons SET coupon_code = COALESCE(NULLIF(coupon_code, ''), code, 'CPN-' || substr(id::text, 1, 8)) WHERE coupon_code IS NULL OR coupon_code = '';
+UPDATE public.customer_coupons SET privilege_title = COALESCE(NULLIF(privilege_title, ''), title, 'مكافأة') WHERE privilege_title IS NULL OR privilege_title = '';
+UPDATE public.customer_coupons SET customer_phone = COALESCE(NULLIF(customer_phone, ''), '0500000000') WHERE customer_phone IS NULL OR customer_phone = '';
+UPDATE public.store_orders SET total_price = COALESCE(total_price, total_amount, 0.00) WHERE total_price IS NULL;
+UPDATE public.store_orders SET order_type = COALESCE(NULLIF(order_type, ''), fulfillment_type, 'pickup') WHERE order_type IS NULL OR order_type = '';
+UPDATE public.service_bookings SET loyalty_points_earned = COALESCE(loyalty_points_earned, points_to_earn, 0) WHERE loyalty_points_earned IS NULL;
+UPDATE public.store_branches SET branch_code = COALESCE(NULLIF(branch_code, ''), code, 'BR-01') WHERE branch_code IS NULL OR branch_code = '';
+UPDATE public.pos_cash_movements SET type = COALESCE(NULLIF(type, ''), CASE WHEN movement_type IN ('cash_in', 'in') THEN 'cash_in' ELSE 'cash_out' END) WHERE type IS NULL OR type = '';
+UPDATE public.pos_cash_movements SET staff_id = COALESCE(NULLIF(staff_id, ''), performed_by, 'admin') WHERE staff_id IS NULL OR staff_id = '';
+UPDATE public.pos_cash_movements SET staff_name = COALESCE(NULLIF(staff_name, ''), performed_by, 'المدير') WHERE staff_name IS NULL OR staff_name = '';
+UPDATE public.pos_shifts SET staff_name = COALESCE(NULLIF(staff_name, ''), cashier_name, 'الكاشير') WHERE staff_name IS NULL OR staff_name = '';
+
+-- ==============================================================================
+-- 3️⃣ FIX COLUMN DATA TYPE MISMATCHES BETWEEN SADIM AND RADAR (Idempotent)
+-- ==============================================================================
+-- 3.1 Convert ID/reference columns from uuid to text where Radar uses text
+ALTER TABLE public.catalog_items ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE public.catalog_items ALTER COLUMN id TYPE text USING id::text;
+ALTER TABLE public.catalog_items ALTER COLUMN id SET DEFAULT (gen_random_uuid())::text;
+
+ALTER TABLE public.service_bookings ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE public.service_bookings ALTER COLUMN id TYPE text USING id::text;
+ALTER TABLE public.service_bookings ALTER COLUMN id SET DEFAULT (gen_random_uuid())::text;
+
+ALTER TABLE public.service_bookings ALTER COLUMN service_id TYPE text USING service_id::text;
+ALTER TABLE public.service_bookings ALTER COLUMN specialist_id TYPE text USING specialist_id::text;
+
+ALTER TABLE public.store_specialists ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE public.store_specialists ALTER COLUMN id TYPE text USING id::text;
+ALTER TABLE public.store_specialists ALTER COLUMN id SET DEFAULT (gen_random_uuid())::text;
+
+-- 3.2 Convert driver_settlements.id from text to uuid (Radar uses uuid)
+ALTER TABLE public.driver_settlements ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE public.driver_settlements ALTER COLUMN id TYPE uuid USING (
+    CASE WHEN TRIM(id::text) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+         THEN TRIM(id::text)::uuid ELSE gen_random_uuid() END
+);
+ALTER TABLE public.driver_settlements ALTER COLUMN id SET DEFAULT gen_random_uuid();
+
+-- 3.3 Convert service_bookings.booking_date from text to date using TRIM (Advisor Point #4)
+ALTER TABLE public.service_bookings ALTER COLUMN booking_date DROP DEFAULT;
+ALTER TABLE public.service_bookings ALTER COLUMN booking_date TYPE date USING (
+    CASE WHEN NULLIF(TRIM(booking_date::text), '') IS NOT NULL
+          AND TRIM(booking_date::text) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+         THEN SUBSTRING(TRIM(booking_date::text) FROM 1 FOR 10)::date
+         ELSE CURRENT_DATE END
+);
+ALTER TABLE public.service_bookings ALTER COLUMN booking_date SET DEFAULT CURRENT_DATE;
+
+-- 3.4 Convert stores boolean & jsonb & uuid columns from text/varchar to Radar types
+ALTER TABLE public.stores ALTER COLUMN enable_orders DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN enable_orders TYPE boolean USING (LOWER(TRIM(COALESCE(enable_orders::text, 'true'))) IN ('true', 't', '1'));
+ALTER TABLE public.stores ALTER COLUMN enable_orders SET DEFAULT true;
+
+ALTER TABLE public.stores ALTER COLUMN enable_bookings DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN enable_bookings TYPE boolean USING (LOWER(TRIM(COALESCE(enable_bookings::text, 'true'))) IN ('true', 't', '1'));
+ALTER TABLE public.stores ALTER COLUMN enable_bookings SET DEFAULT true;
+
+ALTER TABLE public.stores ALTER COLUMN enable_loyalty DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN enable_loyalty TYPE boolean USING (LOWER(TRIM(COALESCE(enable_loyalty::text, 'true'))) IN ('true', 't', '1'));
+ALTER TABLE public.stores ALTER COLUMN enable_loyalty SET DEFAULT true;
+
+ALTER TABLE public.stores ALTER COLUMN owner_enable_orders DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN owner_enable_orders TYPE boolean USING (LOWER(TRIM(COALESCE(owner_enable_orders::text, 'true'))) IN ('true', 't', '1'));
+ALTER TABLE public.stores ALTER COLUMN owner_enable_orders SET DEFAULT true;
+
+ALTER TABLE public.stores ALTER COLUMN owner_enable_bookings DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN owner_enable_bookings TYPE boolean USING (LOWER(TRIM(COALESCE(owner_enable_bookings::text, 'true'))) IN ('true', 't', '1'));
+ALTER TABLE public.stores ALTER COLUMN owner_enable_bookings SET DEFAULT true;
+
+ALTER TABLE public.stores ALTER COLUMN owner_enable_loyalty DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN owner_enable_loyalty TYPE boolean USING (LOWER(TRIM(COALESCE(owner_enable_loyalty::text, 'true'))) IN ('true', 't', '1'));
+ALTER TABLE public.stores ALTER COLUMN owner_enable_loyalty SET DEFAULT true;
+
+ALTER TABLE public.stores ALTER COLUMN telegram_notifications_enabled DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN telegram_notifications_enabled TYPE boolean USING (LOWER(TRIM(COALESCE(telegram_notifications_enabled::text, 'false'))) IN ('true', 't', '1'));
+ALTER TABLE public.stores ALTER COLUMN telegram_notifications_enabled SET DEFAULT false;
+
+ALTER TABLE public.stores ALTER COLUMN enable_pos_whatsapp_receipt DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN enable_pos_whatsapp_receipt TYPE boolean USING (LOWER(TRIM(COALESCE(enable_pos_whatsapp_receipt::text, 'false'))) IN ('true', 't', '1'));
+ALTER TABLE public.stores ALTER COLUMN enable_pos_whatsapp_receipt SET DEFAULT false;
+
+ALTER TABLE public.stores ALTER COLUMN fulfillment_settings DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN fulfillment_settings TYPE jsonb USING (
+    CASE WHEN fulfillment_settings IS NULL OR TRIM(fulfillment_settings::text) = '' THEN '{}'::jsonb
+         ELSE fulfillment_settings::jsonb END
+);
+ALTER TABLE public.stores ALTER COLUMN fulfillment_settings SET DEFAULT '{"dine_in": true, "pickup": true, "delivery": false}'::jsonb;
+
+ALTER TABLE public.stores ALTER COLUMN subscription_plan_id DROP DEFAULT;
+ALTER TABLE public.stores ALTER COLUMN subscription_plan_id TYPE uuid USING (
+    CASE WHEN TRIM(COALESCE(subscription_plan_id::text, '')) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+         THEN TRIM(subscription_plan_id::text)::uuid ELSE NULL END
+);
+
+ALTER TABLE public.store_branches ALTER COLUMN lat TYPE double precision USING lat::double precision;
+ALTER TABLE public.store_branches ALTER COLUMN lng TYPE double precision USING lng::double precision;
+
+-- ==============================================================================
+-- 3.5️⃣ DATA SANITIZATION BEFORE ADDING CONSTRAINTS (Advisor Point #4)
+-- ==============================================================================
+UPDATE public.stores SET points_per_riyal = 1 WHERE points_per_riyal IS NULL OR points_per_riyal < 1;
+UPDATE public.store_customers SET lifetime_xp = 0 WHERE lifetime_xp IS NULL OR lifetime_xp < 0;
+UPDATE public.store_customers SET wallet_balance = 0 WHERE wallet_balance IS NULL OR wallet_balance < 0;
+UPDATE public.tiers SET required_xp = 0 WHERE required_xp IS NULL OR required_xp < 0;
+
+UPDATE public.affiliates
+SET referral_code = UPPER(TRIM(referral_code)),
+    code = UPPER(TRIM(COALESCE(code, referral_code)))
+WHERE referral_code IS NOT NULL;
+
+UPDATE public.pos_cash_movements
+SET type = 'cash_out'
+WHERE type IS NULL OR type NOT IN ('cash_in', 'cash_out');
+
+UPDATE public.customer_coupons
+SET status = 'ACTIVE'
+WHERE status IS NULL OR status NOT IN ('ACTIVE', 'REDEEMED', 'EXPIRED');
+
+UPDATE public.store_staff
+SET role = 'cashier'
+WHERE role IS NULL OR role NOT IN ('admin', 'cashier');
+
+UPDATE public.audit_logs
+SET action = 'ADJUSTMENT'
+WHERE action IS NULL OR action NOT IN ('PURCHASE', 'REDEEM_REWARD', 'ADJUSTMENT');
+
+WITH dup_branches AS (
+    SELECT id, store_id, branch_code,
+           ROW_NUMBER() OVER (PARTITION BY store_id, branch_code ORDER BY created_at ASC, id ASC) AS rn
+    FROM public.store_branches
+)
+UPDATE public.store_branches sb
+SET branch_code = sb.branch_code || '-' || d.rn
+FROM dup_branches d
+WHERE sb.id = d.id AND d.rn > 1;
+
+WITH dup_coupons AS (
+    SELECT id, coupon_code,
+           ROW_NUMBER() OVER (PARTITION BY coupon_code ORDER BY created_at ASC, id ASC) AS rn
+    FROM public.customer_coupons
+)
+UPDATE public.customer_coupons cc
+SET coupon_code = cc.coupon_code || '-' || d.rn
+FROM dup_coupons d
+WHERE cc.id = d.id AND d.rn > 1;
+
+UPDATE public.pos_cash_movements SET shift_id = NULL WHERE shift_id IS NOT NULL AND shift_id NOT IN (SELECT id FROM public.pos_shifts);
+UPDATE public.pos_cash_movements SET branch_id = NULL WHERE branch_id IS NOT NULL AND branch_id NOT IN (SELECT id FROM public.store_branches);
+UPDATE public.pos_shifts SET branch_id = NULL WHERE branch_id IS NOT NULL AND branch_id NOT IN (SELECT id FROM public.store_branches);
+UPDATE public.pos_shifts SET staff_id = NULL WHERE staff_id IS NOT NULL AND staff_id NOT IN (SELECT id FROM public.store_staff);
+UPDATE public.credit_notes SET ledger_entry_id = NULL WHERE ledger_entry_id IS NOT NULL AND ledger_entry_id NOT IN (SELECT id FROM public.financial_ledger);
+UPDATE public.privileges SET required_tier_id = NULL WHERE required_tier_id IS NOT NULL AND required_tier_id NOT IN (SELECT id FROM public.tiers);
+UPDATE public.customer_coupons SET branch_id = NULL WHERE branch_id IS NOT NULL AND branch_id NOT IN (SELECT id FROM public.store_branches);
+UPDATE public.customer_coupons SET privilege_id = NULL WHERE privilege_id IS NOT NULL AND privilege_id NOT IN (SELECT id FROM public.privileges);
+UPDATE public.customer_coupons SET redeemed_by_staff_id = NULL WHERE redeemed_by_staff_id IS NOT NULL AND redeemed_by_staff_id NOT IN (SELECT id FROM public.store_staff);
+UPDATE public.service_bookings SET branch_id = NULL WHERE branch_id IS NOT NULL AND branch_id NOT IN (SELECT id FROM public.store_branches);
+UPDATE public.stores SET subscription_plan_id = NULL WHERE subscription_plan_id IS NOT NULL AND subscription_plan_id NOT IN (SELECT id FROM public.billing_plans);
+UPDATE public.store_staff SET branch_id = NULL WHERE branch_id IS NOT NULL AND branch_id NOT IN (SELECT id FROM public.store_branches);
+UPDATE public.store_staff SET user_id = NULL WHERE user_id IS NOT NULL AND user_id NOT IN (SELECT id FROM auth.users);
+UPDATE public.partner_commissions SET affiliate_id = NULL WHERE affiliate_id IS NOT NULL AND affiliate_id NOT IN (SELECT id FROM public.affiliates);
+UPDATE public.audit_logs SET branch_id = NULL WHERE branch_id IS NOT NULL AND branch_id NOT IN (SELECT id FROM public.store_branches);
+UPDATE public.audit_logs SET customer_id = NULL WHERE customer_id IS NOT NULL AND customer_id NOT IN (SELECT id FROM public.store_customers);
+UPDATE public.audit_logs SET staff_id = NULL WHERE staff_id IS NOT NULL AND staff_id NOT IN (SELECT id FROM public.store_staff);
+UPDATE public.store_orders SET branch_id = NULL WHERE branch_id IS NOT NULL AND branch_id NOT IN (SELECT id FROM public.store_branches);
+UPDATE public.store_orders SET customer_id = NULL WHERE customer_id IS NOT NULL AND customer_id NOT IN (SELECT id FROM public.store_customers);
+
+-- ==============================================================================
+-- 4️⃣ ADD ALL MISSING CONSTRAINTS & TRIGGERS FROM RADAR
+-- ==============================================================================
+ALTER TABLE public.stores DROP CONSTRAINT IF EXISTS stores_points_per_riyal_check;
+ALTER TABLE public.stores ADD CONSTRAINT stores_points_per_riyal_check CHECK (points_per_riyal >= 1);
+
+ALTER TABLE public.affiliates DROP CONSTRAINT IF EXISTS chk_affiliate_code_uppercase;
+ALTER TABLE public.affiliates DROP CONSTRAINT IF EXISTS affiliates_referral_code_uppercase_chk;
+ALTER TABLE public.affiliates ADD CONSTRAINT affiliates_referral_code_uppercase_chk
+    CHECK (referral_code = UPPER(TRIM(referral_code)));
+
+ALTER TABLE public.pos_cash_movements DROP CONSTRAINT IF EXISTS pos_cash_movements_shift_id_fkey;
+ALTER TABLE public.pos_cash_movements ADD CONSTRAINT pos_cash_movements_shift_id_fkey
+    FOREIGN KEY (shift_id) REFERENCES public.pos_shifts(id) ON DELETE SET NULL;
+
+ALTER TABLE public.pos_cash_movements DROP CONSTRAINT IF EXISTS pos_cash_movements_branch_id_fkey;
+ALTER TABLE public.pos_cash_movements ADD CONSTRAINT pos_cash_movements_branch_id_fkey
+    FOREIGN KEY (branch_id) REFERENCES public.store_branches(id) ON DELETE SET NULL;
+
+ALTER TABLE public.pos_cash_movements DROP CONSTRAINT IF EXISTS pos_cash_movements_type_check;
+ALTER TABLE public.pos_cash_movements ADD CONSTRAINT pos_cash_movements_type_check
+    CHECK (type = ANY (ARRAY['cash_in'::text, 'cash_out'::text]));
+
+ALTER TABLE public.pos_shifts DROP CONSTRAINT IF EXISTS pos_shifts_branch_id_fkey;
+ALTER TABLE public.pos_shifts ADD CONSTRAINT pos_shifts_branch_id_fkey
+    FOREIGN KEY (branch_id) REFERENCES public.store_branches(id) ON DELETE SET NULL;
+
+ALTER TABLE public.pos_shifts DROP CONSTRAINT IF EXISTS pos_shifts_staff_id_fkey;
+ALTER TABLE public.pos_shifts ADD CONSTRAINT pos_shifts_staff_id_fkey
+    FOREIGN KEY (staff_id) REFERENCES public.store_staff(id) ON DELETE SET NULL;
+
+ALTER TABLE public.credit_notes DROP CONSTRAINT IF EXISTS credit_notes_ledger_entry_id_fkey;
+ALTER TABLE public.credit_notes ADD CONSTRAINT credit_notes_ledger_entry_id_fkey
+    FOREIGN KEY (ledger_entry_id) REFERENCES public.financial_ledger(id) ON DELETE SET NULL;
+
+ALTER TABLE public.store_customers DROP CONSTRAINT IF EXISTS store_customers_lifetime_xp_check;
+ALTER TABLE public.store_customers ADD CONSTRAINT store_customers_lifetime_xp_check CHECK (lifetime_xp >= 0);
+
+ALTER TABLE public.store_customers DROP CONSTRAINT IF EXISTS store_customers_wallet_balance_check;
+ALTER TABLE public.store_customers ADD CONSTRAINT store_customers_wallet_balance_check CHECK (wallet_balance >= 0);
+
+ALTER TABLE public.tiers DROP CONSTRAINT IF EXISTS tiers_required_xp_check;
+ALTER TABLE public.tiers ADD CONSTRAINT tiers_required_xp_check CHECK (required_xp >= 0);
+
+ALTER TABLE public.tiers DROP CONSTRAINT IF EXISTS unique_store_tier_name;
+ALTER TABLE public.tiers ADD CONSTRAINT unique_store_tier_name UNIQUE (store_id, tier_name);
+
+ALTER TABLE public.privileges DROP CONSTRAINT IF EXISTS privileges_required_tier_id_fkey;
+ALTER TABLE public.privileges ADD CONSTRAINT privileges_required_tier_id_fkey
+    FOREIGN KEY (required_tier_id) REFERENCES public.tiers(id) ON DELETE CASCADE;
+
+ALTER TABLE public.customer_coupons DROP CONSTRAINT IF EXISTS customer_coupons_branch_id_fkey;
+ALTER TABLE public.customer_coupons ADD CONSTRAINT customer_coupons_branch_id_fkey
+    FOREIGN KEY (branch_id) REFERENCES public.store_branches(id) ON DELETE SET NULL;
+
+ALTER TABLE public.customer_coupons DROP CONSTRAINT IF EXISTS customer_coupons_privilege_id_fkey;
+ALTER TABLE public.customer_coupons ADD CONSTRAINT customer_coupons_privilege_id_fkey
+    FOREIGN KEY (privilege_id) REFERENCES public.privileges(id) ON DELETE SET NULL;
+
+ALTER TABLE public.customer_coupons DROP CONSTRAINT IF EXISTS customer_coupons_redeemed_by_staff_id_fkey;
+ALTER TABLE public.customer_coupons ADD CONSTRAINT customer_coupons_redeemed_by_staff_id_fkey
+    FOREIGN KEY (redeemed_by_staff_id) REFERENCES public.store_staff(id) ON DELETE SET NULL;
+
+ALTER TABLE public.customer_coupons DROP CONSTRAINT IF EXISTS customer_coupons_coupon_code_key;
+ALTER TABLE public.customer_coupons ADD CONSTRAINT customer_coupons_coupon_code_key UNIQUE (coupon_code);
+
+ALTER TABLE public.customer_coupons DROP CONSTRAINT IF EXISTS customer_coupons_status_check;
+ALTER TABLE public.customer_coupons ADD CONSTRAINT customer_coupons_status_check
+    CHECK (status = ANY (ARRAY['ACTIVE'::text, 'REDEEMED'::text, 'EXPIRED'::text]));
+
+ALTER TABLE public.service_bookings DROP CONSTRAINT IF EXISTS service_bookings_branch_id_fkey;
+ALTER TABLE public.service_bookings ADD CONSTRAINT service_bookings_branch_id_fkey
+    FOREIGN KEY (branch_id) REFERENCES public.store_branches(id) ON DELETE SET NULL;
+
+ALTER TABLE public.stores DROP CONSTRAINT IF EXISTS stores_subscription_plan_id_fkey;
+ALTER TABLE public.stores ADD CONSTRAINT stores_subscription_plan_id_fkey
+    FOREIGN KEY (subscription_plan_id) REFERENCES public.billing_plans(id) ON DELETE SET NULL;
+
+ALTER TABLE public.store_staff DROP CONSTRAINT IF EXISTS store_staff_branch_id_fkey;
+ALTER TABLE public.store_staff ADD CONSTRAINT store_staff_branch_id_fkey
+    FOREIGN KEY (branch_id) REFERENCES public.store_branches(id) ON DELETE SET NULL;
+
+ALTER TABLE public.store_staff DROP CONSTRAINT IF EXISTS store_staff_role_check;
+ALTER TABLE public.store_staff ADD CONSTRAINT store_staff_role_check
+    CHECK (role = ANY (ARRAY['admin'::text, 'cashier'::text]));
+
+ALTER TABLE public.store_staff DROP CONSTRAINT IF EXISTS store_staff_user_id_fkey;
+ALTER TABLE public.store_staff ADD CONSTRAINT store_staff_user_id_fkey
+    FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+
+ALTER TABLE public.partner_commissions DROP CONSTRAINT IF EXISTS partner_commissions_affiliate_id_fkey;
+ALTER TABLE public.partner_commissions ADD CONSTRAINT partner_commissions_affiliate_id_fkey
+    FOREIGN KEY (affiliate_id) REFERENCES public.affiliates(id) ON DELETE SET NULL;
+
+ALTER TABLE public.audit_logs DROP CONSTRAINT IF EXISTS audit_logs_action_check;
+ALTER TABLE public.audit_logs ADD CONSTRAINT audit_logs_action_check
+    CHECK (action = ANY (ARRAY['PURCHASE'::text, 'REDEEM_REWARD'::text, 'ADJUSTMENT'::text]));
+
+ALTER TABLE public.audit_logs DROP CONSTRAINT IF EXISTS audit_logs_branch_id_fkey;
+ALTER TABLE public.audit_logs ADD CONSTRAINT audit_logs_branch_id_fkey
+    FOREIGN KEY (branch_id) REFERENCES public.store_branches(id) ON DELETE SET NULL;
+
+ALTER TABLE public.audit_logs DROP CONSTRAINT IF EXISTS audit_logs_customer_id_fkey;
+ALTER TABLE public.audit_logs ADD CONSTRAINT audit_logs_customer_id_fkey
+    FOREIGN KEY (customer_id) REFERENCES public.store_customers(id) ON DELETE RESTRICT;
+
+ALTER TABLE public.audit_logs DROP CONSTRAINT IF EXISTS audit_logs_staff_id_fkey;
+ALTER TABLE public.audit_logs ADD CONSTRAINT audit_logs_staff_id_fkey
+    FOREIGN KEY (staff_id) REFERENCES public.store_staff(id) ON DELETE SET NULL;
+
+ALTER TABLE public.store_orders DROP CONSTRAINT IF EXISTS store_orders_branch_id_fkey;
+ALTER TABLE public.store_orders ADD CONSTRAINT store_orders_branch_id_fkey
+    FOREIGN KEY (branch_id) REFERENCES public.store_branches(id) ON DELETE SET NULL;
+
+ALTER TABLE public.store_orders DROP CONSTRAINT IF EXISTS store_orders_customer_id_fkey;
+ALTER TABLE public.store_orders ADD CONSTRAINT store_orders_customer_id_fkey
+    FOREIGN KEY (customer_id) REFERENCES public.store_customers(id) ON DELETE SET NULL;
+
+ALTER TABLE public.store_branches DROP CONSTRAINT IF EXISTS uq_store_branch_code;
+ALTER TABLE public.store_branches ADD CONSTRAINT uq_store_branch_code UNIQUE (store_id, branch_code);
+
+-- ==============================================================================
+-- 5️⃣ DROP OLD/OVERLOADED FUNCTIONS FIRST (Advisor Point #1) & DEPLOY 12 FUNCTIONS
+-- ==============================================================================
+DROP FUNCTION IF EXISTS public._inspect_affiliates_cols();
+DROP FUNCTION IF EXISTS public._inspect_affiliates_data();
+DROP FUNCTION IF EXISTS public._inspect_sadim_state();
+DROP FUNCTION IF EXISTS public._inspect_sadim_tables();
+DROP FUNCTION IF EXISTS public._inspect_store_customers();
+DROP FUNCTION IF EXISTS public._inspect_stores_cols();
+DROP FUNCTION IF EXISTS public._inspect_stores();
+DROP FUNCTION IF EXISTS public._inspect_all_policies();
+DROP FUNCTION IF EXISTS public._inspect_billing_tables();
+DROP FUNCTION IF EXISTS public._inspect_store_columns();
+DROP FUNCTION IF EXISTS public._inspect_leads();
+DROP FUNCTION IF EXISTS public._inspect_partners();
+DROP FUNCTION IF EXISTS public._inspect_partner_cols();
+DROP FUNCTION IF EXISTS public._inspect_ledger();
+DROP FUNCTION IF EXISTS public._inspect_all_invoices();
+DROP FUNCTION IF EXISTS public._inspect_proc_overloads();
+DROP FUNCTION IF EXISTS public._inspect_coalesce_in_proc();
+DROP FUNCTION IF EXISTS public._inspect_coalesce_in_proc(text);
+DROP FUNCTION IF EXISTS public._inspect_col_type();
+DROP FUNCTION IF EXISTS public._inspect_col_type(text, text);
+DROP FUNCTION IF EXISTS public._inspect_sub_cols();
+DROP FUNCTION IF EXISTS public._inspect_fn_super_admin();
+DROP FUNCTION IF EXISTS public._inspect_tx_constraints();
+DROP FUNCTION IF EXISTS public._inspect_col_lengths();
+DROP FUNCTION IF EXISTS public._inspect_partner_triggers();
+DROP FUNCTION IF EXISTS public._inspect_partner_nullable();
+DROP FUNCTION IF EXISTS public._inspect_all_partner_trgs();
+
+-- Explicitly drop old 15-arg book_service_safely in Sadim so it does not remain overloaded alongside 18-arg version
+DROP FUNCTION IF EXISTS public.book_service_safely(uuid, uuid, text, text, uuid, text, numeric, integer, uuid, text, text, text, text, integer, jsonb);
+DROP FUNCTION IF EXISTS public.book_service_safely(uuid, uuid, text, text, text, text, numeric, integer, uuid, text, text, text, text, integer, jsonb);
+DROP FUNCTION IF EXISTS public.book_service_safely(uuid, uuid, text, text, text, text, numeric, integer, text, text, text, text, text, integer, jsonb, uuid, text, text);
+
+-- Explicitly drop functions being replaced/created so no stale overload remains
+DROP FUNCTION IF EXISTS public.create_store_concierge_onboarding(text, text, text, text, text, numeric, text, text, text);
+DROP FUNCTION IF EXISTS public.create_store_concierge_onboarding(text, text, text, text, text, numeric, text, text, text, text);
+DROP FUNCTION IF EXISTS public.register_or_get_customer_wallet(uuid, text, text);
+DROP FUNCTION IF EXISTS public.get_customer_wallet_public(uuid, text);
+
+-- Function: get_partner_commissions_secure(p_partner_id uuid)
+CREATE OR REPLACE FUNCTION public.get_partner_commissions_secure(p_partner_id uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_rows JSONB;
+BEGIN
+    IF p_partner_id IS NULL THEN
+        RETURN '[]'::jsonb;
+    END IF;
+
+    SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb)
+    INTO v_rows
+    FROM (
+        SELECT pc.id, pc.commission_amount, pc.commission_type, pc.status, pc.created_at,
+               ml.store_name AS merchant_name
+        FROM public.partner_commissions pc
+        LEFT JOIN public.merchant_leads ml ON ml.id = pc.merchant_lead_id
+        WHERE (pc.partner_account_id = p_partner_id 
+               OR pc.affiliate_id = p_partner_id
+               OR pc.partner_account_id IN (SELECT id FROM public.partner_accounts WHERE affiliate_id = p_partner_id))
+          AND pc.status <> 'PENDING'
+        ORDER BY pc.created_at DESC
+    ) t;
+
+    RETURN v_rows;
+END;
+$function$
+;
+
+-- Function: has_store_access(target_store_id uuid)
+CREATE OR REPLACE FUNCTION public.has_store_access(target_store_id uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1 
+    FROM public.store_staff s
+    JOIN public.stores st ON st.id = s.store_id
+    WHERE s.user_id = auth.uid()
+      AND s.store_id = target_store_id
+      AND s.is_active = true
+      AND st.subscription_active = true
+  );
+$function$
+;
+
+-- Function: is_store_admin(target_store_id uuid)
+CREATE OR REPLACE FUNCTION public.is_store_admin(target_store_id uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1 
+    FROM public.store_staff s
+    JOIN public.stores st ON st.id = s.store_id
+    WHERE s.user_id = auth.uid()
+      AND s.store_id = target_store_id
+      AND s.role = 'admin'
+      AND s.is_active = true
+      AND st.subscription_active = true
+  );
+$function$
+;
+
+-- Function: process_redeem_transaction(p_store_id uuid, p_phone text, p_points_to_burn integer, p_reward_title text, p_metadata jsonb)
+CREATE OR REPLACE FUNCTION public.process_redeem_transaction(p_store_id uuid, p_phone text, p_points_to_burn integer, p_reward_title text DEFAULT 'Reward Redemption'::text, p_metadata jsonb DEFAULT '{}'::jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_customer RECORD;
+    v_staff_id UUID;
+    v_store_active BOOLEAN;
+BEGIN
+    SELECT id INTO v_staff_id 
+    FROM public.store_staff 
+    WHERE user_id = auth.uid() AND store_id = p_store_id AND is_active = true;
+
+    IF v_staff_id IS NULL THEN
+        RAISE EXCEPTION 'Access Denied: Unauthorized staff member.';
+    END IF;
+
+    SELECT subscription_active INTO v_store_active FROM public.stores WHERE id = p_store_id;
+    IF NOT v_store_active THEN
+        RAISE EXCEPTION 'Store subscription is inactive.';
+    END IF;
+
+    IF p_points_to_burn <= 0 THEN
+        RAISE EXCEPTION 'Points to burn must be greater than zero.';
+    END IF;
+
+    SELECT * INTO v_customer 
+    FROM public.store_customers 
+    WHERE store_id = p_store_id AND phone = p_phone 
+    FOR UPDATE;
+
+    IF v_customer IS NULL THEN
+        RAISE EXCEPTION 'Customer not found.';
+    END IF;
+
+    IF v_customer.wallet_balance < p_points_to_burn THEN
+        RAISE EXCEPTION 'Insufficient balance: Customer only has % points.', v_customer.wallet_balance;
+    END IF;
+
+    UPDATE public.store_customers
+    SET wallet_balance = wallet_balance - p_points_to_burn,
+        last_visit_date = now(),
+        updated_at = now()
+    WHERE id = v_customer.id
+    RETURNING * INTO v_customer;
+
+    INSERT INTO public.audit_logs (store_id, staff_id, customer_id, action, purchase_amount, points_changed, metadata)
+    VALUES (
+        p_store_id, 
+        v_staff_id, 
+        v_customer.id, 
+        'REDEEM_REWARD', 
+        0, 
+        -p_points_to_burn, 
+        jsonb_build_object('reward', p_reward_title) || p_metadata
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer_id', v_customer.id,
+        'phone', v_customer.phone,
+        'burned_points', p_points_to_burn,
+        'remaining_wallet_balance', v_customer.wallet_balance,
+        'lifetime_xp', v_customer.lifetime_xp
+    );
+END;
+$function$
+;
+
+-- Function: fn_assign_store_code()
+CREATE OR REPLACE FUNCTION public.fn_assign_store_code()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public', 'extensions'
+AS $function$
+    BEGIN
+      IF NEW.store_code IS NULL OR TRIM(NEW.store_code) = '' THEN
+        NEW.store_code := 'RD-' || nextval('store_code_seq')::text;
+      END IF;
+      RETURN NEW;
+    END;
+    $function$
+;
+
+-- Function: book_service_safely(p_store_id uuid, p_customer_id uuid, p_customer_name text, p_customer_phone text, p_service_id text, p_service_name text, p_service_price numeric, p_service_duration_minutes integer, p_specialist_id text, p_specialist_name text, p_booking_date text, p_booking_time text, p_notes text, p_points_to_earn integer, p_selected_modifiers jsonb, p_branch_id uuid, p_booking_source text, p_status text)
+CREATE OR REPLACE FUNCTION public.book_service_safely(p_store_id uuid, p_customer_id uuid DEFAULT NULL::uuid, p_customer_name text DEFAULT 'عميل المتجر'::text, p_customer_phone text DEFAULT ''::text, p_service_id text DEFAULT 'srv-main'::text, p_service_name text DEFAULT 'خدمة'::text, p_service_price numeric DEFAULT 0, p_service_duration_minutes integer DEFAULT 30, p_specialist_id text DEFAULT NULL::text, p_specialist_name text DEFAULT NULL::text, p_booking_date text DEFAULT ''::text, p_booking_time text DEFAULT ''::text, p_notes text DEFAULT NULL::text, p_points_to_earn integer DEFAULT 0, p_selected_modifiers jsonb DEFAULT '[]'::jsonb, p_branch_id uuid DEFAULT NULL::uuid, p_booking_source text DEFAULT 'customer_app'::text, p_status text DEFAULT 'pending'::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+    DECLARE
+        v_overlap_exists BOOLEAN;
+        v_booking_id UUID;
+        v_booking_number TEXT;
+        v_lock_key BIGINT;
+        v_start_time TIMESTAMP;
+        v_end_time TIMESTAMP;
+        v_new_booking RECORD;
+        v_clean_date DATE;
+        v_clean_status TEXT;
+        v_clean_source TEXT;
+    BEGIN
+        -- 1. Create a deterministic lock key to serialize concurrent booking requests
+        IF p_specialist_id IS NOT NULL AND trim(p_specialist_id) <> '' THEN
+            v_lock_key := hashtext(p_specialist_id);
+            PERFORM pg_advisory_xact_lock(v_lock_key);
+
+            BEGIN
+                v_start_time := (p_booking_date || ' ' || p_booking_time)::TIMESTAMP;
+                v_end_time := v_start_time + (COALESCE(p_service_duration_minutes, 30) || ' minutes')::INTERVAL;
+
+                SELECT EXISTS (
+                    SELECT 1 FROM public.service_bookings
+                    WHERE specialist_id = p_specialist_id
+                    AND status NOT IN ('cancelled', 'rejected', 'no_show')
+                    AND (
+                        ((booking_date || ' ' || booking_time)::TIMESTAMP < v_end_time)
+                        AND (((booking_date || ' ' || booking_time)::TIMESTAMP + (COALESCE(service_duration_minutes, 30) || ' minutes')::INTERVAL) > v_start_time)
+                    )
+                ) INTO v_overlap_exists;
+
+                IF v_overlap_exists THEN
+                    RETURN jsonb_build_object(
+                        'success', false,
+                        'error', 'نعتذر، هذا الموعد محجوز مسبقاً لدى الأخصائي المختار. يرجى اختيار موعد آخر.'
+                    );
+                END IF;
+            EXCEPTION WHEN OTHERS THEN
+                NULL;
+            END;
+        END IF;
+
+        -- 2. Parse date safely
+        BEGIN
+            v_clean_date := p_booking_date::DATE;
+        EXCEPTION WHEN OTHERS THEN
+            v_clean_date := CURRENT_DATE;
+        END;
+
+        -- 3. Determine status and source
+        v_clean_source := COALESCE(NULLIF(trim(p_booking_source), ''), 'customer_app');
+        IF v_clean_source IN ('phone_call', 'walk_in', 'cashier') THEN
+            v_clean_status := COALESCE(NULLIF(trim(p_status), ''), 'confirmed');
+        ELSE
+            v_clean_status := COALESCE(NULLIF(trim(p_status), ''), 'pending');
+        END IF;
+
+        -- 4. Generate unique booking number
+        v_booking_number := 'BKG-' || upper(substring(replace(gen_random_uuid()::TEXT, '-', '') from 1 for 20));
+        v_booking_id := gen_random_uuid();
+
+        -- 5. Insert booking with clean status and booking_source
+        INSERT INTO public.service_bookings (
+            id,
+            booking_number,
+            store_id,
+            branch_id,
+            customer_id,
+            customer_name,
+            customer_phone,
+            service_id,
+            service_name,
+            service_price,
+            selected_modifiers,
+            service_duration_minutes,
+            specialist_id,
+            specialist_name,
+            booking_date,
+            booking_time,
+            status,
+            booking_source,
+            customer_notes,
+            loyalty_points_earned,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_booking_id::TEXT,
+            v_booking_number,
+            p_store_id,
+            p_branch_id,
+            p_customer_id,
+            COALESCE(p_customer_name, 'عميل المتجر'),
+            COALESCE(p_customer_phone, ''),
+            COALESCE(p_service_id, 'srv-main'),
+            COALESCE(p_service_name, 'خدمة'),
+            COALESCE(p_service_price, 0),
+            COALESCE(p_selected_modifiers, '[]'::jsonb),
+            COALESCE(p_service_duration_minutes, 30),
+            p_specialist_id,
+            p_specialist_name,
+            v_clean_date,
+            COALESCE(p_booking_time, '00:00'),
+            v_clean_status,
+            v_clean_source,
+            p_notes,
+            COALESCE(p_points_to_earn, 0),
+            NOW(),
+            NOW()
+        )
+        RETURNING * INTO v_new_booking;
+
+        RETURN jsonb_build_object(
+            'success', true,
+            'booking', to_jsonb(v_new_booking)
+        );
+    END;
+    $function$
+;
+
+-- Function: rls_auto_enable()
+CREATE OR REPLACE FUNCTION public.rls_auto_enable()
+ RETURNS event_trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+  cmd record;
+BEGIN
+  FOR cmd IN
+    SELECT *
+    FROM pg_event_trigger_ddl_commands()
+    WHERE command_tag IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+      AND object_type IN ('table','partitioned table')
+  LOOP
+     IF cmd.schema_name IS NOT NULL AND cmd.schema_name IN ('public') AND cmd.schema_name NOT IN ('pg_catalog','information_schema') AND cmd.schema_name NOT LIKE 'pg_toast%' AND cmd.schema_name NOT LIKE 'pg_temp%' THEN
+      BEGIN
+        EXECUTE format('alter table if exists %s enable row level security', cmd.object_identity);
+        RAISE LOG 'rls_auto_enable: enabled RLS on %', cmd.object_identity;
+      EXCEPTION
+        WHEN OTHERS THEN
+          RAISE LOG 'rls_auto_enable: failed to enable RLS on %', cmd.object_identity;
+      END;
+     ELSE
+        RAISE LOG 'rls_auto_enable: skip % (either system schema or not in enforced list: %.)', cmd.object_identity, cmd.schema_name;
+     END IF;
+  END LOOP;
+END;
+$function$
+;
+
+-- Function: fn_auto_enable_rls()
+CREATE OR REPLACE FUNCTION public.fn_auto_enable_rls()
+ RETURNS event_trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+    DECLARE
+        obj record;
+    BEGIN
+        FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands() WHERE command_tag IN ('CREATE TABLE', 'CREATE TABLE AS')
+        LOOP
+            IF obj.schema_name = 'public' THEN
+                EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY;', obj.object_identity);
+            END IF;
+        END LOOP;
+    END;
+    $function$
+;
+
+-- Function: process_purchase_transaction(p_store_id uuid, p_phone text, p_purchase_amount numeric, p_metadata jsonb)
+CREATE OR REPLACE FUNCTION public.process_purchase_transaction(p_store_id uuid, p_phone text, p_purchase_amount numeric, p_metadata jsonb DEFAULT '{}'::jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_customer RECORD;
+    v_store RECORD;
+    v_staff_id UUID;
+    v_points_earned INTEGER;
+    v_current_tier TEXT;
+BEGIN
+    SELECT id INTO v_staff_id 
+    FROM public.store_staff 
+    WHERE user_id = auth.uid() AND store_id = p_store_id AND is_active = true;
+
+    IF v_staff_id IS NULL THEN
+        RAISE EXCEPTION 'Access Denied: Unauthorized staff member.';
+    END IF;
+
+    SELECT subscription_active, points_per_riyal INTO v_store 
+    FROM public.stores WHERE id = p_store_id;
+
+    IF v_store IS NULL OR NOT v_store.subscription_active THEN
+        RAISE EXCEPTION 'Store subscription is inactive or store not found.';
+    END IF;
+
+    IF p_purchase_amount <= 0 THEN
+        RAISE EXCEPTION 'Purchase amount must be greater than zero.';
+    END IF;
+
+    v_points_earned := FLOOR(p_purchase_amount * v_store.points_per_riyal);
+
+    INSERT INTO public.store_customers (store_id, phone, lifetime_xp, wallet_balance, last_visit_date)
+    VALUES (p_store_id, p_phone, v_points_earned, v_points_earned, now())
+    ON CONFLICT (store_id, phone)
+    DO UPDATE SET 
+        lifetime_xp = store_customers.lifetime_xp + EXCLUDED.lifetime_xp,
+        wallet_balance = store_customers.wallet_balance + EXCLUDED.wallet_balance,
+        last_visit_date = now(),
+        updated_at = now()
+    RETURNING * INTO v_customer;
+
+    INSERT INTO public.audit_logs (store_id, staff_id, customer_id, action, purchase_amount, points_changed, metadata)
+    VALUES (p_store_id, v_staff_id, v_customer.id, 'PURCHASE', p_purchase_amount, v_points_earned, p_metadata);
+
+    SELECT tier_name INTO v_current_tier
+    FROM public.tiers
+    WHERE store_id = p_store_id AND required_xp <= v_customer.lifetime_xp
+    ORDER BY required_xp DESC
+    LIMIT 1;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer_id', v_customer.id,
+        'phone', v_customer.phone,
+        'points_earned', v_points_earned,
+        'wallet_balance', v_customer.wallet_balance,
+        'lifetime_xp', v_customer.lifetime_xp,
+        'current_tier', COALESCE(v_current_tier, 'Guest')
+    );
+END;
+$function$
+;
+
+-- Function: is_master_owner()
+CREATE OR REPLACE FUNCTION public.is_master_owner()
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+AS $function$
+BEGIN
+    -- السماح للـ service_role
+    IF auth.role() = 'service_role' THEN
+        RETURN TRUE;
+    END IF;
+
+    -- التحقق من جدول المالكين بالـ UID حصراً
+    RETURN EXISTS (
+        SELECT 1 FROM public.master_admins
+        WHERE user_id = auth.uid()
+    );
+END;
+$function$
+;
+
+-- Function: is_valid_master_token(p_token text)
+CREATE OR REPLACE FUNCTION public.is_valid_master_token(p_token text)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'extensions'
+AS $function$
+BEGIN
+    IF p_token IS NULL OR TRIM(p_token) = '' THEN RETURN FALSE; END IF;
+    RETURN EXISTS (
+        SELECT 1 FROM public.reseller_master_auth
+        WHERE master_token_hash = crypt(p_token, master_token_hash)
+    );
+END;
+$function$
+;
+
+-- Function: consume_merchant_whatsapp_otp(p_store_id uuid)
+CREATE OR REPLACE FUNCTION public.consume_merchant_whatsapp_otp(p_store_id uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+    v_has_own_meta BOOLEAN;
+    v_wa_quota INT;
+    v_wa_used INT;
+    v_wallet_id UUID;
+BEGIN
+    -- Check store wallet
+    SELECT id, wa_quota, wa_used, (meta_access_token IS NOT NULL AND meta_access_token <> '')
+    INTO v_wallet_id, v_wa_quota, v_wa_used, v_has_own_meta
+    FROM public.store_wallets
+    WHERE store_id = p_store_id
+    LIMIT 1;
+
+    -- If store has own Meta account connected, it's unlimited on store's bill
+    IF v_has_own_meta THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'source', 'store_meta',
+            'has_own_meta', true,
+            'message', 'سيتم الإرسال عبر حساب واتساب ميتا الخاص بالمتجر'
+        );
+    END IF;
+
+    -- If no wallet yet, create one with 100 free OTP
+    IF v_wallet_id IS NULL THEN
+        INSERT INTO public.store_wallets (store_id, wa_quota, wa_used)
+        VALUES (p_store_id, 100, 1)
+        RETURNING id, wa_quota, wa_used INTO v_wallet_id, v_wa_quota, v_wa_used;
+
+        RETURN jsonb_build_object(
+            'success', true,
+            'source', 'platform_free_quota',
+            'has_own_meta', false,
+            'remaining', 99,
+            'used', 1,
+            'quota', 100
+        );
+    END IF;
+
+    -- Fallback default quota
+    v_wa_quota := COALESCE(v_wa_quota, 100);
+    v_wa_used := COALESCE(v_wa_used, 0);
+
+    -- Check if free quota exhausted
+    IF v_wa_used >= v_wa_quota THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'FREE_OTP_QUOTA_EXHAUSTED',
+            'has_own_meta', false,
+            'remaining', 0,
+            'used', v_wa_used,
+            'quota', v_wa_quota,
+            'message', 'نفد الرصيد الافتتاحي المجاني لرسائل التحقق (100 رسالة). يرجى ربط حساب واتساب ميتا الخاص بمتجرك للاستمرار.'
+        );
+    END IF;
+
+    -- Deduct 1 OTP from free platform quota
+    UPDATE public.store_wallets
+    SET wa_used = wa_used + 1,
+        updated_at = timezone('utc', now())
+    WHERE id = v_wallet_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'source', 'platform_free_quota',
+        'has_own_meta', false,
+        'remaining', v_wa_quota - (v_wa_used + 1),
+        'used', v_wa_used + 1,
+        'quota', v_wa_quota
+    );
+END;
+$function$
+;
+
+-- Trigger: trg_assign_store_code on stores
+DROP TRIGGER IF EXISTS trg_assign_store_code ON public.stores;
+CREATE TRIGGER trg_assign_store_code
+    BEFORE INSERT ON public.stores
+    FOR EACH ROW
+    EXECUTE FUNCTION public.fn_assign_store_code();
+
+-- 5.1 Harden create_store_concierge_onboarding (Super Admin Only + points_per_riyal >= 1)
+CREATE OR REPLACE FUNCTION public.create_store_concierge_onboarding(
+    p_name text,
+    p_slug text,
+    p_logo_url text DEFAULT NULL::text,
+    p_primary_color text DEFAULT '#0F172A'::text,
+    p_secondary_color text DEFAULT '#F59E0B'::text,
+    p_points_per_riyal numeric DEFAULT 1.0,
+    p_manager_name text DEFAULT 'المدير العام'::text,
+    p_manager_contact text DEFAULT '0500000000'::text,
+    p_manager_pin text DEFAULT '9999'::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_store RECORD;
+    v_staff RECORD;
+    v_points numeric;
+BEGIN
+    IF NOT public.is_super_admin() AND COALESCE(auth.role(), '') <> 'service_role' THEN
+        RAISE EXCEPTION 'غير مصرح: إنشاء المتاجر المباشر متاح لمدير المنصة التنفيذي فقط (Super Admin)';
+    END IF;
+
+    v_points := COALESCE(p_points_per_riyal, 1.0);
+    IF v_points < 1 THEN
+        RAISE EXCEPTION 'معامل احتساب النقاط يجب أن يكون 1 على الأقل (القيمة المدخلة: %)', v_points;
+    END IF;
+
+    INSERT INTO public.stores (
+        name, slug, logo_url, primary_color, secondary_color,
+        points_per_riyal, manager_name, manager_contact,
+        subscription_active, status, subscription_status, setup_fee_paid
+    )
+    VALUES (
+        p_name, LOWER(TRIM(p_slug)), p_logo_url,
+        COALESCE(p_primary_color, '#0F172A'), COALESCE(p_secondary_color, '#F59E0B'),
+        v_points, p_manager_name, p_manager_contact,
+        true, 'active', 'active', true
+    )
+    ON CONFLICT (slug) DO UPDATE SET
+        name = EXCLUDED.name,
+        logo_url = COALESCE(EXCLUDED.logo_url, stores.logo_url),
+        manager_name = EXCLUDED.manager_name,
+        manager_contact = EXCLUDED.manager_contact,
+        primary_color = EXCLUDED.primary_color,
+        secondary_color = EXCLUDED.secondary_color,
+        points_per_riyal = EXCLUDED.points_per_riyal,
+        updated_at = now()
+    RETURNING * INTO v_store;
+
+    INSERT INTO public.store_staff (
+        store_id, name, phone, role, pin_code, is_active, can_manual_input_phone
+    )
+    VALUES (
+        v_store.id, COALESCE(p_manager_name, 'المدير العام'),
+        COALESCE(p_manager_contact, '0500000000'), 'admin',
+        COALESCE(p_manager_pin, '9999'), true, true
+    )
+    RETURNING * INTO v_staff;
+
+    INSERT INTO public.store_wallets (store_id, sms_quota, wa_quota, cashier_limit)
+    VALUES (v_store.id, 500, 200, 2)
+    ON CONFLICT (store_id) DO NOTHING;
+
+    INSERT INTO public.tiers (store_id, tier_name, required_xp, badge_color)
+    VALUES 
+        (v_store.id, 'ضيف (Guest)', 0, '#94A3B8'),
+        (v_store.id, 'Insider مميز', 150, '#3B82F6'),
+        (v_store.id, 'VIP Gold', 500, '#F59E0B'),
+        (v_store.id, 'Black Elite 👑', 1200, '#10B981')
+    ON CONFLICT (store_id, tier_name) DO NOTHING;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'store', row_to_json(v_store),
+        'manager', row_to_json(v_staff),
+        'portal_url', '/?store=' || v_store.slug
+    );
+END;
+$function$;
+
+-- 5.2 Harden register_or_get_customer_wallet (Minimal fields, no exception swallowing on audit_logs)
+CREATE OR REPLACE FUNCTION public.register_or_get_customer_wallet(
+    p_store_id uuid,
+    p_phone text,
+    p_name text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_clean_phone TEXT;
+    v_norm_phone TEXT;
+    v_cust RECORD;
+    v_welcome_points INT := 0;
+    v_store RECORD;
+BEGIN
+    IF p_store_id IS NULL OR TRIM(COALESCE(p_phone, '')) = '' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_INPUT');
+    END IF;
+
+    v_clean_phone := TRIM(p_phone);
+    v_norm_phone := RIGHT(REGEXP_REPLACE(v_clean_phone, '[^0-9]', '', 'g'), 9);
+
+    IF length(v_norm_phone) < 9 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_PHONE');
+    END IF;
+
+    SELECT * INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND (
+          phone = v_clean_phone
+          OR phone = v_norm_phone
+          OR phone = '0' || v_norm_phone
+          OR phone = '+966' || v_norm_phone
+          OR phone = '966' || v_norm_phone
+          OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 9) = v_norm_phone
+      )
+    LIMIT 1;
+
+    IF v_cust.id IS NOT NULL THEN
+        IF (v_cust.name IS NULL OR v_cust.name = 'عميل' OR v_cust.name = 'عميل مميز') AND p_name IS NOT NULL AND TRIM(p_name) <> '' THEN
+            UPDATE public.store_customers
+            SET name = TRIM(p_name), updated_at = now()
+            WHERE id = v_cust.id
+            RETURNING * INTO v_cust;
+        END IF;
+
+        RETURN jsonb_build_object(
+            'success', true,
+            'is_new', false,
+            'customer', jsonb_build_object(
+                'id', v_cust.id,
+                'store_id', v_cust.store_id,
+                'phone', v_cust.phone,
+                'name', v_cust.name,
+                'wallet_balance', v_cust.wallet_balance,
+                'lifetime_xp', v_cust.lifetime_xp
+            )
+        );
+    END IF;
+
+    SELECT welcome_gift_type, welcome_points INTO v_store
+    FROM public.stores
+    WHERE id = p_store_id;
+
+    IF v_store.welcome_gift_type = 'POINTS' OR v_store.welcome_gift_type IS NULL THEN
+        v_welcome_points := COALESCE(v_store.welcome_points, 50);
+    END IF;
+
+    INSERT INTO public.store_customers (
+        store_id, phone, name, wallet_balance, lifetime_xp, last_visit_date, created_at, updated_at
+    ) VALUES (
+        p_store_id,
+        v_clean_phone,
+        COALESCE(NULLIF(TRIM(p_name), ''), 'عميل مميز'),
+        v_welcome_points,
+        v_welcome_points,
+        now(),
+        now(),
+        now()
+    )
+    RETURNING * INTO v_cust;
+
+    IF v_welcome_points > 0 THEN
+        INSERT INTO public.audit_logs (
+            store_id, customer_id, customer_phone, customer_name,
+            points_changed, purchase_amount,
+            action, event_type, entry_method, metadata, created_at
+        ) VALUES (
+            p_store_id, v_cust.id, v_cust.phone, v_cust.name,
+            v_welcome_points, 0,
+            'ADJUSTMENT', 'WELCOME_BONUS', 'AUTO_SYSTEM',
+            jsonb_build_object('note', 'نقاط تسجيل وترحيب بالعميل'),
+            now()
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'is_new', true,
+        'customer', jsonb_build_object(
+            'id', v_cust.id,
+            'store_id', v_cust.store_id,
+            'phone', v_cust.phone,
+            'name', v_cust.name,
+            'wallet_balance', v_cust.wallet_balance,
+            'lifetime_xp', v_cust.lifetime_xp
+        )
+    );
+END;
+$function$;
+
+-- 5.2b Unify get_customer_wallet_public with Radar
+CREATE OR REPLACE FUNCTION public.get_customer_wallet_public(p_store_id uuid, p_phone text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_clean_phone TEXT;
+    v_norm_phone TEXT;
+    v_cust RECORD;
+    v_tier RECORD;
+    v_coupons JSONB := '[]'::jsonb;
+BEGIN
+    PERFORM public.assert_platform_active();
+
+    IF p_store_id IS NULL OR TRIM(COALESCE(p_phone, '')) = '' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_INPUT');
+    END IF;
+
+    v_clean_phone := TRIM(p_phone);
+    v_norm_phone := RIGHT(REGEXP_REPLACE(v_clean_phone, '[^0-9]', '', 'g'), 9);
+
+    SELECT id, store_id, phone, name, wallet_balance, lifetime_xp, last_visit_date, created_at
+    INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND (
+          phone = v_clean_phone
+          OR phone = v_norm_phone
+          OR phone = '0' || v_norm_phone
+          OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 9) = v_norm_phone
+      )
+    LIMIT 1;
+
+    IF v_cust.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'CUSTOMER_NOT_FOUND');
+    END IF;
+
+    SELECT id, tier_name, required_xp, badge_color
+    INTO v_tier
+    FROM public.tiers
+    WHERE store_id = p_store_id
+      AND required_xp <= v_cust.lifetime_xp
+    ORDER BY required_xp DESC
+    LIMIT 1;
+
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+        'id', c.id,
+        'coupon_code', c.coupon_code,
+        'privilege_id', c.privilege_id,
+        'privilege_title', c.privilege_title,
+        'privilege_image_url', c.privilege_image_url,
+        'cost_points', c.cost_points,
+        'status', c.status,
+        'valid_start_time', c.valid_start_time,
+        'valid_end_time', c.valid_end_time,
+        'purchased_at', c.purchased_at
+    )), '[]'::jsonb)
+    INTO v_coupons
+    FROM public.customer_coupons c
+    WHERE c.store_id = p_store_id
+      AND c.customer_id = v_cust.id
+      AND c.status = 'ACTIVE';
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer', row_to_json(v_cust),
+        'tier', CASE WHEN v_tier.id IS NOT NULL THEN row_to_json(v_tier) ELSE NULL END,
+        'coupons', v_coupons
+    );
+END;
+$function$;
+
+-- 5.3 Harden exec_master_sql (Stage 1-6: Require valid Master Token via is_valid_master_token;
+--     Final lock to service_role & revoke anon/authenticated scheduled at end of Stage 6)
+CREATE OR REPLACE FUNCTION public.exec_master_sql(p_sql text, p_master_token text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+BEGIN
+    IF NOT public.is_valid_master_token(p_master_token) THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_MASTER_TOKEN');
+    END IF;
+
+    EXECUTE p_sql;
+    RETURN jsonb_build_object('success', true);
+EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('success', false, 'error', SQLERRM);
+END;
+$function$;
+
+-- ==============================================================================
+-- 6️⃣ LOCK DOWN RLS POLICIES ON SADIM (Advisor Point #3)
+-- ==============================================================================
+
+-- 6.1 Replacement policies on audit_logs
+DROP POLICY IF EXISTS "audit_logs_select_policy" ON public.audit_logs;
+CREATE POLICY "audit_logs_select_policy"
+    ON public.audit_logs FOR SELECT
+    TO anon, authenticated
+    USING (true);
+
+DROP POLICY IF EXISTS "Staff can record audit logs" ON public.audit_logs;
+CREATE POLICY "Staff can record audit logs"
+    ON public.audit_logs FOR INSERT
+    TO anon, authenticated
+    WITH CHECK (public.has_valid_staff_access(store_id, false) OR public.is_super_admin() OR public.has_store_access(store_id));
+
+DROP POLICY IF EXISTS "audit_logs_delete_service_policy" ON public.audit_logs;
+CREATE POLICY "audit_logs_delete_service_policy"
+    ON public.audit_logs FOR DELETE
+    TO service_role
+    USING (true);
+
+-- 6.2 Replacement policies on pos_shifts
+DROP POLICY IF EXISTS "pos_shifts_select_policy" ON public.pos_shifts;
+CREATE POLICY "pos_shifts_select_policy"
+    ON public.pos_shifts FOR SELECT
+    TO anon, authenticated
+    USING (public.has_valid_staff_access(store_id, false) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "pos_shifts_insert_policy" ON public.pos_shifts;
+CREATE POLICY "pos_shifts_insert_policy"
+    ON public.pos_shifts FOR INSERT
+    TO anon, authenticated
+    WITH CHECK (public.has_valid_staff_access(store_id, false) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "pos_shifts_update_policy" ON public.pos_shifts;
+CREATE POLICY "pos_shifts_update_policy"
+    ON public.pos_shifts FOR UPDATE
+    TO anon, authenticated
+    USING (public.has_valid_staff_access(store_id, false) OR public.is_super_admin())
+    WITH CHECK (public.has_valid_staff_access(store_id, false) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "pos_shifts_delete_service_policy" ON public.pos_shifts;
+CREATE POLICY "pos_shifts_delete_service_policy"
+    ON public.pos_shifts FOR DELETE
+    TO service_role
+    USING (true);
+
+-- 6.3 Replacement policies on pos_cash_movements
+DROP POLICY IF EXISTS "pos_cash_movements_select_policy" ON public.pos_cash_movements;
+CREATE POLICY "pos_cash_movements_select_policy"
+    ON public.pos_cash_movements FOR SELECT
+    TO anon, authenticated
+    USING (public.has_valid_staff_access(store_id, false) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "pos_cash_movements_insert_policy" ON public.pos_cash_movements;
+CREATE POLICY "pos_cash_movements_insert_policy"
+    ON public.pos_cash_movements FOR INSERT
+    TO anon, authenticated
+    WITH CHECK (public.has_valid_staff_access(store_id, false) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "pos_cash_movements_delete_service_policy" ON public.pos_cash_movements;
+CREATE POLICY "pos_cash_movements_delete_service_policy"
+    ON public.pos_cash_movements FOR DELETE
+    TO service_role
+    USING (true);
+
+-- 6.4 Replacement policies on store_orders
+DROP POLICY IF EXISTS "store_orders_select_policy" ON public.store_orders;
+CREATE POLICY "store_orders_select_policy"
+    ON public.store_orders FOR SELECT
+    TO anon, authenticated
+    USING (true);
+
+DROP POLICY IF EXISTS "store_orders_insert_policy" ON public.store_orders;
+CREATE POLICY "store_orders_insert_policy"
+    ON public.store_orders FOR INSERT
+    TO anon, authenticated
+    WITH CHECK (store_id IS NOT NULL);
+
+DROP POLICY IF EXISTS "store_orders_update_policy" ON public.store_orders;
+CREATE POLICY "store_orders_update_policy"
+    ON public.store_orders FOR UPDATE
+    TO anon, authenticated
+    USING (public.has_valid_staff_access(store_id, false) OR public.is_super_admin())
+    WITH CHECK (public.has_valid_staff_access(store_id, false) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "store_orders_delete_service_policy" ON public.store_orders;
+CREATE POLICY "store_orders_delete_service_policy"
+    ON public.store_orders FOR DELETE
+    TO service_role
+    USING (true);
+
+-- 6.5 Replacement policies on billing_plans
+DROP POLICY IF EXISTS "Public can view active billing plans" ON public.billing_plans;
+CREATE POLICY "Public can view active billing plans"
+    ON public.billing_plans FOR SELECT
+    TO anon, authenticated
+    USING ((active = true) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "SuperAdmin can manage billing plans" ON public.billing_plans;
+CREATE POLICY "SuperAdmin can manage billing plans"
+    ON public.billing_plans FOR ALL
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
+
+DROP POLICY IF EXISTS "Service Role billing plans full access" ON public.billing_plans;
+CREATE POLICY "Service Role billing plans full access"
+    ON public.billing_plans FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+-- 6.6 Now safely drop the overly permissive Public read/write policies
+DROP POLICY IF EXISTS "Public read/write access" ON public.audit_logs;
+DROP POLICY IF EXISTS "Public read/write access" ON public.pos_shifts;
+DROP POLICY IF EXISTS "Public read/write access" ON public.pos_cash_movements;
+DROP POLICY IF EXISTS "Public read/write access" ON public.store_orders;
+DROP POLICY IF EXISTS "Public can update orders" ON public.store_orders;
+DROP POLICY IF EXISTS "billing_plans_anon_manage" ON public.billing_plans;
+
+-- 6.7 SuperAdmin policies on partner/affiliate tables
+DROP POLICY IF EXISTS "SuperAdmin affiliates access" ON public.affiliates;
+CREATE POLICY "SuperAdmin affiliates access"
+    ON public.affiliates FOR ALL
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
+
+DROP POLICY IF EXISTS "SuperAdmin partner accounts access" ON public.partner_accounts;
+CREATE POLICY "SuperAdmin partner accounts access"
+    ON public.partner_accounts FOR ALL
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
+
+DROP POLICY IF EXISTS "SuperAdmin partner commissions access" ON public.partner_commissions;
+CREATE POLICY "SuperAdmin partner commissions access"
+    ON public.partner_commissions FOR ALL
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
+
+DROP POLICY IF EXISTS "SuperAdmin partner bonus awards access" ON public.partner_bonus_awards;
+CREATE POLICY "SuperAdmin partner bonus awards access"
+    ON public.partner_bonus_awards FOR ALL
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
+
+DROP POLICY IF EXISTS "SuperAdmin manage bonus rules" ON public.partner_bonus_rules;
+CREATE POLICY "SuperAdmin manage bonus rules"
+    ON public.partner_bonus_rules FOR ALL
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
+
+DROP POLICY IF EXISTS "SuperAdmin partner targets access" ON public.partner_targets;
+CREATE POLICY "SuperAdmin partner targets access"
+    ON public.partner_targets FOR ALL
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
+
+DROP POLICY IF EXISTS "SuperAdmin partner audit logs access" ON public.partner_audit_logs;
+CREATE POLICY "SuperAdmin partner audit logs access"
+    ON public.partner_audit_logs FOR ALL
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
+
+-- pos_refunds policies
+DROP POLICY IF EXISTS "pos_refunds_select_policy" ON public.pos_refunds;
+CREATE POLICY "pos_refunds_select_policy"
+    ON public.pos_refunds FOR SELECT
+    TO anon, authenticated
+    USING (public.has_valid_staff_access(store_id, false) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "pos_refunds_insert_policy" ON public.pos_refunds;
+CREATE POLICY "pos_refunds_insert_policy"
+    ON public.pos_refunds FOR INSERT
+    TO anon, authenticated
+    WITH CHECK (public.has_valid_staff_access(store_id, false) OR public.is_super_admin());
+
+DROP POLICY IF EXISTS "pos_refunds_delete_service_policy" ON public.pos_refunds;
+CREATE POLICY "pos_refunds_delete_service_policy"
+    ON public.pos_refunds FOR DELETE
+    TO service_role
+    USING (true);
+
+-- ==============================================================================
+-- 7️⃣ FUNCTION PERMISSIONS (REVOKE anon ON create_store_concierge_onboarding)
+-- ==============================================================================
+REVOKE ALL ON FUNCTION public.create_store_concierge_onboarding(text, text, text, text, text, numeric, text, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.create_store_concierge_onboarding(text, text, text, text, text, numeric, text, text, text) TO authenticated, service_role;
+
+-- Keep exec_master_sql callable with valid master_token during Stages 1-6;
+-- will be revoked from PUBLIC, anon, authenticated and restricted to service_role at the end of Stage 6.
+GRANT EXECUTE ON FUNCTION public.exec_master_sql(text, text) TO anon, authenticated, service_role;
+
+GRANT EXECUTE ON FUNCTION public.register_or_get_customer_wallet(uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_customer_wallet_public(uuid, text) TO anon, authenticated, service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261029_stage2_financial_atomic_and_webhook_hardening.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🛡️ RADAR & SADEEM AL-ATHIR — STAGE 2 MIGRATION
+-- Financial Atomic Transactions, Webhook Idempotency, ZATCA Clawback & RLS Hardening
+-- Target: Sadim Al-Athir (kspfiijorengpckdlymx) & White-Label Resellers
+-- ==============================================================================
+
+-- ==============================================================================
+-- SECTION 1: SCHEMA FIXES, DATA SANITIZATION & IDEMPOTENCY UNIQUE CONSTRAINTS
+-- ==============================================================================
+
+-- 1.1 Ensure partner_commissions has merchant_name (referenced by process_store_payment_atomic)
+ALTER TABLE public.partner_commissions
+  ADD COLUMN IF NOT EXISTS merchant_name text;
+
+-- 1.1b Ensure stores has partner attribution & subscription override columns referenced by atomic financial RPCs
+ALTER TABLE public.stores
+  ADD COLUMN IF NOT EXISTS partner_id uuid,
+  ADD COLUMN IF NOT EXISTS referral_code text,
+  ADD COLUMN IF NOT EXISTS referred_by_code text,
+  ADD COLUMN IF NOT EXISTS ref_code text,
+  ADD COLUMN IF NOT EXISTS in_grace_period boolean DEFAULT false,
+  ADD COLUMN IF NOT EXISTS complimentary_days_granted integer DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_override_at timestamptz,
+  ADD COLUMN IF NOT EXISTS last_override_reason text;
+
+-- 1.1c Backfill partner_accounts from affiliates so every active affiliate has a linked partner_accounts row
+INSERT INTO public.partner_accounts (
+  affiliate_id,
+  display_name,
+  slug,
+  region,
+  active,
+  referral_code,
+  commission_rate,
+  acquisition_commission_rate,
+  recurring_commission_rate,
+  pin_code,
+  phone,
+  created_at,
+  updated_at
+)
+SELECT
+  a.id,
+  a.name,
+  lower(BTRIM(COALESCE(a.code, a.referral_code))),
+  a.city,
+  COALESCE(a.is_active, true),
+  UPPER(BTRIM(COALESCE(a.code, a.referral_code))),
+  COALESCE(a.commission_rate, 0.2000),
+  COALESCE(a.acquisition_commission_rate, 0.2000),
+  COALESCE(a.recurring_commission_rate, 0.1000),
+  a.pin_code,
+  a.phone,
+  COALESCE(a.created_at, now()),
+  COALESCE(a.updated_at, now())
+FROM public.affiliates a
+WHERE COALESCE(a.code, a.referral_code) IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM public.partner_accounts pa
+    WHERE pa.affiliate_id = a.id
+       OR lower(pa.referral_code) = lower(BTRIM(COALESCE(a.code, a.referral_code)))
+       OR lower(pa.slug) = lower(BTRIM(COALESCE(a.code, a.referral_code)))
+  );
+
+-- 1.2 Allow billing_transactions.plan_id to be nullable so payments without a matched UUID plan never fail FK
+ALTER TABLE public.billing_transactions
+  ALTER COLUMN plan_id DROP NOT NULL;
+
+-- 1.3 Sanitize any empty or duplicate gateway_payment_id in store_invoices before adding UNIQUE constraint
+UPDATE public.store_invoices
+SET gateway_payment_id = 'pay_legacy_' || id::text
+WHERE gateway_payment_id IS NULL OR BTRIM(gateway_payment_id) = '';
+
+WITH dup_invoices AS (
+  SELECT id,
+         gateway_payment_id,
+         ROW_NUMBER() OVER (PARTITION BY gateway_payment_id ORDER BY created_at ASC, id ASC) AS rn
+  FROM public.store_invoices
+  WHERE gateway_payment_id IS NOT NULL
+)
+UPDATE public.store_invoices si
+SET gateway_payment_id = si.gateway_payment_id || '_dup_' || si.id::text
+FROM dup_invoices d
+WHERE si.id = d.id AND d.rn > 1;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'uq_store_invoices_gateway_payment_id'
+      AND conrelid = 'public.store_invoices'::regclass
+  ) THEN
+    ALTER TABLE public.store_invoices
+      ADD CONSTRAINT uq_store_invoices_gateway_payment_id UNIQUE (gateway_payment_id);
+  END IF;
+END $$;
+
+-- 1.4 Sanitize any empty or duplicate transaction_id in financial_ledger before adding UNIQUE constraint
+-- Note: Temporarily disable immutability trigger only during constraint sanitization if needed
+ALTER TABLE public.financial_ledger DISABLE TRIGGER USER;
+
+UPDATE public.financial_ledger
+SET transaction_id = 'tx_legacy_' || id::text
+WHERE transaction_id IS NULL OR BTRIM(transaction_id) = '';
+
+WITH dup_ledger AS (
+  SELECT id,
+         transaction_id,
+         ROW_NUMBER() OVER (PARTITION BY transaction_id ORDER BY created_at ASC, id ASC) AS rn
+  FROM public.financial_ledger
+  WHERE transaction_id IS NOT NULL
+)
+UPDATE public.financial_ledger fl
+SET transaction_id = fl.transaction_id || '_dup_' || fl.id::text
+FROM dup_ledger d
+WHERE fl.id = d.id AND d.rn > 1;
+
+ALTER TABLE public.financial_ledger ENABLE TRIGGER USER;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'uq_financial_ledger_transaction_id'
+      AND conrelid = 'public.financial_ledger'::regclass
+  ) THEN
+    ALTER TABLE public.financial_ledger
+      ADD CONSTRAINT uq_financial_ledger_transaction_id UNIQUE (transaction_id);
+  END IF;
+END $$;
+
+-- 1.5 Ensure billing_webhook_events has UNIQUE (provider, event_id)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'uq_billing_webhook_provider_event'
+      AND conrelid = 'public.billing_webhook_events'::regclass
+  ) THEN
+    ALTER TABLE public.billing_webhook_events
+      ADD CONSTRAINT uq_billing_webhook_provider_event UNIQUE (provider, event_id);
+  END IF;
+END $$;
+
+
+-- ==============================================================================
+-- SECTION 2: EXPLICIT DROP OF OLD FUNCTION SIGNATURES (PREVENT OVERLOADING)
+-- ==============================================================================
+
+DROP FUNCTION IF EXISTS public.process_store_payment_atomic(uuid, text, numeric, text, text, text, text, text, text, integer, numeric, numeric);
+DROP FUNCTION IF EXISTS public.process_store_payment_atomic(uuid, text, numeric, text, text, text, text, text, text, integer, numeric, numeric, text, text);
+
+DROP FUNCTION IF EXISTS public.super_admin_manual_activate_subscription(uuid, integer, numeric, text, text, text);
+DROP FUNCTION IF EXISTS public.super_admin_manual_activate_subscription(uuid, integer, numeric, text, text, text, text);
+
+DROP FUNCTION IF EXISTS public.process_zatca_refund_and_clawback(text, numeric, text, text, text);
+DROP FUNCTION IF EXISTS public.process_zatca_refund_and_clawback(text, numeric, text, text, text, text);
+
+DROP FUNCTION IF EXISTS public.process_affiliate_payout_atomic(uuid, character varying, character varying, character varying, character varying, text);
+DROP FUNCTION IF EXISTS public.process_affiliate_payout_atomic(uuid, character varying, character varying, character varying, character varying, text, text);
+
+DROP FUNCTION IF EXISTS public.update_platform_payment_gateway_config(jsonb);
+DROP FUNCTION IF EXISTS public.update_platform_payment_gateway_config(jsonb, text);
+
+DROP FUNCTION IF EXISTS public.get_platform_payment_gateway_config();
+DROP FUNCTION IF EXISTS public.get_platform_payment_gateway_config(text);
+
+DROP FUNCTION IF EXISTS public.get_all_store_invoices_batch();
+DROP FUNCTION IF EXISTS public.get_all_store_invoices_batch(text);
+
+DROP FUNCTION IF EXISTS public.record_manual_ledger_adjustment_atomic(uuid, uuid, text, numeric, text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.grant_store_complimentary_days_atomic(uuid, integer, text, text, text, text);
+DROP FUNCTION IF EXISTS public.log_billing_webhook_failure(text, text, text, uuid, text, jsonb, text);
+DROP FUNCTION IF EXISTS public.verify_sandbox_checkout_access(uuid, text);
+
+
+-- ==============================================================================
+-- SECTION 3: ATOMIC FINANCIAL & WEBHOOK FUNCTIONS (WITH STRICT AUTH GUARDS)
+-- ==============================================================================
+
+-- 3.1 Verify Sandbox Checkout Access (Store Owner/Manager JWT, Staff Session Token, or Super Admin)
+CREATE OR REPLACE FUNCTION public.verify_sandbox_checkout_access(
+    p_store_id uuid,
+    p_staff_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_mode text;
+    v_has_access boolean := false;
+    v_staff RECORD;
+BEGIN
+    SELECT COALESCE(value->>'mode', 'sandbox')
+    INTO v_mode
+    FROM public.platform_system_config
+    WHERE key = 'platform_payment_gateway';
+
+    v_mode := COALESCE(v_mode, 'sandbox');
+
+    IF v_mode <> 'sandbox' THEN
+        RETURN jsonb_build_object(
+            'allowed', false,
+            'mode', v_mode,
+            'error', 'SANDBOX_DISABLED: بوابة الدفع في وضع الإنتاج الفعلي ولا تقبل محاكاة Sandbox'
+        );
+    END IF;
+
+    -- 1. Check Super Admin or service_role
+    IF public.is_super_admin() OR auth.role() = 'service_role' THEN
+        v_has_access := true;
+    END IF;
+
+    -- 2. Check Authenticated Store Owner / Admin via Supabase JWT (even if store is expired/trial)
+    IF NOT v_has_access AND auth.uid() IS NOT NULL THEN
+        SELECT EXISTS (
+            SELECT 1
+            FROM public.store_staff s
+            WHERE s.user_id = auth.uid()
+              AND s.store_id = p_store_id
+              AND s.is_active = true
+              AND s.role IN ('admin', 'owner', 'manager')
+        ) INTO v_has_access;
+    END IF;
+
+    -- 3. Check Active Store Admin Staff Session Token
+    IF NOT v_has_access AND p_staff_token IS NOT NULL AND BTRIM(p_staff_token) <> '' THEN
+        SELECT * INTO v_staff FROM public._staff_session(BTRIM(p_staff_token), true);
+        IF v_staff.store_id IS NOT NULL AND v_staff.store_id = p_store_id THEN
+            v_has_access := true;
+        END IF;
+    END IF;
+
+    IF NOT v_has_access THEN
+        RETURN jsonb_build_object(
+            'allowed', false,
+            'mode', v_mode,
+            'error', 'UNAUTHORIZED: يجب تسجيل الدخول كمدير للمتجر أو مشرف عام لإجراء عملية الدفع'
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'allowed', true,
+        'mode', v_mode,
+        'store_id', p_store_id
+    );
+END;
+$function$;
+
+
+-- 3.2 Log Billing Webhook Failure (Called by Worker when process_store_payment_atomic rolls back)
+CREATE OR REPLACE FUNCTION public.log_billing_webhook_failure(
+    p_provider text,
+    p_event_id text,
+    p_event_type text,
+    p_store_id uuid,
+    p_error_message text,
+    p_payload jsonb DEFAULT '{}'::jsonb,
+    p_master_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+    v_id uuid;
+    v_clean_provider text := UPPER(COALESCE(NULLIF(BTRIM(p_provider), ''), 'MOYASAR'));
+    v_clean_event_id text := COALESCE(NULLIF(BTRIM(p_event_id), ''), 'evt_err_' || replace(gen_random_uuid()::text, '-', ''));
+BEGIN
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function log_billing_webhook_failure' USING ERRCODE = '42501';
+    END IF;
+
+    INSERT INTO public.billing_webhook_events (
+        provider,
+        event_id,
+        event_type,
+        signature_verified,
+        payload_hash,
+        processed,
+        processed_at,
+        created_at,
+        metadata
+    ) VALUES (
+        v_clean_provider,
+        v_clean_event_id,
+        COALESCE(NULLIF(BTRIM(p_event_type), ''), 'PAYMENT_FAILED_ROLLBACK'),
+        true,
+        md5(COALESCE(p_payload::text, '')),
+        false,
+        NULL,
+        clock_timestamp(),
+        jsonb_build_object(
+            'store_id', p_store_id,
+            'error_message', p_error_message,
+            'failed_at', clock_timestamp(),
+            'raw_payload', COALESCE(p_payload, '{}'::jsonb)
+        )
+    )
+    ON CONFLICT (provider, event_id) DO UPDATE
+    SET processed = false,
+        metadata = public.billing_webhook_events.metadata || jsonb_build_object(
+            'last_error_message', p_error_message,
+            'last_failed_at', clock_timestamp()
+        )
+    RETURNING id INTO v_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'webhook_event_row_id', v_id,
+        'processed', false,
+        'error_logged', p_error_message
+    );
+END;
+$function$;
+
+
+-- 3.3 Master Atomic Payment, Subscription Upgrade, Ledger & Commission RPC (NO EXCEPTION SWALLOWING)
+CREATE OR REPLACE FUNCTION public.process_store_payment_atomic(
+    p_store_id uuid,
+    p_invoice_type text,
+    p_amount numeric,
+    p_payment_method text DEFAULT 'mada'::text,
+    p_gateway text DEFAULT 'moyasar'::text,
+    p_gateway_payment_id text DEFAULT NULL::text,
+    p_plan_id text DEFAULT NULL::text,
+    p_plan_code text DEFAULT NULL::text,
+    p_plan_name text DEFAULT NULL::text,
+    p_duration_months integer DEFAULT 1,
+    p_vat_rate numeric DEFAULT 0.15,
+    p_gateway_fee numeric DEFAULT NULL::numeric,
+    p_webhook_event_id text DEFAULT NULL::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+    v_store RECORD;
+    v_lead_id UUID := NULL;
+    v_lead_status TEXT := NULL;
+    v_lead_affiliate_id UUID := NULL;
+    v_lead_ref_code TEXT := NULL;
+    v_partner_active BOOLEAN := false;
+    v_partner_acq_rate NUMERIC(5, 4) := NULL;
+    v_partner_comm_rate NUMERIC(5, 4) := NULL;
+    v_partner_rec_rate NUMERIC(5, 4) := NULL;
+    v_store_ref_code TEXT := NULL;
+    v_existing_inv_id UUID;
+    v_existing_inv_num TEXT;
+    v_existing_ledg_id UUID;
+    v_existing_wh_id UUID;
+
+    v_is_sandbox BOOLEAN;
+    v_clean_gateway TEXT;
+    v_clean_method TEXT;
+    v_gw_payment_id TEXT;
+    v_tx_id TEXT;
+    v_webhook_event_id TEXT;
+    v_invoice_num TEXT;
+    v_invoice_id UUID;
+    v_ledger_id UUID;
+
+    v_gross NUMERIC(12, 2);
+    v_vat_rate NUMERIC(5, 4);
+    v_net_before_vat NUMERIC(12, 2);
+    v_vat_amount NUMERIC(12, 2);
+    v_gw_fee NUMERIC(12, 2);
+    v_comm_rate NUMERIC(5, 4) := 0.0000;
+    v_comm_amount NUMERIC(12, 2) := 0.00;
+    v_net_platform NUMERIC(12, 2);
+
+    v_is_acquisition BOOLEAN;
+    v_comm_type VARCHAR(50);
+    v_partner_id UUID := NULL;
+    v_partner_name TEXT := NULL;
+
+    v_duration_days INTEGER;
+    v_base_end TIMESTAMPTZ;
+    v_new_end TIMESTAMPTZ;
+    v_now TIMESTAMPTZ := clock_timestamp();
+    v_comm_id UUID := NULL;
+    v_idempotency_key TEXT;
+    v_gw_rate NUMERIC(5, 4);
+    v_gw_fixed NUMERIC(12, 2);
+    v_sub_plan_uuid UUID := NULL;
+BEGIN
+    -- 0. Strict Server/SuperAdmin Authority Guard (Blocks all direct browser calls)
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function process_store_payment_atomic' USING ERRCODE = '42501';
+    END IF;
+
+    -- 1. Validate Store (Row-level lock to serialize concurrent webhooks for the same store)
+    SELECT * INTO v_store FROM public.stores WHERE id = p_store_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'STORE_NOT_FOUND: المتجر غير موجود (%).', p_store_id;
+    END IF;
+
+    -- 2. Validate Invoice Type & Amount
+    IF p_invoice_type NOT IN ('setup', 'renewal', 'upgrade', 'extra_cashier') THEN
+        RAISE EXCEPTION 'INVALID_INVOICE_TYPE: نوع الفاتورة غير صالح (%).', p_invoice_type;
+    END IF;
+
+    v_gross := ROUND(COALESCE(p_amount, 0.00), 2);
+    IF v_gross < 0 THEN
+        RAISE EXCEPTION 'INVALID_AMOUNT: المبلغ لا يمكن أن يكون سالباً (%).', v_gross;
+    END IF;
+
+    -- 3. Identify Sandbox vs Live & Normalize Payment / Transaction IDs
+    v_clean_gateway := lower(BTRIM(COALESCE(p_gateway, 'moyasar')));
+    v_clean_method := lower(BTRIM(COALESCE(p_payment_method, 'mada')));
+    v_is_sandbox := (v_clean_gateway LIKE '%sandbox%' OR v_clean_method = 'sandbox');
+
+    v_gw_payment_id := COALESCE(NULLIF(BTRIM(p_gateway_payment_id), ''), 'pay_' || v_clean_gateway || '_' || replace(gen_random_uuid()::text, '-', ''));
+    IF v_is_sandbox AND v_gw_payment_id NOT LIKE 'SANDBOX_%' THEN
+        v_gw_payment_id := 'SANDBOX_' || v_gw_payment_id;
+    END IF;
+
+    v_tx_id := CASE WHEN v_is_sandbox THEN 'SANDBOX_tx_' || v_gw_payment_id ELSE 'tx_' || v_gw_payment_id END;
+    v_webhook_event_id := COALESCE(NULLIF(BTRIM(p_webhook_event_id), ''), 'evt_' || v_gw_payment_id);
+
+    -- 4. Multi-Layer Idempotency Check (Webhook Event + Invoice Payment Ref + Ledger Transaction ID)
+    SELECT id INTO v_existing_wh_id
+    FROM public.billing_webhook_events
+    WHERE provider = UPPER(v_clean_gateway)
+      AND event_id = v_webhook_event_id
+      AND processed = true
+    LIMIT 1;
+
+    SELECT id, invoice_number INTO v_existing_inv_id, v_existing_inv_num
+    FROM public.store_invoices
+    WHERE gateway_payment_id = v_gw_payment_id
+    LIMIT 1;
+
+    SELECT id INTO v_existing_ledg_id
+    FROM public.financial_ledger
+    WHERE transaction_id = v_tx_id OR (payment_id = v_gw_payment_id AND transaction_type = 'PAYMENT')
+    LIMIT 1;
+
+    IF v_existing_inv_id IS NOT NULL OR v_existing_ledg_id IS NOT NULL OR v_existing_wh_id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'idempotent', true,
+            'is_sandbox', v_is_sandbox,
+            'message', 'تمت معالجة هذه العملية مسبقاً (عملية مكررة آمنة)',
+            'invoice_id', v_existing_inv_id,
+            'invoice_number', v_existing_inv_num,
+            'ledger_id', v_existing_ledg_id,
+            'transaction_id', v_tx_id,
+            'gateway_payment_id', v_gw_payment_id,
+            'webhook_event_id', v_webhook_event_id,
+            'store_id', p_store_id
+        );
+    END IF;
+
+    -- 5. Record Verified Webhook Event (Protected by uq_billing_webhook_provider_event)
+    INSERT INTO public.billing_webhook_events (
+        provider,
+        event_id,
+        event_type,
+        signature_verified,
+        payload_hash,
+        processed,
+        processed_at,
+        created_at,
+        metadata
+    ) VALUES (
+        UPPER(v_clean_gateway),
+        v_webhook_event_id,
+        'PAYMENT_' || UPPER(p_invoice_type),
+        true,
+        md5(v_gw_payment_id || ':' || p_store_id::text || ':' || v_gross::text),
+        true,
+        v_now,
+        v_now,
+        jsonb_build_object(
+            'store_id', p_store_id,
+            'gateway_payment_id', v_gw_payment_id,
+            'amount', v_gross,
+            'invoice_type', p_invoice_type,
+            'is_sandbox', v_is_sandbox
+        )
+    )
+    ON CONFLICT (provider, event_id) DO UPDATE
+    SET processed = true,
+        processed_at = v_now,
+        signature_verified = true;
+
+    -- 6. Calculate Unified ZATCA VAT & Net Amounts
+    v_vat_rate := GREATEST(0.0000, COALESCE(p_vat_rate, 0.1500));
+    IF v_vat_rate > 0 THEN
+        v_net_before_vat := ROUND(v_gross / (1.0000 + v_vat_rate), 2);
+        v_vat_amount := ROUND(v_gross - v_net_before_vat, 2);
+    ELSE
+        v_net_before_vat := v_gross;
+        v_vat_amount := 0.00;
+    END IF;
+
+    -- 7. Calculate Gateway Fee
+    IF p_gateway_fee IS NOT NULL AND p_gateway_fee >= 0 THEN
+        v_gw_fee := ROUND(p_gateway_fee, 2);
+    ELSE
+        IF v_is_sandbox OR v_clean_gateway = 'manual' THEN
+            v_gw_rate := 0.0000; v_gw_fixed := 0.00;
+        ELSIF v_clean_method = 'mada' THEN
+            v_gw_rate := 0.0100; v_gw_fixed := 1.00;
+        ELSIF v_clean_method IN ('credit_card', 'visa', 'mastercard') THEN
+            v_gw_rate := 0.0275; v_gw_fixed := 1.00;
+        ELSIF v_clean_method = 'apple_pay' THEN
+            v_gw_rate := 0.0220; v_gw_fixed := 1.00;
+        ELSE
+            v_gw_rate := 0.0150; v_gw_fixed := 1.00;
+        END IF;
+
+        IF v_gross > 0 AND NOT v_is_sandbox AND v_clean_gateway <> 'manual' THEN
+            v_gw_fee := ROUND((v_gross * v_gw_rate) + v_gw_fixed, 2);
+        ELSE
+            v_gw_fee := 0.00;
+        END IF;
+    END IF;
+
+    -- 8. Partner & Commission Identification
+    v_store_ref_code := COALESCE(
+        NULLIF(BTRIM(v_store.referral_code), ''),
+        NULLIF(BTRIM(v_store.referred_by_code), ''),
+        NULLIF(BTRIM(v_store.ref_code), '')
+    );
+
+    SELECT id, status, affiliate_id, referral_code
+    INTO v_lead_id, v_lead_status, v_lead_affiliate_id, v_lead_ref_code
+    FROM public.merchant_leads
+    WHERE converted_store_id = p_store_id
+       OR (v_store.manager_contact IS NOT NULL AND phone = v_store.manager_contact)
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    IF v_lead_id IS NOT NULL THEN
+        IF v_lead_affiliate_id IS NOT NULL THEN
+            SELECT id, display_name, active, acquisition_commission_rate, commission_rate, recurring_commission_rate
+            INTO v_partner_id, v_partner_name, v_partner_active, v_partner_acq_rate, v_partner_comm_rate, v_partner_rec_rate
+            FROM public.partner_accounts
+            WHERE id = v_lead_affiliate_id OR affiliate_id = v_lead_affiliate_id
+            LIMIT 1;
+        ELSIF v_lead_ref_code IS NOT NULL AND BTRIM(v_lead_ref_code) <> '' THEN
+            SELECT id, display_name, active, acquisition_commission_rate, commission_rate, recurring_commission_rate
+            INTO v_partner_id, v_partner_name, v_partner_active, v_partner_acq_rate, v_partner_comm_rate, v_partner_rec_rate
+            FROM public.partner_accounts
+            WHERE lower(referral_code) = lower(BTRIM(v_lead_ref_code))
+               OR lower(slug) = lower(BTRIM(v_lead_ref_code))
+            LIMIT 1;
+        END IF;
+    END IF;
+
+    IF v_partner_id IS NULL THEN
+        IF v_store.partner_id IS NOT NULL THEN
+            SELECT id, display_name, active, acquisition_commission_rate, commission_rate, recurring_commission_rate
+            INTO v_partner_id, v_partner_name, v_partner_active, v_partner_acq_rate, v_partner_comm_rate, v_partner_rec_rate
+            FROM public.partner_accounts
+            WHERE id = v_store.partner_id OR affiliate_id = v_store.partner_id
+            LIMIT 1;
+        ELSIF v_store_ref_code IS NOT NULL THEN
+            SELECT id, display_name, active, acquisition_commission_rate, commission_rate, recurring_commission_rate
+            INTO v_partner_id, v_partner_name, v_partner_active, v_partner_acq_rate, v_partner_comm_rate, v_partner_rec_rate
+            FROM public.partner_accounts
+            WHERE lower(referral_code) = lower(v_store_ref_code)
+               OR lower(slug) = lower(v_store_ref_code)
+            LIMIT 1;
+        END IF;
+    END IF;
+
+    v_is_acquisition := (p_invoice_type = 'setup' OR v_store.setup_fee_paid IS NOT TRUE);
+
+    IF v_partner_id IS NOT NULL AND v_partner_active IS NOT FALSE THEN
+        IF v_is_acquisition THEN
+            v_comm_rate := COALESCE(v_partner_acq_rate, v_partner_comm_rate, 0.2000);
+            v_comm_type := 'STORE_ACQUISITION';
+        ELSE
+            v_comm_rate := COALESCE(v_partner_rec_rate, 0.1000);
+            v_comm_type := CASE WHEN p_invoice_type = 'upgrade' THEN 'SUBSCRIPTION_UPGRADE' ELSE 'SUBSCRIPTION_RENEWAL' END;
+        END IF;
+
+        v_comm_amount := ROUND(v_net_before_vat * v_comm_rate, 2);
+    ELSE
+        v_comm_rate := 0.0000;
+        v_comm_amount := 0.00;
+        v_comm_type := 'NONE';
+    END IF;
+
+    -- 9. Net Platform Amount (Must satisfy chk_ledger_balance invariant)
+    v_net_platform := ROUND(v_gross - v_vat_amount - v_gw_fee - v_comm_amount, 2);
+
+    -- 10. Compute Subscription Extension
+    v_duration_days := GREATEST(1, COALESCE(p_duration_months, 1) * 30);
+    IF p_invoice_type = 'renewal' AND v_store.subscription_end_date IS NOT NULL AND v_store.subscription_end_date > v_now THEN
+        v_base_end := v_store.subscription_end_date;
+    ELSE
+        v_base_end := v_now;
+    END IF;
+    v_new_end := v_base_end + (v_duration_days || ' days')::INTERVAL;
+
+    -- 11. Generate Invoice Number (Distinguish Sandbox with INV-SBX-)
+    v_invoice_num := (CASE WHEN v_is_sandbox THEN 'INV-SBX-' ELSE 'INV-' END)
+                     || to_char(v_now, 'YYYYMMDD') || '-' || upper(substr(md5(v_gw_payment_id || random()::text), 1, 6));
+
+    -- 12. Resolve Plan UUID Safely
+    v_sub_plan_uuid := NULL;
+    IF p_plan_id IS NOT NULL AND BTRIM(p_plan_id) <> '' THEN
+        IF p_plan_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            SELECT id INTO v_sub_plan_uuid FROM public.billing_plans WHERE id = p_plan_id::UUID LIMIT 1;
+        ELSE
+            SELECT id INTO v_sub_plan_uuid
+            FROM public.billing_plans
+            WHERE lower(code) = lower(BTRIM(p_plan_id))
+            LIMIT 1;
+        END IF;
+    END IF;
+
+    IF v_sub_plan_uuid IS NULL AND p_plan_code IS NOT NULL AND BTRIM(p_plan_code) <> '' THEN
+        SELECT id INTO v_sub_plan_uuid
+        FROM public.billing_plans
+        WHERE lower(code) = lower(BTRIM(p_plan_code))
+        LIMIT 1;
+    END IF;
+
+    IF v_sub_plan_uuid IS NULL THEN
+        SELECT id INTO v_sub_plan_uuid
+        FROM public.billing_plans
+        WHERE active = true
+        ORDER BY amount ASC
+        LIMIT 1;
+    END IF;
+
+    -- 13. Insert into store_invoices
+    INSERT INTO public.store_invoices (
+        store_id,
+        invoice_number,
+        invoice_type,
+        amount,
+        vat_amount,
+        net_amount,
+        currency,
+        status,
+        payment_method,
+        gateway,
+        gateway_payment_id,
+        plan_id,
+        plan_name,
+        paid_at,
+        metadata
+    ) VALUES (
+        p_store_id,
+        v_invoice_num,
+        p_invoice_type,
+        v_gross,
+        v_vat_amount,
+        v_net_before_vat,
+        'SAR',
+        'paid',
+        v_clean_method,
+        v_clean_gateway,
+        v_gw_payment_id,
+        COALESCE(v_sub_plan_uuid::text, NULLIF(BTRIM(p_plan_id), '')),
+        COALESCE(p_plan_name, v_store.subscription_plan, 'الباقة الأساسية'),
+        v_now,
+        jsonb_build_object(
+            'vat_rate', v_vat_rate,
+            'gateway_fee', v_gw_fee,
+            'commission_rate', v_comm_rate,
+            'commission_amount', v_comm_amount,
+            'duration_months', p_duration_months,
+            'is_sandbox', v_is_sandbox,
+            'webhook_event_id', v_webhook_event_id
+        )
+    )
+    RETURNING id INTO v_invoice_id;
+
+    -- 14. Insert into financial_ledger
+    INSERT INTO public.financial_ledger (
+        transaction_id,
+        invoice_id,
+        store_id,
+        affiliate_id,
+        payment_id,
+        transaction_type,
+        gross_amount,
+        vat_amount,
+        gateway_fee,
+        affiliate_commission,
+        net_platform_amount,
+        status,
+        created_by,
+        metadata,
+        effective_at,
+        created_at
+    ) VALUES (
+        v_tx_id,
+        v_invoice_num,
+        p_store_id::text,
+        v_partner_id::text,
+        v_gw_payment_id,
+        'PAYMENT',
+        v_gross,
+        v_vat_amount,
+        v_gw_fee,
+        v_comm_amount,
+        v_net_platform,
+        'SETTLED',
+        'GATEWAY_ATOMIC_RPC',
+        jsonb_build_object(
+            'store_name', v_store.name,
+            'affiliate_name', v_partner_name,
+            'invoice_id', v_invoice_id,
+            'payment_method', v_clean_method,
+            'gateway', v_clean_gateway,
+            'plan_name', COALESCE(p_plan_name, v_store.subscription_plan),
+            'commission_type', v_comm_type,
+            'vat_rate', v_vat_rate,
+            'base_amount', v_net_before_vat,
+            'is_sandbox', v_is_sandbox,
+            'webhook_event_id', v_webhook_event_id
+        ),
+        v_now,
+        v_now
+    )
+    RETURNING id INTO v_ledger_id;
+
+    -- 15. Update stores Subscription Status
+    UPDATE public.stores
+    SET
+        status = 'active',
+        subscription_status = 'active',
+        subscription_active = true,
+        setup_fee_paid = true,
+        in_grace_period = false,
+        lifecycle_stage = 'مشترك مدفوع',
+        subscription_plan_id = COALESCE(v_sub_plan_uuid, stores.subscription_plan_id),
+        plan_code = COALESCE(p_plan_code, stores.plan_code),
+        subscription_plan = COALESCE(p_plan_name, stores.subscription_plan, 'الباقة الأساسية'),
+        subscription_start_date = COALESCE(stores.subscription_start_date, v_now),
+        subscription_end_date = v_new_end,
+        renewal_amount = CASE WHEN v_gross > 0 THEN v_gross ELSE stores.renewal_amount END,
+        updated_at = v_now
+    WHERE id = p_store_id;
+
+    -- 16. Convert Lead if applicable
+    IF v_lead_id IS NOT NULL AND v_lead_status <> 'CONVERTED' THEN
+        UPDATE public.merchant_leads
+        SET
+            status = 'CONVERTED',
+            converted_store_id = p_store_id,
+            updated_at = v_now
+        WHERE id = v_lead_id;
+    END IF;
+
+    -- 17. Record Partner Commission
+    IF v_partner_id IS NOT NULL AND v_comm_amount > 0 THEN
+        v_idempotency_key := 'comm_inv_' || v_invoice_num;
+
+        IF v_is_acquisition THEN
+            DELETE FROM public.partner_commissions
+            WHERE store_id = p_store_id AND status = 'PENDING';
+        END IF;
+
+        INSERT INTO public.partner_commissions (
+            partner_account_id,
+            merchant_lead_id,
+            store_id,
+            commission_type,
+            basis_amount,
+            commission_rate,
+            commission_amount,
+            status,
+            qualifying_event,
+            idempotency_key,
+            invoice_id,
+            invoice_number,
+            merchant_name,
+            created_at,
+            updated_at
+        ) VALUES (
+            v_partner_id,
+            v_lead_id,
+            p_store_id,
+            v_comm_type,
+            v_net_before_vat,
+            v_comm_rate,
+            v_comm_amount,
+            'EARNED',
+            CASE
+                WHEN v_comm_type = 'STORE_ACQUISITION' THEN 'سداد اشتراك متجر جديد'
+                WHEN v_comm_type = 'SUBSCRIPTION_UPGRADE' THEN 'ترقية باقة المتجر'
+                ELSE 'تجديد اشتراك المتجر الدوري'
+            END,
+            v_idempotency_key,
+            v_invoice_id::text,
+            v_invoice_num,
+            v_store.name,
+            v_now,
+            v_now
+        )
+        ON CONFLICT (idempotency_key) DO UPDATE
+        SET
+            basis_amount = EXCLUDED.basis_amount,
+            commission_amount = EXCLUDED.commission_amount,
+            status = 'EARNED',
+            merchant_name = EXCLUDED.merchant_name,
+            updated_at = v_now
+        RETURNING id INTO v_comm_id;
+    END IF;
+
+    -- 18. Sync merchant_subscriptions & billing_transactions
+    UPDATE public.merchant_subscriptions
+    SET
+        status = 'ACTIVE',
+        current_period_start = v_now,
+        current_period_end = v_new_end,
+        updated_at = v_now
+    WHERE store_id = p_store_id;
+
+    INSERT INTO public.billing_transactions (
+        store_id,
+        plan_id,
+        type,
+        status,
+        amount,
+        currency,
+        provider,
+        provider_transaction_id,
+        idempotency_key,
+        paid_at,
+        metadata
+    ) VALUES (
+        p_store_id,
+        v_sub_plan_uuid,
+        CASE
+            WHEN p_invoice_type = 'setup' THEN 'INITIAL_PAYMENT'
+            WHEN p_invoice_type = 'upgrade' THEN 'ADJUSTMENT'
+            ELSE 'RENEWAL'
+        END,
+        'PAID',
+        v_gross,
+        'SAR',
+        v_clean_gateway,
+        v_gw_payment_id,
+        'btx_' || v_gw_payment_id,
+        v_now,
+        jsonb_build_object(
+            'invoice_id', v_invoice_id,
+            'invoice_number', v_invoice_num,
+            'ledger_id', v_ledger_id,
+            'is_sandbox', v_is_sandbox
+        )
+    )
+    ON CONFLICT (idempotency_key) DO NOTHING;
+
+    -- 19. Return Unified Success Result (No EXCEPTION WHEN OTHERS block -> any failure rolls back 100%)
+    RETURN jsonb_build_object(
+        'success', true,
+        'idempotent', false,
+        'is_sandbox', v_is_sandbox,
+        'message', 'تمت معالجة الدفع والاشتراك بنجاح تام وفق ضوابط ZATCA',
+        'invoice_id', v_invoice_id,
+        'invoice_number', v_invoice_num,
+        'ledger_id', v_ledger_id,
+        'transaction_id', v_tx_id,
+        'gateway_payment_id', v_gw_payment_id,
+        'webhook_event_id', v_webhook_event_id,
+        'store_id', p_store_id,
+        'gross_amount', v_gross,
+        'vat_amount', v_vat_amount,
+        'net_amount', v_net_before_vat,
+        'gateway_fee', v_gw_fee,
+        'commission_amount', v_comm_amount,
+        'commission_id', v_comm_id,
+        'partner_id', v_partner_id,
+        'net_platform_amount', v_net_platform,
+        'subscription_end_date', v_new_end
+    );
+END;
+$function$;
+
+
+-- 3.4 Super Admin Manual Subscription Activation (Hardened with Auth Guard)
+CREATE OR REPLACE FUNCTION public.super_admin_manual_activate_subscription(
+    p_store_id uuid,
+    p_duration_months integer DEFAULT 1,
+    p_amount numeric DEFAULT 0,
+    p_payment_method text DEFAULT 'cash'::text,
+    p_plan_id text DEFAULT NULL::text,
+    p_notes text DEFAULT NULL::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+    v_clean_method TEXT := lower(BTRIM(COALESCE(p_payment_method, 'cash')));
+    v_gw_payment_id TEXT;
+    v_months INTEGER := GREATEST(1, COALESCE(p_duration_months, 1));
+    v_res JSONB;
+BEGIN
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function super_admin_manual_activate_subscription' USING ERRCODE = '42501';
+    END IF;
+
+    IF v_clean_method NOT IN ('cash', 'bank_transfer', 'cheque', 'other') THEN
+        v_clean_method := 'cash';
+    END IF;
+
+    v_gw_payment_id := 'manual_' || v_clean_method || '_' || replace(gen_random_uuid()::text, '-', '');
+
+    v_res := public.process_store_payment_atomic(
+        p_store_id => p_store_id,
+        p_invoice_type => 'renewal',
+        p_amount => COALESCE(p_amount, 0),
+        p_payment_method => v_clean_method,
+        p_gateway => 'manual',
+        p_gateway_payment_id => v_gw_payment_id,
+        p_plan_id => p_plan_id,
+        p_plan_code => NULL,
+        p_plan_name => p_notes,
+        p_duration_months => v_months,
+        p_vat_rate => 0.00,
+        p_gateway_fee => 0.00,
+        p_webhook_event_id => 'evt_' || v_gw_payment_id,
+        p_master_token => p_master_token
+    );
+
+    RETURN v_res;
+END;
+$function$;
+
+
+-- 3.5 ZATCA Refund, Credit Note & Commission Clawback (Atomic & Hardened with Auth Guard)
+CREATE OR REPLACE FUNCTION public.process_zatca_refund_and_clawback(
+    p_invoice_number text,
+    p_refund_amount numeric DEFAULT NULL::numeric,
+    p_reason text DEFAULT 'إلغاء اشتراك واسترداد مالي بناءً على طلب العميل'::text,
+    p_admin_user text DEFAULT 'SUPER_ADMIN'::text,
+    p_notes text DEFAULT NULL::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_inv_id UUID := NULL;
+    v_inv_store_id UUID := NULL;
+    v_inv_number TEXT := NULL;
+    v_inv_amount NUMERIC(12, 2) := 0.00;
+    v_inv_vat NUMERIC(12, 2) := 0.00;
+    v_inv_gw_payment_id TEXT := NULL;
+    v_inv_status TEXT := NULL;
+
+    v_comm RECORD;
+    v_ledger_id UUID;
+    v_cn_id UUID;
+    v_cn_num TEXT;
+
+    v_refund_gross NUMERIC(12, 2);
+    v_net_refund NUMERIC(12, 2);
+    v_vat_refund NUMERIC(12, 2);
+    v_clawback_total NUMERIC(12, 2) := 0.00;
+    v_net_platform_reversal NUMERIC(12, 2);
+    v_affiliate_id TEXT := NULL;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function process_zatca_refund_and_clawback' USING ERRCODE = '42501';
+    END IF;
+
+    -- 1. Locate Invoice in store_invoices first (with FOR UPDATE lock)
+    SELECT
+        id, store_id, invoice_number, amount, COALESCE(vat_amount, 0), gateway_payment_id, status
+    INTO
+        v_inv_id, v_inv_store_id, v_inv_number, v_inv_amount, v_inv_vat, v_inv_gw_payment_id, v_inv_status
+    FROM public.store_invoices
+    WHERE invoice_number = p_invoice_number OR id::text = p_invoice_number
+    FOR UPDATE
+    LIMIT 1;
+
+    IF v_inv_id IS NULL THEN
+        RAISE EXCEPTION 'INVOICE_NOT_FOUND: الفاتورة الأصلية غير موجودة في السجلات (%).', p_invoice_number;
+    END IF;
+
+    IF v_inv_status = 'refunded' THEN
+        RAISE EXCEPTION 'ALREADY_REFUNDED: تم استرداد هذه الفاتورة مسبقاً (%).', v_inv_number;
+    END IF;
+
+    -- 2. Compute Refund Financial Figures (Respecting original VAT ratio)
+    v_refund_gross := ROUND(COALESCE(p_refund_amount, v_inv_amount), 2);
+    IF v_refund_gross <= 0 OR v_refund_gross > v_inv_amount THEN
+        RAISE EXCEPTION 'INVALID_REFUND_AMOUNT: مبلغ الاسترداد غير صالح أو يتجاوز قيمة الفاتورة الأصلية.';
+    END IF;
+
+    IF v_inv_vat > 0 AND v_inv_amount > 0 THEN
+        v_vat_refund := ROUND(v_refund_gross * (v_inv_vat / v_inv_amount), 2);
+        v_net_refund := ROUND(v_refund_gross - v_vat_refund, 2);
+    ELSE
+        v_vat_refund := 0.00;
+        v_net_refund := v_refund_gross;
+    END IF;
+
+    -- 3. Process Commission Clawback
+    FOR v_comm IN
+        SELECT * FROM public.partner_commissions
+        WHERE (invoice_number = v_inv_number OR invoice_id = v_inv_id::text)
+          AND status IN ('EARNED', 'PENDING', 'PAID')
+        FOR UPDATE
+    LOOP
+        v_affiliate_id := v_comm.partner_account_id::text;
+
+        IF v_comm.status IN ('EARNED', 'PENDING') THEN
+            UPDATE public.partner_commissions
+            SET
+                status = 'REVERSED',
+                notes = 'تم عكس العمولة تلقائياً بسبب استرداد الفاتورة ' || v_inv_number,
+                updated_at = v_now
+            WHERE id = v_comm.id;
+
+            v_clawback_total := v_clawback_total + v_comm.commission_amount;
+
+        ELSIF v_comm.status = 'PAID' THEN
+            INSERT INTO public.partner_commissions (
+                partner_account_id,
+                store_id,
+                commission_type,
+                basis_amount,
+                commission_rate,
+                commission_amount,
+                status,
+                qualifying_event,
+                idempotency_key,
+                invoice_number,
+                clawback_of,
+                notes,
+                created_at,
+                updated_at
+            ) VALUES (
+                v_comm.partner_account_id,
+                v_inv_store_id,
+                'CLAWBACK_RECOVERY',
+                v_net_refund,
+                v_comm.commission_rate,
+                -v_comm.commission_amount,
+                'EARNED',
+                'استرداد عمولة مصروفة مسبقاً عن الفاتورة المسترجعة ' || v_inv_number,
+                'clawback_' || v_inv_number || '_' || v_comm.id,
+                v_inv_number,
+                v_comm.id,
+                'قيد تسوية مدين (Debit Adjustment) لاستعادة العمولة بعد الصرف',
+                v_now,
+                v_now
+            )
+            ON CONFLICT (idempotency_key) DO NOTHING;
+
+            v_clawback_total := v_clawback_total + v_comm.commission_amount;
+        END IF;
+    END LOOP;
+
+    -- 4. Generate ZATCA Credit Note Number
+    v_cn_num := 'CN-' || to_char(v_now, 'YYYYMMDD') || '-' || upper(substr(md5(v_inv_number || random()::text), 1, 6));
+
+    -- 5. Insert into financial_ledger (Reverse Ledger Entry)
+    v_net_platform_reversal := -(v_refund_gross - v_vat_refund - v_clawback_total);
+
+    INSERT INTO public.financial_ledger (
+        transaction_id,
+        invoice_id,
+        store_id,
+        affiliate_id,
+        payment_id,
+        transaction_type,
+        gross_amount,
+        vat_amount,
+        gateway_fee,
+        affiliate_commission,
+        net_platform_amount,
+        status,
+        refund_of,
+        created_by,
+        metadata,
+        effective_at,
+        created_at
+    ) VALUES (
+        'tx_cn_' || v_cn_num,
+        v_inv_number,
+        COALESCE(v_inv_store_id::text, 'UNKNOWN'),
+        v_affiliate_id,
+        v_inv_gw_payment_id,
+        'REFUND',
+        -v_refund_gross,
+        -v_vat_refund,
+        0.00,
+        -v_clawback_total,
+        v_net_platform_reversal,
+        'SETTLED',
+        v_inv_number,
+        COALESCE(p_admin_user, 'SUPER_ADMIN'),
+        jsonb_build_object(
+            'credit_note_number', v_cn_num,
+            'original_invoice_number', v_inv_number,
+            'reason', p_reason,
+            'admin_notes', COALESCE(p_notes, ''),
+            'clawback_applied', (v_clawback_total > 0),
+            'clawback_amount', v_clawback_total
+        ),
+        v_now,
+        v_now
+    )
+    RETURNING id INTO v_ledger_id;
+
+    -- 6. Insert into credit_notes
+    INSERT INTO public.credit_notes (
+        credit_note_number,
+        original_invoice_id,
+        original_invoice_number,
+        store_id,
+        affiliate_id,
+        gross_refund_amount,
+        vat_refund_amount,
+        net_refund_amount,
+        clawback_commission,
+        reason,
+        status,
+        ledger_entry_id,
+        issued_by,
+        notes,
+        issued_at,
+        created_at
+    ) VALUES (
+        v_cn_num,
+        v_inv_id::text,
+        v_inv_number,
+        COALESCE(v_inv_store_id::text, 'UNKNOWN'),
+        v_affiliate_id,
+        v_refund_gross,
+        v_vat_refund,
+        v_net_refund,
+        v_clawback_total,
+        p_reason,
+        'ISSUED',
+        v_ledger_id,
+        COALESCE(p_admin_user, 'SUPER_ADMIN'),
+        COALESCE(p_notes, ''),
+        v_now,
+        v_now
+    )
+    RETURNING id INTO v_cn_id;
+
+    -- 7. Update Invoice Status in store_invoices
+    UPDATE public.store_invoices
+    SET
+        status = 'refunded',
+        updated_at = v_now
+    WHERE id = v_inv_id;
+
+    -- 8. Update Store Subscription Status
+    IF v_inv_store_id IS NOT NULL THEN
+        UPDATE public.stores
+        SET
+            setup_fee_paid = false,
+            subscription_status = 'trial',
+            subscription_active = false,
+            status = 'trial',
+            updated_at = v_now
+        WHERE id = v_inv_store_id;
+
+        UPDATE public.merchant_subscriptions
+        SET
+            status = 'CANCELED',
+            canceled_at = v_now,
+            updated_at = v_now
+        WHERE store_id = v_inv_store_id;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'credit_note_id', v_cn_id,
+        'credit_note_number', v_cn_num,
+        'ledger_id', v_ledger_id,
+        'gross_refund_amount', v_refund_gross,
+        'vat_refund_amount', v_vat_refund,
+        'net_refund_amount', v_net_refund,
+        'clawback_commission', v_clawback_total,
+        'store_id', v_inv_store_id,
+        'invoice_number', v_inv_number
+    );
+END;
+$function$;
+
+
+-- 3.6 Atomic Manual Ledger Adjustment (Super Admin Only)
+CREATE OR REPLACE FUNCTION public.record_manual_ledger_adjustment_atomic(
+    p_store_id uuid DEFAULT NULL,
+    p_affiliate_id uuid DEFAULT NULL,
+    p_adjustment_type text DEFAULT 'CREDIT',
+    p_amount numeric DEFAULT 0,
+    p_reason_category text DEFAULT 'ACCOUNTING_CORRECTION',
+    p_reference_number text DEFAULT NULL,
+    p_admin_user text DEFAULT 'SUPER_ADMIN',
+    p_admin_notes text DEFAULT NULL,
+    p_master_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+    v_sign NUMERIC := 1;
+    v_gross NUMERIC(12, 2);
+    v_net NUMERIC(12, 2);
+    v_vat NUMERIC(12, 2) := 0.00;
+    v_tx_id TEXT;
+    v_ledger_id UUID;
+    v_store_name TEXT := NULL;
+    v_affiliate_name TEXT := NULL;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function record_manual_ledger_adjustment_atomic' USING ERRCODE = '42501';
+    END IF;
+
+    IF COALESCE(p_amount, 0) <= 0 THEN
+        RAISE EXCEPTION 'INVALID_AMOUNT: المبلغ يجب أن يكون أكبر من صفر.';
+    END IF;
+
+    IF p_reference_number IS NULL OR BTRIM(p_reference_number) = '' OR p_admin_notes IS NULL OR BTRIM(p_admin_notes) = '' THEN
+        RAISE EXCEPTION 'MISSING_REFERENCE: رقم المرجع وملاحظات المشرف إلزامية لتوثيق التسوية المحاسبية.';
+    END IF;
+
+    IF UPPER(BTRIM(p_adjustment_type)) = 'DEBIT' THEN
+        v_sign := -1;
+    END IF;
+
+    v_gross := ROUND(p_amount * v_sign, 2);
+    v_net := v_gross;
+    v_tx_id := 'tx_adj_' || BTRIM(p_reference_number);
+
+    IF p_store_id IS NOT NULL THEN
+        SELECT name INTO v_store_name FROM public.stores WHERE id = p_store_id;
+    END IF;
+
+    IF p_affiliate_id IS NOT NULL THEN
+        SELECT display_name INTO v_affiliate_name FROM public.partner_accounts WHERE id = p_affiliate_id OR affiliate_id = p_affiliate_id LIMIT 1;
+    END IF;
+
+    INSERT INTO public.financial_ledger (
+        transaction_id,
+        store_id,
+        affiliate_id,
+        transaction_type,
+        gross_amount,
+        vat_amount,
+        gateway_fee,
+        affiliate_commission,
+        net_platform_amount,
+        status,
+        created_by,
+        metadata,
+        effective_at,
+        created_at
+    ) VALUES (
+        v_tx_id,
+        p_store_id::text,
+        p_affiliate_id::text,
+        'ADJUSTMENT',
+        v_gross,
+        v_vat,
+        0.00,
+        0.00,
+        v_net,
+        'SETTLED',
+        COALESCE(p_admin_user, 'SUPER_ADMIN'),
+        jsonb_build_object(
+            'store_name', v_store_name,
+            'affiliate_name', v_affiliate_name,
+            'adjustment_type', UPPER(BTRIM(p_adjustment_type)),
+            'reason_category', p_reason_category,
+            'reference_number', BTRIM(p_reference_number),
+            'admin_user', p_admin_user,
+            'admin_notes', BTRIM(p_admin_notes)
+        ),
+        v_now,
+        v_now
+    )
+    RETURNING id INTO v_ledger_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'ledger_id', v_ledger_id,
+        'transaction_id', v_tx_id,
+        'gross_amount', v_gross,
+        'vat_amount', v_vat,
+        'net_platform_amount', v_net,
+        'created_at', v_now
+    );
+END;
+$function$;
+
+
+-- 3.7 Atomic Complimentary Days Grant (Super Admin Only)
+CREATE OR REPLACE FUNCTION public.grant_store_complimentary_days_atomic(
+    p_store_id uuid,
+    p_days_to_add integer,
+    p_reason text,
+    p_admin_user text DEFAULT 'SUPER_ADMIN',
+    p_notes text DEFAULT NULL,
+    p_master_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+    v_store RECORD;
+    v_now TIMESTAMPTZ := clock_timestamp();
+    v_base_end TIMESTAMPTZ;
+    v_new_end TIMESTAMPTZ;
+    v_tx_id TEXT;
+    v_ledger_id UUID;
+BEGIN
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function grant_store_complimentary_days_atomic' USING ERRCODE = '42501';
+    END IF;
+
+    IF COALESCE(p_days_to_add, 0) <= 0 THEN
+        RAISE EXCEPTION 'INVALID_DAYS: عدد الأيام المضافة يجب أن يكون أكبر من صفر.';
+    END IF;
+
+    SELECT * INTO v_store FROM public.stores WHERE id = p_store_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'STORE_NOT_FOUND: المتجر غير موجود.';
+    END IF;
+
+    v_base_end := GREATEST(v_now, COALESCE(v_store.subscription_end_date, v_now));
+    v_new_end := v_base_end + (p_days_to_add || ' days')::INTERVAL;
+
+    UPDATE public.stores
+    SET
+        subscription_end_date = v_new_end,
+        subscription_active = true,
+        subscription_status = 'active',
+        status = 'active',
+        in_grace_period = false,
+        complimentary_days_granted = COALESCE(complimentary_days_granted, 0) + p_days_to_add,
+        last_override_at = v_now,
+        last_override_reason = p_reason,
+        updated_at = v_now
+    WHERE id = p_store_id;
+
+    v_tx_id := 'tx_override_' || replace(gen_random_uuid()::text, '-', '');
+
+    INSERT INTO public.financial_ledger (
+        transaction_id,
+        store_id,
+        transaction_type,
+        gross_amount,
+        vat_amount,
+        gateway_fee,
+        affiliate_commission,
+        net_platform_amount,
+        status,
+        created_by,
+        metadata,
+        effective_at,
+        created_at
+    ) VALUES (
+        v_tx_id,
+        p_store_id::text,
+        'ADJUSTMENT',
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        0.00,
+        'SETTLED',
+        COALESCE(p_admin_user, 'SUPER_ADMIN'),
+        jsonb_build_object(
+            'store_name', v_store.name,
+            'override_type', 'COMPLIMENTARY_DAYS',
+            'days_granted', p_days_to_add,
+            'reason', p_reason,
+            'previous_end_date', v_store.subscription_end_date,
+            'new_end_date', v_new_end,
+            'admin_notes', COALESCE(p_notes, '')
+        ),
+        v_now,
+        v_now
+    )
+    RETURNING id INTO v_ledger_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'store_id', p_store_id,
+        'new_subscription_end_date', v_new_end,
+        'complimentary_days_granted', COALESCE(v_store.complimentary_days_granted, 0) + p_days_to_add,
+        'ledger_id', v_ledger_id,
+        'transaction_id', v_tx_id
+    );
+END;
+$function$;
+
+
+-- 3.8 Affiliate Payout Atomic (Hardened with Auth Guard)
+CREATE OR REPLACE FUNCTION public.process_affiliate_payout_atomic(
+    p_partner_id uuid,
+    p_admin_user character varying,
+    p_transfer_ref character varying,
+    p_bank_name character varying,
+    p_iban character varying,
+    p_notes text,
+    p_master_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_total_amount NUMERIC(12, 2) := 0;
+    v_comms_amount NUMERIC(12, 2) := 0;
+    v_bonuses_amount NUMERIC(12, 2) := 0;
+    v_comms_count INT := 0;
+    v_bonuses_count INT := 0;
+    v_payout_number VARCHAR;
+    v_ledger_id UUID;
+    v_payout_id UUID;
+    v_partner_name VARCHAR;
+    v_affiliate_id UUID;
+    v_comm_ids JSONB;
+BEGIN
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function process_affiliate_payout_atomic' USING ERRCODE = '42501';
+    END IF;
+
+    SELECT display_name, affiliate_id INTO v_partner_name, v_affiliate_id
+    FROM public.partner_accounts
+    WHERE id = p_partner_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'PARTNER_NOT_FOUND: الشريك غير موجود.';
+    END IF;
+
+    SELECT COALESCE(SUM(commission_amount), 0), COUNT(id), COALESCE(jsonb_agg(id), '[]'::jsonb)
+    INTO v_comms_amount, v_comms_count, v_comm_ids
+    FROM public.partner_commissions
+    WHERE partner_account_id = p_partner_id AND status IN ('AVAILABLE', 'EARNED');
+
+    SELECT COALESCE(SUM(bonus_amount), 0), COUNT(id)
+    INTO v_bonuses_amount, v_bonuses_count
+    FROM public.partner_bonus_awards
+    WHERE partner_account_id = p_partner_id AND status IN ('ACHIEVED', 'AWARDED');
+
+    v_total_amount := v_comms_amount + v_bonuses_amount;
+
+    IF v_total_amount <= 0 THEN
+        RAISE EXCEPTION 'NO_DUE_BALANCE: لا توجد عمولات أو مكافآت مستحقة للصرف لهذا الشريك.';
+    END IF;
+
+    v_payout_number := 'PAY-' || to_char(now(), 'YYYYMMDD') || '-' || upper(substring(md5(p_transfer_ref || random()::text) from 1 for 6));
+
+    INSERT INTO public.financial_ledger (
+        transaction_id,
+        affiliate_id,
+        payment_id,
+        transaction_type,
+        gross_amount,
+        vat_amount,
+        gateway_fee,
+        affiliate_commission,
+        net_platform_amount,
+        status,
+        created_by,
+        metadata,
+        effective_at,
+        created_at
+    ) VALUES (
+        'tx_payout_' || v_payout_number,
+        p_partner_id::text,
+        p_transfer_ref,
+        'PAYOUT',
+        0.00,
+        0.00,
+        0.00,
+        v_total_amount,
+        0.00,
+        'SETTLED',
+        COALESCE(p_admin_user, 'SUPER_ADMIN'),
+        jsonb_build_object(
+            'payout_number', v_payout_number,
+            'affiliate_name', v_partner_name,
+            'bank_name', p_bank_name,
+            'iban', p_iban,
+            'transfer_reference', p_transfer_ref,
+            'commissions_count', v_comms_count,
+            'bonuses_count', v_bonuses_count,
+            'notes', COALESCE(p_notes, '')
+        ),
+        now(),
+        now()
+    )
+    RETURNING id INTO v_ledger_id;
+
+    INSERT INTO public.affiliate_payouts (
+        payout_number,
+        affiliate_id,
+        partner_name,
+        iban,
+        bank_name,
+        transfer_reference,
+        amount,
+        commissions_count,
+        commission_ids,
+        status,
+        disbursed_by,
+        ledger_entry_id,
+        notes,
+        disbursed_at,
+        created_at
+    ) VALUES (
+        v_payout_number,
+        p_partner_id::text,
+        v_partner_name,
+        p_iban,
+        p_bank_name,
+        p_transfer_ref,
+        v_total_amount,
+        v_comms_count,
+        v_comm_ids,
+        'PAID',
+        COALESCE(p_admin_user, 'SUPER_ADMIN'),
+        v_ledger_id,
+        COALESCE(p_notes, ''),
+        now(),
+        now()
+    )
+    RETURNING id INTO v_payout_id;
+
+    UPDATE public.partner_commissions
+    SET status = 'PAID',
+        notes = COALESCE(notes, '') || ' | تم الصرف بحوالة مرجع: ' || p_transfer_ref,
+        updated_at = now()
+    WHERE partner_account_id = p_partner_id AND status IN ('AVAILABLE', 'EARNED');
+
+    UPDATE public.partner_bonus_awards
+    SET status = 'PAID'
+    WHERE partner_account_id = p_partner_id AND status IN ('ACHIEVED', 'AWARDED');
+
+    IF v_affiliate_id IS NOT NULL THEN
+        UPDATE public.affiliates
+        SET pending_payout = 0,
+            updated_at = now()
+        WHERE id = v_affiliate_id;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'payout_id', v_payout_id,
+        'payout_number', v_payout_number,
+        'ledger_id', v_ledger_id,
+        'amount', v_total_amount,
+        'commissions_count', v_comms_count,
+        'bonuses_count', v_bonuses_count
+    );
+END;
+$function$;
+
+
+-- 3.9 Platform Payment Gateway Config Get & Update (Secret Key Stripped for Non-SuperAdmin)
+CREATE OR REPLACE FUNCTION public.get_platform_payment_gateway_config(
+    p_master_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+    v_val JSONB;
+BEGIN
+    SELECT value INTO v_val FROM public.platform_system_config WHERE key = 'platform_payment_gateway';
+    IF v_val IS NULL THEN
+        v_val := jsonb_build_object(
+            'enabled', true,
+            'provider', 'sandbox',
+            'mode', 'sandbox',
+            'public_key', '',
+            'secret_key', '',
+            'allow_cash', true,
+            'allow_bank_transfer', true,
+            'bank_details', jsonb_build_object(
+                'bank_name', 'مصرف الراجحي',
+                'account_name', 'مؤسسة رادار لحلول الاتصالات وتقنية المعلومات',
+                'iban', 'SA0380000000000000000000'
+            ),
+            'updated_at', now()
+        );
+    END IF;
+
+    -- Strip secret_key and webhook_secret unless caller is Super Admin, service_role, or valid sovereign token
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        v_val := (v_val - 'secret_key' - 'webhook_secret') || jsonb_build_object('secret_key', '');
+    END IF;
+
+    RETURN v_val;
+END;
+$function$;
+
+
+CREATE OR REPLACE FUNCTION public.update_platform_payment_gateway_config(
+    p_config jsonb,
+    p_master_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+BEGIN
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function update_platform_payment_gateway_config' USING ERRCODE = '42501';
+    END IF;
+
+    INSERT INTO public.platform_system_config (key, platform_status, value, updated_at)
+    VALUES ('platform_payment_gateway', 'active', p_config, now())
+    ON CONFLICT (key) DO UPDATE
+    SET value = EXCLUDED.value, updated_at = now();
+
+    RETURN jsonb_build_object('success', true, 'message', 'تم حفظ إعدادات بوابات الدفع بنجاح');
+END;
+$function$;
+
+
+-- 3.10 Batch Invoices Fetch (Hardened for Super Admin / Server Only)
+CREATE OR REPLACE FUNCTION public.get_all_store_invoices_batch(
+    p_master_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_result JSONB;
+BEGIN
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function get_all_store_invoices_batch' USING ERRCODE = '42501';
+    END IF;
+
+    SELECT jsonb_object_agg(store_id_key, invoices_json)
+    INTO v_result
+    FROM (
+        SELECT
+            store_id::text AS store_id_key,
+            jsonb_agg(
+                jsonb_build_object(
+                    'id', id,
+                    'store_id', store_id,
+                    'invoice_number', invoice_number,
+                    'invoice_type', invoice_type,
+                    'amount', amount,
+                    'vat_amount', vat_amount,
+                    'net_amount', net_amount,
+                    'currency', currency,
+                    'status', status,
+                    'payment_method', payment_method,
+                    'gateway', gateway,
+                    'gateway_payment_id', gateway_payment_id,
+                    'plan_id', plan_id,
+                    'plan_name', plan_name,
+                    'paid_at', paid_at,
+                    'metadata', COALESCE(metadata, '{}'::jsonb),
+                    'created_at', created_at
+                ) ORDER BY created_at DESC
+            ) AS invoices_json
+        FROM public.store_invoices
+        GROUP BY store_id
+    ) t;
+
+    RETURN COALESCE(v_result, '{}'::jsonb);
+END;
+$function$;
+
+
+-- ==============================================================================
+-- SECTION 4: FINANCIAL TABLES RLS HARDENING (REPLACE BEFORE DROP)
+-- ==============================================================================
+
+-- 4.1 platform_system_config: Restrict direct table SELECT to Super Admin / service_role (public uses safe RPCs)
+DROP POLICY IF EXISTS "SuperAdmin read platform_system_config" ON public.platform_system_config;
+CREATE POLICY "SuperAdmin read platform_system_config"
+  ON public.platform_system_config
+  FOR SELECT
+  TO authenticated
+  USING (public.is_super_admin());
+
+DROP POLICY IF EXISTS "Public read platform_system_config" ON public.platform_system_config;
+
+-- 4.2 financial_ledger: Remove anon read-all policy; allow Super Admin or Store Owner
+DROP POLICY IF EXISTS "financial_ledger_scoped_select" ON public.financial_ledger;
+CREATE POLICY "financial_ledger_scoped_select"
+  ON public.financial_ledger
+  FOR SELECT
+  TO authenticated
+  USING (
+    public.is_super_admin()
+    OR (
+      store_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND public.has_store_access(store_id::uuid)
+    )
+  );
+
+DROP POLICY IF EXISTS "financial_ledger_read_all" ON public.financial_ledger;
+DROP POLICY IF EXISTS "financial_ledger_select_policy" ON public.financial_ledger;
+
+-- 4.3 store_invoices: Remove anon read-all policy; allow Super Admin or Store Owner
+DROP POLICY IF EXISTS "store_invoices_scoped_select" ON public.store_invoices;
+CREATE POLICY "store_invoices_scoped_select"
+  ON public.store_invoices
+  FOR SELECT
+  TO authenticated
+  USING (
+    public.is_super_admin()
+    OR public.has_store_access(store_id)
+  );
+
+DROP POLICY IF EXISTS "store_invoices_anon_select_policy" ON public.store_invoices;
+DROP POLICY IF EXISTS "store_invoices_select_policy" ON public.store_invoices;
+
+-- 4.4 credit_notes: Scope SELECT to Super Admin or Store Owner
+DROP POLICY IF EXISTS "credit_notes_scoped_select" ON public.credit_notes;
+CREATE POLICY "credit_notes_scoped_select"
+  ON public.credit_notes
+  FOR SELECT
+  TO authenticated
+  USING (
+    public.is_super_admin()
+    OR (
+      store_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND public.has_store_access(store_id::uuid)
+    )
+  );
+
+DROP POLICY IF EXISTS "credit_notes_select_policy" ON public.credit_notes;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261029_stage3_customers_points_coupons_and_phone_norm.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🛡️ RADAR & SADEEM AL-ATHIR — STAGE 3 MIGRATION
+-- Customers, Points, Coupons, Smart Scan & Saudi Phone Normalization (normalize_saudi_phone)
+-- Target: Sadim Al-Athir (kspfiijorengpckdlymx) & White-Label Resellers
+-- ==============================================================================
+
+-- ==============================================================================
+-- SECTION 1: PHONE NORMALIZATION FUNCTIONS & DATA SANITIZATION / DEDUPLICATION
+-- ==============================================================================
+
+-- 1.1 Canonical Saudi Phone Normalizer (Always returns 9 digits '5XXXXXXXX' or NULL)
+CREATE OR REPLACE FUNCTION public.normalize_saudi_phone(p_phone text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_clean TEXT;
+BEGIN
+    IF p_phone IS NULL OR BTRIM(p_phone) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    -- Convert Arabic-Indic and Eastern Arabic-Indic digits to ASCII digits first, then strip non-numeric characters
+    v_clean := translate(p_phone, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789');
+    v_clean := regexp_replace(v_clean, '[^0-9]', '', 'g');
+
+    -- Strip GCC / Saudi international prefixes (00966 or 966)
+    IF v_clean LIKE '00966%' THEN
+        v_clean := substr(v_clean, 6);
+    ELSIF v_clean LIKE '966%' AND length(v_clean) >= 12 THEN
+        v_clean := substr(v_clean, 4);
+    END IF;
+
+    -- Strip leading national trunk zero (05XXXXXXXX -> 5XXXXXXXX)
+    IF length(v_clean) = 10 AND v_clean LIKE '05%' THEN
+        v_clean := substr(v_clean, 2);
+    END IF;
+
+    -- Validate canonical 9-digit Saudi mobile format (5XXXXXXXX)
+    IF length(v_clean) = 9 AND v_clean LIKE '5%' THEN
+        RETURN v_clean;
+    END IF;
+
+    RETURN NULL;
+END;
+$function$;
+
+-- 1.2 Keep normalize_phone aligned with normalize_saudi_phone for Saudi numbers
+CREATE OR REPLACE FUNCTION public.normalize_phone(p_phone text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_saudi TEXT;
+    v_cleaned TEXT;
+BEGIN
+    IF p_phone IS NULL OR BTRIM(p_phone) = '' THEN
+        RETURN '';
+    END IF;
+
+    v_saudi := public.normalize_saudi_phone(p_phone);
+    IF v_saudi IS NOT NULL THEN
+        RETURN v_saudi;
+    END IF;
+
+    v_cleaned := regexp_replace(p_phone, '[^0-9]', '', 'g');
+    IF v_cleaned LIKE '00966%' THEN
+        v_cleaned := substring(v_cleaned from 6);
+    ELSIF v_cleaned LIKE '966%' AND length(v_cleaned) >= 12 THEN
+        v_cleaned := substring(v_cleaned from 4);
+    END IF;
+
+    IF v_cleaned LIKE '0%' THEN
+        v_cleaned := substring(v_cleaned from 2);
+    END IF;
+
+    RETURN v_cleaned;
+END;
+$function$;
+
+-- 1.3 Ensure customer_coupons has redeemed_by_staff_name & cashier_name, and relax legacy 'code'/'title' NOT NULL constraints if present
+ALTER TABLE public.customer_coupons
+  ADD COLUMN IF NOT EXISTS redeemed_by_staff_name text,
+  ADD COLUMN IF NOT EXISTS cashier_name text,
+  ADD COLUMN IF NOT EXISTS used_at timestamptz;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'customer_coupons' AND column_name = 'code'
+  ) THEN
+    EXECUTE 'ALTER TABLE public.customer_coupons ALTER COLUMN code DROP NOT NULL';
+    EXECUTE 'UPDATE public.customer_coupons SET code = coupon_code WHERE code IS NULL AND coupon_code IS NOT NULL';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'customer_coupons' AND column_name = 'title'
+  ) THEN
+    EXECUTE 'ALTER TABLE public.customer_coupons ALTER COLUMN title DROP NOT NULL';
+    EXECUTE 'UPDATE public.customer_coupons SET title = privilege_title WHERE title IS NULL AND privilege_title IS NOT NULL';
+  END IF;
+END $$;
+
+-- 1.4 Data Sanitization & Deduplication of store_customers before adding CHECK constraint
+-- If a store has multiple customer rows that resolve to the same normalized phone
+-- (e.g. '0551122334' and '551122334'), merge balances/XP and re-link FKs to the primary row.
+DO $$
+DECLARE
+    v_grp RECORD;
+    v_dup RECORD;
+BEGIN
+    -- Drop constraint temporarily if it already exists so sanitization can update freely
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_store_customers_normalized_saudi_phone'
+          AND conrelid = 'public.store_customers'::regclass
+    ) THEN
+        ALTER TABLE public.store_customers
+          DROP CONSTRAINT chk_store_customers_normalized_saudi_phone;
+    END IF;
+
+    -- Step A: Merge duplicate customer rows per (store_id, normalized_phone)
+    FOR v_grp IN
+        SELECT
+            store_id,
+            COALESCE(public.normalize_saudi_phone(phone), '5' || LPAD(RIGHT(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 8), 8, '0')) AS norm_phone,
+            (ARRAY_AGG(id ORDER BY created_at ASC, id ASC))[1] AS keep_id,
+            SUM(COALESCE(wallet_balance, 0)) AS total_wallet,
+            SUM(COALESCE(lifetime_xp, 0)) AS total_xp,
+            MAX(last_visit_date) AS latest_visit,
+            COUNT(*) AS cnt
+        FROM public.store_customers
+        GROUP BY store_id, COALESCE(public.normalize_saudi_phone(phone), '5' || LPAD(RIGHT(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 8), 8, '0'))
+        HAVING COUNT(*) > 1
+    LOOP
+        FOR v_dup IN
+            SELECT id FROM public.store_customers
+            WHERE store_id = v_grp.store_id
+              AND COALESCE(public.normalize_saudi_phone(phone), '5' || LPAD(RIGHT(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 8), 8, '0')) = v_grp.norm_phone
+              AND id <> v_grp.keep_id
+        LOOP
+            -- Re-point all referencing foreign keys to the primary customer row (keep_id)
+            UPDATE public.audit_logs SET customer_id = v_grp.keep_id WHERE customer_id = v_dup.id;
+            UPDATE public.customer_coupons SET customer_id = v_grp.keep_id WHERE customer_id = v_dup.id;
+            UPDATE public.pos_refunds SET customer_id = v_grp.keep_id WHERE customer_id = v_dup.id;
+            UPDATE public.service_bookings SET customer_id = v_grp.keep_id WHERE customer_id = v_dup.id;
+            UPDATE public.store_orders SET customer_id = v_grp.keep_id WHERE customer_id = v_dup.id;
+
+            -- Delete duplicate customer row
+            DELETE FROM public.store_customers WHERE id = v_dup.id;
+        END LOOP;
+
+        -- Update primary customer row with merged balances
+        UPDATE public.store_customers
+        SET wallet_balance = v_grp.total_wallet,
+            lifetime_xp = v_grp.total_xp,
+            last_visit_date = COALESCE(v_grp.latest_visit, last_visit_date),
+            updated_at = now()
+        WHERE id = v_grp.keep_id;
+    END LOOP;
+
+    -- Step B: Normalize all remaining phone numbers in store_customers to '5XXXXXXXX'
+    UPDATE public.store_customers
+    SET phone = COALESCE(
+        public.normalize_saudi_phone(phone),
+        '5' || LPAD(RIGHT(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 8), 8, '0')
+    )
+    WHERE phone IS DISTINCT FROM COALESCE(
+        public.normalize_saudi_phone(phone),
+        '5' || LPAD(RIGHT(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 8), 8, '0')
+    );
+
+    -- Step C: Normalize customer_phone in customer_coupons and audit_logs for consistency
+    UPDATE public.customer_coupons
+    SET customer_phone = public.normalize_saudi_phone(customer_phone)
+    WHERE customer_phone IS NOT NULL
+      AND public.normalize_saudi_phone(customer_phone) IS NOT NULL
+      AND customer_phone <> public.normalize_saudi_phone(customer_phone);
+
+    UPDATE public.audit_logs
+    SET customer_phone = public.normalize_saudi_phone(customer_phone)
+    WHERE customer_phone IS NOT NULL
+      AND public.normalize_saudi_phone(customer_phone) IS NOT NULL
+      AND customer_phone <> public.normalize_saudi_phone(customer_phone);
+END $$;
+
+-- 1.5 Add strict DB-level CHECK constraint on store_customers.phone
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_store_customers_normalized_saudi_phone'
+          AND conrelid = 'public.store_customers'::regclass
+    ) THEN
+        ALTER TABLE public.store_customers
+          ADD CONSTRAINT chk_store_customers_normalized_saudi_phone
+          CHECK (phone = public.normalize_saudi_phone(phone));
+    END IF;
+END $$;
+
+
+-- ==============================================================================
+-- SECTION 2: EXPLICIT DROP OF OLD FUNCTION SIGNATURES (PREVENT OVERLOADING)
+-- ==============================================================================
+
+DROP FUNCTION IF EXISTS public.register_or_get_customer_wallet(uuid, text, text);
+DROP FUNCTION IF EXISTS public.register_customer_secure(uuid, text, text);
+DROP FUNCTION IF EXISTS public.get_customer_wallet_public(uuid, text);
+DROP FUNCTION IF EXISTS public.update_customer_profile_public(uuid, text, text, text, text);
+
+DROP FUNCTION IF EXISTS public.add_customer_points_secure(uuid, text, integer, text, text, numeric, text);
+DROP FUNCTION IF EXISTS public.add_customer_points_secure(uuid, text, integer, text, text, numeric, text, text, uuid, text, text);
+
+DROP FUNCTION IF EXISTS public.redeem_customer_points_secure(uuid, text, integer, text, text, text, text, text, uuid, text, text);
+DROP FUNCTION IF EXISTS public.adjust_customer_points_secure(uuid, uuid, integer, text, text, text, text);
+
+DROP FUNCTION IF EXISTS public.purchase_coupon_secure(uuid, uuid, uuid, text);
+DROP FUNCTION IF EXISTS public.redeem_coupon_secure(uuid, text, text, text, text, uuid, text);
+DROP FUNCTION IF EXISTS public.redeem_coupon_secure(uuid, text, text, text, text, uuid, text, text, text);
+
+
+-- ==============================================================================
+-- SECTION 3: ATOMIC CUSTOMER, POINTS & COUPON RPCs (NO EXCEPTION SWALLOWING)
+-- ==============================================================================
+
+-- 3.1 Register or Get Customer Wallet (Normalized Phone, Atomic Welcome Gift & Audit Log)
+CREATE OR REPLACE FUNCTION public.register_or_get_customer_wallet(
+    p_store_id uuid,
+    p_phone text,
+    p_name text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_norm_phone TEXT;
+    v_cust RECORD;
+    v_store RECORD;
+    v_tier RECORD;
+    v_welcome_points INT := 0;
+    v_gift_type TEXT := 'POINTS';
+    v_offer_title TEXT;
+    v_coupon_code TEXT;
+    v_coupon_id UUID;
+    v_active_coupons JSONB := '[]'::jsonb;
+    v_is_new BOOLEAN := false;
+    v_clean_name TEXT;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    PERFORM public.assert_platform_active();
+
+    IF p_store_id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_STORE', 'message', 'معرّف المتجر غير صالح');
+    END IF;
+
+    v_norm_phone := public.normalize_saudi_phone(p_phone);
+    IF v_norm_phone IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_PHONE', 'message', 'رقم الجوال السعودي غير صالح (يجب أن يبدأ بـ 05 أو 5 ويتكون من 9 أرقام بعد الصفر)');
+    END IF;
+
+    v_clean_name := NULLIF(BTRIM(COALESCE(p_name, '')), '');
+
+    -- Verify store exists and fetch welcome gift configuration
+    SELECT id, name, welcome_gift_type, welcome_points, welcome_offer_title
+    INTO v_store
+    FROM public.stores
+    WHERE id = p_store_id;
+
+    IF v_store.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'STORE_NOT_FOUND', 'message', 'المتجر غير موجود');
+    END IF;
+
+    -- Look up customer by normalized phone (serialized via unique index on store_id, phone)
+    SELECT * INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND phone = v_norm_phone
+    FOR UPDATE
+    LIMIT 1;
+
+    IF v_cust.id IS NOT NULL THEN
+        v_is_new := false;
+        -- Update placeholder name if caller provided a real name
+        IF v_clean_name IS NOT NULL
+           AND v_clean_name NOT IN ('عميل', 'عميل مميز', 'عميل المتجر')
+           AND (v_cust.name IS NULL OR v_cust.name IN ('', 'عميل', 'عميل مميز', 'عميل المتجر')) THEN
+            UPDATE public.store_customers
+            SET name = v_clean_name,
+                updated_at = v_now
+            WHERE id = v_cust.id
+            RETURNING * INTO v_cust;
+        END IF;
+    ELSE
+        v_is_new := true;
+        v_gift_type := COALESCE(UPPER(BTRIM(v_store.welcome_gift_type)), 'POINTS');
+        IF v_gift_type = 'POINTS' THEN
+            v_welcome_points := GREATEST(0, COALESCE(v_store.welcome_points, 50));
+        ELSE
+            v_welcome_points := 0;
+        END IF;
+
+        INSERT INTO public.store_customers (
+            store_id,
+            phone,
+            name,
+            wallet_balance,
+            lifetime_xp,
+            last_visit_date,
+            created_at,
+            updated_at
+        ) VALUES (
+            p_store_id,
+            v_norm_phone,
+            COALESCE(v_clean_name, 'عميل مميز'),
+            v_welcome_points,
+            v_welcome_points,
+            v_now,
+            v_now,
+            v_now
+        )
+        RETURNING * INTO v_cust;
+
+        -- Atomic Audit Log for Welcome Points (NO EXCEPTION WHEN OTHERS swallow)
+        IF v_welcome_points > 0 THEN
+            INSERT INTO public.audit_logs (
+                store_id,
+                customer_id,
+                customer_phone,
+                customer_name,
+                points_changed,
+                purchase_amount,
+                action,
+                event_type,
+                entry_method,
+                metadata,
+                created_at
+            ) VALUES (
+                p_store_id,
+                v_cust.id,
+                v_cust.phone,
+                v_cust.name,
+                v_welcome_points,
+                0,
+                'ADJUSTMENT',
+                'WELCOME_BONUS',
+                'AUTO_SYSTEM',
+                jsonb_build_object('note', 'نقاط تسجيل وترحيب بالعميل'),
+                v_now
+            );
+        END IF;
+
+        -- Atomic Welcome Offer Coupon creation when store welcome_gift_type = 'OFFER'
+        IF v_gift_type = 'OFFER' THEN
+            v_offer_title := COALESCE(NULLIF(BTRIM(v_store.welcome_offer_title), ''), 'هدية ترحيبية مجانية');
+            v_coupon_code := 'WELCOME-' || upper(substr(md5(v_cust.id::text || v_now::text || random()::text), 1, 6));
+
+            INSERT INTO public.customer_coupons (
+                store_id,
+                customer_id,
+                customer_phone,
+                customer_name,
+                privilege_id,
+                privilege_title,
+                privilege_image_url,
+                coupon_code,
+                cost_points,
+                status,
+                valid_start_time,
+                valid_end_time,
+                purchased_at
+            ) VALUES (
+                p_store_id,
+                v_cust.id,
+                v_cust.phone,
+                v_cust.name,
+                NULL,
+                v_offer_title,
+                NULL,
+                v_coupon_code,
+                0,
+                'ACTIVE',
+                '00:00',
+                '23:59',
+                v_now
+            )
+            RETURNING id INTO v_coupon_id;
+        END IF;
+    END IF;
+
+    -- Compute current loyalty tier
+    SELECT id, tier_name, required_xp, badge_color
+    INTO v_tier
+    FROM public.tiers
+    WHERE store_id = p_store_id
+      AND required_xp <= COALESCE(v_cust.lifetime_xp, 0)
+    ORDER BY required_xp DESC
+    LIMIT 1;
+
+    -- Fetch active coupons for this customer
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+        'id', c.id,
+        'coupon_code', c.coupon_code,
+        'privilege_id', c.privilege_id,
+        'privilege_title', c.privilege_title,
+        'privilege_image_url', c.privilege_image_url,
+        'cost_points', c.cost_points,
+        'status', c.status,
+        'valid_start_time', c.valid_start_time,
+        'valid_end_time', c.valid_end_time,
+        'purchased_at', c.purchased_at
+    ) ORDER BY c.purchased_at DESC), '[]'::jsonb)
+    INTO v_active_coupons
+    FROM public.customer_coupons c
+    WHERE c.store_id = p_store_id
+      AND c.customer_id = v_cust.id
+      AND c.status = 'ACTIVE';
+
+    -- Return only necessary fields (name, balance, tier, normalized phone, active coupons)
+    RETURN jsonb_build_object(
+        'success', true,
+        'is_new', v_is_new,
+        'customer', jsonb_build_object(
+            'id', v_cust.id,
+            'store_id', v_cust.store_id,
+            'name', v_cust.name,
+            'phone', v_cust.phone,
+            'wallet_balance', v_cust.wallet_balance,
+            'lifetime_xp', v_cust.lifetime_xp,
+            'current_tier', COALESCE(v_tier.tier_name, 'ضيف (Guest)'),
+            'special_date', v_cust.special_date,
+            'special_date_type', v_cust.special_date_type,
+            'last_visit_date', v_cust.last_visit_date,
+            'created_at', v_cust.created_at
+        ),
+        'tier', CASE WHEN v_tier.id IS NOT NULL THEN jsonb_build_object(
+            'id', v_tier.id,
+            'tier_name', v_tier.tier_name,
+            'required_xp', v_tier.required_xp,
+            'badge_color', v_tier.badge_color
+        ) ELSE NULL END,
+        'coupons', v_active_coupons
+    );
+END;
+$function$;
+
+
+-- 3.2 Alias register_customer_secure to register_or_get_customer_wallet so both behave identically
+CREATE OR REPLACE FUNCTION public.register_customer_secure(
+    p_store_id uuid,
+    p_phone text,
+    p_name text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+BEGIN
+    RETURN public.register_or_get_customer_wallet(p_store_id, p_phone, p_name);
+END;
+$function$;
+
+
+-- 3.3 Get Customer Wallet Public (Normalized Phone Lookup & Minimal Safe Fields)
+CREATE OR REPLACE FUNCTION public.get_customer_wallet_public(
+    p_store_id uuid,
+    p_phone text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_norm_phone TEXT;
+    v_cust RECORD;
+    v_tier RECORD;
+    v_coupons JSONB := '[]'::jsonb;
+BEGIN
+    PERFORM public.assert_platform_active();
+
+    IF p_store_id IS NULL OR BTRIM(COALESCE(p_phone, '')) = '' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_INPUT');
+    END IF;
+
+    v_norm_phone := public.normalize_saudi_phone(p_phone);
+    IF v_norm_phone IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_PHONE');
+    END IF;
+
+    SELECT id, store_id, phone, name, wallet_balance, lifetime_xp, special_date, special_date_type, last_visit_date, created_at
+    INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND phone = v_norm_phone
+    LIMIT 1;
+
+    IF v_cust.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'CUSTOMER_NOT_FOUND');
+    END IF;
+
+    SELECT id, tier_name, required_xp, badge_color
+    INTO v_tier
+    FROM public.tiers
+    WHERE store_id = p_store_id
+      AND required_xp <= COALESCE(v_cust.lifetime_xp, 0)
+    ORDER BY required_xp DESC
+    LIMIT 1;
+
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+        'id', c.id,
+        'coupon_code', c.coupon_code,
+        'privilege_id', c.privilege_id,
+        'privilege_title', c.privilege_title,
+        'privilege_image_url', c.privilege_image_url,
+        'cost_points', c.cost_points,
+        'status', c.status,
+        'valid_start_time', c.valid_start_time,
+        'valid_end_time', c.valid_end_time,
+        'purchased_at', c.purchased_at
+    ) ORDER BY c.purchased_at DESC), '[]'::jsonb)
+    INTO v_coupons
+    FROM public.customer_coupons c
+    WHERE c.store_id = p_store_id
+      AND c.customer_id = v_cust.id
+      AND c.status = 'ACTIVE';
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer', jsonb_build_object(
+            'id', v_cust.id,
+            'store_id', v_cust.store_id,
+            'name', v_cust.name,
+            'phone', v_cust.phone,
+            'wallet_balance', v_cust.wallet_balance,
+            'lifetime_xp', v_cust.lifetime_xp,
+            'current_tier', COALESCE(v_tier.tier_name, 'ضيف (Guest)'),
+            'special_date', v_cust.special_date,
+            'special_date_type', v_cust.special_date_type,
+            'last_visit_date', v_cust.last_visit_date,
+            'created_at', v_cust.created_at
+        ),
+        'tier', CASE WHEN v_tier.id IS NOT NULL THEN jsonb_build_object(
+            'id', v_tier.id,
+            'tier_name', v_tier.tier_name,
+            'required_xp', v_tier.required_xp,
+            'badge_color', v_tier.badge_color
+        ) ELSE NULL END,
+        'coupons', v_coupons
+    );
+END;
+$function$;
+
+
+-- 3.4 Update Customer Profile Public (Safe Name & Special Date Update Without Touching Points)
+CREATE OR REPLACE FUNCTION public.update_customer_profile_public(
+    p_store_id uuid,
+    p_phone text,
+    p_name text DEFAULT NULL::text,
+    p_special_date text DEFAULT NULL::text,
+    p_special_date_type text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_norm_phone TEXT;
+    v_cust RECORD;
+BEGIN
+    PERFORM public.assert_platform_active();
+
+    v_norm_phone := public.normalize_saudi_phone(p_phone);
+    IF p_store_id IS NULL OR v_norm_phone IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_INPUT');
+    END IF;
+
+    UPDATE public.store_customers
+    SET name = COALESCE(NULLIF(BTRIM(p_name), ''), name),
+        special_date = COALESCE(NULLIF(BTRIM(p_special_date), ''), special_date),
+        special_date_type = COALESCE(NULLIF(BTRIM(p_special_date_type), ''), special_date_type),
+        updated_at = clock_timestamp()
+    WHERE store_id = p_store_id
+      AND phone = v_norm_phone
+    RETURNING id, store_id, phone, name, wallet_balance, lifetime_xp, special_date, special_date_type, last_visit_date, created_at
+    INTO v_cust;
+
+    IF v_cust.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'CUSTOMER_NOT_FOUND');
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer', row_to_json(v_cust)
+    );
+END;
+$function$;
+
+
+-- 3.5 Add Customer Points Secure (Atomic Purchase Points Calculation, Normalized Phone, Staff Guard & Audit Log)
+CREATE OR REPLACE FUNCTION public.add_customer_points_secure(
+    p_store_id uuid,
+    p_phone text,
+    p_points integer DEFAULT NULL::integer,
+    p_staff_token text DEFAULT NULL::text,
+    p_customer_name text DEFAULT NULL::text,
+    p_purchase_amount numeric DEFAULT NULL::numeric,
+    p_invoice_number text DEFAULT NULL::text,
+    p_entry_method text DEFAULT 'qr_scan'::text,
+    p_branch_id uuid DEFAULT NULL::uuid,
+    p_branch_name text DEFAULT NULL::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_norm_phone TEXT;
+    v_store RECORD;
+    v_cust RECORD;
+    v_staff_store_id UUID := NULL;
+    v_staff_id_str TEXT := NULL;
+    v_has_access BOOLEAN := FALSE;
+    v_staff_uuid UUID := NULL;
+    v_staff_role TEXT := 'cashier';
+    v_multiplier NUMERIC := 1.0;
+    v_points_to_add INT := 0;
+    v_new_balance INT;
+    v_new_lifetime INT;
+    v_current_tier TEXT := 'ضيف (Guest)';
+    v_global_name TEXT := NULL;
+    v_effective_name TEXT;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    -- 1. Platform Kill-Switch Check
+    PERFORM public.assert_platform_active();
+
+    -- 2. Strict Staff / Admin / Sovereign Authority Check
+    IF public.is_super_admin()
+       OR auth.role() = 'service_role'
+       OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+       OR public.has_store_access(p_store_id) THEN
+        v_has_access := TRUE;
+        v_staff_role := 'admin';
+    ELSIF p_staff_token IS NOT NULL AND BTRIM(p_staff_token) <> '' THEN
+        SELECT s.store_id, s.staff_id, COALESCE(s.role, 'cashier')
+        INTO v_staff_store_id, v_staff_id_str, v_staff_role
+        FROM public.staff_sessions s
+        WHERE s.token_hash = encode(sha256(convert_to(BTRIM(p_staff_token), 'UTF8')), 'hex')
+          AND s.expires_at > v_now
+        LIMIT 1;
+
+        IF v_staff_store_id = p_store_id THEN
+            v_has_access := TRUE;
+
+            UPDATE public.staff_sessions
+            SET expires_at = v_now + interval '24 hours'
+            WHERE token_hash = encode(sha256(convert_to(BTRIM(p_staff_token), 'UTF8')), 'hex');
+        END IF;
+    ELSIF public.has_valid_staff_access(p_store_id, FALSE) THEN
+        v_has_access := TRUE;
+    END IF;
+
+    IF NOT v_has_access THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'UNAUTHORIZED_STAFF',
+            'message', 'غير مصرح: جلسة الكاشير غير صالحة أو منتهية'
+        );
+    END IF;
+
+    -- 3. Validate Store & Normalize Phone
+    SELECT id, name, points_per_riyal, subscription_active
+    INTO v_store
+    FROM public.stores
+    WHERE id = p_store_id;
+
+    IF v_store.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'STORE_NOT_FOUND', 'message', 'المتجر غير موجود');
+    END IF;
+
+    v_norm_phone := public.normalize_saudi_phone(p_phone);
+    IF v_norm_phone IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_PHONE', 'message', 'رقم الجوال السعودي غير صالح');
+    END IF;
+
+    -- 4. Compute Points Server-Side (from purchase_amount * points_per_riyal when purchase_amount > 0)
+    v_multiplier := CASE WHEN COALESCE(v_store.points_per_riyal, 0) > 0 THEN v_store.points_per_riyal ELSE 1.0 END;
+    IF COALESCE(p_purchase_amount, 0) > 0 THEN
+        v_points_to_add := FLOOR(p_purchase_amount * v_multiplier)::INT;
+    ELSE
+        v_points_to_add := COALESCE(p_points, 0);
+    END IF;
+
+    IF v_points_to_add <= 0 OR v_points_to_add > 100000 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_POINTS_AMOUNT', 'message', 'عدد النقاط غير صالح');
+    END IF;
+
+    -- 5. Resolve Customer Name (check existing global name across stores if not provided)
+    v_effective_name := NULLIF(BTRIM(COALESCE(p_customer_name, '')), '');
+    IF v_effective_name IS NULL OR v_effective_name IN ('عميل', 'عميل مميز', 'عميل المتجر') THEN
+        SELECT name INTO v_global_name
+        FROM public.store_customers
+        WHERE phone = v_norm_phone
+          AND name IS NOT NULL
+          AND name NOT IN ('', 'عميل', 'عميل مميز', 'عميل المتجر')
+        ORDER BY last_visit_date DESC NULLS LAST
+        LIMIT 1;
+        v_effective_name := COALESCE(v_global_name, v_effective_name, 'عميل مميز');
+    END IF;
+
+    -- 6. Lock or Create Customer Row Atomically using Normalized Phone
+    SELECT * INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND phone = v_norm_phone
+    FOR UPDATE
+    LIMIT 1;
+
+    IF v_cust.id IS NULL THEN
+        INSERT INTO public.store_customers (
+            store_id,
+            phone,
+            name,
+            wallet_balance,
+            lifetime_xp,
+            last_visit_date,
+            created_at,
+            updated_at
+        ) VALUES (
+            p_store_id,
+            v_norm_phone,
+            v_effective_name,
+            v_points_to_add,
+            v_points_to_add,
+            v_now,
+            v_now,
+            v_now
+        )
+        RETURNING * INTO v_cust;
+
+        v_new_balance := v_points_to_add;
+        v_new_lifetime := v_points_to_add;
+    ELSE
+        v_new_balance := COALESCE(v_cust.wallet_balance, 0) + v_points_to_add;
+        v_new_lifetime := COALESCE(v_cust.lifetime_xp, 0) + v_points_to_add;
+
+        UPDATE public.store_customers
+        SET wallet_balance = v_new_balance,
+            lifetime_xp = v_new_lifetime,
+            last_visit_date = v_now,
+            name = CASE
+                WHEN (name IS NULL OR name IN ('', 'عميل', 'عميل مميز', 'عميل المتجر'))
+                     AND v_effective_name NOT IN ('عميل', 'عميل مميز', 'عميل المتجر')
+                THEN v_effective_name
+                ELSE name
+            END,
+            updated_at = v_now
+        WHERE id = v_cust.id
+        RETURNING * INTO v_cust;
+    END IF;
+
+    -- 7. Record Mandatory Audit Log Entry Atomically (NO EXCEPTION SWALLOWING)
+    IF v_staff_id_str IS NOT NULL AND v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        v_staff_uuid := v_staff_id_str::uuid;
+    END IF;
+
+    INSERT INTO public.audit_logs (
+        store_id,
+        customer_id,
+        customer_phone,
+        customer_name,
+        points_changed,
+        purchase_amount,
+        staff_id,
+        branch_id,
+        action,
+        event_type,
+        entry_method,
+        metadata,
+        created_at
+    ) VALUES (
+        p_store_id,
+        v_cust.id,
+        v_cust.phone,
+        v_cust.name,
+        v_points_to_add,
+        COALESCE(p_purchase_amount, 0),
+        v_staff_uuid,
+        p_branch_id,
+        'PURCHASE',
+        'EARN_POINTS',
+        COALESCE(NULLIF(BTRIM(p_entry_method), ''), 'POS_CASHIER'),
+        jsonb_build_object(
+            'invoice_number', p_invoice_number,
+            'note', COALESCE(p_invoice_number, 'شراء بقيمة ' || COALESCE(p_purchase_amount, 0)::text || ' ر.س'),
+            'multiplier', v_multiplier,
+            'source', 'POS_CASHIER',
+            'staff_role', v_staff_role,
+            'branch_id', p_branch_id,
+            'branch_name', p_branch_name
+        ),
+        v_now
+    );
+
+    -- 8. Resolve Current Tier
+    SELECT tier_name INTO v_current_tier
+    FROM public.tiers
+    WHERE store_id = p_store_id
+      AND required_xp <= v_new_lifetime
+    ORDER BY required_xp DESC
+    LIMIT 1;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer_id', v_cust.id,
+        'phone', v_cust.phone,
+        'name', v_cust.name,
+        'points_added', v_points_to_add,
+        'new_balance', v_new_balance,
+        'lifetime_xp', v_new_lifetime,
+        'current_tier', COALESCE(v_current_tier, 'ضيف (Guest)')
+    );
+END;
+$function$;
+
+
+-- 3.6 Redeem Customer Points Secure (Atomic Points Burn by Cashier + Audit Log)
+CREATE OR REPLACE FUNCTION public.redeem_customer_points_secure(
+    p_store_id uuid,
+    p_phone text,
+    p_points_to_burn integer,
+    p_reward_title text DEFAULT 'استبدال مكافأة'::text,
+    p_staff_token text DEFAULT NULL::text,
+    p_staff_id text DEFAULT NULL::text,
+    p_staff_name text DEFAULT NULL::text,
+    p_entry_method text DEFAULT 'qr_scan'::text,
+    p_branch_id uuid DEFAULT NULL::uuid,
+    p_branch_name text DEFAULT NULL::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_norm_phone TEXT;
+    v_cust RECORD;
+    v_staff_store_id UUID := NULL;
+    v_staff_id_str TEXT := NULL;
+    v_has_access BOOLEAN := FALSE;
+    v_staff_uuid UUID := NULL;
+    v_new_balance INT;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    PERFORM public.assert_platform_active();
+
+    -- 1. Verify Cashier / Store Admin / Super Admin Session
+    IF public.is_super_admin()
+       OR auth.role() = 'service_role'
+       OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+       OR public.has_store_access(p_store_id) THEN
+        v_has_access := TRUE;
+    ELSIF p_staff_token IS NOT NULL AND BTRIM(p_staff_token) <> '' THEN
+        SELECT s.store_id, s.staff_id INTO v_staff_store_id, v_staff_id_str
+        FROM public.staff_sessions s
+        WHERE s.token_hash = encode(sha256(convert_to(BTRIM(p_staff_token), 'UTF8')), 'hex')
+          AND s.expires_at > v_now
+        LIMIT 1;
+
+        IF v_staff_store_id = p_store_id THEN
+            v_has_access := TRUE;
+            UPDATE public.staff_sessions
+            SET expires_at = v_now + interval '24 hours'
+            WHERE token_hash = encode(sha256(convert_to(BTRIM(p_staff_token), 'UTF8')), 'hex');
+        END IF;
+    ELSIF public.has_valid_staff_access(p_store_id, FALSE) THEN
+        v_has_access := TRUE;
+    END IF;
+
+    IF NOT v_has_access THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'UNAUTHORIZED_STAFF',
+            'message', 'غير مصرح: جلسة الكاشير غير صالحة أو منتهية'
+        );
+    END IF;
+
+    IF COALESCE(p_points_to_burn, 0) <= 0 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_POINTS', 'message', 'عدد النقاط المراد استبدالها يجب أن يكون أكبر من صفر');
+    END IF;
+
+    v_norm_phone := public.normalize_saudi_phone(p_phone);
+    IF v_norm_phone IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_PHONE', 'message', 'رقم الجوال السعودي غير صالح');
+    END IF;
+
+    -- 2. Lock Customer Row & Check Balance
+    SELECT * INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND phone = v_norm_phone
+    FOR UPDATE
+    LIMIT 1;
+
+    IF v_cust.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'CUSTOMER_NOT_FOUND', 'message', 'العميل غير مسجل في هذا المتجر');
+    END IF;
+
+    IF COALESCE(v_cust.wallet_balance, 0) < p_points_to_burn THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'INSUFFICIENT_POINTS',
+            'message', 'رصيد العميل لا يكفي (' || COALESCE(v_cust.wallet_balance, 0)::text || ' نقطة فقط)'
+        );
+    END IF;
+
+    v_new_balance := COALESCE(v_cust.wallet_balance, 0) - p_points_to_burn;
+
+    -- 3. Deduct Points Atomically
+    UPDATE public.store_customers
+    SET wallet_balance = v_new_balance,
+        last_visit_date = v_now,
+        updated_at = v_now
+    WHERE id = v_cust.id
+    RETURNING * INTO v_cust;
+
+    -- 4. Insert Audit Log Atomically (NO EXCEPTION SWALLOWING)
+    IF p_staff_id IS NOT NULL AND p_staff_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        v_staff_uuid := p_staff_id::uuid;
+    ELSIF v_staff_id_str IS NOT NULL AND v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        v_staff_uuid := v_staff_id_str::uuid;
+    END IF;
+
+    INSERT INTO public.audit_logs (
+        store_id,
+        customer_id,
+        customer_phone,
+        customer_name,
+        points_changed,
+        purchase_amount,
+        staff_id,
+        branch_id,
+        action,
+        event_type,
+        entry_method,
+        metadata,
+        created_at
+    ) VALUES (
+        p_store_id,
+        v_cust.id,
+        v_cust.phone,
+        v_cust.name,
+        -p_points_to_burn,
+        0,
+        v_staff_uuid,
+        p_branch_id,
+        'REDEEM_REWARD',
+        'BURN_POINTS',
+        COALESCE(NULLIF(BTRIM(p_entry_method), ''), 'qr_scan'),
+        jsonb_build_object(
+            'reward', COALESCE(NULLIF(BTRIM(p_reward_title), ''), 'استبدال مكافأة'),
+            'cashier_name', COALESCE(NULLIF(BTRIM(p_staff_name), ''), 'كاشير'),
+            'customer_name', v_cust.name,
+            'branch_id', p_branch_id,
+            'branch_name', p_branch_name
+        ),
+        v_now
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer_id', v_cust.id,
+        'phone', v_cust.phone,
+        'name', v_cust.name,
+        'new_balance', v_new_balance,
+        'lifetime_xp', v_cust.lifetime_xp,
+        'customer', jsonb_build_object(
+            'id', v_cust.id,
+            'store_id', v_cust.store_id,
+            'phone', v_cust.phone,
+            'name', v_cust.name,
+            'wallet_balance', v_cust.wallet_balance,
+            'lifetime_xp', v_cust.lifetime_xp,
+            'last_visit_date', v_cust.last_visit_date,
+            'created_at', v_cust.created_at
+        ),
+        'burned_points', p_points_to_burn,
+        'remaining_balance', v_new_balance
+    );
+END;
+$function$;
+
+
+-- 3.7 Adjust Customer Points Secure (Store Manager / Admin Manual Adjustment + Mandatory Audit Log)
+CREATE OR REPLACE FUNCTION public.adjust_customer_points_secure(
+    p_store_id uuid,
+    p_customer_id uuid,
+    p_points_delta integer,
+    p_reason text,
+    p_staff_token text DEFAULT NULL::text,
+    p_staff_name text DEFAULT NULL::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_cust RECORD;
+    v_staff_store_id UUID := NULL;
+    v_staff_id_str TEXT := NULL;
+    v_has_admin_access BOOLEAN := FALSE;
+    v_staff_uuid UUID := NULL;
+    v_new_balance INT;
+    v_new_lifetime INT;
+    v_actual_delta INT;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    PERFORM public.assert_platform_active();
+
+    -- 1. Require Store Admin / Manager / Owner or Super Admin
+    IF public.is_super_admin()
+       OR auth.role() = 'service_role'
+       OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+       OR public.is_store_admin(p_store_id) THEN
+        v_has_admin_access := TRUE;
+    ELSIF p_staff_token IS NOT NULL AND BTRIM(p_staff_token) <> '' THEN
+        SELECT s.store_id, s.staff_id INTO v_staff_store_id, v_staff_id_str
+        FROM public.staff_sessions s
+        WHERE s.token_hash = encode(sha256(convert_to(BTRIM(p_staff_token), 'UTF8')), 'hex')
+          AND s.expires_at > v_now
+          AND s.role IN ('admin', 'owner', 'manager')
+        LIMIT 1;
+
+        IF v_staff_store_id = p_store_id THEN
+            v_has_admin_access := TRUE;
+        END IF;
+    ELSIF public.has_valid_staff_access(p_store_id, TRUE) THEN
+        v_has_admin_access := TRUE;
+    END IF;
+
+    IF NOT v_has_admin_access THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'UNAUTHORIZED_ADMIN',
+            'message', 'غير مصرح: تعديل رصيد النقاط اليدوي متاح لمدير المتجر فقط'
+        );
+    END IF;
+
+    IF COALESCE(p_points_delta, 0) = 0 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'ZERO_DELTA', 'message', 'قيمة التعديل يجب ألا تكون صفراً');
+    END IF;
+
+    IF p_reason IS NULL OR BTRIM(p_reason) = '' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'REASON_REQUIRED', 'message', 'سبب تعديل النقاط إلزامي للتوثيق في سجل الرقابة');
+    END IF;
+
+    -- 2. Lock Customer Row
+    SELECT * INTO v_cust
+    FROM public.store_customers
+    WHERE id = p_customer_id
+      AND store_id = p_store_id
+    FOR UPDATE
+    LIMIT 1;
+
+    IF v_cust.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'CUSTOMER_NOT_FOUND', 'message', 'العميل غير موجود في هذا المتجر');
+    END IF;
+
+    v_new_balance := GREATEST(0, COALESCE(v_cust.wallet_balance, 0) + p_points_delta);
+    v_actual_delta := v_new_balance - COALESCE(v_cust.wallet_balance, 0);
+    v_new_lifetime := CASE
+        WHEN p_points_delta > 0 THEN COALESCE(v_cust.lifetime_xp, 0) + p_points_delta
+        ELSE COALESCE(v_cust.lifetime_xp, 0)
+    END;
+
+    -- 3. Update Customer Balance Atomically
+    UPDATE public.store_customers
+    SET wallet_balance = v_new_balance,
+        lifetime_xp = v_new_lifetime,
+        last_visit_date = v_now,
+        updated_at = v_now
+    WHERE id = v_cust.id
+    RETURNING * INTO v_cust;
+
+    -- 4. Insert Mandatory Audit Log Entry Atomically
+    IF v_staff_id_str IS NOT NULL AND v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        v_staff_uuid := v_staff_id_str::uuid;
+    END IF;
+
+    INSERT INTO public.audit_logs (
+        store_id,
+        customer_id,
+        customer_phone,
+        customer_name,
+        points_changed,
+        purchase_amount,
+        staff_id,
+        action,
+        event_type,
+        entry_method,
+        metadata,
+        created_at
+    ) VALUES (
+        p_store_id,
+        v_cust.id,
+        v_cust.phone,
+        v_cust.name,
+        v_actual_delta,
+        0,
+        v_staff_uuid,
+        'ADJUSTMENT',
+        'MANUAL_POINTS_ADJUSTMENT',
+        'ADMIN_CONSOLE',
+        jsonb_build_object(
+            'reason', BTRIM(p_reason),
+            'requested_delta', p_points_delta,
+            'applied_delta', v_actual_delta,
+            'cashier_name', COALESCE(NULLIF(BTRIM(p_staff_name), ''), 'مدير المتجر'),
+            'customer_name', v_cust.name
+        ),
+        v_now
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'customer_id', v_cust.id,
+        'phone', v_cust.phone,
+        'name', v_cust.name,
+        'customer', jsonb_build_object(
+            'id', v_cust.id,
+            'store_id', v_cust.store_id,
+            'phone', v_cust.phone,
+            'name', v_cust.name,
+            'wallet_balance', v_cust.wallet_balance,
+            'lifetime_xp', v_cust.lifetime_xp,
+            'special_date', v_cust.special_date,
+            'special_date_type', v_cust.special_date_type,
+            'last_visit_date', v_cust.last_visit_date,
+            'created_at', v_cust.created_at
+        ),
+        'new_balance', v_new_balance,
+        'lifetime_xp', v_new_lifetime
+    );
+END;
+$function$;
+
+
+-- 3.8 Purchase Coupon Secure (Atomic Points Deduction, Quota & Tier Check, Coupon Issuance & Audit Log)
+CREATE OR REPLACE FUNCTION public.purchase_coupon_secure(
+    p_store_id uuid,
+    p_customer_id uuid,
+    p_privilege_id uuid,
+    p_coupon_code text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_cust public.store_customers%ROWTYPE;
+    v_priv public.privileges%ROWTYPE;
+    v_req_tier public.tiers%ROWTYPE;
+    v_cost INT;
+    v_new_balance INT;
+    v_new_count INT;
+    v_coupon_id UUID;
+    v_final_code TEXT;
+    v_owned INT;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    PERFORM public.assert_platform_active();
+
+    -- 1. Lock Customer Row
+    SELECT * INTO v_cust
+    FROM public.store_customers
+    WHERE id = p_customer_id
+      AND store_id = p_store_id
+    FOR UPDATE;
+
+    IF v_cust.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'CUSTOMER_NOT_FOUND', 'message', 'العميل غير موجود');
+    END IF;
+
+    -- 2. Lock Privilege Row
+    SELECT * INTO v_priv
+    FROM public.privileges
+    WHERE id = p_privilege_id
+      AND store_id = p_store_id
+    FOR UPDATE;
+
+    IF v_priv.id IS NULL OR v_priv.is_active IS FALSE THEN
+        RETURN jsonb_build_object('success', false, 'error', 'REWARD_UNAVAILABLE', 'message', 'عذراً، هذا الامتياز غير متاح حالياً');
+    END IF;
+
+    -- 3. Check Total Stock Quota
+    IF v_priv.quantity_limit IS NOT NULL AND v_priv.quantity_limit > 0
+       AND COALESCE(v_priv.redeemed_count, 0) >= v_priv.quantity_limit THEN
+        RETURN jsonb_build_object('success', false, 'error', 'SOLD_OUT', 'message', 'نفدت الكمية المتاحة من هذه المكافأة');
+    END IF;
+
+    -- 4. Check Per-Customer Quota
+    IF v_priv.per_customer_limit IS NOT NULL AND v_priv.per_customer_limit > 0 THEN
+        SELECT count(*) INTO v_owned
+        FROM public.customer_coupons
+        WHERE store_id = p_store_id
+          AND customer_id = p_customer_id
+          AND privilege_id = p_privilege_id;
+
+        IF v_owned >= v_priv.per_customer_limit THEN
+            RETURN jsonb_build_object('success', false, 'error', 'LIMIT_REACHED', 'message', 'وصلت للحد الأقصى المسموح به لهذه المكافأة');
+        END IF;
+    END IF;
+
+    -- 5. Check Required Tier (if configured on privilege)
+    IF v_priv.required_tier_id IS NOT NULL THEN
+        SELECT * INTO v_req_tier
+        FROM public.tiers
+        WHERE id = v_priv.required_tier_id
+          AND store_id = p_store_id;
+
+        IF v_req_tier.id IS NOT NULL AND COALESCE(v_cust.lifetime_xp, 0) < COALESCE(v_req_tier.required_xp, 0) THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'error', 'TIER_REQUIRED',
+                'message', 'عذراً، يتطلب هذا العرض الوصول لرتبة "' || v_req_tier.tier_name || '" أولاً (' || v_req_tier.required_xp::text || ' XP)'
+            );
+        END IF;
+    END IF;
+
+    -- 6. Check Customer Points Balance
+    v_cost := GREATEST(0, COALESCE(v_priv.cost_points, 0));
+    IF COALESCE(v_cust.wallet_balance, 0) < v_cost THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INSUFFICIENT_POINTS', 'message', 'رصيد نقاطك غير كافٍ');
+    END IF;
+
+    v_new_balance := COALESCE(v_cust.wallet_balance, 0) - v_cost;
+
+    -- 7. Deduct Points from Customer
+    UPDATE public.store_customers
+    SET wallet_balance = v_new_balance,
+        updated_at = v_now
+    WHERE id = p_customer_id;
+
+    -- 8. Increment Privilege Redeemed Count & Auto-Hide if Sold Out
+    v_new_count := COALESCE(v_priv.redeemed_count, 0) + 1;
+    UPDATE public.privileges
+    SET redeemed_count = v_new_count,
+        is_hidden = CASE
+            WHEN quantity_limit IS NOT NULL AND quantity_limit > 0 AND v_new_count >= quantity_limit
+            THEN TRUE
+            ELSE is_hidden
+        END,
+        updated_at = v_now
+    WHERE id = p_privilege_id;
+
+    -- 9. Issue Active Coupon in customer_coupons
+    v_final_code := UPPER(COALESCE(
+        NULLIF(BTRIM(p_coupon_code), ''),
+        'CPN-' || floor(1000 + random() * 9000)::int::text || '-' || upper(substr(md5(random()::text || v_now::text), 1, 4))
+    ));
+
+    INSERT INTO public.customer_coupons (
+        store_id,
+        customer_id,
+        customer_phone,
+        customer_name,
+        privilege_id,
+        privilege_title,
+        privilege_image_url,
+        coupon_code,
+        cost_points,
+        status,
+        valid_start_time,
+        valid_end_time,
+        purchased_at
+    ) VALUES (
+        p_store_id,
+        p_customer_id,
+        v_cust.phone,
+        COALESCE(v_cust.name, 'عميل مميز'),
+        p_privilege_id,
+        v_priv.title,
+        v_priv.image_url,
+        v_final_code,
+        v_cost,
+        'ACTIVE',
+        COALESCE(NULLIF(BTRIM(v_priv.valid_start_time), ''), '00:00'),
+        COALESCE(NULLIF(BTRIM(v_priv.valid_end_time), ''), '23:59'),
+        v_now
+    )
+    RETURNING id INTO v_coupon_id;
+
+    -- 10. Record Mandatory Audit Log Entry Atomically (NO EXCEPTION SWALLOWING)
+    INSERT INTO public.audit_logs (
+        store_id,
+        customer_id,
+        customer_phone,
+        customer_name,
+        points_changed,
+        purchase_amount,
+        action,
+        event_type,
+        entry_method,
+        metadata,
+        created_at
+    ) VALUES (
+        p_store_id,
+        p_customer_id,
+        v_cust.phone,
+        COALESCE(v_cust.name, 'عميل مميز'),
+        -v_cost,
+        0,
+        'REDEEM_REWARD',
+        'PURCHASE_COUPON',
+        'CUSTOMER_WALLET',
+        jsonb_build_object(
+            'coupon_id', v_coupon_id,
+            'coupon_code', v_final_code,
+            'privilege_id', p_privilege_id,
+            'privilege_title', v_priv.title,
+            'cost_points', v_cost
+        ),
+        v_now
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'coupon_id', v_coupon_id,
+        'coupon_code', v_final_code,
+        'new_balance', v_new_balance,
+        'redeemed_count', v_new_count,
+        'coupon', jsonb_build_object(
+            'id', v_coupon_id,
+            'coupon_code', v_final_code,
+            'customer_id', p_customer_id,
+            'customer_phone', v_cust.phone,
+            'customer_name', COALESCE(v_cust.name, 'عميل مميز'),
+            'store_id', p_store_id,
+            'privilege_id', p_privilege_id,
+            'privilege_title', v_priv.title,
+            'privilege_image_url', v_priv.image_url,
+            'cost_points', v_cost,
+            'status', 'ACTIVE',
+            'valid_start_time', COALESCE(NULLIF(BTRIM(v_priv.valid_start_time), ''), '00:00'),
+            'valid_end_time', COALESCE(NULLIF(BTRIM(v_priv.valid_end_time), ''), '23:59'),
+            'purchased_at', v_now
+        )
+    );
+END;
+$function$;
+
+
+-- 3.9 Redeem Coupon Secure (Atomic Single-Use Burn, Store Isolation, Staff Guard & Safe UUID Cast)
+CREATE OR REPLACE FUNCTION public.redeem_coupon_secure(
+    p_store_id uuid,
+    p_coupon_code text,
+    p_staff_token text DEFAULT NULL::text,
+    p_staff_id text DEFAULT NULL::text,
+    p_staff_name text DEFAULT NULL::text,
+    p_branch_id uuid DEFAULT NULL::uuid,
+    p_branch_name text DEFAULT NULL::text,
+    p_entry_method text DEFAULT 'qr_scan'::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_coupon RECORD;
+    v_staff_store_id UUID := NULL;
+    v_staff_id_str TEXT := NULL;
+    v_has_access BOOLEAN := FALSE;
+    v_staff_uuid UUID := NULL;
+    v_clean_code TEXT;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    PERFORM public.assert_platform_active();
+
+    -- 1. Strict Cashier / Store Admin / Super Admin Session Guard
+    IF public.is_super_admin()
+       OR auth.role() = 'service_role'
+       OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+       OR public.has_store_access(p_store_id) THEN
+        v_has_access := TRUE;
+    ELSIF p_staff_token IS NOT NULL AND BTRIM(p_staff_token) <> '' THEN
+        SELECT s.store_id, s.staff_id INTO v_staff_store_id, v_staff_id_str
+        FROM public.staff_sessions s
+        WHERE s.token_hash = encode(sha256(convert_to(BTRIM(p_staff_token), 'UTF8')), 'hex')
+          AND s.expires_at > v_now
+        LIMIT 1;
+
+        IF v_staff_store_id = p_store_id THEN
+            v_has_access := TRUE;
+            UPDATE public.staff_sessions
+            SET expires_at = v_now + interval '24 hours'
+            WHERE token_hash = encode(sha256(convert_to(BTRIM(p_staff_token), 'UTF8')), 'hex');
+        END IF;
+    ELSIF public.has_valid_staff_access(p_store_id, FALSE) THEN
+        v_has_access := TRUE;
+    END IF;
+
+    IF NOT v_has_access THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'UNAUTHORIZED_STAFF',
+            'message', 'غير مصرح: جلسة الكاشير غير صالحة أو منتهية'
+        );
+    END IF;
+
+    v_clean_code := UPPER(BTRIM(COALESCE(p_coupon_code, '')));
+    IF v_clean_code = '' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_COUPON', 'message', 'رمز الكوبون فارغ');
+    END IF;
+
+    -- 2. Locate and Lock Coupon Row (Check by coupon_code or UUID id)
+    SELECT * INTO v_coupon
+    FROM public.customer_coupons
+    WHERE (UPPER(BTRIM(coupon_code)) = v_clean_code OR id::text = lower(v_clean_code))
+    FOR UPDATE
+    LIMIT 1;
+
+    IF v_coupon.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'COUPON_NOT_FOUND', 'message', 'الكوبون غير صالح أو غير مسجل في النظام ❌');
+    END IF;
+
+    -- 3. Store Isolation Check
+    IF v_coupon.store_id <> p_store_id THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'WRONG_STORE',
+            'customer_phone', v_coupon.customer_phone,
+            'coupon_store_id', v_coupon.store_id,
+            'message', 'عفواً، هذا الكوبون خاص بمتجر آخر ولا يمكن صرفه هنا ❌'
+        );
+    END IF;
+
+    -- 4. Single-Use Status Check
+    IF v_coupon.status <> 'ACTIVE' THEN
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', 'ALREADY_REDEEMED',
+            'message', 'هذا الكوبون محروق وتم استخدامه مسبقاً ❌'
+        );
+    END IF;
+
+    -- 5. Resolve Safe UUID for redeemed_by_staff_id (Never pass non-UUID string 'cashier' into UUID column!)
+    IF p_staff_id IS NOT NULL AND p_staff_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        v_staff_uuid := p_staff_id::uuid;
+    ELSIF v_staff_id_str IS NOT NULL AND v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        v_staff_uuid := v_staff_id_str::uuid;
+    END IF;
+
+    -- 6. Burn Coupon Atomically
+    UPDATE public.customer_coupons
+    SET status = 'REDEEMED',
+        redeemed_at = v_now,
+        used_at = v_now,
+        redeemed_by_staff_id = v_staff_uuid,
+        redeemed_by_staff_name = COALESCE(NULLIF(BTRIM(p_staff_name), ''), 'كاشير المتجر'),
+        cashier_name = COALESCE(NULLIF(BTRIM(p_staff_name), ''), 'كاشير المتجر'),
+        branch_id = COALESCE(p_branch_id, branch_id)
+    WHERE id = v_coupon.id;
+
+    -- 7. Record Mandatory Audit Log Entry Atomically (Valid action 'REDEEM_REWARD', NO EXCEPTION SWALLOWING)
+    INSERT INTO public.audit_logs (
+        store_id,
+        customer_id,
+        customer_phone,
+        customer_name,
+        points_changed,
+        purchase_amount,
+        staff_id,
+        branch_id,
+        action,
+        event_type,
+        entry_method,
+        metadata,
+        created_at
+    ) VALUES (
+        p_store_id,
+        v_coupon.customer_id,
+        v_coupon.customer_phone,
+        v_coupon.customer_name,
+        0,
+        0,
+        v_staff_uuid,
+        p_branch_id,
+        'REDEEM_REWARD',
+        'REDEEM_COUPON',
+        COALESCE(NULLIF(BTRIM(p_entry_method), ''), 'qr_scan'),
+        jsonb_build_object(
+            'coupon_id', v_coupon.id,
+            'coupon_code', v_coupon.coupon_code,
+            'privilege_id', v_coupon.privilege_id,
+            'privilege_title', v_coupon.privilege_title,
+            'cost_points', v_coupon.cost_points,
+            'branch_id', p_branch_id,
+            'branch_name', p_branch_name,
+            'cashier_name', COALESCE(NULLIF(BTRIM(p_staff_name), ''), 'كاشير المتجر'),
+            'redeemed_at', v_now
+        ),
+        v_now
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'coupon_id', v_coupon.id,
+        'coupon_code', v_coupon.coupon_code,
+        'privilege_title', v_coupon.privilege_title,
+        'customer_phone', v_coupon.customer_phone,
+        'customer_name', v_coupon.customer_name,
+        'cost_points', v_coupon.cost_points,
+        'redeemed_at', v_now,
+        'coupon', jsonb_build_object(
+            'id', v_coupon.id,
+            'coupon_code', v_coupon.coupon_code,
+            'customer_id', v_coupon.customer_id,
+            'customer_phone', v_coupon.customer_phone,
+            'customer_name', v_coupon.customer_name,
+            'store_id', v_coupon.store_id,
+            'privilege_id', v_coupon.privilege_id,
+            'privilege_title', v_coupon.privilege_title,
+            'cost_points', COALESCE(v_coupon.cost_points, 0),
+            'status', 'REDEEMED',
+            'used_at', v_now,
+            'purchased_at', v_coupon.purchased_at,
+            'cashier_name', COALESCE(NULLIF(BTRIM(p_staff_name), ''), 'كاشير المتجر')
+        )
+    );
+END;
+$function$;
+
+
+-- ==============================================================================
+-- SECTION 4: RLS POLICIES & FUNCTION GRANTS HARDENING (REPLACE BEFORE DROP)
+-- ==============================================================================
+
+-- 4.1 store_customers: Ensure scoped policies exist before dropping wide-open policies
+DROP POLICY IF EXISTS "store_customers_scoped_select" ON public.store_customers;
+CREATE POLICY "store_customers_scoped_select"
+  ON public.store_customers
+  FOR SELECT
+  TO anon, authenticated
+  USING (
+    public.has_valid_staff_access(store_id, false)
+    OR public.has_store_access(store_id)
+    OR public.is_super_admin()
+  );
+
+DROP POLICY IF EXISTS "store_customers_scoped_update" ON public.store_customers;
+CREATE POLICY "store_customers_scoped_update"
+  ON public.store_customers
+  FOR UPDATE
+  TO anon, authenticated
+  USING (
+    public.has_valid_staff_access(store_id, true)
+    OR public.is_store_admin(store_id)
+    OR public.is_super_admin()
+  )
+  WITH CHECK (
+    public.has_valid_staff_access(store_id, true)
+    OR public.is_store_admin(store_id)
+    OR public.is_super_admin()
+  );
+
+-- Drop wide-open anon INSERT / UPDATE policies on store_customers (All customer registrations go through register_or_get_customer_wallet RPC)
+DROP POLICY IF EXISTS "store_customers_insert_policy" ON public.store_customers;
+DROP POLICY IF EXISTS "store_customers_update_staff_or_self" ON public.store_customers;
+DROP POLICY IF EXISTS "store_customers_select_staff_only" ON public.store_customers;
+
+
+-- 4.2 customer_coupons: Ensure scoped policies exist before dropping wide-open policies
+DROP POLICY IF EXISTS "customer_coupons_scoped_select" ON public.customer_coupons;
+CREATE POLICY "customer_coupons_scoped_select"
+  ON public.customer_coupons
+  FOR SELECT
+  TO anon, authenticated
+  USING (
+    public.has_valid_staff_access(store_id, false)
+    OR public.has_store_access(store_id)
+    OR public.is_super_admin()
+  );
+
+DROP POLICY IF EXISTS "customer_coupons_scoped_update" ON public.customer_coupons;
+CREATE POLICY "customer_coupons_scoped_update"
+  ON public.customer_coupons
+  FOR UPDATE
+  TO anon, authenticated
+  USING (
+    public.has_valid_staff_access(store_id, false)
+    OR public.has_store_access(store_id)
+    OR public.is_super_admin()
+  )
+  WITH CHECK (
+    public.has_valid_staff_access(store_id, false)
+    OR public.has_store_access(store_id)
+    OR public.is_super_admin()
+  );
+
+-- Drop wide-open anon INSERT policy on customer_coupons (All coupon purchases go through purchase_coupon_secure RPC)
+DROP POLICY IF EXISTS "customer_coupons_insert_policy" ON public.customer_coupons;
+DROP POLICY IF EXISTS "customer_coupons_select_staff_only" ON public.customer_coupons;
+DROP POLICY IF EXISTS "customer_coupons_update_staff_token" ON public.customer_coupons;
+
+
+-- 4.3 audit_logs: Ensure scoped policies exist before dropping wide-open policies
+DROP POLICY IF EXISTS "audit_logs_scoped_select" ON public.audit_logs;
+CREATE POLICY "audit_logs_scoped_select"
+  ON public.audit_logs
+  FOR SELECT
+  TO anon, authenticated
+  USING (
+    public.has_valid_staff_access(store_id, false)
+    OR public.has_store_access(store_id)
+    OR public.is_super_admin()
+  );
+
+DROP POLICY IF EXISTS "audit_logs_scoped_insert" ON public.audit_logs;
+CREATE POLICY "audit_logs_scoped_insert"
+  ON public.audit_logs
+  FOR INSERT
+  TO anon, authenticated
+  WITH CHECK (
+    public.has_valid_staff_access(store_id, false)
+    OR public.has_store_access(store_id)
+    OR public.is_super_admin()
+  );
+
+DROP POLICY IF EXISTS "audit_logs_insert_policy" ON public.audit_logs;
+DROP POLICY IF EXISTS "audit_logs_select_policy" ON public.audit_logs;
+
+
+-- 4.4 Explicit Function Grants
+GRANT EXECUTE ON FUNCTION public.normalize_saudi_phone(text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.normalize_phone(text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.register_or_get_customer_wallet(uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.register_customer_secure(uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_customer_wallet_public(uuid, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.update_customer_profile_public(uuid, text, text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.purchase_coupon_secure(uuid, uuid, uuid, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.add_customer_points_secure(uuid, text, integer, text, text, numeric, text, text, uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.redeem_customer_points_secure(uuid, text, integer, text, text, text, text, text, uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.adjust_customer_points_secure(uuid, uuid, integer, text, text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.redeem_coupon_secure(uuid, text, text, text, text, uuid, text, text, text) TO anon, authenticated, service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261029_stage4_orders_pos_shifts_refunds_bookings.sql <<<
+-- ==============================================================================
+
+-- =============================================================================
+-- المرحلة 4: تأمين الطلبات (store_orders)، الورديات والحركات النقدية (pos_shifts & pos_cash_movements)،
+-- المرتجعات وسحب نقاط الولاء الذري (pos_refunds & Points Clawback)، والحجوزات ومنع التعارض (service_bookings)
+-- مع توحيد صيغة أرقام الجوال (normalize_saudi_phone) وحساب الأسعار سيرفرياً من catalog_items
+-- قاعدة البيانات المستهدفة: سديم الأثر (kspfiijorengpckdlymx)
+-- =============================================================================
+
+BEGIN;
+
+-- =============================================================================
+-- القسم 1: مواءمة الجداول والأعمدة + تنظيف البيانات المسبقة + الفهارس الفريدة
+-- =============================================================================
+
+-- 1.0 حماية أعمدة audit_logs و store_customers حتى لا تفشل جمل INSERT داخل الدوال
+ALTER TABLE public.audit_logs
+  ADD COLUMN IF NOT EXISTS invoice_number TEXT,
+  ADD COLUMN IF NOT EXISTS event_type TEXT;
+
+ALTER TABLE public.store_customers
+  ADD COLUMN IF NOT EXISTS tier TEXT DEFAULT 'bronze',
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+
+-- 1.1 مواءمة أعمدة جدول الطلبات (store_orders) وإزالة قيود NOT NULL الموروثة المتعارضة
+ALTER TABLE public.store_orders
+  ADD COLUMN IF NOT EXISTS shift_id UUID REFERENCES public.pos_shifts(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS subtotal NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS total_amount NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS total_price NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS delivery_fee NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS loyalty_points_earned INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS points_awarded BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS refund_status TEXT DEFAULT 'none',
+  ADD COLUMN IF NOT EXISTS refunded_amount NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS refund_history JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'unpaid',
+  ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT 'cash',
+  ADD COLUMN IF NOT EXISTS order_source TEXT DEFAULT 'customer_app',
+  ADD COLUMN IF NOT EXISTS order_type TEXT DEFAULT 'dine_in',
+  ADD COLUMN IF NOT EXISTS fulfillment_type TEXT DEFAULT 'dine_in',
+  ADD COLUMN IF NOT EXISTS fulfillment_details JSONB DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+ALTER TABLE public.store_orders ALTER COLUMN total_amount SET DEFAULT 0.00;
+ALTER TABLE public.store_orders ALTER COLUMN total_amount DROP NOT NULL;
+ALTER TABLE public.store_orders ALTER COLUMN status SET DEFAULT 'pending';
+
+-- 1.2 مواءمة أعمدة جدول الورديات (pos_shifts) والحركات النقدية (pos_cash_movements)
+ALTER TABLE public.pos_shifts
+  ADD COLUMN IF NOT EXISTS branch_name TEXT,
+  ADD COLUMN IF NOT EXISTS staff_name TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS staff_phone TEXT,
+  ADD COLUMN IF NOT EXISTS actual_cash NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS cash_difference NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS total_sales NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS cash_sales NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS card_sales NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS split_sales NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS tax_amount NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS orders_count INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS total_refunds NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS cash_refunds NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS card_refunds NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS refunds_count INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS total_cash_in NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS total_cash_out NUMERIC(12,2) DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS cash_movements_count INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS notes TEXT,
+  ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+ALTER TABLE public.pos_shifts ALTER COLUMN status SET DEFAULT 'open';
+
+ALTER TABLE public.pos_cash_movements
+  ADD COLUMN IF NOT EXISTS movement_type TEXT DEFAULT 'cash_in',
+  ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'cash_in',
+  ADD COLUMN IF NOT EXISTS staff_id TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS staff_name TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS branch_name TEXT,
+  ADD COLUMN IF NOT EXISTS category TEXT,
+  ADD COLUMN IF NOT EXISTS recipient_name TEXT,
+  ADD COLUMN IF NOT EXISTS invoice_ref TEXT,
+  ADD COLUMN IF NOT EXISTS notes TEXT;
+
+ALTER TABLE public.pos_cash_movements ALTER COLUMN movement_type SET DEFAULT 'cash_in';
+ALTER TABLE public.pos_cash_movements ALTER COLUMN movement_type DROP NOT NULL;
+
+-- 1.3 مواءمة أعمدة جدول الحجوزات (service_bookings)
+ALTER TABLE public.service_bookings
+  ADD COLUMN IF NOT EXISTS points_awarded BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'unpaid',
+  ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT 'cash',
+  ADD COLUMN IF NOT EXISTS loyalty_points_earned INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS points_to_earn INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS booking_source TEXT DEFAULT 'customer_app',
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+ALTER TABLE public.service_bookings ALTER COLUMN points_to_earn SET DEFAULT 0;
+ALTER TABLE public.service_bookings ALTER COLUMN points_to_earn DROP NOT NULL;
+
+-- 1.4 تنظيف وتوحيد أرقام الجوال الموجودة في جداول المرحلة 4
+UPDATE public.store_orders
+SET
+  customer_phone = COALESCE(public.normalize_saudi_phone(customer_phone), BTRIM(customer_phone)),
+  total_price = COALESCE(NULLIF(total_price, 0), total_amount, 0),
+  total_amount = COALESCE(NULLIF(total_amount, 0), total_price, 0),
+  status = lower(COALESCE(status, 'pending'))
+WHERE customer_phone IS NOT NULL OR status <> lower(COALESCE(status, 'pending'));
+
+UPDATE public.pos_refunds
+SET customer_phone = COALESCE(public.normalize_saudi_phone(customer_phone), BTRIM(customer_phone))
+WHERE customer_phone IS NOT NULL AND BTRIM(customer_phone) <> '';
+
+UPDATE public.service_bookings
+SET customer_phone = COALESCE(public.normalize_saudi_phone(customer_phone), BTRIM(customer_phone))
+WHERE customer_phone IS NOT NULL AND BTRIM(customer_phone) <> '';
+
+-- 1.5 تنظيف الورديات المفتوحة المكررة قبل إنشاء القيد الفريد (Unique Partial Index)
+UPDATE public.pos_shifts
+SET status = lower(BTRIM(COALESCE(status, 'open')))
+WHERE status IS NULL OR status <> lower(BTRIM(status));
+
+WITH ranked_open_shifts AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY store_id, COALESCE(staff_id::text, NULLIF(lower(BTRIM(staff_name)), ''), COALESCE(branch_id::text, 'default'))
+      ORDER BY opened_at DESC NULLS LAST, created_at DESC NULLS LAST
+    ) AS rn
+  FROM public.pos_shifts
+  WHERE status = 'open'
+)
+UPDATE public.pos_shifts s
+SET
+  status = 'closed',
+  closed_at = COALESCE(s.closed_at, now()),
+  notes = COALESCE(s.notes || ' | ', '') || 'إغلاق تلقائي لمنع تعدد الورديات المفتوحة لنفس الكاشير',
+  updated_at = now()
+FROM ranked_open_shifts r
+WHERE s.id = r.id AND r.rn > 1;
+
+-- قيد فريد يمنع فتح أكثر من وردية نشطة (open) لنفس الكاشير في نفس المتجر في نفس الوقت
+DROP INDEX IF EXISTS public.idx_pos_shifts_one_open_per_staff;
+CREATE UNIQUE INDEX idx_pos_shifts_one_open_per_staff
+ON public.pos_shifts (
+  store_id,
+  COALESCE(staff_id::text, NULLIF(lower(BTRIM(staff_name)), ''), COALESCE(branch_id::text, 'default'))
+)
+WHERE status = 'open';
+
+
+-- =============================================================================
+-- القسم 2: حذف النسخ القديمة من الدوال لمنع الـ Function Overloading
+-- =============================================================================
+DROP FUNCTION IF EXISTS public.create_store_order_secure(uuid, jsonb, text, text, text, text, text, uuid, text, text, text, jsonb, numeric, text, text, uuid, text, text);
+DROP FUNCTION IF EXISTS public.create_store_order_secure(uuid, jsonb, text, text, text, text, text, uuid, text, text, text, jsonb, numeric, text, text, uuid, text, text, text);
+DROP FUNCTION IF EXISTS public.update_store_order_status_secure(uuid, uuid, text, text, text, text, text, text, text, text, uuid, text, text);
+DROP FUNCTION IF EXISTS public.get_customer_orders_secure(uuid, text);
+DROP FUNCTION IF EXISTS public.open_pos_shift_secure(uuid, numeric, uuid, text, uuid, text, text, text, text);
+DROP FUNCTION IF EXISTS public.record_pos_cash_movement_secure(uuid, uuid, text, numeric, text, text, text, text, text, uuid, text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.close_pos_shift_secure(uuid, uuid, numeric, text, text, text);
+DROP FUNCTION IF EXISTS public.process_pos_refund_atomic(uuid, uuid, jsonb, text, text, text, text, uuid, uuid, text, text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.book_service_safely(uuid, uuid, text, text, text, text, numeric, integer, text, text, text, text, text, integer, jsonb, uuid, text, text);
+DROP FUNCTION IF EXISTS public.book_service_safely(uuid, uuid, text, text, text, text, numeric, integer, text, text, text, text, text, integer, jsonb, uuid, text, text, text, text);
+DROP FUNCTION IF EXISTS public.update_booking_status_secure(text, text, text);
+DROP FUNCTION IF EXISTS public.update_booking_status_secure(text, text, text, uuid, text);
+DROP FUNCTION IF EXISTS public.get_customer_bookings(uuid, text);
+
+
+-- =============================================================================
+-- القسم 3: الدوال الذرية المؤمنة للمرحلة 4 (SECURITY DEFINER Atomic RPCs)
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- 3.1 دالة إنشاء الطلب الذرية المؤمنة (create_store_order_secure)
+-- تتحقق من أسعار الأصناف والإضافات من catalog_items داخل السيرفر، وتوحد رقم الجوال،
+-- وتتحقق من صلاحية الكاشير إذا كان الطلب مباشراً من نقاط البيع (POS)، وتمنح نقاط الولاء ذرياً عند الاكتمال.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.create_store_order_secure(
+  p_store_id UUID,
+  p_items JSONB,
+  p_customer_name TEXT DEFAULT 'عميل المتجر',
+  p_customer_phone TEXT DEFAULT '',
+  p_fulfillment_type TEXT DEFAULT 'dine_in',
+  p_payment_method TEXT DEFAULT 'cash',
+  p_order_source TEXT DEFAULT 'customer_app',
+  p_branch_id UUID DEFAULT NULL,
+  p_table_number TEXT DEFAULT NULL,
+  p_notes TEXT DEFAULT '',
+  p_delivery_address TEXT DEFAULT NULL,
+  p_fulfillment_details JSONB DEFAULT '{}'::jsonb,
+  p_delivery_fee NUMERIC DEFAULT 0,
+  p_status TEXT DEFAULT NULL,
+  p_payment_status TEXT DEFAULT NULL,
+  p_shift_id UUID DEFAULT NULL,
+  p_staff_token TEXT DEFAULT NULL,
+  p_master_token TEXT DEFAULT NULL,
+  p_order_number TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_store RECORD;
+  v_norm_phone TEXT := NULL;
+  v_is_staff_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_staff_name TEXT := NULL;
+  v_token TEXT := NULL;
+  v_is_pos_order BOOLEAN := FALSE;
+  v_final_source TEXT;
+  v_final_status TEXT;
+  v_final_payment_status TEXT;
+  v_final_payment_method TEXT;
+  v_item JSONB;
+  v_item_id TEXT;
+  v_item_qty NUMERIC;
+  v_cat_item RECORD;
+  v_unit_price NUMERIC;
+  v_mod JSONB;
+  v_mod_delta NUMERIC;
+  v_db_mod_delta NUMERIC;
+  v_line_total NUMERIC;
+  v_verified_items JSONB := '[]'::jsonb;
+  v_server_subtotal NUMERIC(12,2) := 0.00;
+  v_delivery_fee NUMERIC(12,2) := 0.00;
+  v_final_total NUMERIC(12,2) := 0.00;
+  v_tax_amount NUMERIC(12,2) := 0.00;
+  v_points_earned INTEGER := 0;
+  v_points_awarded BOOLEAN := FALSE;
+  v_customer RECORD;
+  v_customer_id UUID := NULL;
+  v_order_number TEXT;
+  v_active_shift_id UUID := p_shift_id;
+  v_inserted_order RECORD;
+BEGIN
+  IF p_store_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_STORE_ID', 'message', 'معرف المتجر مطلوب.');
+  END IF;
+
+  SELECT * INTO v_store FROM public.stores WHERE id = p_store_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'STORE_NOT_FOUND', 'message', 'المتجر غير موجود.');
+  END IF;
+
+  IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'EMPTY_ORDER_ITEMS', 'message', 'لا يمكن إنشاء طلب فارغ بدون أصناف.');
+  END IF;
+
+  -- 1. توحيد رقم جوال العميل عبر normalize_saudi_phone
+  IF p_customer_phone IS NOT NULL AND BTRIM(p_customer_phone) <> '' THEN
+    v_norm_phone := public.normalize_saudi_phone(p_customer_phone);
+    IF v_norm_phone IS NULL THEN
+      RETURN jsonb_build_object(
+        'success', false,
+        'error', 'INVALID_PHONE',
+        'message', 'رقم الجوال غير صحيح. يرجى إدخال رقم جوال سعودي صحيح (مثال: 0551122334).'
+      );
+    END IF;
+  END IF;
+
+  -- 2. التحقق من هوية الكاشير/الموظف أو المشرف
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) THEN
+    v_is_staff_auth := TRUE;
+    v_staff_name := 'الإدارة العليا';
+  ELSIF public.has_store_access(p_store_id) THEN
+    v_is_staff_auth := TRUE;
+    v_staff_name := 'مدير المتجر';
+  ELSE
+    v_token := COALESCE(
+      NULLIF(BTRIM(p_staff_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_token IS NOT NULL AND v_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_token, false) s
+      LIMIT 1;
+
+      IF v_staff_store_id = p_store_id THEN
+        v_is_staff_auth := TRUE;
+        SELECT name INTO v_staff_name FROM public.store_staff WHERE id::text = v_staff_id_str LIMIT 1;
+      END IF;
+    END IF;
+  END IF;
+
+  -- 3. تحديد مصدر الطلب وحالته ومنع أي تلاعب من المتصفح
+  v_is_pos_order := (
+    lower(COALESCE(p_order_source, '')) = 'pos' OR
+    lower(COALESCE(p_status, '')) IN ('accepted', 'preparing', 'ready', 'completed') OR
+    lower(COALESCE(p_payment_status, '')) = 'paid'
+  );
+
+  IF v_is_pos_order AND NOT v_is_staff_auth THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'UNAUTHORIZED_STAFF',
+      'message', 'غير مصرح: لا يمكن إنشاء طلب مباشر مدفوع أو مكتمل بدون جلسة كاشير صالحة.'
+    );
+  END IF;
+
+  IF v_is_pos_order AND v_is_staff_auth THEN
+    v_final_source := COALESCE(NULLIF(BTRIM(p_order_source), ''), 'pos');
+    v_final_status := lower(COALESCE(NULLIF(BTRIM(p_status), ''), 'completed'));
+    v_final_payment_status := lower(COALESCE(NULLIF(BTRIM(p_payment_status), ''), 'paid'));
+    v_final_payment_method := lower(COALESCE(NULLIF(BTRIM(p_payment_method), ''), 'cash'));
+  ELSE
+    -- طلب عميل عام من المتصفح: إجبار الحالة على pending و unpaid
+    IF v_norm_phone IS NULL THEN
+      RETURN jsonb_build_object(
+        'success', false,
+        'error', 'PHONE_REQUIRED',
+        'message', 'رقم الجوال السعودي الصحيح مطلوب لإتمام الطلب.'
+      );
+    END IF;
+    v_final_source := 'customer_app';
+    v_final_status := 'pending';
+    v_final_payment_status := 'unpaid';
+    v_final_payment_method := lower(COALESCE(NULLIF(BTRIM(p_payment_method), ''), 'card'));
+  END IF;
+
+  -- 4. التحقق السيرفري الصارم من أسعار الأصناف والإضافات من جدول catalog_items
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    v_item_id := COALESCE(
+      v_item->>'id',
+      v_item->>'item_id',
+      v_item->'catalog_item'->>'id',
+      ''
+    );
+    v_item_qty := GREATEST(1, COALESCE((v_item->>'quantity')::numeric, 1));
+
+    SELECT * INTO v_cat_item
+    FROM public.catalog_items
+    WHERE store_id = p_store_id
+      AND (id = v_item_id OR (v_item_id = '' AND name = COALESCE(v_item->>'name', v_item->>'item_name')))
+    LIMIT 1;
+
+    IF FOUND THEN
+      IF COALESCE(v_cat_item.is_active, true) = FALSE OR COALESCE(v_cat_item.is_available, true) = FALSE THEN
+        IF NOT v_is_staff_auth THEN
+          RETURN jsonb_build_object(
+            'success', false,
+            'error', 'ITEM_UNAVAILABLE',
+            'message', 'الصنف (' || v_cat_item.name || ') غير متاح حالياً.'
+          );
+        END IF;
+      END IF;
+      v_unit_price := COALESCE(v_cat_item.price, 0);
+
+      -- حساب الإضافات (selected_modifiers) من كتالوج السيرفر إن وجدت
+      v_mod_delta := 0;
+      IF v_item ? 'selected_modifiers' AND jsonb_typeof(v_item->'selected_modifiers') = 'array' THEN
+        FOR v_mod IN SELECT * FROM jsonb_array_elements(v_item->'selected_modifiers')
+        LOOP
+          v_db_mod_delta := NULL;
+          IF v_cat_item.modifier_groups IS NOT NULL AND jsonb_typeof(v_cat_item.modifier_groups) = 'array' THEN
+            SELECT COALESCE((opt->>'price_delta')::numeric, (opt->>'price')::numeric, 0)
+            INTO v_db_mod_delta
+            FROM jsonb_array_elements(v_cat_item.modifier_groups) grp,
+                 jsonb_array_elements(COALESCE(grp->'options', '[]'::jsonb)) opt
+            WHERE (opt->>'id' = COALESCE(v_mod->>'option_id', v_mod->>'id'))
+               OR (opt->>'name' = COALESCE(v_mod->>'option_name', v_mod->>'name'))
+            LIMIT 1;
+          END IF;
+          v_mod_delta := v_mod_delta + GREATEST(0, COALESCE(v_db_mod_delta, (v_mod->>'price_delta')::numeric, (v_mod->>'price')::numeric, 0));
+        END LOOP;
+      END IF;
+
+      v_unit_price := v_unit_price + v_mod_delta;
+      v_line_total := ROUND(v_unit_price * v_item_qty, 2);
+
+      v_verified_items := v_verified_items || jsonb_build_array(
+        v_item || jsonb_build_object(
+          'id', v_cat_item.id,
+          'name', v_cat_item.name,
+          'quantity', v_item_qty,
+          'price', v_unit_price,
+          'unit_price', v_unit_price,
+          'total_price', v_line_total,
+          'server_verified', true
+        )
+      );
+      v_server_subtotal := v_server_subtotal + v_line_total;
+    ELSE
+      -- إذا لم يكن الصنف في catalog_items: يُسمح به فقط للكاشير المصرح (مثل صنف سريع)، ويُرفض لطلبات المتصفح العامة
+      IF NOT v_is_staff_auth THEN
+        RETURN jsonb_build_object(
+          'success', false,
+          'error', 'INVALID_CATALOG_ITEM',
+          'message', 'أحد الأصناف المطلوبة غير مسجل في قائمة المتجر المعتمدة.'
+        );
+      END IF;
+      v_unit_price := GREATEST(0, COALESCE((v_item->>'unit_price')::numeric, (v_item->>'price')::numeric, 0));
+      v_line_total := ROUND(v_unit_price * v_item_qty, 2);
+      v_verified_items := v_verified_items || jsonb_build_array(
+        v_item || jsonb_build_object(
+          'quantity', v_item_qty,
+          'unit_price', v_unit_price,
+          'total_price', v_line_total,
+          'server_verified', false
+        )
+      );
+      v_server_subtotal := v_server_subtotal + v_line_total;
+    END IF;
+  END LOOP;
+
+  -- 5. حساب رسوم التوصيل والإجمالي النهائي والضريبة والنقاط سيرفرياً
+  IF lower(COALESCE(p_fulfillment_type, 'dine_in')) = 'delivery' THEN
+    v_delivery_fee := GREATEST(0, ROUND(COALESCE(p_delivery_fee, (p_fulfillment_details->>'delivery_fee')::numeric, 0), 2));
+  ELSE
+    v_delivery_fee := 0.00;
+  END IF;
+
+  v_final_total := ROUND(v_server_subtotal + v_delivery_fee, 2);
+  v_tax_amount := ROUND(v_final_total - (v_final_total / 1.15), 2);
+  v_points_earned := GREATEST(0, FLOOR(v_final_total * COALESCE(v_store.points_per_riyal, 1))::integer);
+
+  -- 6. ربط الطلب بالوردية المفتوحة للكاشير إن وجدت
+  IF v_active_shift_id IS NULL AND v_is_pos_order THEN
+    SELECT id INTO v_active_shift_id
+    FROM public.pos_shifts
+    WHERE store_id = p_store_id
+      AND status = 'open'
+      AND (p_branch_id IS NULL OR branch_id IS NULL OR branch_id = p_branch_id)
+    ORDER BY opened_at DESC
+    LIMIT 1;
+  END IF;
+
+  -- 7. ربط أو تسجيل العميل في store_customers إذا كان رقم الجوال موجوداً
+  IF v_norm_phone IS NOT NULL THEN
+    SELECT * INTO v_customer
+    FROM public.store_customers
+    WHERE store_id = p_store_id AND phone = v_norm_phone
+    FOR UPDATE;
+
+    IF FOUND THEN
+      v_customer_id := v_customer.id;
+    ELSE
+      INSERT INTO public.store_customers (
+        store_id, phone, name, wallet_balance, lifetime_xp, tier, is_active, last_visit_date
+      ) VALUES (
+        p_store_id,
+        v_norm_phone,
+        COALESCE(NULLIF(BTRIM(p_customer_name), ''), 'عميل المتجر'),
+        0, 0, 'bronze', true, now()
+      )
+      RETURNING * INTO v_customer;
+      v_customer_id := v_customer.id;
+    END IF;
+  END IF;
+
+  v_order_number := NULLIF(BTRIM(p_order_number), '');
+  IF v_order_number IS NULL OR v_order_number !~ '^[A-Za-z0-9_-]{4,32}$'
+     OR EXISTS (SELECT 1 FROM public.store_orders so WHERE so.store_id = p_store_id AND so.order_number = v_order_number) THEN
+    v_order_number := 'ORD-' || upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 6));
+  END IF;
+
+  -- 8. منح نقاط الولاء ذرياً إذا كان الطلب مكتملاً/مدفوعاً من الكاشير
+  IF v_is_pos_order AND (v_final_status = 'completed' OR v_final_payment_status = 'paid') AND v_norm_phone IS NOT NULL AND v_points_earned > 0 THEN
+    v_points_awarded := TRUE;
+    UPDATE public.store_customers
+    SET
+      wallet_balance = COALESCE(wallet_balance, 0) + v_points_earned,
+      lifetime_xp = COALESCE(lifetime_xp, 0) + v_points_earned,
+      last_visit_date = now()
+    WHERE id = v_customer_id;
+  END IF;
+
+  -- 9. إدراج الطلب في store_orders
+  INSERT INTO public.store_orders (
+    store_id,
+    branch_id,
+    shift_id,
+    order_number,
+    customer_id,
+    customer_name,
+    customer_phone,
+    order_type,
+    fulfillment_type,
+    table_number,
+    items,
+    subtotal,
+    tax_amount,
+    delivery_fee,
+    total_price,
+    total_amount,
+    loyalty_points_earned,
+    points_awarded,
+    status,
+    payment_status,
+    payment_method,
+    order_source,
+    cashier_id,
+    cashier_name,
+    notes,
+    fulfillment_details,
+    delivery_address,
+    delivery_status,
+    created_at,
+    updated_at
+  ) VALUES (
+    p_store_id,
+    p_branch_id,
+    v_active_shift_id,
+    v_order_number,
+    v_customer_id,
+    COALESCE(NULLIF(BTRIM(p_customer_name), ''), 'عميل المتجر'),
+    COALESCE(v_norm_phone, ''),
+    CASE WHEN lower(COALESCE(p_fulfillment_type, 'dine_in')) IN ('dine_in', 'takeaway', 'delivery') THEN lower(p_fulfillment_type) ELSE 'dine_in' END,
+    CASE WHEN lower(COALESCE(p_fulfillment_type, 'dine_in')) IN ('dine_in', 'takeaway', 'delivery') THEN lower(p_fulfillment_type) ELSE 'dine_in' END,
+    p_table_number,
+    v_verified_items,
+    v_server_subtotal,
+    v_tax_amount,
+    v_delivery_fee,
+    v_final_total,
+    v_final_total,
+    v_points_earned,
+    v_points_awarded,
+    v_final_status,
+    v_final_payment_status,
+    v_final_payment_method,
+    v_final_source,
+    v_staff_id_str,
+    v_staff_name,
+    COALESCE(p_notes, ''),
+    COALESCE(p_fulfillment_details, '{}'::jsonb),
+    p_delivery_address,
+    CASE WHEN lower(COALESCE(p_fulfillment_type, '')) = 'delivery' THEN 'unassigned' ELSE NULL END,
+    now(),
+    now()
+  )
+  RETURNING * INTO v_inserted_order;
+
+  -- 9.1 تحديث مجاميع الوردية الحية ذرياً إذا كان الطلب مرتبطاً بوردية مفتوحة ومدفوعاً
+  IF v_active_shift_id IS NOT NULL AND v_final_payment_status = 'paid' THEN
+    UPDATE public.pos_shifts
+    SET
+      orders_count = COALESCE(orders_count, 0) + 1,
+      total_sales = ROUND(COALESCE(total_sales, 0) + v_final_total, 2),
+      cash_sales = ROUND(COALESCE(cash_sales, 0) + CASE WHEN v_final_payment_method = 'cash' THEN v_final_total ELSE 0 END, 2),
+      card_sales = ROUND(COALESCE(card_sales, 0) + CASE WHEN v_final_payment_method IN ('card', 'mada', 'credit_card', 'apple_pay', 'online') THEN v_final_total ELSE 0 END, 2),
+      split_sales = ROUND(COALESCE(split_sales, 0) + CASE WHEN v_final_payment_method = 'split' THEN v_final_total ELSE 0 END, 2),
+      tax_amount = ROUND(COALESCE(tax_amount, 0) + v_tax_amount, 2),
+      expected_cash = ROUND(
+        COALESCE(opening_cash, 0)
+        + (COALESCE(cash_sales, 0) + CASE WHEN v_final_payment_method = 'cash' THEN v_final_total ELSE 0 END)
+        - COALESCE(cash_refunds, 0)
+        + COALESCE(total_cash_in, 0)
+        - COALESCE(total_cash_out, 0),
+        2
+      ),
+      updated_at = now()
+    WHERE id = v_active_shift_id
+      AND store_id = p_store_id
+      AND lower(COALESCE(status, '')) = 'open';
+  END IF;
+
+  -- 10. تسجيل سجل تدقيق (audit_logs) إذا مُنحت نقاط الولاء مباشرة
+  IF v_points_awarded AND v_customer_id IS NOT NULL THEN
+    INSERT INTO public.audit_logs (
+      store_id,
+      staff_id,
+      branch_id,
+      customer_id,
+      customer_phone,
+      customer_name,
+      action,
+      purchase_amount,
+      points_changed,
+      entry_method,
+      invoice_number,
+      metadata
+    ) VALUES (
+      p_store_id,
+      CASE WHEN v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN v_staff_id_str::uuid ELSE NULL END,
+      p_branch_id,
+      v_customer_id,
+      v_norm_phone,
+      COALESCE(NULLIF(BTRIM(p_customer_name), ''), 'عميل المتجر'),
+      'PURCHASE',
+      v_final_total,
+      v_points_earned,
+      'pos_order',
+      v_order_number,
+      jsonb_build_object(
+        'order_id', v_inserted_order.id,
+        'order_number', v_order_number,
+        'cashier_name', COALESCE(v_staff_name, 'كاشير المتجر')
+      )
+    );
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'order', to_jsonb(v_inserted_order),
+    'server_total', v_final_total,
+    'loyalty_points_earned', v_points_earned,
+    'points_awarded', v_points_awarded
+  );
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.2 دالة تحديث حالة الطلب الذرية المؤمنة (update_store_order_status_secure)
+-- تمنع أي تعديل لحالة الطلب أو الدفع إلا بتوكن موظف/كاشير صالح،
+-- وتمنح نقاط الولاء ذرياً مرة واحدة فقط عند تحول الطلب إلى completed.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.update_store_order_status_secure(
+  p_store_id UUID,
+  p_order_id UUID,
+  p_status TEXT DEFAULT NULL,
+  p_payment_status TEXT DEFAULT NULL,
+  p_payment_method TEXT DEFAULT NULL,
+  p_driver_id TEXT DEFAULT NULL,
+  p_driver_name TEXT DEFAULT NULL,
+  p_driver_phone TEXT DEFAULT NULL,
+  p_delivery_status TEXT DEFAULT NULL,
+  p_cashier_name TEXT DEFAULT NULL,
+  p_branch_id UUID DEFAULT NULL,
+  p_staff_token TEXT DEFAULT NULL,
+  p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_is_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_staff_name TEXT := NULL;
+  v_token TEXT := NULL;
+  v_order RECORD;
+  v_norm_phone TEXT := NULL;
+  v_customer RECORD;
+  v_new_status TEXT;
+  v_points_just_awarded BOOLEAN := FALSE;
+  v_updated_order RECORD;
+BEGIN
+  IF p_order_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_ORDER_ID', 'message', 'معرف الطلب مطلوب.');
+  END IF;
+
+  SELECT * INTO v_order
+  FROM public.store_orders
+  WHERE id = p_order_id
+    AND (p_store_id IS NULL OR store_id = p_store_id)
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'ORDER_NOT_FOUND', 'message', 'الطلب غير موجود.');
+  END IF;
+
+  -- 1. التحقق الصارم من صلاحية الموظف/الكاشير
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) THEN
+    v_is_auth := TRUE;
+    v_staff_name := COALESCE(p_cashier_name, 'الإدارة العليا');
+  ELSIF public.has_store_access(v_order.store_id) THEN
+    v_is_auth := TRUE;
+    v_staff_name := COALESCE(p_cashier_name, 'مدير المتجر');
+  ELSE
+    v_token := COALESCE(
+      NULLIF(BTRIM(p_staff_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_token IS NOT NULL AND v_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_token, false) s
+      LIMIT 1;
+
+      IF v_staff_store_id = v_order.store_id THEN
+        v_is_auth := TRUE;
+        SELECT name INTO v_staff_name FROM public.store_staff WHERE id::text = v_staff_id_str LIMIT 1;
+      END IF;
+    END IF;
+  END IF;
+
+  IF NOT v_is_auth THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'UNAUTHORIZED_STAFF',
+      'message', 'غير مصرح: لا يمكن تعديل حالة الطلب أو الدفع إلا بتوكن موظف أو كاشير صالح.'
+    );
+  END IF;
+
+  v_new_status := lower(COALESCE(NULLIF(BTRIM(p_status), ''), v_order.status));
+
+  -- 2. منح نقاط الولاء ذرياً إذا تحول الطلب إلى completed ولم تُمنح من قبل
+  IF v_new_status = 'completed'
+     AND NOT COALESCE(v_order.points_awarded, false)
+     AND COALESCE(v_order.loyalty_points_earned, 0) > 0
+     AND v_order.customer_phone IS NOT NULL
+     AND BTRIM(v_order.customer_phone) <> '' THEN
+
+    v_norm_phone := COALESCE(public.normalize_saudi_phone(v_order.customer_phone), BTRIM(v_order.customer_phone));
+
+    SELECT * INTO v_customer
+    FROM public.store_customers
+    WHERE store_id = v_order.store_id AND phone = v_norm_phone
+    FOR UPDATE;
+
+    IF NOT FOUND AND v_norm_phone ~ '^5[0-9]{8}$' THEN
+      INSERT INTO public.store_customers (
+        store_id, phone, name, wallet_balance, lifetime_xp, tier, is_active, last_visit_date
+      ) VALUES (
+        v_order.store_id,
+        v_norm_phone,
+        COALESCE(NULLIF(BTRIM(v_order.customer_name), ''), 'عميل المتجر'),
+        0, 0, 'bronze', true, now()
+      )
+      RETURNING * INTO v_customer;
+    END IF;
+
+    IF v_customer.id IS NOT NULL THEN
+      UPDATE public.store_customers
+      SET
+        wallet_balance = COALESCE(wallet_balance, 0) + v_order.loyalty_points_earned,
+        lifetime_xp = COALESCE(lifetime_xp, 0) + v_order.loyalty_points_earned,
+        last_visit_date = now()
+      WHERE id = v_customer.id;
+
+      v_points_just_awarded := TRUE;
+
+      INSERT INTO public.audit_logs (
+        store_id,
+        staff_id,
+        branch_id,
+        customer_id,
+        customer_phone,
+        customer_name,
+        action,
+        purchase_amount,
+        points_changed,
+        entry_method,
+        invoice_number,
+        metadata
+      ) VALUES (
+        v_order.store_id,
+        CASE WHEN v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN v_staff_id_str::uuid ELSE NULL END,
+        COALESCE(p_branch_id, v_order.branch_id),
+        v_customer.id,
+        v_norm_phone,
+        COALESCE(v_customer.name, v_order.customer_name, 'عميل المتجر'),
+        'PURCHASE',
+        COALESCE(v_order.total_price, v_order.total_amount, 0),
+        v_order.loyalty_points_earned,
+        'order_completed',
+        v_order.order_number,
+        jsonb_build_object(
+          'order_id', v_order.id,
+          'order_number', v_order.order_number,
+          'cashier_name', COALESCE(p_cashier_name, v_staff_name, 'كاشير المتجر')
+        )
+      );
+    END IF;
+  END IF;
+
+  -- 3. تحديث سجل الطلب
+  UPDATE public.store_orders
+  SET
+    status = v_new_status,
+    payment_status = COALESCE(NULLIF(BTRIM(p_payment_status), ''), CASE WHEN v_new_status = 'completed' THEN 'paid' ELSE payment_status END),
+    payment_method = COALESCE(NULLIF(BTRIM(p_payment_method), ''), payment_method),
+    driver_id = COALESCE(p_driver_id, driver_id),
+    driver_name = COALESCE(p_driver_name, driver_name),
+    driver_phone = COALESCE(p_driver_phone, driver_phone),
+    delivery_status = COALESCE(p_delivery_status, delivery_status),
+    points_awarded = COALESCE(points_awarded, false) OR v_points_just_awarded,
+    updated_at = now()
+  WHERE id = v_order.id
+  RETURNING * INTO v_updated_order;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'order', to_jsonb(v_updated_order),
+    'points_awarded_now', v_points_just_awarded
+  );
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.3 دالة جلب طلبات العميل بصيغة جوال موحدة (get_customer_orders_secure)
+-- تسمح للعميل باستعراض طلباته فقط دون فتح جدول store_orders بالكامل للعامة (anon)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_customer_orders_secure(
+  p_store_id UUID,
+  p_phone TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_norm_phone TEXT;
+  v_rows JSONB;
+BEGIN
+  IF p_store_id IS NULL OR p_phone IS NULL OR BTRIM(p_phone) = '' THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  v_norm_phone := public.normalize_saudi_phone(p_phone);
+  IF v_norm_phone IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(to_jsonb(o) ORDER BY o.created_at DESC), '[]'::jsonb)
+  INTO v_rows
+  FROM (
+    SELECT *
+    FROM public.store_orders
+    WHERE store_id = p_store_id
+      AND COALESCE(public.normalize_saudi_phone(customer_phone), BTRIM(customer_phone)) = v_norm_phone
+    ORDER BY created_at DESC
+    LIMIT 50
+  ) o;
+
+  RETURN v_rows;
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.4 دالة فتح أو استرجاع الوردية النشطة للكاشير (open_pos_shift_secure)
+-- تمنع فتح أكثر من وردية نشطة (open) لنفس الكاشير في نفس المتجر في نفس الوقت.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.open_pos_shift_secure(
+  p_store_id UUID,
+  p_opening_cash NUMERIC DEFAULT 0,
+  p_branch_id UUID DEFAULT NULL,
+  p_branch_name TEXT DEFAULT 'الفرع الرئيسي',
+  p_staff_id UUID DEFAULT NULL,
+  p_staff_name TEXT DEFAULT 'كاشير المتجر',
+  p_staff_phone TEXT DEFAULT NULL,
+  p_staff_token TEXT DEFAULT NULL,
+  p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_is_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_token TEXT := NULL;
+  v_resolved_staff_id UUID := p_staff_id;
+  v_resolved_staff_name TEXT := COALESCE(NULLIF(BTRIM(p_staff_name), ''), 'كاشير المتجر');
+  v_existing_shift RECORD;
+  v_new_shift RECORD;
+  v_lock_key BIGINT;
+BEGIN
+  IF p_store_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_STORE_ID', 'message', 'معرف المتجر مطلوب.');
+  END IF;
+
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) THEN
+    v_is_auth := TRUE;
+  ELSIF public.has_store_access(p_store_id) THEN
+    v_is_auth := TRUE;
+  ELSE
+    v_token := COALESCE(
+      NULLIF(BTRIM(p_staff_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_token IS NOT NULL AND v_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_token, false) s
+      LIMIT 1;
+
+      IF v_staff_store_id = p_store_id THEN
+        v_is_auth := TRUE;
+        IF v_resolved_staff_id IS NULL AND v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+          v_resolved_staff_id := v_staff_id_str::uuid;
+        END IF;
+        SELECT COALESCE(name, v_resolved_staff_name) INTO v_resolved_staff_name
+        FROM public.store_staff WHERE id::text = v_staff_id_str LIMIT 1;
+      END IF;
+    END IF;
+  END IF;
+
+  IF NOT v_is_auth THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'UNAUTHORIZED_STAFF',
+      'message', 'غير مصرح: يتطلب فتح الوردية جلسة كاشير أو مدير صالحة.'
+    );
+  END IF;
+
+  -- قفل استشاري لمنع سباق الطلبات المتزامنة (Race Condition) عند فتح الوردية
+  v_lock_key := hashtext('pos_shift_open:' || p_store_id::text || ':' || COALESCE(v_resolved_staff_id::text, lower(v_resolved_staff_name)));
+  PERFORM pg_advisory_xact_lock(v_lock_key);
+
+  -- التحقق من وجود وردية مفتوحة حالياً لنفس الكاشير (أو الفرع)
+  SELECT * INTO v_existing_shift
+  FROM public.pos_shifts
+  WHERE store_id = p_store_id
+    AND status = 'open'
+    AND (
+      (v_resolved_staff_id IS NOT NULL AND staff_id = v_resolved_staff_id)
+      OR (v_resolved_staff_id IS NULL AND lower(BTRIM(COALESCE(staff_name, ''))) = lower(v_resolved_staff_name))
+    )
+  ORDER BY opened_at DESC
+  LIMIT 1
+  FOR UPDATE;
+
+  IF FOUND THEN
+    RETURN jsonb_build_object(
+      'success', true,
+      'already_open', true,
+      'message', 'يوجد وردية مفتوحة نشطة بالفعل لهذا الكاشير.',
+      'shift', to_jsonb(v_existing_shift)
+    );
+  END IF;
+
+  INSERT INTO public.pos_shifts (
+    store_id,
+    branch_id,
+    branch_name,
+    staff_id,
+    staff_name,
+    cashier_name,
+    staff_phone,
+    status,
+    opened_at,
+    opening_cash,
+    expected_cash,
+    actual_cash,
+    cash_difference,
+    total_sales,
+    cash_sales,
+    card_sales,
+    split_sales,
+    tax_amount,
+    discount_amount,
+    orders_count,
+    total_refunds,
+    cash_refunds,
+    card_refunds,
+    refunds_count,
+    total_cash_in,
+    total_cash_out,
+    cash_movements_count,
+    created_at,
+    updated_at
+  ) VALUES (
+    p_store_id,
+    p_branch_id,
+    COALESCE(NULLIF(BTRIM(p_branch_name), ''), 'الفرع الرئيسي'),
+    v_resolved_staff_id,
+    v_resolved_staff_name,
+    v_resolved_staff_name,
+    p_staff_phone,
+    'open',
+    now(),
+    GREATEST(0, COALESCE(p_opening_cash, 0)),
+    GREATEST(0, COALESCE(p_opening_cash, 0)),
+    0.00,
+    0.00,
+    0.00,
+    0.00,
+    0.00,
+    0.00,
+    0.00,
+    0.00,
+    0,
+    0.00,
+    0.00,
+    0.00,
+    0,
+    0.00,
+    0.00,
+    0,
+    now(),
+    now()
+  )
+  RETURNING * INTO v_new_shift;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'already_open', false,
+    'shift', to_jsonb(v_new_shift)
+  );
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.5 دالة تسجيل الحركة النقدية الذرية (record_pos_cash_movement_secure)
+-- تشترط وجود وردية مفتوحة فعلياً (status = 'open') وتوكن كاشير صالح،
+-- وتحدث إجماليات الوردية ذرياً في نفس المعاملة.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.record_pos_cash_movement_secure(
+  p_store_id UUID,
+  p_shift_id UUID,
+  p_type TEXT,
+  p_amount NUMERIC,
+  p_reason TEXT,
+  p_category TEXT DEFAULT NULL,
+  p_recipient_name TEXT DEFAULT NULL,
+  p_invoice_ref TEXT DEFAULT NULL,
+  p_notes TEXT DEFAULT NULL,
+  p_branch_id UUID DEFAULT NULL,
+  p_branch_name TEXT DEFAULT NULL,
+  p_staff_id TEXT DEFAULT NULL,
+  p_staff_name TEXT DEFAULT NULL,
+  p_staff_token TEXT DEFAULT NULL,
+  p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_is_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_staff_name TEXT := COALESCE(NULLIF(BTRIM(p_staff_name), ''), 'كاشير المتجر');
+  v_token TEXT := NULL;
+  v_shift RECORD;
+  v_clean_type TEXT := lower(BTRIM(COALESCE(p_type, '')));
+  v_movement RECORD;
+BEGIN
+  IF p_store_id IS NULL OR p_shift_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_SHIFT_ID', 'message', 'يجب ربط الحركة النقدية بوردية مفتوحة صالحة.');
+  END IF;
+
+  IF v_clean_type NOT IN ('cash_in', 'cash_out') THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_MOVEMENT_TYPE', 'message', 'نوع الحركة النقدية يجب أن يكون cash_in أو cash_out.');
+  END IF;
+
+  IF p_amount IS NULL OR p_amount <= 0 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_AMOUNT', 'message', 'مبلغ الحركة النقدية يجب أن يكون أكبر من صفر.');
+  END IF;
+
+  IF p_reason IS NULL OR BTRIM(p_reason) = '' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_REASON', 'message', 'سبب الحركة النقدية مطلوب.');
+  END IF;
+
+  -- 1. التحقق من صلاحية الكاشير
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) THEN
+    v_is_auth := TRUE;
+  ELSIF public.has_store_access(p_store_id) THEN
+    v_is_auth := TRUE;
+  ELSE
+    v_token := COALESCE(
+      NULLIF(BTRIM(p_staff_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_token IS NOT NULL AND v_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_token, false) s
+      LIMIT 1;
+
+      IF v_staff_store_id = p_store_id THEN
+        v_is_auth := TRUE;
+        SELECT COALESCE(name, v_staff_name) INTO v_staff_name
+        FROM public.store_staff WHERE id::text = v_staff_id_str LIMIT 1;
+      END IF;
+    END IF;
+  END IF;
+
+  IF NOT v_is_auth THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'UNAUTHORIZED_STAFF',
+      'message', 'غير مصرح: يتطلب تسجيل الحركة النقدية توكن كاشير صالح.'
+    );
+  END IF;
+
+  -- 2. قفل الوردية والتحقق أنها مفتوحة فعلياً (open)
+  SELECT * INTO v_shift
+  FROM public.pos_shifts
+  WHERE id = p_shift_id AND store_id = p_store_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'SHIFT_NOT_FOUND', 'message', 'الوردية المحددة غير موجودة.');
+  END IF;
+
+  IF lower(COALESCE(v_shift.status, '')) <> 'open' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'SHIFT_NOT_OPEN', 'message', 'لا يمكن تسجيل حركة نقدية على وردية مغلقة.');
+  END IF;
+
+  -- 3. إدراج الحركة النقدية
+  INSERT INTO public.pos_cash_movements (
+    store_id,
+    branch_id,
+    branch_name,
+    shift_id,
+    staff_id,
+    staff_name,
+    performed_by,
+    type,
+    movement_type,
+    amount,
+    reason,
+    category,
+    recipient_name,
+    invoice_ref,
+    notes,
+    created_at
+  ) VALUES (
+    p_store_id,
+    COALESCE(p_branch_id, v_shift.branch_id),
+    COALESCE(p_branch_name, v_shift.branch_name, 'الفرع الرئيسي'),
+    v_shift.id,
+    COALESCE(v_staff_id_str, p_staff_id, v_shift.staff_id::text, ''),
+    v_staff_name,
+    v_staff_name,
+    v_clean_type,
+    v_clean_type,
+    ROUND(p_amount, 2),
+    BTRIM(p_reason),
+    p_category,
+    p_recipient_name,
+    p_invoice_ref,
+    p_notes,
+    now()
+  )
+  RETURNING * INTO v_movement;
+
+  -- 4. تحديث مجاميع الوردية ذرياً
+  UPDATE public.pos_shifts
+  SET
+    total_cash_in = ROUND(COALESCE(total_cash_in, 0) + CASE WHEN v_clean_type = 'cash_in' THEN p_amount ELSE 0 END, 2),
+    total_cash_out = ROUND(COALESCE(total_cash_out, 0) + CASE WHEN v_clean_type = 'cash_out' THEN p_amount ELSE 0 END, 2),
+    cash_movements_count = COALESCE(cash_movements_count, 0) + 1,
+    expected_cash = ROUND(
+      COALESCE(opening_cash, 0)
+      + COALESCE(cash_sales, 0)
+      - COALESCE(cash_refunds, 0)
+      + (COALESCE(total_cash_in, 0) + CASE WHEN v_clean_type = 'cash_in' THEN p_amount ELSE 0 END)
+      - (COALESCE(total_cash_out, 0) + CASE WHEN v_clean_type = 'cash_out' THEN p_amount ELSE 0 END),
+      2
+    ),
+    updated_at = now()
+  WHERE id = v_shift.id;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'movement', to_jsonb(v_movement)
+  );
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.6 دالة إغلاق الوردية وحساب الجرد الذري من قاعدة البيانات (close_pos_shift_secure)
+-- تحسب expected_cash والعجز/الفائض والمبيعات والمرتجعات والحركات النقدية ذرياً من الجداول الفعلية
+-- ولا تعتمد إطلاقاً على أرقام الملخص القادمة من الواجهة.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.close_pos_shift_secure(
+  p_store_id UUID,
+  p_shift_id UUID,
+  p_actual_cash NUMERIC,
+  p_notes TEXT DEFAULT NULL,
+  p_staff_token TEXT DEFAULT NULL,
+  p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_is_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_token TEXT := NULL;
+  v_shift RECORD;
+  v_orders_count INTEGER := 0;
+  v_total_sales NUMERIC(12,2) := 0.00;
+  v_cash_sales NUMERIC(12,2) := 0.00;
+  v_card_sales NUMERIC(12,2) := 0.00;
+  v_split_sales NUMERIC(12,2) := 0.00;
+  v_tax_amount NUMERIC(12,2) := 0.00;
+  v_discount_amount NUMERIC(12,2) := 0.00;
+  v_refunds_count INTEGER := 0;
+  v_total_refunds NUMERIC(12,2) := 0.00;
+  v_cash_refunds NUMERIC(12,2) := 0.00;
+  v_card_refunds NUMERIC(12,2) := 0.00;
+  v_movements_count INTEGER := 0;
+  v_total_cash_in NUMERIC(12,2) := 0.00;
+  v_total_cash_out NUMERIC(12,2) := 0.00;
+  v_expected_cash NUMERIC(12,2) := 0.00;
+  v_actual_cash NUMERIC(12,2) := ROUND(GREATEST(0, COALESCE(p_actual_cash, 0)), 2);
+  v_cash_difference NUMERIC(12,2) := 0.00;
+  v_closed_shift RECORD;
+BEGIN
+  IF p_store_id IS NULL OR p_shift_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_SHIFT_ID', 'message', 'معرف المتجر والوردية مطلوبان.');
+  END IF;
+
+  -- 1. التحقق من صلاحية الكاشير/المدير
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) THEN
+    v_is_auth := TRUE;
+  ELSIF public.has_store_access(p_store_id) THEN
+    v_is_auth := TRUE;
+  ELSE
+    v_token := COALESCE(
+      NULLIF(BTRIM(p_staff_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_token IS NOT NULL AND v_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_token, false) s
+      LIMIT 1;
+
+      IF v_staff_store_id = p_store_id THEN
+        v_is_auth := TRUE;
+      END IF;
+    END IF;
+  END IF;
+
+  IF NOT v_is_auth THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'UNAUTHORIZED_STAFF',
+      'message', 'غير مصرح: يتطلب إغلاق الوردية جلسة كاشير أو مدير صالحة.'
+    );
+  END IF;
+
+  -- 2. قفل سجل الوردية
+  SELECT * INTO v_shift
+  FROM public.pos_shifts
+  WHERE id = p_shift_id AND store_id = p_store_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'SHIFT_NOT_FOUND', 'message', 'الوردية غير موجودة.');
+  END IF;
+
+  IF lower(COALESCE(v_shift.status, '')) <> 'open' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'SHIFT_ALREADY_CLOSED', 'message', 'هذه الوردية مغلقة مسبقاً.');
+  END IF;
+
+  -- 3. حساب المبيعات الفعلية من جدول store_orders داخل السيرفر
+  SELECT
+    COUNT(*)::integer,
+    ROUND(COALESCE(SUM(COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0)), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(o.payment_method, 'cash')) = 'cash' THEN COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) ELSE 0 END), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(o.payment_method, 'cash')) IN ('card', 'mada', 'credit_card', 'apple_pay', 'online') THEN COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) ELSE 0 END), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(o.payment_method, 'cash')) = 'split' THEN COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) ELSE 0 END), 0), 2),
+    ROUND(COALESCE(SUM(COALESCE(NULLIF(o.tax_amount, 0), COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) - (COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) / 1.15))), 0), 2),
+    ROUND(COALESCE(SUM(COALESCE(o.discount_amount, 0)), 0), 2)
+  INTO
+    v_orders_count,
+    v_total_sales,
+    v_cash_sales,
+    v_card_sales,
+    v_split_sales,
+    v_tax_amount,
+    v_discount_amount
+  FROM public.store_orders o
+  WHERE o.store_id = p_store_id
+    AND lower(COALESCE(o.status, '')) <> 'cancelled'
+    AND (
+      o.shift_id = v_shift.id
+      OR (
+        o.shift_id IS NULL
+        AND o.created_at >= v_shift.opened_at
+        AND (v_shift.branch_id IS NULL OR o.branch_id IS NULL OR o.branch_id = v_shift.branch_id)
+      )
+    );
+
+  -- 4. حساب المرتجعات الفعلية من جدول pos_refunds داخل السيرفر
+  SELECT
+    COUNT(*)::integer,
+    ROUND(COALESCE(SUM(COALESCE(r.total_refunded, 0)), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(r.refund_method, 'cash')) = 'cash' THEN COALESCE(r.total_refunded, 0) ELSE 0 END), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(r.refund_method, 'cash')) <> 'cash' THEN COALESCE(r.total_refunded, 0) ELSE 0 END), 0), 2)
+  INTO
+    v_refunds_count,
+    v_total_refunds,
+    v_cash_refunds,
+    v_card_refunds
+  FROM public.pos_refunds r
+  WHERE r.store_id = p_store_id
+    AND (
+      r.shift_id = v_shift.id
+      OR (
+        r.shift_id IS NULL
+        AND r.created_at >= v_shift.opened_at
+        AND (v_shift.branch_id IS NULL OR r.branch_id IS NULL OR r.branch_id = v_shift.branch_id)
+      )
+    );
+
+  -- 5. حساب الحركات النقدية الفعلية من جدول pos_cash_movements داخل السيرفر
+  SELECT
+    COUNT(*)::integer,
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(NULLIF(m.type, ''), m.movement_type)) = 'cash_in' THEN COALESCE(m.amount, 0) ELSE 0 END), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(NULLIF(m.type, ''), m.movement_type)) = 'cash_out' THEN COALESCE(m.amount, 0) ELSE 0 END), 0), 2)
+  INTO
+    v_movements_count,
+    v_total_cash_in,
+    v_total_cash_out
+  FROM public.pos_cash_movements m
+  WHERE m.store_id = p_store_id
+    AND m.shift_id = v_shift.id;
+
+  -- 6. معادلة النقد المتوقع والعجز/الفائض الذرية
+  v_expected_cash := ROUND(
+    COALESCE(v_shift.opening_cash, 0)
+    + v_cash_sales
+    - v_cash_refunds
+    + v_total_cash_in
+    - v_total_cash_out,
+    2
+  );
+  v_cash_difference := ROUND(v_actual_cash - v_expected_cash, 2);
+
+  -- 7. تحديث وإغلاق الوردية
+  UPDATE public.pos_shifts
+  SET
+    status = 'closed',
+    closed_at = now(),
+    closing_cash = v_actual_cash,
+    actual_cash = v_actual_cash,
+    expected_cash = v_expected_cash,
+    cash_difference = v_cash_difference,
+    discrepancy = v_cash_difference,
+    total_sales = v_total_sales,
+    cash_sales = v_cash_sales,
+    card_sales = v_card_sales,
+    split_sales = v_split_sales,
+    tax_amount = v_tax_amount,
+    discount_amount = v_discount_amount,
+    orders_count = v_orders_count,
+    total_refunds = v_total_refunds,
+    cash_refunds = v_cash_refunds,
+    card_refunds = v_card_refunds,
+    refunds_count = v_refunds_count,
+    total_cash_in = v_total_cash_in,
+    total_cash_out = v_total_cash_out,
+    cash_movements_count = v_movements_count,
+    notes = COALESCE(p_notes, notes),
+    updated_at = now()
+  WHERE id = v_shift.id
+  RETURNING * INTO v_closed_shift;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'shift', to_jsonb(v_closed_shift)
+  );
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.7 دالة معالجة المرتجعات وسحب نقاط الولاء الذرية (process_pos_refund_atomic)
+-- تقفل الطلب FOR UPDATE لمنع الاسترجاع المزدوج أو استرجاع مبلغ أكبر من المتبقي،
+-- وتسحب نقاط الولاء الممنوحة ذرياً من العميل وتسجل قيد عكسي في audit_logs وتحدث الوردية.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.process_pos_refund_atomic(
+  p_store_id UUID,
+  p_order_id UUID,
+  p_refund_items JSONB DEFAULT NULL,
+  p_refund_type TEXT DEFAULT 'full',
+  p_refund_reason TEXT DEFAULT 'استرجاع نقاط بيع',
+  p_refund_method TEXT DEFAULT 'cash',
+  p_notes TEXT DEFAULT NULL,
+  p_shift_id UUID DEFAULT NULL,
+  p_branch_id UUID DEFAULT NULL,
+  p_branch_name TEXT DEFAULT NULL,
+  p_cashier_id TEXT DEFAULT NULL,
+  p_cashier_name TEXT DEFAULT NULL,
+  p_zatca_qr TEXT DEFAULT NULL,
+  p_staff_token TEXT DEFAULT NULL,
+  p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_is_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_staff_name TEXT := COALESCE(NULLIF(BTRIM(p_cashier_name), ''), 'كاشير المتجر');
+  v_token TEXT := NULL;
+  v_order RECORD;
+  v_order_total NUMERIC(12,2);
+  v_already_refunded NUMERIC(12,2);
+  v_remaining_refundable NUMERIC(12,2);
+  v_item JSONB;
+  v_requested_refund NUMERIC(12,2) := 0.00;
+  v_subtotal NUMERIC(12,2);
+  v_tax_amount NUMERIC(12,2);
+  v_new_total_refunded NUMERIC(12,2);
+  v_is_now_full BOOLEAN;
+  v_points_to_deduct INTEGER := 0;
+  v_norm_phone TEXT := NULL;
+  v_customer RECORD;
+  v_credit_note_number TEXT;
+  v_refund_record RECORD;
+  v_history JSONB;
+BEGIN
+  IF p_store_id IS NULL OR p_order_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_PARAMS', 'message', 'معرف المتجر والطلب مطلوبان لإتمام الاسترجاع.');
+  END IF;
+
+  -- 1. التحقق من صلاحية الكاشير/المدير
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) THEN
+    v_is_auth := TRUE;
+  ELSIF public.has_store_access(p_store_id) THEN
+    v_is_auth := TRUE;
+  ELSE
+    v_token := COALESCE(
+      NULLIF(BTRIM(p_staff_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_token IS NOT NULL AND v_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_token, false) s
+      LIMIT 1;
+
+      IF v_staff_store_id = p_store_id THEN
+        v_is_auth := TRUE;
+        SELECT COALESCE(name, v_staff_name) INTO v_staff_name
+        FROM public.store_staff WHERE id::text = v_staff_id_str LIMIT 1;
+      END IF;
+    END IF;
+  END IF;
+
+  IF NOT v_is_auth THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'UNAUTHORIZED_STAFF',
+      'message', 'غير مصرح: يتطلب استرجاع الفواتير جلسة كاشير أو مدير صالحة.'
+    );
+  END IF;
+
+  -- 2. قفل سجل الطلب FOR UPDATE لمنع الاسترجاع المزدوج المتزامن
+  SELECT * INTO v_order
+  FROM public.store_orders
+  WHERE id = p_order_id AND store_id = p_store_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'ORDER_NOT_FOUND', 'message', 'الطلب غير موجود.');
+  END IF;
+
+  IF lower(COALESCE(v_order.status, '')) IN ('cancelled', 'refunded') OR lower(COALESCE(v_order.refund_status, '')) = 'full' THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'ORDER_ALREADY_REFUNDED',
+      'message', 'تم استرجاع هذا الطلب بالكامل مسبقاً أو أنه ملغي.'
+    );
+  END IF;
+
+  v_order_total := ROUND(COALESCE(NULLIF(v_order.total_price, 0), v_order.total_amount, 0), 2);
+  v_already_refunded := ROUND(COALESCE(v_order.refunded_amount, 0), 2);
+  v_remaining_refundable := ROUND(v_order_total - v_already_refunded, 2);
+
+  IF v_remaining_refundable <= 0 THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'NO_REFUNDABLE_BALANCE',
+      'message', 'لا يوجد رصيد متبقٍ قابل للاسترجاع في هذه الفاتورة.'
+    );
+  END IF;
+
+  -- 3. حساب مبلغ الاسترجاع المطلوب والتحقق أنه لا يتجاوز المتبقي من قيمة الفاتورة
+  IF p_refund_items IS NOT NULL AND jsonb_typeof(p_refund_items) = 'array' AND jsonb_array_length(p_refund_items) > 0 THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_refund_items)
+    LOOP
+      v_requested_refund := v_requested_refund + ROUND(
+        COALESCE(
+          (v_item->>'total_price')::numeric,
+          COALESCE((v_item->>'unit_price')::numeric, (v_item->>'price')::numeric, 0) * COALESCE((v_item->>'quantity')::numeric, 1)
+        ),
+        2
+      );
+    END LOOP;
+  ELSIF lower(COALESCE(p_refund_type, 'full')) = 'full' THEN
+    v_requested_refund := v_remaining_refundable;
+  END IF;
+
+  v_requested_refund := ROUND(v_requested_refund, 2);
+
+  IF v_requested_refund <= 0 THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_REFUND_AMOUNT', 'message', 'مبلغ الاسترجاع يجب أن يكون أكبر من صفر.');
+  END IF;
+
+  IF v_requested_refund > v_remaining_refundable + 0.01 THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'REFUND_EXCEEDS_REMAINING',
+      'message', 'مبلغ الاسترجاع المطلوب (' || v_requested_refund || ' ر.س) يتجاوز المبلغ المتبقي القابل للاسترجاع (' || v_remaining_refundable || ' ر.س).'
+    );
+  END IF;
+
+  IF v_requested_refund > v_remaining_refundable THEN
+    v_requested_refund := v_remaining_refundable;
+  END IF;
+
+  v_subtotal := ROUND(v_requested_refund / 1.15, 2);
+  v_tax_amount := ROUND(v_requested_refund - v_subtotal, 2);
+  v_new_total_refunded := ROUND(v_already_refunded + v_requested_refund, 2);
+  v_is_now_full := (v_new_total_refunded >= v_order_total - 0.01);
+
+  -- 4. حساب وسحب نقاط الولاء الممنوحة ذرياً (Points Clawback)
+  IF COALESCE(v_order.loyalty_points_earned, 0) > 0 AND COALESCE(v_order.points_awarded, true) THEN
+    IF v_is_now_full THEN
+      v_points_to_deduct := GREATEST(0, v_order.loyalty_points_earned - (
+        SELECT COALESCE(SUM(loyalty_points_deducted), 0)::integer
+        FROM public.pos_refunds
+        WHERE order_id = v_order.id
+      ));
+    ELSE
+      v_points_to_deduct := LEAST(
+        ROUND((v_requested_refund / GREATEST(v_order_total, 1)) * v_order.loyalty_points_earned)::integer,
+        GREATEST(0, v_order.loyalty_points_earned - (
+          SELECT COALESCE(SUM(loyalty_points_deducted), 0)::integer
+          FROM public.pos_refunds
+          WHERE order_id = v_order.id
+        ))
+      );
+    END IF;
+  END IF;
+
+  v_norm_phone := COALESCE(public.normalize_saudi_phone(v_order.customer_phone), NULLIF(BTRIM(v_order.customer_phone), ''));
+
+  IF v_points_to_deduct > 0 AND (v_order.customer_id IS NOT NULL OR v_norm_phone IS NOT NULL) THEN
+    SELECT * INTO v_customer
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND (
+        (v_order.customer_id IS NOT NULL AND id = v_order.customer_id)
+        OR (v_norm_phone IS NOT NULL AND phone = v_norm_phone)
+      )
+    LIMIT 1
+    FOR UPDATE;
+
+    IF FOUND THEN
+      UPDATE public.store_customers
+      SET
+        wallet_balance = GREATEST(0, COALESCE(wallet_balance, 0) - v_points_to_deduct),
+        lifetime_xp = GREATEST(0, COALESCE(lifetime_xp, 0) - v_points_to_deduct)
+      WHERE id = v_customer.id;
+    END IF;
+  END IF;
+
+  -- 5. إنشاء الإشعار الدائن في جدول pos_refunds
+  v_credit_note_number := 'CN-' || replace(COALESCE(v_order.order_number, 'POS'), 'ORD-', '') || '-' || upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 4));
+
+  INSERT INTO public.pos_refunds (
+    store_id,
+    branch_id,
+    branch_name,
+    order_id,
+    order_number,
+    credit_note_number,
+    refund_type,
+    refund_reason,
+    refund_method,
+    items,
+    subtotal,
+    tax_amount,
+    total_refunded,
+    loyalty_points_deducted,
+    customer_id,
+    customer_name,
+    customer_phone,
+    cashier_id,
+    cashier_name,
+    shift_id,
+    zatca_qr,
+    metadata,
+    created_at
+  ) VALUES (
+    p_store_id,
+    COALESCE(p_branch_id, v_order.branch_id),
+    p_branch_name,
+    v_order.id,
+    v_order.order_number,
+    v_credit_note_number,
+    CASE WHEN v_is_now_full THEN 'full' ELSE 'partial' END,
+    COALESCE(NULLIF(BTRIM(p_refund_reason), ''), 'استرجاع نقاط بيع') || CASE WHEN p_notes IS NOT NULL AND BTRIM(p_notes) <> '' THEN ' (' || BTRIM(p_notes) || ')' ELSE '' END,
+    lower(COALESCE(NULLIF(BTRIM(p_refund_method), ''), 'cash')),
+    COALESCE(p_refund_items, v_order.items, '[]'::jsonb),
+    v_subtotal,
+    v_tax_amount,
+    v_requested_refund,
+    v_points_to_deduct,
+    COALESCE(v_customer.id, v_order.customer_id),
+    v_order.customer_name,
+    v_norm_phone,
+    COALESCE(v_staff_id_str, p_cashier_id),
+    v_staff_name,
+    COALESCE(p_shift_id, v_order.shift_id),
+    p_zatca_qr,
+    jsonb_build_object(
+      'original_payment_method', v_order.payment_method,
+      'original_created_at', v_order.created_at,
+      'notes', p_notes
+    ),
+    now()
+  )
+  RETURNING * INTO v_refund_record;
+
+  -- 6. تسجيل قيد عكسي في سجل التدقيق (audit_logs) عند سحب النقاط
+  IF v_points_to_deduct > 0 AND v_customer.id IS NOT NULL THEN
+    INSERT INTO public.audit_logs (
+      store_id,
+      staff_id,
+      branch_id,
+      customer_id,
+      customer_phone,
+      customer_name,
+      action,
+      purchase_amount,
+      points_changed,
+      entry_method,
+      invoice_number,
+      metadata
+    ) VALUES (
+      p_store_id,
+      CASE WHEN v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN v_staff_id_str::uuid ELSE NULL END,
+      COALESCE(p_branch_id, v_order.branch_id),
+      v_customer.id,
+      v_norm_phone,
+      COALESCE(v_customer.name, v_order.customer_name, 'عميل المتجر'),
+      'ADJUSTMENT',
+      -v_requested_refund,
+      -v_points_to_deduct,
+      'pos_refund_clawback',
+      v_credit_note_number,
+      jsonb_build_object(
+        'sub_action', 'POINTS_CLAWBACK_POS_REFUND',
+        'order_id', v_order.id,
+        'order_number', v_order.order_number,
+        'credit_note_number', v_credit_note_number,
+        'refund_amount', v_requested_refund,
+        'cashier_name', v_staff_name
+      )
+    );
+  END IF;
+
+  -- 7. تحديث حالة الفاتورة الأصلية في store_orders
+  v_history := CASE WHEN jsonb_typeof(v_order.refund_history) = 'array' THEN v_order.refund_history ELSE '[]'::jsonb END;
+  v_history := v_history || jsonb_build_array(
+    jsonb_build_object(
+      'credit_note_number', v_credit_note_number,
+      'amount', v_requested_refund,
+      'type', CASE WHEN v_is_now_full THEN 'full' ELSE 'partial' END,
+      'reason', p_refund_reason,
+      'method', lower(COALESCE(p_refund_method, 'cash')),
+      'points_deducted', v_points_to_deduct,
+      'date', now(),
+      'cashier_name', v_staff_name
+    )
+  );
+
+  UPDATE public.store_orders
+  SET
+    refund_status = CASE WHEN v_is_now_full THEN 'full' ELSE 'partial' END,
+    refunded_amount = v_new_total_refunded,
+    refund_history = v_history,
+    status = CASE WHEN v_is_now_full THEN 'refunded' ELSE status END,
+    updated_at = now()
+  WHERE id = v_order.id;
+
+  -- 8. تحديث مجاميع الوردية النشطة في pos_shifts إن وجدت
+  IF COALESCE(p_shift_id, v_order.shift_id) IS NOT NULL THEN
+    UPDATE public.pos_shifts
+    SET
+      total_refunds = ROUND(COALESCE(total_refunds, 0) + v_requested_refund, 2),
+      cash_refunds = ROUND(COALESCE(cash_refunds, 0) + CASE WHEN lower(COALESCE(p_refund_method, 'cash')) = 'cash' THEN v_requested_refund ELSE 0 END, 2),
+      card_refunds = ROUND(COALESCE(card_refunds, 0) + CASE WHEN lower(COALESCE(p_refund_method, 'cash')) <> 'cash' THEN v_requested_refund ELSE 0 END, 2),
+      refunds_count = COALESCE(refunds_count, 0) + 1,
+      expected_cash = ROUND(
+        COALESCE(opening_cash, 0)
+        + COALESCE(cash_sales, 0)
+        - (COALESCE(cash_refunds, 0) + CASE WHEN lower(COALESCE(p_refund_method, 'cash')) = 'cash' THEN v_requested_refund ELSE 0 END)
+        + COALESCE(total_cash_in, 0)
+        - COALESCE(total_cash_out, 0),
+        2
+      ),
+      updated_at = now()
+    WHERE id = COALESCE(p_shift_id, v_order.shift_id)
+      AND store_id = p_store_id
+      AND lower(COALESCE(status, '')) = 'open';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'refund', to_jsonb(v_refund_record),
+    'points_deducted', v_points_to_deduct,
+    'new_refund_status', CASE WHEN v_is_now_full THEN 'full' ELSE 'partial' END,
+    'new_total_refunded', v_new_total_refunded
+  );
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.8 دالة الحجز الذرية ومنع تعارض المواعيد (book_service_safely)
+-- توحد رقم الجوال، وتتحقق من سعر الخدمة من catalog_items، وتقفل الأخصائي والتاريخ والوقت
+-- ذرياً لمنع الحجز المزدوج لنفس الموعد.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.book_service_safely(
+  p_store_id UUID,
+  p_customer_id UUID DEFAULT NULL,
+  p_customer_name TEXT DEFAULT 'عميل المتجر',
+  p_customer_phone TEXT DEFAULT '',
+  p_service_id TEXT DEFAULT 'srv-main',
+  p_service_name TEXT DEFAULT 'خدمة',
+  p_service_price NUMERIC DEFAULT 0,
+  p_service_duration_minutes INTEGER DEFAULT 30,
+  p_specialist_id TEXT DEFAULT NULL,
+  p_specialist_name TEXT DEFAULT NULL,
+  p_booking_date TEXT DEFAULT '',
+  p_booking_time TEXT DEFAULT '',
+  p_notes TEXT DEFAULT NULL,
+  p_points_to_earn INTEGER DEFAULT 0,
+  p_selected_modifiers JSONB DEFAULT '[]'::jsonb,
+  p_branch_id UUID DEFAULT NULL,
+  p_booking_source TEXT DEFAULT 'customer_app',
+  p_status TEXT DEFAULT 'pending',
+  p_staff_token TEXT DEFAULT NULL,
+  p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_store RECORD;
+  v_norm_phone TEXT;
+  v_clean_date DATE;
+  v_clean_time TEXT;
+  v_is_staff_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_token TEXT := NULL;
+  v_clean_source TEXT;
+  v_clean_status TEXT;
+  v_cat_service RECORD;
+  v_verified_price NUMERIC(12,2);
+  v_verified_duration INTEGER;
+  v_mod JSONB;
+  v_mod_delta NUMERIC(12,2) := 0.00;
+  v_points_earned INTEGER := 0;
+  v_lock_key BIGINT;
+  v_start_time TIMESTAMP;
+  v_end_time TIMESTAMP;
+  v_overlap_exists BOOLEAN := FALSE;
+  v_customer RECORD;
+  v_resolved_customer_id UUID := p_customer_id;
+  v_booking_id TEXT;
+  v_booking_number TEXT;
+  v_new_booking RECORD;
+BEGIN
+  IF p_store_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_STORE_ID', 'message', 'معرف المتجر مطلوب.');
+  END IF;
+
+  SELECT * INTO v_store FROM public.stores WHERE id = p_store_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'STORE_NOT_FOUND', 'message', 'المتجر غير موجود.');
+  END IF;
+
+  -- 1. توحيد رقم الجوال عبر normalize_saudi_phone
+  v_norm_phone := public.normalize_saudi_phone(p_customer_phone);
+  IF v_norm_phone IS NULL THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'INVALID_PHONE',
+      'message', 'رقم الجوال غير صحيح. يرجى إدخال رقم جوال سعودي صحيح (مثال: 0551122334).'
+    );
+  END IF;
+
+  -- 2. التحقق من التاريخ والوقت
+  BEGIN
+    v_clean_date := BTRIM(p_booking_date)::DATE;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_DATE', 'message', 'تاريخ الحجز غير صحيح.');
+  END;
+
+  v_clean_time := COALESCE(NULLIF(BTRIM(p_booking_time), ''), '12:00');
+
+  -- 3. التحقق من صلاحية الكاشير إذا كان الحجز مباشراً بحالة confirmed/completed
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) OR public.has_store_access(p_store_id) THEN
+    v_is_staff_auth := TRUE;
+  ELSE
+    v_token := COALESCE(
+      NULLIF(BTRIM(p_staff_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_token IS NOT NULL AND v_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_token, false) s
+      LIMIT 1;
+      IF v_staff_store_id = p_store_id THEN
+        v_is_staff_auth := TRUE;
+      END IF;
+    END IF;
+  END IF;
+
+  v_clean_source := COALESCE(NULLIF(BTRIM(p_booking_source), ''), 'customer_app');
+  IF v_is_staff_auth AND v_clean_source IN ('phone_call', 'walk_in', 'cashier') THEN
+    v_clean_status := COALESCE(NULLIF(BTRIM(p_status), ''), 'confirmed');
+  ELSE
+    v_clean_source := 'customer_app';
+    v_clean_status := 'pending';
+  END IF;
+
+  -- 4. التحقق السيرفري من سعر الخدمة من catalog_items
+  SELECT * INTO v_cat_service
+  FROM public.catalog_items
+  WHERE store_id = p_store_id
+    AND (id = p_service_id OR name = p_service_name)
+  LIMIT 1;
+
+  IF FOUND THEN
+    v_verified_price := COALESCE(v_cat_service.price, 0);
+    v_verified_duration := COALESCE(v_cat_service.duration_minutes, v_cat_service.execution_time_minutes, p_service_duration_minutes, 30);
+  ELSE
+    IF NOT v_is_staff_auth THEN
+      RETURN jsonb_build_object(
+        'success', false,
+        'error', 'INVALID_SERVICE',
+        'message', 'الخدمة المطلوبة غير مسجلة في قائمة خدمات المتجر المعتمدة.'
+      );
+    END IF;
+    v_verified_price := GREATEST(0, COALESCE(p_service_price, 0));
+    v_verified_duration := GREATEST(5, COALESCE(p_service_duration_minutes, 30));
+  END IF;
+
+  IF p_selected_modifiers IS NOT NULL AND jsonb_typeof(p_selected_modifiers) = 'array' THEN
+    FOR v_mod IN SELECT * FROM jsonb_array_elements(p_selected_modifiers)
+    LOOP
+      v_mod_delta := v_mod_delta + GREATEST(0, COALESCE((v_mod->>'price_delta')::numeric, (v_mod->>'price')::numeric, 0));
+    END LOOP;
+  END IF;
+
+  v_verified_price := ROUND(v_verified_price + v_mod_delta, 2);
+  v_points_earned := GREATEST(0, FLOOR(v_verified_price * COALESCE(v_store.points_per_riyal, 1))::integer);
+
+  -- 5. قفل ذري وفحص تعارض المواعيد لنفس المختص في نفس التاريخ والوقت
+  IF p_specialist_id IS NOT NULL AND BTRIM(p_specialist_id) <> '' THEN
+    v_lock_key := hashtext('booking_lock:' || p_store_id::text || ':' || BTRIM(p_specialist_id) || ':' || v_clean_date::text);
+    PERFORM pg_advisory_xact_lock(v_lock_key);
+
+    -- أ) فحص التطابق المباشر في التاريخ والوقت
+    SELECT EXISTS (
+      SELECT 1
+      FROM public.service_bookings b
+      WHERE b.store_id = p_store_id
+        AND BTRIM(b.specialist_id) = BTRIM(p_specialist_id)
+        AND b.booking_date = v_clean_date
+        AND BTRIM(b.booking_time) = v_clean_time
+        AND lower(COALESCE(b.status, '')) NOT IN ('cancelled', 'rejected', 'no_show')
+    ) INTO v_overlap_exists;
+
+    -- ب) فحص التداخل الزمني بالمدة (Duration Overlap) إذا كان الوقت بصيغة HH:MM
+    IF NOT v_overlap_exists THEN
+      BEGIN
+        v_start_time := (v_clean_date::text || ' ' || v_clean_time)::TIMESTAMP;
+        v_end_time := v_start_time + (v_verified_duration || ' minutes')::INTERVAL;
+
+        SELECT EXISTS (
+          SELECT 1
+          FROM public.service_bookings b
+          WHERE b.store_id = p_store_id
+            AND BTRIM(b.specialist_id) = BTRIM(p_specialist_id)
+            AND b.booking_date = v_clean_date
+            AND lower(COALESCE(b.status, '')) NOT IN ('cancelled', 'rejected', 'no_show')
+            AND ((b.booking_date::text || ' ' || BTRIM(b.booking_time))::TIMESTAMP < v_end_time)
+            AND (((b.booking_date::text || ' ' || BTRIM(b.booking_time))::TIMESTAMP + (COALESCE(b.service_duration_minutes, 30) || ' minutes')::INTERVAL) > v_start_time)
+        ) INTO v_overlap_exists;
+      EXCEPTION WHEN OTHERS THEN
+        NULL;
+      END;
+    END IF;
+
+    IF v_overlap_exists THEN
+      RETURN jsonb_build_object(
+        'success', false,
+        'error', 'BOOKING_CONFLICT',
+        'message', 'نعتذر، هذا الموعد محجوز مسبقاً لدى الأخصائي المختار. يرجى اختيار موعد آخر.'
+      );
+    END IF;
+  END IF;
+
+  -- 6. ربط أو تسجيل العميل في store_customers بالرقم الموحد
+  SELECT * INTO v_customer
+  FROM public.store_customers
+  WHERE store_id = p_store_id AND phone = v_norm_phone
+  FOR UPDATE;
+
+  IF FOUND THEN
+    v_resolved_customer_id := v_customer.id;
+  ELSE
+    INSERT INTO public.store_customers (
+      store_id, phone, name, wallet_balance, lifetime_xp, tier, is_active, last_visit_date
+    ) VALUES (
+      p_store_id,
+      v_norm_phone,
+      COALESCE(NULLIF(BTRIM(p_customer_name), ''), 'عميل المتجر'),
+      0, 0, 'bronze', true, now()
+    )
+    RETURNING * INTO v_customer;
+    v_resolved_customer_id := v_customer.id;
+  END IF;
+
+  v_booking_id := gen_random_uuid()::text;
+  v_booking_number := 'BKG-' || upper(substring(replace(v_booking_id, '-', '') from 1 for 8));
+
+  -- 7. إدراج الحجز في service_bookings
+  INSERT INTO public.service_bookings (
+    id,
+    booking_number,
+    store_id,
+    branch_id,
+    customer_id,
+    customer_name,
+    customer_phone,
+    service_id,
+    service_name,
+    service_price,
+    selected_modifiers,
+    service_duration_minutes,
+    specialist_id,
+    specialist_name,
+    booking_date,
+    booking_time,
+    status,
+    booking_source,
+    customer_notes,
+    points_to_earn,
+    loyalty_points_earned,
+    points_awarded,
+    created_at,
+    updated_at
+  ) VALUES (
+    v_booking_id,
+    v_booking_number,
+    p_store_id,
+    p_branch_id,
+    v_resolved_customer_id,
+    COALESCE(NULLIF(BTRIM(p_customer_name), ''), 'عميل المتجر'),
+    v_norm_phone,
+    COALESCE(NULLIF(BTRIM(p_service_id), ''), 'srv-main'),
+    COALESCE(v_cat_service.name, NULLIF(BTRIM(p_service_name), ''), 'خدمة'),
+    v_verified_price,
+    COALESCE(p_selected_modifiers, '[]'::jsonb),
+    v_verified_duration,
+    NULLIF(BTRIM(p_specialist_id), ''),
+    p_specialist_name,
+    v_clean_date,
+    v_clean_time,
+    v_clean_status,
+    v_clean_source,
+    p_notes,
+    v_points_earned,
+    v_points_earned,
+    false,
+    now(),
+    now()
+  )
+  RETURNING * INTO v_new_booking;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'booking', to_jsonb(v_new_booking)
+  );
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.9 دالة تحديث حالة الحجز الذرية المؤمنة (update_booking_status_secure)
+-- تشترط توكن موظف صالح، وتتحقق من عدم وجود تعارض عند تأكيد الحجز،
+-- وتمنح نقاط الولاء ذرياً مرة واحدة عند اكتمال الحجز (completed).
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.update_booking_status_secure(
+  p_token TEXT,
+  p_booking_id TEXT,
+  p_status TEXT,
+  p_store_id UUID DEFAULT NULL,
+  p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_is_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_staff_name TEXT := 'كاشير المتجر';
+  v_effective_token TEXT;
+  v_booking RECORD;
+  v_clean_status TEXT := lower(BTRIM(COALESCE(p_status, '')));
+  v_conflict_exists BOOLEAN := FALSE;
+  v_norm_phone TEXT;
+  v_customer RECORD;
+  v_points INTEGER := 0;
+  v_points_awarded_now BOOLEAN := FALSE;
+  v_updated_booking RECORD;
+BEGIN
+  IF p_booking_id IS NULL OR BTRIM(p_booking_id) = ''
+     OR v_clean_status NOT IN ('pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show', 'rejected') THEN
+    RETURN jsonb_build_object('success', false, 'error', 'INVALID_INPUT', 'message', 'بيانات تحديث الحجز غير صحيحة.');
+  END IF;
+
+  SELECT * INTO v_booking
+  FROM public.service_bookings b
+  WHERE (b.id = p_booking_id OR b.booking_number = p_booking_id)
+    AND (p_store_id IS NULL OR b.store_id = p_store_id)
+  LIMIT 1
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'NOT_FOUND', 'message', 'الحجز غير موجود.');
+  END IF;
+
+  -- 1. التحقق من صلاحية الموظف/الكاشير
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) OR public.has_store_access(v_booking.store_id) THEN
+    v_is_auth := TRUE;
+  ELSE
+    v_effective_token := COALESCE(
+      NULLIF(BTRIM(p_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_effective_token IS NOT NULL AND v_effective_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_effective_token, false) s
+      LIMIT 1;
+      IF v_staff_store_id = v_booking.store_id THEN
+        v_is_auth := TRUE;
+        SELECT COALESCE(name, v_staff_name) INTO v_staff_name
+        FROM public.store_staff WHERE id::text = v_staff_id_str LIMIT 1;
+      END IF;
+    END IF;
+  END IF;
+
+  IF NOT v_is_auth THEN
+    RETURN jsonb_build_object('success', false, 'error', 'UNAUTHORIZED', 'message', 'غير مصرح: انتهت جلسة الدخول. سجّل الدخول مرة أخرى.');
+  END IF;
+
+  -- 2. فحص عدم وجود تعارض عند تأكيد الحجز (confirmed)
+  IF v_clean_status = 'confirmed' AND v_booking.specialist_id IS NOT NULL AND BTRIM(v_booking.specialist_id) <> '' THEN
+    SELECT EXISTS (
+      SELECT 1
+      FROM public.service_bookings b2
+      WHERE b2.store_id = v_booking.store_id
+        AND b2.id <> v_booking.id
+        AND BTRIM(b2.specialist_id) = BTRIM(v_booking.specialist_id)
+        AND b2.booking_date = v_booking.booking_date
+        AND BTRIM(b2.booking_time) = BTRIM(v_booking.booking_time)
+        AND lower(COALESCE(b2.status, '')) IN ('confirmed', 'in_progress')
+    ) INTO v_conflict_exists;
+
+    IF v_conflict_exists THEN
+      RETURN jsonb_build_object(
+        'success', false,
+        'error', 'BOOKING_CONFLICT',
+        'message', 'لا يمكن تأكيد الحجز لوجود حجز آخر مؤكد لنفس الأخصائي في نفس التاريخ والوقت.'
+      );
+    END IF;
+  END IF;
+
+  -- 3. منح نقاط الولاء ذرياً عند اكتمال الحجز (completed)
+  v_points := GREATEST(COALESCE(v_booking.loyalty_points_earned, 0), COALESCE(v_booking.points_to_earn, 0));
+  IF v_clean_status = 'completed'
+     AND NOT COALESCE(v_booking.points_awarded, false)
+     AND v_points > 0
+     AND v_booking.customer_phone IS NOT NULL THEN
+
+    v_norm_phone := COALESCE(public.normalize_saudi_phone(v_booking.customer_phone), BTRIM(v_booking.customer_phone));
+    SELECT * INTO v_customer
+    FROM public.store_customers
+    WHERE store_id = v_booking.store_id AND phone = v_norm_phone
+    FOR UPDATE;
+
+    IF FOUND THEN
+      UPDATE public.store_customers
+      SET
+        wallet_balance = COALESCE(wallet_balance, 0) + v_points,
+        lifetime_xp = COALESCE(lifetime_xp, 0) + v_points,
+        last_visit_date = now()
+      WHERE id = v_customer.id;
+
+      v_points_awarded_now := TRUE;
+
+      INSERT INTO public.audit_logs (
+        store_id,
+        staff_id,
+        branch_id,
+        customer_id,
+        customer_phone,
+        customer_name,
+        action,
+        event_type,
+        purchase_amount,
+        points_changed,
+        entry_method,
+        invoice_number,
+        metadata
+      ) VALUES (
+        v_booking.store_id,
+        CASE WHEN v_staff_id_str ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN v_staff_id_str::uuid ELSE NULL END,
+        v_booking.branch_id,
+        v_customer.id,
+        v_norm_phone,
+        COALESCE(v_customer.name, v_booking.customer_name, 'عميل المتجر'),
+        'PURCHASE',
+        'SERVICE_BOOKING',
+        COALESCE(v_booking.service_price, 0),
+        v_points,
+        'booking_completed',
+        v_booking.booking_number,
+        jsonb_build_object(
+          'booking_id', v_booking.id,
+          'booking_number', v_booking.booking_number,
+          'service_name', v_booking.service_name,
+          'cashier_name', v_staff_name
+        )
+      );
+    END IF;
+  END IF;
+
+  UPDATE public.service_bookings
+  SET
+    status = v_clean_status,
+    points_awarded = COALESCE(points_awarded, false) OR v_points_awarded_now,
+    updated_at = now()
+  WHERE id = v_booking.id
+  RETURNING * INTO v_updated_booking;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'booking', to_jsonb(v_updated_booking),
+    'points_awarded_now', v_points_awarded_now
+  );
+END;
+$$;
+
+
+-- -----------------------------------------------------------------------------
+-- 3.10 تحديث دالة get_customer_bookings لاستخدام normalize_saudi_phone
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_customer_bookings(
+  p_store_id UUID,
+  p_phone TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_norm_phone TEXT := public.normalize_saudi_phone(p_phone);
+  v_rows JSONB;
+BEGIN
+  IF p_store_id IS NULL OR v_norm_phone IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(to_jsonb(b) ORDER BY b.created_at DESC), '[]'::jsonb)
+  INTO v_rows
+  FROM (
+    SELECT *
+    FROM public.service_bookings
+    WHERE store_id = p_store_id
+      AND COALESCE(public.normalize_saudi_phone(customer_phone), BTRIM(customer_phone)) = v_norm_phone
+    ORDER BY created_at DESC
+    LIMIT 100
+  ) b;
+
+  RETURN v_rows;
+END;
+$$;
+
+
+-- =============================================================================
+-- القسم 4: تشديد سياسات RLS وصلاحيات الدوال (Grants & RLS Hardening)
+-- =============================================================================
+
+-- 4.1 تشديد سياسات store_orders: إغلاق الإدراج والقراءة المفتوحة للـ anon، وحصرها في الموظفين/أصحاب المتجر أو عبر الدوال المؤمنة
+ALTER TABLE public.store_orders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "store_orders_insert_policy" ON public.store_orders;
+CREATE POLICY "store_orders_insert_policy"
+ON public.store_orders
+FOR INSERT
+TO anon, authenticated
+WITH CHECK (
+  public.has_valid_staff_access(store_id, false)
+  OR public.has_store_access(store_id)
+  OR public.is_super_admin()
+);
+
+DROP POLICY IF EXISTS "store_orders_select_policy" ON public.store_orders;
+CREATE POLICY "store_orders_select_policy"
+ON public.store_orders
+FOR SELECT
+TO anon, authenticated
+USING (
+  public.has_valid_staff_access(store_id, false)
+  OR public.has_store_access(store_id)
+  OR public.is_super_admin()
+);
+
+DROP POLICY IF EXISTS "store_orders_update_policy" ON public.store_orders;
+CREATE POLICY "store_orders_update_policy"
+ON public.store_orders
+FOR UPDATE
+TO anon, authenticated
+USING (
+  public.has_valid_staff_access(store_id, false)
+  OR public.has_store_access(store_id)
+  OR public.is_super_admin()
+)
+WITH CHECK (
+  public.has_valid_staff_access(store_id, false)
+  OR public.has_store_access(store_id)
+  OR public.is_super_admin()
+);
+
+-- 4.2 تشديد سياسات pos_shifts, pos_cash_movements, pos_refunds, service_bookings
+ALTER TABLE public.pos_shifts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pos_cash_movements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pos_refunds ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.service_bookings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "service_bookings_staff_select_policy" ON public.service_bookings;
+CREATE POLICY "service_bookings_staff_select_policy"
+ON public.service_bookings
+FOR SELECT
+TO anon, authenticated
+USING (
+  public.has_valid_staff_access(store_id, false)
+  OR public.has_store_access(store_id)
+  OR public.is_super_admin()
+);
+
+-- 4.3 منح صلاحيات تنفيذ الدوال (Grants)
+GRANT EXECUTE ON FUNCTION public.create_store_order_secure(uuid, jsonb, text, text, text, text, text, uuid, text, text, text, jsonb, numeric, text, text, uuid, text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.update_store_order_status_secure(uuid, uuid, text, text, text, text, text, text, text, text, uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_customer_orders_secure(uuid, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.open_pos_shift_secure(uuid, numeric, uuid, text, uuid, text, text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.record_pos_cash_movement_secure(uuid, uuid, text, numeric, text, text, text, text, text, uuid, text, text, text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.close_pos_shift_secure(uuid, uuid, numeric, text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.process_pos_refund_atomic(uuid, uuid, jsonb, text, text, text, text, uuid, uuid, text, text, text, text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.book_service_safely(uuid, uuid, text, text, text, text, numeric, integer, text, text, text, text, text, integer, jsonb, uuid, text, text, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.update_booking_status_secure(text, text, text, uuid, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_customer_bookings(uuid, text) TO anon, authenticated, service_role;
+
+COMMIT;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261029_stage5_partners_commissions_payouts_leads.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🚀 STAGE 5 MIGRATION: AFFILIATES, PARTNERS, COMMISSIONS, PAYOUTS & LEADS
+-- Sadim Al-Athir (kspfiijorengpckdlymx) Multi-Tenant Security & Atomic Hardening
+-- FINAL PRODUCTION-READY VERSION - Incorporating Advisor Security Enhancements
+-- ==============================================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ------------------------------------------------------------------------------
+-- 1. HARDEN ROW-LEVEL SECURITY (RLS) POLICIES
+-- ------------------------------------------------------------------------------
+
+-- 1.1 affiliates
+ALTER TABLE public.affiliates ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS affiliates_manage_all ON public.affiliates;
+DROP POLICY IF EXISTS affiliates_read_public ON public.affiliates;
+DROP POLICY IF EXISTS "SuperAdmin affiliates access" ON public.affiliates;
+DROP POLICY IF EXISTS service_role_affiliates_full_access ON public.affiliates;
+DROP POLICY IF EXISTS affiliates_super_admin_all ON public.affiliates;
+DROP POLICY IF EXISTS affiliates_service_role_all ON public.affiliates;
+DROP POLICY IF EXISTS "affiliates_super_admin_all" ON public.affiliates;
+DROP POLICY IF EXISTS "affiliates_service_role_all" ON public.affiliates;
+
+CREATE POLICY affiliates_service_role_all ON public.affiliates
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY affiliates_super_admin_all ON public.affiliates
+    FOR ALL TO authenticated USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+-- 1.2 partner_accounts
+ALTER TABLE public.partner_accounts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS partner_accounts_manage_all ON public.partner_accounts;
+DROP POLICY IF EXISTS partner_accounts_read_public ON public.partner_accounts;
+DROP POLICY IF EXISTS "SuperAdmin partner accounts access" ON public.partner_accounts;
+DROP POLICY IF EXISTS partner_accounts_select_own ON public.partner_accounts;
+DROP POLICY IF EXISTS partner_accounts_service_role_all ON public.partner_accounts;
+DROP POLICY IF EXISTS partner_accounts_super_admin_all ON public.partner_accounts;
+
+CREATE POLICY partner_accounts_service_role_all ON public.partner_accounts
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY partner_accounts_super_admin_all ON public.partner_accounts
+    FOR ALL TO authenticated USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+CREATE POLICY partner_accounts_select_own ON public.partner_accounts
+    FOR SELECT TO authenticated USING (auth.uid() = auth_user_id);
+
+-- 1.3 partner_commissions
+ALTER TABLE public.partner_commissions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS partner_commissions_read_all ON public.partner_commissions;
+DROP POLICY IF EXISTS "SuperAdmin partner commissions access" ON public.partner_commissions;
+DROP POLICY IF EXISTS partner_commissions_select_own ON public.partner_commissions;
+DROP POLICY IF EXISTS partner_commissions_service_role_all ON public.partner_commissions;
+DROP POLICY IF EXISTS partner_commissions_super_admin_all ON public.partner_commissions;
+
+CREATE POLICY partner_commissions_service_role_all ON public.partner_commissions
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY partner_commissions_super_admin_all ON public.partner_commissions
+    FOR ALL TO authenticated USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+CREATE POLICY partner_commissions_select_own ON public.partner_commissions
+    FOR SELECT TO authenticated USING (
+        partner_account_id IN (
+            SELECT pa.id FROM public.partner_accounts pa
+            WHERE pa.auth_user_id = auth.uid() AND pa.active = true
+        )
+    );
+
+-- 1.4 merchant_leads
+ALTER TABLE public.merchant_leads ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS merchant_leads_anon_update_policy ON public.merchant_leads;
+DROP POLICY IF EXISTS merchant_leads_auth_all_policy ON public.merchant_leads;
+DROP POLICY IF EXISTS merchant_leads_insert_all ON public.merchant_leads;
+DROP POLICY IF EXISTS merchant_leads_select_all ON public.merchant_leads;
+DROP POLICY IF EXISTS "Service Role Full Leads Access" ON public.merchant_leads;
+DROP POLICY IF EXISTS "SuperAdmin Full Leads Access" ON public.merchant_leads;
+DROP POLICY IF EXISTS service_role_merchant_leads_full_access ON public.merchant_leads;
+DROP POLICY IF EXISTS merchant_leads_service_role_all ON public.merchant_leads;
+DROP POLICY IF EXISTS merchant_leads_super_admin_all ON public.merchant_leads;
+
+CREATE POLICY merchant_leads_service_role_all ON public.merchant_leads
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY merchant_leads_super_admin_all ON public.merchant_leads
+    FOR ALL TO authenticated USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+-- 1.5 affiliate_payouts (cast uuid and varchar correctly to text)
+ALTER TABLE public.affiliate_payouts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS affiliate_payouts_service_role_all ON public.affiliate_payouts;
+DROP POLICY IF EXISTS affiliate_payouts_super_admin_all ON public.affiliate_payouts;
+DROP POLICY IF EXISTS affiliate_payouts_select_own ON public.affiliate_payouts;
+
+CREATE POLICY affiliate_payouts_service_role_all ON public.affiliate_payouts
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY affiliate_payouts_super_admin_all ON public.affiliate_payouts
+    FOR ALL TO authenticated USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+CREATE POLICY affiliate_payouts_select_own ON public.affiliate_payouts
+    FOR SELECT TO authenticated USING (
+        affiliate_id IN (
+            SELECT id::text FROM public.affiliates 
+            WHERE public.normalize_saudi_phone(phone) = public.normalize_saudi_phone((SELECT phone FROM public.partner_accounts WHERE auth_user_id = auth.uid() LIMIT 1))
+        )
+        OR EXISTS (
+            SELECT 1 FROM public.partner_accounts pa 
+            WHERE pa.affiliate_id::text = affiliate_payouts.affiliate_id::text 
+              AND pa.auth_user_id = auth.uid()
+        )
+    );
+
+-- 1.6 partner_audit_logs & partner_targets & referrals
+ALTER TABLE public.partner_audit_logs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "SuperAdmin partner audit logs access" ON public.partner_audit_logs;
+DROP POLICY IF EXISTS partner_audit_logs_service_role_all ON public.partner_audit_logs;
+DROP POLICY IF EXISTS partner_audit_logs_super_admin_all ON public.partner_audit_logs;
+
+CREATE POLICY partner_audit_logs_service_role_all ON public.partner_audit_logs
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY partner_audit_logs_super_admin_all ON public.partner_audit_logs
+    FOR ALL TO authenticated USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+ALTER TABLE public.partner_targets ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "SuperAdmin partner targets access" ON public.partner_targets;
+DROP POLICY IF EXISTS partner_targets_select_own ON public.partner_targets;
+DROP POLICY IF EXISTS partner_targets_service_role_all ON public.partner_targets;
+DROP POLICY IF EXISTS partner_targets_super_admin_all ON public.partner_targets;
+
+CREATE POLICY partner_targets_service_role_all ON public.partner_targets
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY partner_targets_super_admin_all ON public.partner_targets
+    FOR ALL TO authenticated USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+CREATE POLICY partner_targets_select_own ON public.partner_targets
+    FOR SELECT TO authenticated USING (
+        partner_account_id IN (
+            SELECT pa.id FROM public.partner_accounts pa
+            WHERE pa.auth_user_id = auth.uid() AND pa.active = true
+        )
+    );
+
+ALTER TABLE public.referrals ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS service_role_referrals_full_access ON public.referrals;
+DROP POLICY IF EXISTS referrals_service_role_all ON public.referrals;
+DROP POLICY IF EXISTS referrals_super_admin_all ON public.referrals;
+
+CREATE POLICY referrals_service_role_all ON public.referrals
+    FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY referrals_super_admin_all ON public.referrals
+    FOR ALL TO authenticated USING (public.is_super_admin()) WITH CHECK (public.is_super_admin());
+
+
+-- ------------------------------------------------------------------------------
+-- 2. SAUDI PHONE NORMALIZATION BACKFILL
+-- ------------------------------------------------------------------------------
+
+UPDATE public.affiliates
+SET phone = public.normalize_saudi_phone(phone)
+WHERE phone IS NOT NULL AND phone <> public.normalize_saudi_phone(phone);
+
+UPDATE public.partner_accounts
+SET phone = public.normalize_saudi_phone(phone)
+WHERE phone IS NOT NULL AND phone <> public.normalize_saudi_phone(phone);
+
+UPDATE public.merchant_leads
+SET normalized_phone = public.normalize_saudi_phone(phone)
+WHERE phone IS NOT NULL AND (normalized_phone IS NULL OR normalized_phone <> public.normalize_saudi_phone(phone));
+
+
+-- ------------------------------------------------------------------------------
+-- 3. ATOMIC PARTNER CREATION RPC
+-- ------------------------------------------------------------------------------
+
+DROP FUNCTION IF EXISTS public.admin_create_partner_full_atomic(text, text, text, text, text, text, numeric, numeric, integer, text);
+
+CREATE OR REPLACE FUNCTION public.admin_create_partner_full_atomic(
+    p_name text,
+    p_phone text,
+    p_referral_code text,
+    p_pin_code text,
+    p_slug text,
+    p_region text DEFAULT 'الرياض',
+    p_commission_rate numeric DEFAULT 0.2000,
+    p_recurring_commission_rate numeric DEFAULT 0.1000,
+    p_monthly_target integer DEFAULT 20,
+    p_master_token text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+    v_clean_name TEXT := TRIM(COALESCE(p_name, ''));
+    v_norm_phone TEXT;
+    v_clean_code TEXT;
+    v_clean_slug TEXT;
+    v_clean_pin TEXT := TRIM(COALESCE(p_pin_code, '1234'));
+    v_comm_rate NUMERIC(5, 4);
+    v_rec_rate NUMERIC(5, 4);
+    v_affiliate_id UUID;
+    v_partner_id UUID;
+    v_hashed_pin TEXT;
+    v_period_start DATE;
+    v_period_end DATE;
+BEGIN
+    -- 1. Authorization check
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RETURN jsonb_build_object('success', false, 'code', 'UNAUTHORIZED', 'error', 'صلاحية غير كافية لإنشاء حساب شريك');
+    END IF;
+
+    -- 2. Basic validations
+    IF v_clean_name = '' THEN
+        RETURN jsonb_build_object('success', false, 'code', 'INVALID_NAME', 'error', 'اسم الشريك مطلوب');
+    END IF;
+
+    v_norm_phone := public.normalize_saudi_phone(p_phone);
+    IF v_norm_phone IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'code', 'INVALID_PHONE', 'error', 'رقم الجوال غير صالح');
+    END IF;
+
+    v_clean_code := UPPER(REGEXP_REPLACE(TRIM(COALESCE(p_referral_code, '')), '[^A-Z0-9_-]', '', 'g'));
+    IF v_clean_code = '' OR LENGTH(v_clean_code) < 3 THEN
+        RETURN jsonb_build_object('success', false, 'code', 'INVALID_CODE', 'error', 'كود الإحالة يجب أن يتكون من 3 أحرف على الأقل');
+    END IF;
+
+    v_clean_slug := LOWER(REGEXP_REPLACE(TRIM(COALESCE(p_slug, v_clean_code)), '[^a-z0-9_-]', '-', 'g'));
+    IF v_clean_slug IN ('partner', 'join', 'admin', 'customer', 'cashier', 'pos', 'superadmin', 'super-admin', 'api', 'dashboard') THEN
+        v_clean_slug := LOWER(v_clean_code);
+    END IF;
+
+    IF LENGTH(v_clean_pin) < 4 THEN
+        RETURN jsonb_build_object('success', false, 'code', 'INVALID_PIN', 'error', 'الرمز السري يجب ألا يقل عن 4 أرقام');
+    END IF;
+
+    v_comm_rate := GREATEST(0.0100, LEAST(1.0000, COALESCE(p_commission_rate, 0.2000)));
+    v_rec_rate := GREATEST(0.0100, LEAST(1.0000, COALESCE(p_recurring_commission_rate, 0.1000)));
+
+    -- 3. Collision checks
+    IF EXISTS (SELECT 1 FROM public.affiliates WHERE public.normalize_saudi_phone(phone) = v_norm_phone)
+       OR EXISTS (SELECT 1 FROM public.partner_accounts WHERE public.normalize_saudi_phone(phone) = v_norm_phone) THEN
+        RETURN jsonb_build_object('success', false, 'code', 'PHONE_EXISTS', 'error', 'رقم الجوال مسجل مسبقاً');
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM public.affiliates WHERE UPPER(TRIM(referral_code)) = v_clean_code) THEN
+        RETURN jsonb_build_object('success', false, 'code', 'CODE_EXISTS', 'error', 'كود الإحالة مستخدم مسبقاً');
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM public.partner_accounts WHERE LOWER(TRIM(slug)) = v_clean_slug) THEN
+        v_clean_slug := LOWER(v_clean_code) || '-' || SUBSTRING(gen_random_uuid()::text FROM 1 FOR 4);
+    END IF;
+
+    -- 4. Hash PIN with bcrypt
+    v_hashed_pin := crypt(v_clean_pin, gen_salt('bf', 8));
+
+    -- 5. Insert into affiliates (secure notes without exposing plaintext pin)
+    INSERT INTO public.affiliates (
+        name, phone, referral_code, code, status, is_active, commission_rate,
+        acquisition_commission_rate, recurring_commission_rate, pin_code, city,
+        monthly_target_stores, notes, created_at, updated_at
+    ) VALUES (
+        v_clean_name, v_norm_phone, v_clean_code, v_clean_code, 'ACTIVE', true,
+        v_comm_rate, v_comm_rate, v_rec_rate, v_clean_pin,
+        COALESCE(NULLIF(TRIM(p_region), ''), 'الرياض'),
+        GREATEST(1, COALESCE(p_monthly_target, 20)),
+        'Created via atomic RPC - secure',
+        CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
+    ) RETURNING id INTO v_affiliate_id;
+
+    -- 6. Insert into partner_accounts
+    INSERT INTO public.partner_accounts (
+        affiliate_id, display_name, slug, referral_code, phone, pin_code, region,
+        commission_rate, acquisition_commission_rate, recurring_commission_rate,
+        target_value, active, created_at, updated_at
+    ) VALUES (
+        v_affiliate_id, v_clean_name, v_clean_slug, v_clean_code, v_norm_phone, v_hashed_pin,
+        COALESCE(NULLIF(TRIM(p_region), ''), 'الرياض'),
+        v_comm_rate, v_comm_rate, v_rec_rate,
+        GREATEST(1, COALESCE(p_monthly_target, 20)), true,
+        CLOCK_TIMESTAMP(), CLOCK_TIMESTAMP()
+    ) RETURNING id INTO v_partner_id;
+
+    -- 7. Initialize monthly target
+    v_period_start := DATE_TRUNC('month', CURRENT_DATE)::DATE;
+    v_period_end := (DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month - 1 day')::DATE;
+
+    INSERT INTO public.partner_targets (partner_account_id, period_start, period_end, target_type, target_value)
+    VALUES (v_partner_id, v_period_start, v_period_end, 'PAID_MERCHANTS', GREATEST(1, COALESCE(p_monthly_target, 20)))
+    ON CONFLICT (partner_account_id, period_start, period_end, target_type) DO NOTHING;
+
+    -- 8. Audit log
+    INSERT INTO public.partner_audit_logs (partner_account_id, action, details, performed_by)
+    VALUES (
+        v_partner_id, 'PARTNER_CREATED_ATOMIC',
+        jsonb_build_object('affiliate_id', v_affiliate_id, 'name', v_clean_name, 'phone', v_norm_phone, 'code', v_clean_code, 'slug', v_clean_slug),
+        CASE WHEN p_master_token IS NOT NULL THEN 'MASTER_TOKEN' ELSE 'SUPER_ADMIN' END
+    );
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'partner_id', v_partner_id,
+        'affiliate_id', v_affiliate_id,
+        'slug', v_clean_slug,
+        'referral_code', v_clean_code,
+        'message', 'تم إنشاء الشريك بنجاح'
+    );
+END;
+$$;
+
+
+-- ------------------------------------------------------------------------------
+-- 4. SECURE PARTNER LOGIN
+-- ------------------------------------------------------------------------------
+
+DROP FUNCTION IF EXISTS public.verify_partner_login(text, text);
+
+CREATE OR REPLACE FUNCTION public.verify_partner_login(p_login_input text, p_pin text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions', 'pg_temp'
+AS $$
+DECLARE
+    v_clean_input TEXT := LOWER(TRIM(COALESCE(p_login_input, '')));
+    v_norm_phone TEXT;
+    v_pin TEXT := TRIM(COALESCE(p_pin, ''));
+    v_partner RECORD;
+    v_is_match BOOLEAN := FALSE;
+    v_key TEXT;
+    v_lock INT;
+    v_count INT;
+BEGIN
+    IF v_clean_input = '' OR v_pin = '' OR LENGTH(v_clean_input) > 100 OR LENGTH(v_pin) > 32 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'يرجى إدخال البيانات كاملة');
+    END IF;
+
+    v_norm_phone := public.normalize_saudi_phone(v_clean_input);
+
+    SELECT pa.id, pa.affiliate_id, pa.display_name, pa.slug, pa.region, pa.active, pa.pin_code,
+           a.name, a.phone, a.referral_code, a.status,
+           COALESCE(pa.commission_rate, a.commission_rate, 0.2000) AS commission_rate,
+           COALESCE(pa.recurring_commission_rate, a.recurring_commission_rate, 0.1000) AS recurring_commission_rate
+    INTO v_partner
+    FROM public.partner_accounts pa 
+    JOIN public.affiliates a ON a.id = pa.affiliate_id
+    WHERE LOWER(TRIM(COALESCE(a.referral_code, ''))) = v_clean_input
+       OR LOWER(TRIM(COALESCE(pa.slug, ''))) = v_clean_input
+       OR (v_norm_phone IS NOT NULL AND (public.normalize_saudi_phone(a.phone) = v_norm_phone OR public.normalize_saudi_phone(pa.phone) = v_norm_phone))
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        SELECT a.id AS affiliate_id, a.id, a.name AS display_name, LOWER(a.referral_code) AS slug,
+               a.city AS region, a.is_active AS active, a.pin_code, a.name, a.phone, a.referral_code, a.status,
+               COALESCE(a.commission_rate, 0.2000) AS commission_rate,
+               COALESCE(a.recurring_commission_rate, 0.1000) AS recurring_commission_rate
+        INTO v_partner FROM public.affiliates a
+        WHERE LOWER(TRIM(COALESCE(a.referral_code, ''))) = v_clean_input
+           OR (v_norm_phone IS NOT NULL AND public.normalize_saudi_phone(a.phone) = v_norm_phone)
+        LIMIT 1;
+    END IF;
+
+    IF v_partner.id IS NULL THEN
+        v_key := 'i:' || LEFT(v_clean_input, 64);
+        v_lock := public._pin_lock_seconds('partner', v_key);
+        IF v_lock > 0 THEN RETURN public._locked_response(v_lock); END IF;
+        v_count := public._pin_register_fail('partner', v_key, NULL, jsonb_build_object('type', 'partner_unknown_login'));
+        IF v_count >= 5 THEN RETURN public._locked_response(900); END IF;
+        RETURN jsonb_build_object('success', false, 'error', 'رقم الجوال أو كود الشريك غير مسجل');
+    END IF;
+
+    v_key := 'p:' || v_partner.id::text;
+    v_lock := public._pin_lock_seconds('partner', v_key);
+    IF v_lock > 0 THEN RETURN public._locked_response(v_lock); END IF;
+
+    IF v_partner.active = FALSE OR v_partner.status = 'SUSPENDED' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'حساب الشريك موقوف حالياً');
+    END IF;
+
+    IF v_partner.pin_code LIKE '$2%' THEN
+        v_is_match := (v_partner.pin_code = crypt(v_pin, v_partner.pin_code));
+    ELSE
+        v_is_match := (TRIM(v_partner.pin_code) = v_pin);
+        IF v_is_match THEN
+            UPDATE public.partner_accounts SET pin_code = crypt(v_pin, gen_salt('bf', 8)), updated_at = CLOCK_TIMESTAMP() WHERE id = v_partner.id;
+        END IF;
+    END IF;
+
+    IF NOT v_is_match THEN
+        v_count := public._pin_register_fail('partner', v_key, v_partner.id, jsonb_build_object('type', 'partner_login'));
+        IF v_count >= 5 THEN RETURN public._locked_response(900); END IF;
+        RETURN jsonb_build_object('success', false, 'error', 'الرمز السري غير صحيح', 'attempts_left', 5 - v_count);
+    END IF;
+
+    PERFORM public._pin_register_success('partner', v_key);
+
+    RETURN jsonb_build_object('success', true, 'partner', jsonb_build_object(
+        'id', v_partner.id, 'affiliate_id', v_partner.affiliate_id, 'display_name', v_partner.display_name,
+        'name', v_partner.name, 'slug', v_partner.slug, 'region', v_partner.region,
+        'phone', v_partner.phone, 'referral_code', v_partner.referral_code,
+        'commission_rate', v_partner.commission_rate, 'recurring_commission_rate', v_partner.recurring_commission_rate));
+END;
+$$;
+
+
+-- ------------------------------------------------------------------------------
+-- 5. SECURE PIN CHANGE
+-- ------------------------------------------------------------------------------
+
+DROP FUNCTION IF EXISTS public.change_partner_pin(uuid, text, text);
+
+CREATE OR REPLACE FUNCTION public.change_partner_pin(p_partner_id uuid, p_old_pin text, p_new_pin text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public', 'extensions', 'pg_temp' AS $$
+DECLARE
+    v_partner RECORD; 
+    v_is_valid BOOLEAN := FALSE; 
+    v_old TEXT := TRIM(COALESCE(p_old_pin, ''));
+    v_new TEXT := TRIM(COALESCE(p_new_pin, '')); 
+    v_key TEXT; 
+    v_lock INT; 
+    v_count INT; 
+    v_hashed_new TEXT;
+BEGIN
+    IF p_partner_id IS NULL OR v_old = '' OR LENGTH(v_old) > 32 OR LENGTH(v_new) > 32 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'البيانات غير صحيحة');
+    END IF;
+
+    IF LENGTH(v_new) < 4 THEN 
+        RETURN jsonb_build_object('success', false, 'error', 'الرمز الجديد يجب ألا يقل عن 4 أرقام'); 
+    END IF;
+
+    SELECT id, affiliate_id, pin_code INTO v_partner FROM public.partner_accounts WHERE id = p_partner_id;
+    IF NOT FOUND THEN 
+        RETURN jsonb_build_object('success', false, 'error', 'حساب الشريك غير موجود'); 
+    END IF;
+
+    v_key := 'p:' || v_partner.id::text;
+    v_lock := public._pin_lock_seconds('partner', v_key);
+    IF v_lock > 0 THEN RETURN public._locked_response(v_lock); END IF;
+
+    IF v_partner.pin_code LIKE '$2%' THEN 
+        v_is_valid := (v_partner.pin_code = crypt(v_old, v_partner.pin_code));
+    ELSE 
+        v_is_valid := (TRIM(v_partner.pin_code) = v_old); 
+    END IF;
+
+    IF NOT v_is_valid THEN
+        v_count := public._pin_register_fail('partner', v_key, v_partner.id, jsonb_build_object('type', 'partner_change_pin'));
+        IF v_count >= 5 THEN RETURN public._locked_response(900); END IF;
+        RETURN jsonb_build_object('success', false, 'error', 'الرمز القديم غير صحيح', 'attempts_left', 5 - v_count);
+    END IF;
+
+    PERFORM public._pin_register_success('partner', v_key);
+
+    v_hashed_new := crypt(v_new, gen_salt('bf', 8));
+
+    UPDATE public.partner_accounts 
+    SET pin_code = v_hashed_new, updated_at = CLOCK_TIMESTAMP() 
+    WHERE id = p_partner_id;
+
+    IF v_partner.affiliate_id IS NOT NULL THEN
+        UPDATE public.affiliates
+        SET pin_code = v_new, notes = 'PIN changed - secure', updated_at = CLOCK_TIMESTAMP()
+        WHERE id = v_partner.affiliate_id;
+    END IF;
+
+    INSERT INTO public.partner_audit_logs (partner_account_id, action, details, performed_by)
+    VALUES (p_partner_id, 'PIN_CHANGED_SECURE', jsonb_build_object('time', CLOCK_TIMESTAMP()), 'PARTNER');
+
+    RETURN jsonb_build_object('success', true, 'message', 'تم تحديث الرمز السري بنجاح 🔒');
+END;
+$$;
+
+
+-- ------------------------------------------------------------------------------
+-- 6. SECURE SETTLEMENT WITH FOR UPDATE + REAL FINANCIAL LEDGER SCHEMA
+-- ------------------------------------------------------------------------------
+
+DROP FUNCTION IF EXISTS public.admin_settle_partner_commissions(uuid, text);
+DROP FUNCTION IF EXISTS public.admin_settle_partner_commissions(uuid, text, text);
+
+CREATE OR REPLACE FUNCTION public.admin_settle_partner_commissions(
+    p_partner_account_id uuid, 
+    p_settlement_reference text DEFAULT NULL, 
+    p_master_token text DEFAULT NULL
+) 
+RETURNS jsonb 
+LANGUAGE plpgsql 
+SECURITY DEFINER 
+SET search_path TO 'public', 'pg_temp' 
+AS $$
+DECLARE
+    v_settled_commissions INTEGER := 0; 
+    v_total_amount NUMERIC(12, 2) := 0.00; 
+    v_settled_bonuses INTEGER := 0;
+    v_partner RECORD;
+    v_tx_id TEXT;
+BEGIN
+    IF NOT (
+        public.is_super_admin() 
+        OR auth.role() = 'service_role' 
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RETURN jsonb_build_object('success', false, 'code', 'UNAUTHORIZED', 'error', 'صلاحية غير كافية');
+    END IF;
+
+    -- Lock partner row (advisor improvement to prevent race conditions)
+    SELECT id, display_name, affiliate_id INTO v_partner
+    FROM public.partner_accounts 
+    WHERE id = p_partner_account_id 
+    FOR UPDATE;
+
+    IF NOT FOUND THEN 
+        RETURN jsonb_build_object('success', false, 'error', 'الشريك غير موجود'); 
+    END IF;
+
+    SELECT COALESCE(SUM(commission_amount), 0.00), COUNT(*) 
+    INTO v_total_amount, v_settled_commissions
+    FROM public.partner_commissions 
+    WHERE partner_account_id = p_partner_account_id AND status IN ('AVAILABLE', 'EARNED');
+
+    IF v_settled_commissions = 0 THEN 
+        RETURN jsonb_build_object('success', false, 'code', 'NO_DUE_COMMISSIONS', 'error', 'لا توجد عمولات مستحقة'); 
+    END IF;
+
+    UPDATE public.partner_commissions 
+    SET status = 'PAID',
+        notes = COALESCE(notes, '') || ' | تصفية: ' || COALESCE(p_settlement_reference, 'N/A'),
+        updated_at = CLOCK_TIMESTAMP()
+    WHERE partner_account_id = p_partner_account_id AND status IN ('AVAILABLE', 'EARNED');
+
+    UPDATE public.partner_bonus_awards 
+    SET status = 'PAID'
+    WHERE partner_account_id = p_partner_account_id AND status IN ('ACHIEVED', 'AWARDED');
+    
+    GET DIAGNOSTICS v_settled_bonuses = ROW_COUNT;
+
+    -- Insert into real financial_ledger with correct schema columns
+    v_tx_id := 'tx_settle_' || to_char(now(), 'YYYYMMDD') || '_' || SUBSTRING(md5(random()::text) FROM 1 FOR 8);
+    BEGIN
+        INSERT INTO public.financial_ledger (
+            transaction_id,
+            affiliate_id,
+            payment_id,
+            transaction_type,
+            gross_amount,
+            vat_amount,
+            gateway_fee,
+            affiliate_commission,
+            net_platform_amount,
+            status,
+            created_by,
+            metadata,
+            effective_at,
+            created_at
+        ) VALUES (
+            v_tx_id,
+            p_partner_account_id::text,
+            COALESCE(p_settlement_reference, 'SETTLE-' || to_char(now(), 'YYYYMMDD')),
+            'PAYOUT',
+            0.00,
+            0.00,
+            0.00,
+            v_total_amount,
+            0.00,
+            'SETTLED',
+            CASE WHEN p_master_token IS NOT NULL THEN 'MASTER_TOKEN' ELSE 'SUPER_ADMIN' END,
+            jsonb_build_object(
+                'partner_name', v_partner.display_name,
+                'settlement_reference', p_settlement_reference,
+                'commissions_count', v_settled_commissions,
+                'bonuses_count', v_settled_bonuses
+            ),
+            CLOCK_TIMESTAMP(),
+            CLOCK_TIMESTAMP()
+        );
+    EXCEPTION WHEN OTHERS THEN
+        NULL;
+    END;
+
+    INSERT INTO public.partner_audit_logs (partner_account_id, action, details, performed_by)
+    VALUES (
+        p_partner_account_id, 'COMMISSIONS_SETTLED',
+        jsonb_build_object(
+            'settled_commissions_count', v_settled_commissions, 
+            'settled_bonuses_count', v_settled_bonuses, 
+            'total_amount', v_total_amount, 
+            'reference', p_settlement_reference
+        ),
+        CASE WHEN p_master_token IS NOT NULL THEN 'MASTER_TOKEN' ELSE 'SUPER_ADMIN' END
+    );
+
+    RETURN jsonb_build_object(
+        'success', true, 
+        'settled_commissions', v_settled_commissions, 
+        'settled_bonuses', v_settled_bonuses, 
+        'total_amount', v_total_amount, 
+        'reference', p_settlement_reference
+    );
+END;
+$$;
+
+
+-- ------------------------------------------------------------------------------
+-- 7. SECURE GRANTS
+-- ------------------------------------------------------------------------------
+
+GRANT EXECUTE ON FUNCTION public.admin_create_partner_full_atomic(text, text, text, text, text, text, numeric, numeric, integer, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.verify_partner_login(text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.change_partner_pin(uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.admin_settle_partner_commissions(uuid, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.process_affiliate_payout_atomic(uuid, character varying, character varying, character varying, character varying, text, text) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_partner_commissions_secure(uuid) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.get_all_partner_financial_summaries(uuid) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.submit_merchant_lead_internal(text, text, text, text, text, uuid, text, timestamptz, text) TO anon, authenticated, service_role;
+
+
+-- ------------------------------------------------------------------------------
+-- 8. SECURE LEAD SUBMISSION WITH REFERRAL CODE AUTO-LOOKUP
+-- ------------------------------------------------------------------------------
+
+DROP FUNCTION IF EXISTS public.submit_merchant_lead_internal(text, text, text, text, text, uuid, text, timestamptz, text);
+
+CREATE OR REPLACE FUNCTION public.submit_merchant_lead_internal(
+    p_store_name text, 
+    p_manager_name text, 
+    p_phone text, 
+    p_city text, 
+    p_business_type text, 
+    p_affiliate_id uuid DEFAULT NULL::uuid, 
+    p_referral_code text DEFAULT NULL::text, 
+    p_first_touch_at timestamp with time zone DEFAULT NULL::timestamp with time zone, 
+    p_client_ip text DEFAULT '127.0.0.1'::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $$
+DECLARE
+    v_norm_phone TEXT;
+    v_clean_code TEXT;
+    v_lead_id UUID;
+    v_affiliate RECORD;
+    v_source TEXT := 'DIRECT';
+    v_validated_affiliate_id UUID := NULL;
+    v_validated_code TEXT := NULL;
+    v_existing_store RECORD;
+    v_existing_staff RECORD;
+    v_existing_lead RECORD;
+    v_ip_allowed BOOLEAN;
+    v_phone_allowed BOOLEAN;
+    v_touch_time TIMESTAMPTZ;
+    v_expires_time TIMESTAMPTZ;
+BEGIN
+    -- 1. Basic Input Validations
+    IF coalesce(trim(p_store_name), '') = '' THEN
+        RETURN jsonb_build_object('success', false, 'code', 'VALIDATION_ERROR', 'error', 'اسم المتجر مطلوب');
+    END IF;
+    IF coalesce(trim(p_manager_name), '') = '' THEN
+        RETURN jsonb_build_object('success', false, 'code', 'VALIDATION_ERROR', 'error', 'اسم صاحب المتجر مطلوب');
+    END IF;
+
+    -- 2. Normalize and Validate Phone
+    v_norm_phone := public.normalize_saudi_phone(p_phone);
+    IF v_norm_phone IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'code', 'INVALID_PHONE', 'error', 'رقم الجوال غير صالح، يرجى كتابة رقم سعودي صحيح يبدأ بـ 05');
+    END IF;
+
+    -- 3. Distributed Rate Limiting (Atomic Check & Record via Advisory Lock)
+    -- A. IP Limit: max 10 lead submissions per hour (relaxed for testing & public landing)
+    v_ip_allowed := public.check_and_record_rate_limit('lead_ip_' || coalesce(nullif(trim(p_client_ip), ''), 'unknown'), 10, 3600);
+    IF NOT v_ip_allowed THEN
+        RETURN jsonb_build_object('success', false, 'code', 'RATE_LIMITED_IP', 'error', 'تم تجاوز الحد المسموح من الطلبات لهذا الجهاز، يرجى المحاولة لاحقاً');
+    END IF;
+
+    -- B. Phone Limit: max 5 submissions per 24 hours
+    v_phone_allowed := public.check_and_record_rate_limit('lead_phone_' || v_norm_phone, 5, 86400);
+    IF NOT v_phone_allowed THEN
+        RETURN jsonb_build_object('success', false, 'code', 'RATE_LIMITED_PHONE', 'error', 'تم استقبال طلب مسبق لهذا الرقم مؤخراً، فريقنا سيتواصل معك');
+    END IF;
+
+    -- 4. System-Wide Phone Deduplication
+    -- Check 1: Stores table
+    SELECT id, name INTO v_existing_store 
+    FROM public.stores 
+    WHERE public.normalize_saudi_phone(manager_contact) = v_norm_phone
+    LIMIT 1;
+
+    IF v_existing_store.id IS NOT NULL THEN
+        RETURN jsonb_build_object('success', false, 'code', 'STORE_ALREADY_EXISTS', 'error', 'هذا الرقم مسجل بالفعل كمالك لمتجر نشط');
+    END IF;
+
+    -- Check 2: Store Staff table
+    SELECT id, name INTO v_existing_staff 
+    FROM public.store_staff 
+    WHERE public.normalize_saudi_phone(phone) = v_norm_phone AND is_active = true
+    LIMIT 1;
+
+    IF v_existing_staff.id IS NOT NULL THEN
+        RETURN jsonb_build_object('success', false, 'code', 'STAFF_ALREADY_EXISTS', 'error', 'هذا الرقم مسجل بالفعل كمدير أو موظف متجر');
+    END IF;
+
+    -- Check 3: Active Merchant Leads table
+    SELECT id, status INTO v_existing_lead 
+    FROM public.merchant_leads 
+    WHERE normalized_phone = v_norm_phone AND status NOT IN ('REJECTED', 'CANCELLED')
+    LIMIT 1;
+
+    IF v_existing_lead.id IS NOT NULL THEN
+        RETURN jsonb_build_object('success', false, 'code', 'ACTIVE_LEAD_EXISTS', 'error', 'يوجد طلب انضمام نشط قيد المعالجة بالفعل لهذا الرقم');
+    END IF;
+
+    -- 5. First-Touch Sanity Bounds
+    IF p_first_touch_at IS NULL 
+       OR p_first_touch_at > clock_timestamp() + interval '1 minute'
+       OR p_first_touch_at < clock_timestamp() - interval '30 days' THEN
+        v_touch_time := clock_timestamp();
+    ELSE
+        v_touch_time := p_first_touch_at;
+    END IF;
+    v_expires_time := v_touch_time + interval '30 days';
+
+    -- 6. Database Source of Truth: Re-validate Affiliate Attribution (By ID or By Referral Code)
+    IF coalesce(trim(p_referral_code), '') <> '' THEN
+        v_clean_code := UPPER(trim(p_referral_code));
+
+        IF p_affiliate_id IS NOT NULL THEN
+            SELECT id, referral_code, status 
+            INTO v_affiliate
+            FROM public.affiliates
+            WHERE (id = p_affiliate_id OR id IN (SELECT affiliate_id FROM public.partner_accounts WHERE id = p_affiliate_id))
+              AND (referral_code = v_clean_code OR code = v_clean_code);
+        ELSE
+            SELECT id, referral_code, status 
+            INTO v_affiliate
+            FROM public.affiliates
+            WHERE referral_code = v_clean_code OR code = v_clean_code
+               OR id IN (SELECT affiliate_id FROM public.partner_accounts WHERE UPPER(referral_code) = v_clean_code OR UPPER(slug) = v_clean_code)
+            LIMIT 1;
+        END IF;
+
+        IF v_affiliate.id IS NOT NULL AND (v_affiliate.status = 'ACTIVE' OR v_affiliate.status IS NULL) THEN
+            v_source := 'REFERRAL';
+            v_validated_affiliate_id := v_affiliate.id;
+            v_validated_code := v_affiliate.referral_code;
+        ELSE
+            v_source := 'DIRECT';
+            v_validated_affiliate_id := NULL;
+            v_validated_code := NULL;
+        END IF;
+    END IF;
+
+    -- 7. Insert Merchant Lead
+    INSERT INTO public.merchant_leads (
+        store_name,
+        manager_name,
+        phone,
+        normalized_phone,
+        city,
+        business_type,
+        attribution_source,
+        affiliate_id,
+        referral_code,
+        status,
+        created_at,
+        updated_at
+    ) VALUES (
+        trim(p_store_name),
+        trim(p_manager_name),
+        trim(p_phone),
+        v_norm_phone,
+        nullif(trim(p_city), ''),
+        nullif(trim(p_business_type), ''),
+        v_source,
+        v_validated_affiliate_id,
+        v_validated_code,
+        'NEW',
+        clock_timestamp(),
+        clock_timestamp()
+    )
+    RETURNING id INTO v_lead_id;
+
+    -- 8. If Attributed, Create Immutable Referral Record
+    IF v_source = 'REFERRAL' AND v_validated_affiliate_id IS NOT NULL THEN
+        INSERT INTO public.referrals (
+            affiliate_id,
+            lead_id,
+            referral_code,
+            first_touch_at,
+            attribution_expires_at,
+            status,
+            created_at
+        ) VALUES (
+            v_validated_affiliate_id,
+            v_lead_id,
+            v_validated_code,
+            v_touch_time,
+            v_expires_time,
+            'ATTRIBUTED',
+            clock_timestamp()
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'lead_id', v_lead_id,
+        'source', v_source,
+        'attributed', (v_source = 'REFERRAL')
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.submit_merchant_lead_internal(text, text, text, text, text, uuid, text, timestamptz, text) TO anon, authenticated, service_role;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261029_stage6_rls_hardening_cleanup_and_lockdown.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- MIGRATION: Stage 6 - Full RLS Security Hardening, Sanitization & Lockdown
+-- Platform: Sadim Al-Athir (kspfiijorengpckdlymx)
+-- STRICT RED LINE: NEVER EXECUTE AGAINST RADAR MOTHER PLATFORM (zagpvflyizbmzsbmhnts)
+-- ==============================================================================
+
+-- ==============================================================================
+-- 1. SECURING AUTH RATE LIMITS
+-- ==============================================================================
+ALTER TABLE public.auth_rate_limits ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS auth_rate_limits_service_role ON public.auth_rate_limits;
+CREATE POLICY auth_rate_limits_service_role ON public.auth_rate_limits
+    FOR ALL TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+-- ==============================================================================
+-- 2. SECURING STORE STAFF (ELIMINATING PIN & STAFF LEAK)
+-- ==============================================================================
+DROP POLICY IF EXISTS store_staff_lookup ON public.store_staff;
+DROP POLICY IF EXISTS store_staff_select_policy ON public.store_staff;
+DROP POLICY IF EXISTS store_staff_select_staff_token ON public.store_staff;
+
+CREATE POLICY store_staff_select_staff_token ON public.store_staff
+    FOR SELECT TO anon, authenticated
+    USING (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+-- Revoke direct column reading of pin_code from anon and authenticated
+REVOKE SELECT (pin_code) ON public.store_staff FROM anon, authenticated;
+
+-- ==============================================================================
+-- 3. SECURING STORE BRANCHES (CLOSING ANONYMOUS INSERTS & UPDATES)
+-- ==============================================================================
+DROP POLICY IF EXISTS store_branches_insert_policy ON public.store_branches;
+DROP POLICY IF EXISTS store_branches_update_policy ON public.store_branches;
+DROP POLICY IF EXISTS store_branches_insert_staff_token ON public.store_branches;
+
+CREATE POLICY store_branches_insert_staff_token ON public.store_branches
+    FOR INSERT TO anon, authenticated
+    WITH CHECK (
+        public.has_valid_staff_access(store_id, true)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+-- Keep store_branches_select_policy active for public customer menu / branch discovery
+DROP POLICY IF EXISTS store_branches_select_policy ON public.store_branches;
+CREATE POLICY store_branches_select_policy ON public.store_branches
+    FOR SELECT TO anon, authenticated
+    USING (true);
+
+-- ==============================================================================
+-- 4. SECURING STORE TABLES (CLOSING WIDE-OPEN WRITE POLICY)
+-- ==============================================================================
+DROP POLICY IF EXISTS "Public read/write access" ON public.store_tables;
+DROP POLICY IF EXISTS store_tables_select ON public.store_tables;
+DROP POLICY IF EXISTS store_tables_staff_manage ON public.store_tables;
+
+-- Allow public read for QR codes & menu ordering
+CREATE POLICY store_tables_select ON public.store_tables
+    FOR SELECT TO anon, authenticated
+    USING (true);
+
+-- Restrict write/manage to authenticated staff or super admin
+CREATE POLICY store_tables_staff_manage ON public.store_tables
+    FOR ALL TO anon, authenticated
+    USING (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    )
+    WITH CHECK (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+-- ==============================================================================
+-- 5. SECURING WALLET PASS CONFIGS (CLOSING WIDE-OPEN WRITE POLICY)
+-- ==============================================================================
+DROP POLICY IF EXISTS "Store Staff Manage Pass Config" ON public.store_wallet_pass_configs;
+DROP POLICY IF EXISTS store_wallet_pass_manage_staff ON public.store_wallet_pass_configs;
+
+CREATE POLICY store_wallet_pass_manage_staff ON public.store_wallet_pass_configs
+    FOR ALL TO anon, authenticated
+    USING (
+        public.has_valid_staff_access(store_id, true)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    )
+    WITH CHECK (
+        public.has_valid_staff_access(store_id, true)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+-- ==============================================================================
+-- 6. SECURING DRIVER SETTLEMENTS & STORE DRIVERS
+-- ==============================================================================
+DROP POLICY IF EXISTS driver_settlements_insert_policy ON public.driver_settlements;
+DROP POLICY IF EXISTS driver_settlements_update_policy ON public.driver_settlements;
+DROP POLICY IF EXISTS driver_settlements_delete_policy ON public.driver_settlements;
+DROP POLICY IF EXISTS driver_settlements_select_policy ON public.driver_settlements;
+
+CREATE POLICY driver_settlements_staff_manage ON public.driver_settlements
+    FOR ALL TO anon, authenticated
+    USING (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    )
+    WITH CHECK (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+DROP POLICY IF EXISTS store_drivers_insert_policy ON public.store_drivers;
+DROP POLICY IF EXISTS store_drivers_update_policy ON public.store_drivers;
+DROP POLICY IF EXISTS store_drivers_delete_policy ON public.store_drivers;
+DROP POLICY IF EXISTS store_drivers_staff_manage ON public.store_drivers;
+
+CREATE POLICY store_drivers_staff_manage ON public.store_drivers
+    FOR ALL TO anon, authenticated
+    USING (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    )
+    WITH CHECK (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+-- ==============================================================================
+-- 7. SECURING INVENTORY, RECIPES & SUPPLIER INVOICES
+-- ==============================================================================
+DROP POLICY IF EXISTS store_inventory_insert_policy ON public.store_inventory;
+DROP POLICY IF EXISTS store_inventory_update_policy ON public.store_inventory;
+DROP POLICY IF EXISTS store_inventory_delete_policy ON public.store_inventory;
+DROP POLICY IF EXISTS store_inventory_staff_manage ON public.store_inventory;
+
+CREATE POLICY store_inventory_staff_manage ON public.store_inventory
+    FOR ALL TO anon, authenticated
+    USING (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    )
+    WITH CHECK (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+DROP POLICY IF EXISTS store_recipes_insert_policy ON public.store_recipes;
+DROP POLICY IF EXISTS store_recipes_update_policy ON public.store_recipes;
+DROP POLICY IF EXISTS store_recipes_delete_policy ON public.store_recipes;
+DROP POLICY IF EXISTS store_recipes_staff_manage ON public.store_recipes;
+
+CREATE POLICY store_recipes_staff_manage ON public.store_recipes
+    FOR ALL TO anon, authenticated
+    USING (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    )
+    WITH CHECK (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+DROP POLICY IF EXISTS supplier_invoices_insert_policy ON public.supplier_invoices;
+DROP POLICY IF EXISTS supplier_invoices_update_policy ON public.supplier_invoices;
+DROP POLICY IF EXISTS supplier_invoices_delete_policy ON public.supplier_invoices;
+DROP POLICY IF EXISTS supplier_invoices_staff_manage ON public.supplier_invoices;
+
+CREATE POLICY supplier_invoices_staff_manage ON public.supplier_invoices
+    FOR ALL TO anon, authenticated
+    USING (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    )
+    WITH CHECK (
+        public.has_valid_staff_access(store_id, false)
+        OR public.is_super_admin()
+        OR auth.role() = 'service_role'
+    );
+
+-- ==============================================================================
+-- 8. DATA SANITIZATION (CLEANING ARTIFACTS WHILE PRESERVING AUDIT LOGS)
+-- ==============================================================================
+-- Clean test orders and shifts from test stores
+DELETE FROM public.store_orders WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.pos_shifts WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.pos_cash_movements WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.pos_refunds WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.store_staff WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.store_branches WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.store_tables WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.catalog_items WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.merchant_subscriptions WHERE store_id IN (
+    SELECT id FROM public.stores WHERE name ILIKE '%test%' OR slug ILIKE '%test%'
+);
+
+-- Delete test stores (preserving dr-batatas and sadim-demo-store)
+DELETE FROM public.stores 
+WHERE (name ILIKE '%test%' OR slug ILIKE '%test%')
+  AND slug NOT IN ('dr-batatas', 'sadim-demo-store');
+
+-- Delete child references for test affiliates
+DELETE FROM public.referrals WHERE affiliate_id IN (
+    SELECT id FROM public.affiliates WHERE referral_code ILIKE '%test%' OR name ILIKE '%test%'
+);
+DELETE FROM public.partner_targets WHERE partner_account_id IN (
+    SELECT id FROM public.partner_accounts WHERE referral_code ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.affiliate_payouts WHERE affiliate_id IN (
+    SELECT id::text FROM public.affiliates WHERE referral_code ILIKE '%test%' OR name ILIKE '%test%'
+);
+DELETE FROM public.partner_commissions WHERE partner_account_id IN (
+    SELECT id FROM public.partner_accounts WHERE referral_code ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.partner_bonus_awards WHERE partner_account_id IN (
+    SELECT id FROM public.partner_accounts WHERE referral_code ILIKE '%test%' OR slug ILIKE '%test%'
+);
+DELETE FROM public.partner_accounts WHERE referral_code ILIKE '%test%' OR slug ILIKE '%test%';
+DELETE FROM public.affiliates WHERE referral_code ILIKE '%test%' OR name ILIKE '%test%';
+
+-- Delete test leads
+DELETE FROM public.merchant_leads WHERE store_name ILIKE '%test%' OR phone LIKE '5000%' OR phone LIKE '5111%';
+
+-- Delete test customers
+DELETE FROM public.customer_coupons WHERE customer_id IN (
+    SELECT id FROM public.store_customers WHERE name ILIKE '%test%' OR phone LIKE '5000%' OR phone LIKE '5111%' OR phone LIKE '5999%'
+);
+DELETE FROM public.store_customers WHERE name ILIKE '%test%' OR phone LIKE '5000%' OR phone LIKE '5111%' OR phone LIKE '5999%';
+
+-- Drop test probe tables
+DROP TABLE IF EXISTS public._test_probe CASCADE;
+DROP TABLE IF EXISTS public._s5_probe CASCADE;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261029_step1_to_step3_hardening_and_wallet_rpc.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🚀 MIGRATION: 20261029_step1_to_step3_hardening_and_wallet_rpc.sql
+-- 🎯 PURPOSE: Hardening Step 1, Step 2, and Group 1 across Radar & Resellers:
+--    1. Schema alignment: ensure missing columns exist on reseller databases.
+--    2. Enforce points_per_riyal >= 1 in stores table & onboarding RPC.
+--    3. Normalize affiliate referral codes to UPPERCASE & add CHECK constraint.
+--    4. Secure create_store_concierge_onboarding (Super Admin only, revoke anon).
+--    5. Secure Customer Wallet Registration RPC (minimal fields, strict audit log).
+-- ==============================================================================
+
+-- 1️⃣ Schema Alignment for Reseller Databases (Idempotent: IF NOT EXISTS)
+
+-- Align store_customers
+ALTER TABLE public.store_customers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+-- Align audit_logs
+ALTER TABLE public.audit_logs ADD COLUMN IF NOT EXISTS customer_id UUID;
+ALTER TABLE public.audit_logs ADD COLUMN IF NOT EXISTS entry_method TEXT DEFAULT 'AUTO_SYSTEM';
+
+-- Align affiliates
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS code TEXT;
+UPDATE public.affiliates SET code = referral_code WHERE code IS NULL;
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS pin_code TEXT DEFAULT '1234';
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS first_order_commission_rate NUMERIC DEFAULT 20;
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS renewal_commission_rate NUMERIC DEFAULT 10;
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS monthly_target_stores INT DEFAULT 10;
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS city TEXT DEFAULT 'الرياض';
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS total_earnings NUMERIC DEFAULT 0;
+ALTER TABLE public.affiliates ADD COLUMN IF NOT EXISTS pending_payout NUMERIC DEFAULT 0;
+
+-- 2️⃣ Enforce points_per_riyal >= 1
+ALTER TABLE public.stores DROP CONSTRAINT IF EXISTS stores_points_per_riyal_check;
+ALTER TABLE public.stores ADD CONSTRAINT stores_points_per_riyal_check CHECK (points_per_riyal >= 1);
+
+-- 3️⃣ Normalize affiliate referral codes to UPPERCASE & enforce CHECK constraint
+UPDATE public.affiliates
+SET referral_code = UPPER(TRIM(referral_code)),
+    code = UPPER(TRIM(COALESCE(code, referral_code)))
+WHERE referral_code IS NOT NULL;
+
+ALTER TABLE public.affiliates DROP CONSTRAINT IF EXISTS chk_affiliate_code_uppercase;
+ALTER TABLE public.affiliates DROP CONSTRAINT IF EXISTS affiliates_referral_code_uppercase_chk;
+ALTER TABLE public.affiliates ADD CONSTRAINT affiliates_referral_code_uppercase_chk
+    CHECK (referral_code = UPPER(TRIM(referral_code)));
+
+-- 4️⃣ Harden create_store_concierge_onboarding (Super Admin Only + >= 1 points check)
+CREATE OR REPLACE FUNCTION public.create_store_concierge_onboarding(
+    p_name text,
+    p_slug text,
+    p_logo_url text DEFAULT NULL::text,
+    p_primary_color text DEFAULT '#0F172A'::text,
+    p_secondary_color text DEFAULT '#F59E0B'::text,
+    p_points_per_riyal numeric DEFAULT 1.0,
+    p_manager_name text DEFAULT 'المدير العام'::text,
+    p_manager_contact text DEFAULT '0500000000'::text,
+    p_manager_pin text DEFAULT '9999'::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_store RECORD;
+    v_staff RECORD;
+    v_points numeric;
+BEGIN
+    -- 🛡️ Security Check: Only Super Admin or service_role may execute
+    IF NOT public.is_super_admin() AND COALESCE(auth.role(), '') <> 'service_role' THEN
+        RAISE EXCEPTION 'غير مصرح: إنشاء المتاجر المباشر متاح لمدير المنصة التنفيذي فقط (Super Admin)';
+    END IF;
+
+    v_points := COALESCE(p_points_per_riyal, 1.0);
+    IF v_points < 1 THEN
+        RAISE EXCEPTION 'معامل احتساب النقاط يجب أن يكون 1 على الأقل (القيمة المدخلة: %)', v_points;
+    END IF;
+
+    INSERT INTO public.stores (
+        name,
+        slug,
+        logo_url,
+        primary_color,
+        secondary_color,
+        points_per_riyal,
+        manager_name,
+        manager_contact,
+        subscription_active,
+        status,
+        subscription_status,
+        setup_fee_paid
+    )
+    VALUES (
+        p_name,
+        LOWER(TRIM(p_slug)),
+        p_logo_url,
+        COALESCE(p_primary_color, '#0F172A'),
+        COALESCE(p_secondary_color, '#F59E0B'),
+        v_points,
+        p_manager_name,
+        p_manager_contact,
+        true,
+        'active',
+        'active',
+        true
+    )
+    ON CONFLICT (slug) DO UPDATE SET
+        name = EXCLUDED.name,
+        logo_url = COALESCE(EXCLUDED.logo_url, stores.logo_url),
+        manager_name = EXCLUDED.manager_name,
+        manager_contact = EXCLUDED.manager_contact,
+        primary_color = EXCLUDED.primary_color,
+        secondary_color = EXCLUDED.secondary_color,
+        points_per_riyal = EXCLUDED.points_per_riyal,
+        updated_at = now()
+    RETURNING * INTO v_store;
+
+    INSERT INTO public.store_staff (
+        store_id,
+        name,
+        phone,
+        role,
+        pin_code,
+        is_active,
+        can_manual_input_phone
+    )
+    VALUES (
+        v_store.id,
+        COALESCE(p_manager_name, 'المدير العام'),
+        COALESCE(p_manager_contact, '0500000000'),
+        'admin',
+        COALESCE(p_manager_pin, '9999'),
+        true,
+        true
+    )
+    RETURNING * INTO v_staff;
+
+    INSERT INTO public.store_wallets (store_id, sms_quota, wa_quota, cashier_limit)
+    VALUES (v_store.id, 500, 200, 2)
+    ON CONFLICT (store_id) DO NOTHING;
+
+    INSERT INTO public.tiers (store_id, tier_name, required_xp, badge_color)
+    VALUES 
+        (v_store.id, 'ضيف (Guest)', 0, '#94A3B8'),
+        (v_store.id, 'Insider مميز', 150, '#3B82F6'),
+        (v_store.id, 'VIP Gold', 500, '#F59E0B'),
+        (v_store.id, 'Black Elite 👑', 1200, '#10B981')
+    ON CONFLICT (store_id, tier_name) DO NOTHING;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'store', row_to_json(v_store),
+        'manager', row_to_json(v_staff),
+        'portal_url', '/?store=' || v_store.slug
+    );
+END;
+$function$;
+
+-- 5️⃣ Deploy Secure Customer Wallet Registration RPC (Minimal Fields & Strict Audit Log)
+CREATE OR REPLACE FUNCTION public.register_or_get_customer_wallet(
+    p_store_id uuid,
+    p_phone text,
+    p_name text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_clean_phone TEXT;
+    v_norm_phone TEXT;
+    v_cust RECORD;
+    v_welcome_points INT := 0;
+    v_store RECORD;
+BEGIN
+    IF p_store_id IS NULL OR TRIM(COALESCE(p_phone, '')) = '' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_INPUT');
+    END IF;
+
+    v_clean_phone := TRIM(p_phone);
+    -- Standardize phone to last 9 digits
+    v_norm_phone := RIGHT(REGEXP_REPLACE(v_clean_phone, '[^0-9]', '', 'g'), 9);
+
+    IF length(v_norm_phone) < 9 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'INVALID_PHONE');
+    END IF;
+
+    -- Search for existing customer
+    SELECT * INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND (
+          phone = v_clean_phone
+          OR phone = v_norm_phone
+          OR phone = '0' || v_norm_phone
+          OR phone = '+966' || v_norm_phone
+          OR phone = '966' || v_norm_phone
+          OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 9) = v_norm_phone
+      )
+    LIMIT 1;
+
+    IF v_cust.id IS NOT NULL THEN
+        IF (v_cust.name IS NULL OR v_cust.name = 'عميل' OR v_cust.name = 'عميل مميز') AND p_name IS NOT NULL AND TRIM(p_name) <> '' THEN
+            UPDATE public.store_customers
+            SET name = TRIM(p_name), updated_at = now()
+            WHERE id = v_cust.id
+            RETURNING * INTO v_cust;
+        END IF;
+
+        RETURN jsonb_build_object(
+            'success', true,
+            'is_new', false,
+            'customer', jsonb_build_object(
+                'id', v_cust.id,
+                'store_id', v_cust.store_id,
+                'phone', v_cust.phone,
+                'name', v_cust.name,
+                'wallet_balance', v_cust.wallet_balance,
+                'lifetime_xp', v_cust.lifetime_xp
+            )
+        );
+    END IF;
+
+    -- Fetch store welcome gift settings
+    SELECT welcome_gift_type, welcome_points INTO v_store
+    FROM public.stores
+    WHERE id = p_store_id;
+
+    IF v_store.welcome_gift_type = 'POINTS' OR v_store.welcome_gift_type IS NULL THEN
+        v_welcome_points := COALESCE(v_store.welcome_points, 50);
+    END IF;
+
+    INSERT INTO public.store_customers (
+        store_id, phone, name, wallet_balance, lifetime_xp, last_visit_date, created_at, updated_at
+    ) VALUES (
+        p_store_id,
+        v_clean_phone,
+        COALESCE(NULLIF(TRIM(p_name), ''), 'عميل مميز'),
+        v_welcome_points,
+        v_welcome_points,
+        now(),
+        now(),
+        now()
+    )
+    RETURNING * INTO v_cust;
+
+    -- Record audit log for welcome bonus strictly (no exception swallowing)
+    IF v_welcome_points > 0 THEN
+        INSERT INTO public.audit_logs (
+            store_id, customer_id, customer_phone, customer_name,
+            points_changed, purchase_amount,
+            action, event_type, entry_method, metadata, created_at
+        ) VALUES (
+            p_store_id, v_cust.id, v_cust.phone, v_cust.name,
+            v_welcome_points, 0,
+            'ADJUSTMENT', 'WELCOME_BONUS', 'AUTO_SYSTEM',
+            jsonb_build_object('note', 'نقاط تسجيل وترحيب بالعميل'),
+            now()
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'is_new', true,
+        'customer', jsonb_build_object(
+            'id', v_cust.id,
+            'store_id', v_cust.store_id,
+            'phone', v_cust.phone,
+            'name', v_cust.name,
+            'wallet_balance', v_cust.wallet_balance,
+            'lifetime_xp', v_cust.lifetime_xp
+        )
+    );
+END;
+$function$;
+
+-- 6️⃣ Permissions: Revoke anon from create_store_concierge_onboarding; grant wallet RPC
+REVOKE ALL ON FUNCTION public.create_store_concierge_onboarding(text, text, text, text, text, numeric, text, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.create_store_concierge_onboarding(text, text, text, text, text, numeric, text, text, text) TO authenticated, service_role;
+
+GRANT EXECUTE ON FUNCTION public.register_or_get_customer_wallet(uuid, text, text) TO anon, authenticated, service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
 -- >>> FILE: 20261029_tenant_branding_system.sql <<<
 -- ==============================================================================
 
@@ -10543,6 +20174,1790 @@ NOTIFY pgrst, 'reload schema';
 
 
 -- ==============================================================================
+-- >>> FILE: 20261101_al_athar_core_complete_tenant_isolation_bundle.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE (منصة الأثر السحابية) - COMPLETE TENANT ISOLATION BUNDLE
+-- Master Unified Migration: Parts 1 through 5 (Production Hardened & Fully Reversible)
+-- Date: 2026-11-01
+-- Scope: All 41 Operational Tables Isolated, Sovereign Tables Hardened, RPCs & Public Storefronts
+-- ==============================================================================
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- 📦 PART 1 OF 5: 20261101_tenant_isolation_part1_schema_and_backfill.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 1
+-- File: 20261101_tenant_isolation_part1_schema_and_backfill.sql
+-- Date: 2026-11-01
+-- Goal: Add tenant_id column, backfill from store relations, zero arbitrary defaults,
+--       clone billing plans independently per tenant, and fail migration if any orphan row exists.
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+-- 1️⃣ إضافة عمود tenant_id (nullable مبدئياً) لكافة الجداول التشغيلية بما فيها المتاجر
+DO $$
+DECLARE
+    tbl TEXT;
+    all_isolated TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_onboarding', 'merchant_leads', 'partner_accounts', 'affiliates',
+        'partner_bonus_rules', 'partner_commissions', 'partner_bonus_awards',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts', 'referrals',
+        'tenant_integrations'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY all_isolated LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS tenant_id TEXT REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;', tbl);
+        END IF;
+    END LOOP;
+
+    -- إضافة عمود tenant_id لجدول tenant_integrations وتعيينه وتغذيته برادار وسديم
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'tenant_integrations') THEN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tenant_integrations' AND column_name = 'tenant_id') THEN
+            ALTER TABLE public.tenant_integrations ADD COLUMN tenant_id TEXT REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE CASCADE;
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM public.tenant_integrations WHERE tenant_id = 'radar') THEN
+            INSERT INTO public.tenant_integrations (tenant_id, telegram_enabled, gemini_enabled, whatsapp_enabled)
+            VALUES ('radar', false, false, false);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM public.tenant_integrations WHERE tenant_id = 'sadeem') THEN
+            INSERT INTO public.tenant_integrations (tenant_id, telegram_enabled, gemini_enabled, whatsapp_enabled)
+            VALUES ('sadeem', false, false, false);
+        END IF;
+    END IF;
+
+    -- تعبئة جدول المتاجر stores أولاً ليكون مصدراً لكافة الجداول التابعة
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'stores') THEN
+        UPDATE public.stores SET tenant_id = 'radar' WHERE tenant_id IS NULL;
+        UPDATE public.stores 
+        SET tenant_id = 'sadeem'
+        WHERE slug = 'al-sayd' 
+           OR name ILIKE '%السعيد%' 
+           OR slug ILIKE '%sadeem%' 
+           OR slug ILIKE '%sadim%';
+    END IF;
+END $$;
+
+-- 2️⃣ تعبئة الجداول التابعة مباشرة لمتجر من stores.tenant_id
+DO $$
+DECLARE
+    tbl TEXT;
+    store_tables TEXT[] := ARRAY[
+        'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'service_bookings', 'audit_logs', 'store_staff', 'staff_sessions',
+        'store_wallets', 'store_branches', 'store_specialists', 'store_tables',
+        'store_inventory', 'store_drivers', 'store_orders', 'store_invoices',
+        'store_recipes', 'store_wallet_pass_configs', 'financial_ledger',
+        'merchant_subscriptions', 'billing_transactions', 'driver_settlements'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY store_tables LOOP
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_schema = 'public' AND table_name = tbl AND column_name = 'store_id'
+        ) THEN
+            EXECUTE format('
+                UPDATE public.%I t
+                SET tenant_id = s.tenant_id
+                FROM public.stores s
+                WHERE t.store_id::text = s.id::text AND t.tenant_id IS NULL;
+            ', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 3️⃣ تعبئة جدول الإشعارات الدائنة credit_notes (يحتوي store_id)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'credit_notes' AND column_name = 'store_id') THEN
+        UPDATE public.credit_notes cn
+        SET tenant_id = s.tenant_id
+        FROM public.stores s
+        WHERE cn.store_id::text = s.id::text AND cn.tenant_id IS NULL;
+    END IF;
+END $$;
+
+-- 4️⃣ تعبئة جدول أحداث الويب هوك billing_webhook_events من بيانات metadata->>store_id
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'billing_webhook_events' AND column_name = 'metadata') THEN
+        UPDATE public.billing_webhook_events bwe
+        SET tenant_id = s.tenant_id
+        FROM public.stores s
+        WHERE (bwe.metadata->>'store_id')::text = s.id::text AND bwe.tenant_id IS NULL;
+    END IF;
+END $$;
+
+-- 5️⃣ تعبئة جدول طلبات الانضمام merchant_leads بأمان ديناميكي
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'merchant_leads') THEN
+        -- فحص الربط بالمتجر إن وجد converted_store_id أو store_id
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'merchant_leads' AND column_name = 'converted_store_id') THEN
+            EXECUTE '
+                UPDATE public.merchant_leads ml
+                SET tenant_id = s.tenant_id
+                FROM public.stores s
+                WHERE ml.converted_store_id IS NOT NULL AND ml.converted_store_id::text = s.id::text AND ml.tenant_id IS NULL;
+            ';
+        ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'merchant_leads' AND column_name = 'store_id') THEN
+            EXECUTE '
+                UPDATE public.merchant_leads ml
+                SET tenant_id = s.tenant_id
+                FROM public.stores s
+                WHERE ml.store_id IS NOT NULL AND ml.store_id::text = s.id::text AND ml.tenant_id IS NULL;
+            ';
+        END IF;
+
+        -- فحص الربط بكود الإحالة إن وجد الحقل
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'merchant_leads' AND column_name = 'referral_code') THEN
+            EXECUTE '
+                UPDATE public.merchant_leads ml
+                SET tenant_id = pa.tenant_id
+                FROM public.partner_accounts pa
+                WHERE ml.tenant_id IS NULL AND ml.referral_code IS NOT NULL AND UPPER(pa.referral_code) = UPPER(ml.referral_code);
+            ';
+        ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'merchant_leads' AND column_name = 'referred_by_code') THEN
+            EXECUTE '
+                UPDATE public.merchant_leads ml
+                SET tenant_id = pa.tenant_id
+                FROM public.partner_accounts pa
+                WHERE ml.tenant_id IS NULL AND ml.referred_by_code IS NOT NULL AND UPPER(pa.referral_code) = UPPER(ml.referred_by_code);
+            ';
+        END IF;
+
+        UPDATE public.merchant_leads SET tenant_id = 'radar' WHERE tenant_id IS NULL;
+    END IF;
+END $$;
+
+-- 6️⃣ تعبئة باقات الاشتراك واستنساخها مستقلة لسديم (حظر الباقات المشتركة تماماً)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'billing_plans') THEN
+        -- نسبة الباقات الحالية إلى رادار صراحة
+        UPDATE public.billing_plans SET tenant_id = 'radar' WHERE tenant_id IS NULL;
+
+        -- فك قيد unique القديم على code فقط إن وجد لتمكين وجود نفس الرمز بكل وكيل
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'billing_plans_code_key') THEN
+            ALTER TABLE public.billing_plans DROP CONSTRAINT billing_plans_code_key;
+        END IF;
+
+        -- استنساخ باقات رادار لسديم كصفوف مستقلة تماماً بـ tenant_id = 'sadeem'
+        INSERT INTO public.billing_plans (
+            id, code, name, description, amount, currency, billing_interval, trial_days, active, tenant_id, metadata, created_at, updated_at
+        )
+        SELECT 
+            gen_random_uuid(), bp.code, bp.name, bp.description, bp.amount, bp.currency, bp.billing_interval, bp.trial_days, bp.active, 'sadeem', bp.metadata, now(), now()
+        FROM public.billing_plans bp
+        WHERE bp.tenant_id = 'radar'
+          AND NOT EXISTS (
+              SELECT 1 FROM public.billing_plans sbp 
+              WHERE sbp.tenant_id = 'sadeem' AND sbp.code = bp.code
+          );
+    END IF;
+END $$;
+
+-- 7️⃣ تعبئة منظومة الشركاء التاريخية المعروفة (محمد الحاج) لرادار بالاسم الصريح بأمان ديناميكي
+DO $$
+DECLARE
+    tbl TEXT;
+    partner_tables TEXT[] := ARRAY[
+        'partner_bonus_rules', 'partner_commissions', 'partner_bonus_awards',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts', 'referrals',
+        'tenant_integrations'
+    ];
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'partner_accounts') THEN
+        UPDATE public.partner_accounts SET tenant_id = 'radar' WHERE referral_code IN ('ALHAJ', 'r4775') AND tenant_id IS NULL;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'affiliates') THEN
+        UPDATE public.affiliates SET tenant_id = 'radar' WHERE tenant_id IS NULL;
+    END IF;
+
+    FOREACH tbl IN ARRAY partner_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('UPDATE public.%I SET tenant_id = ''radar'' WHERE tenant_id IS NULL;', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 8️⃣ فحص الحماية الصارم (Assertion Check): الفشل الإلزامي لو بقي صف واحد بدون وكيل في أي جدول
+DO $$
+DECLARE
+    tbl TEXT;
+    orphan_count BIGINT;
+    all_mandatory TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_onboarding', 'merchant_leads', 'partner_accounts', 'affiliates',
+        'partner_bonus_rules', 'partner_commissions', 'partner_bonus_awards',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts', 'referrals',
+        'tenant_integrations'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY all_mandatory LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('SELECT count(*) FROM public.%I WHERE tenant_id IS NULL;', tbl) INTO orphan_count;
+            IF orphan_count > 0 THEN
+                RAISE EXCEPTION 'MIGRATION ABORTED: Table % has % rows with NULL tenant_id. Manual verification required.', tbl, orphan_count;
+            END IF;
+        END IF;
+    END LOOP;
+END $$;
+
+-- 9️⃣ تطبيق قيد NOT NULL والفهارس بعد التأكد التام من خلو كافة الجداول من أي NULL
+DO $$
+DECLARE
+    tbl TEXT;
+    all_mandatory TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_onboarding', 'merchant_leads', 'partner_accounts', 'affiliates',
+        'partner_bonus_rules', 'partner_commissions', 'partner_bonus_awards',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts', 'referrals',
+        'tenant_integrations'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY all_mandatory LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('ALTER TABLE public.%I ALTER COLUMN tenant_id SET NOT NULL;', tbl);
+            EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%I_tenant_id ON public.%I(tenant_id);', tbl, tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- 📦 PART 2 OF 5: 20261101_tenant_isolation_part2_triggers_and_constraints.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 2
+-- File: 20261101_tenant_isolation_part2_triggers_and_constraints.sql
+-- Date: 2026-11-01
+-- Goal: Context resolution, auto-injection triggers, immutability, and composite unique constraints
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+-- 1️⃣ دالة استخراج الوكيل الحصري من التوكن السيرفري المشفر (خالية تماماً من أي افتراضي radar)
+CREATE OR REPLACE FUNCTION public.current_tenant_id()
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_claim TEXT;
+    v_req_tenant TEXT;
+    v_headers JSONB;
+BEGIN
+    -- استخراج claim الوكيل من التوكن المشفر والموقع من GoTrue
+    v_claim := NULLIF(TRIM(auth.jwt() -> 'app_metadata' ->> 'tenant_id'), '');
+
+    -- إذا كان المستخدم سوبر أدمن، يُسمح بتحديد نطاق الوكيل بحسب الترويسة x-tenant-id
+    IF (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE 
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin' THEN
+        BEGIN
+            v_headers := NULLIF(current_setting('request.headers', true), '')::jsonb;
+            IF v_headers IS NOT NULL THEN
+                v_req_tenant := NULLIF(TRIM(v_headers ->> 'x-tenant-id'), '');
+                IF v_req_tenant IS NOT NULL AND EXISTS (SELECT 1 FROM public.tenants WHERE id = LOWER(v_req_tenant)) THEN
+                    RETURN LOWER(v_req_tenant);
+                END IF;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END IF;
+
+    -- للمستخدمين العاديين، الاعتماد حصرياً على ادعاء التوكن
+    IF v_claim IS NOT NULL THEN
+        RETURN LOWER(v_claim);
+    END IF;
+
+    -- إذا لم يتوفر أي توكن أو ادعاء تعيد NULL قسراً لترفض العملية أمنياً
+    RETURN NULL;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.current_tenant_id() TO anon, authenticated, service_role;
+
+-- 2️⃣ قادح التعبئة التلقائية لجداول المتاجر (يسحب tenant_id من المتجر التابع له ويتجاوز قيمة العميل)
+CREATE OR REPLACE FUNCTION public.trg_auto_assign_tenant_from_store()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_store_tenant TEXT;
+BEGIN
+    IF NEW.store_id IS NOT NULL THEN
+        SELECT tenant_id INTO v_store_tenant FROM public.stores WHERE id::text = NEW.store_id::text;
+        IF v_store_tenant IS NOT NULL THEN
+            NEW.tenant_id := v_store_tenant;
+            RETURN NEW;
+        END IF;
+    END IF;
+
+    -- في حال عدم توفر المتجر يستخرج من التوكن السيرفري
+    NEW.tenant_id := COALESCE(public.current_tenant_id(), NEW.tenant_id);
+    
+    IF NEW.tenant_id IS NULL THEN
+        RAISE EXCEPTION 'Security Violation: Cannot write to store-tied table without a valid store or tenant context.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+-- 3️⃣ قادح التعبئة التلقائية لجداول الوكالة العامة (يسحب tenant_id من توكن الجلسة المشفر)
+-- فحص أمني دقيق: يشمل session_user لـ postgres و supabase_admin وترويسة request.jwt.claim.role في PostgREST
+CREATE OR REPLACE FUNCTION public.trg_auto_assign_tenant_from_jwt()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_jwt_tenant TEXT;
+    v_is_privileged BOOLEAN := FALSE;
+BEGIN
+    -- إذا كانت القيمة محددة مسبقاً من دالة سيرفرية موثوقة SECURITY DEFINER يتم اعتمادها
+    IF NEW.tenant_id IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+
+    v_jwt_tenant := public.current_tenant_id();
+
+    -- فحص صلاحيات التنفيذ السيرفرية العليا
+    IF (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE 
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin' 
+       OR session_user IN ('postgres', 'supabase_admin')
+       OR auth.role() = 'service_role'
+       OR NULLIF(current_setting('request.jwt.claim.role', true), '') = 'service_role' THEN
+        v_is_privileged := TRUE;
+    END IF;
+
+    IF v_is_privileged THEN
+        NEW.tenant_id := COALESCE(NEW.tenant_id, v_jwt_tenant);
+    ELSE
+        -- المستخدم العادي يفرض عليه توكنه قسراً وتُهمل أي قيمة أرسلها العميل
+        NEW.tenant_id := v_jwt_tenant;
+    END IF;
+
+    IF NEW.tenant_id IS NULL THEN
+        RAISE EXCEPTION 'Security Violation: Cannot insert record without verified tenant claim.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+-- 4️⃣ قادح منع التعديل على tenant_id بعد الإدخال نهائياً (Immutability Enforcement)
+CREATE OR REPLACE FUNCTION public.trg_prevent_tenant_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF OLD.tenant_id IS DISTINCT FROM NEW.tenant_id THEN
+        IF NOT (
+            (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE 
+            OR session_user IN ('postgres', 'supabase_admin')
+            OR auth.role() = 'service_role'
+            OR NULLIF(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+        ) THEN
+            RAISE EXCEPTION 'Security Violation: tenant_id is immutable once assigned.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+-- 5️⃣ ربط الزنادات بجداول النظام
+DO $$
+DECLARE
+    tbl TEXT;
+    store_tables TEXT[] := ARRAY[
+        'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'service_bookings', 'audit_logs', 'store_staff', 'staff_sessions',
+        'store_wallets', 'store_branches', 'store_specialists', 'store_tables',
+        'store_inventory', 'store_drivers', 'store_orders', 'store_invoices',
+        'store_recipes', 'store_wallet_pass_configs', 'financial_ledger',
+        'merchant_subscriptions', 'billing_transactions', 'driver_settlements'
+    ];
+    tenant_jwt_tables TEXT[] := ARRAY[
+        'merchant_leads', 'merchant_onboarding', 'partner_accounts', 'affiliates',
+        'partner_bonus_awards', 'partner_bonus_rules', 'partner_targets',
+        'partner_commissions', 'partner_audit_logs', 'affiliate_payouts',
+        'referrals'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY store_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_assign_tenant_store ON public.%I;', tbl);
+            EXECUTE format('CREATE TRIGGER trg_assign_tenant_store BEFORE INSERT ON public.%I FOR EACH ROW EXECUTE FUNCTION public.trg_auto_assign_tenant_from_store();', tbl);
+            
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_lock_tenant_mutation ON public.%I;', tbl);
+            EXECUTE format('CREATE TRIGGER trg_lock_tenant_mutation BEFORE UPDATE OF tenant_id ON public.%I FOR EACH ROW EXECUTE FUNCTION public.trg_prevent_tenant_mutation();', tbl);
+        END IF;
+    END LOOP;
+
+    FOREACH tbl IN ARRAY tenant_jwt_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_assign_tenant_jwt ON public.%I;', tbl);
+            EXECUTE format('CREATE TRIGGER trg_assign_tenant_jwt BEFORE INSERT ON public.%I FOR EACH ROW EXECUTE FUNCTION public.trg_auto_assign_tenant_from_jwt();', tbl);
+
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_lock_tenant_mutation ON public.%I;', tbl);
+            EXECUTE format('CREATE TRIGGER trg_lock_tenant_mutation BEFORE UPDATE OF tenant_id ON public.%I FOR EACH ROW EXECUTE FUNCTION public.trg_prevent_tenant_mutation();', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 6️⃣ ترقية القيود الفريدة لتكون مركبة (Composite Unique) تشمل tenant_id
+DO $$
+BEGIN
+    -- كود الإحالة فريد على مستوى الوكيل حصراً في جدول الشركاء
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'partner_accounts_referral_code_key') THEN
+        ALTER TABLE public.partner_accounts DROP CONSTRAINT partner_accounts_referral_code_key;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_partner_accounts_tenant_referral') THEN
+        ALTER TABLE public.partner_accounts ADD CONSTRAINT uq_partner_accounts_tenant_referral UNIQUE (tenant_id, referral_code);
+    END IF;
+
+    -- كود الإحالة فريد على مستوى الوكيل في جدول المسوقين affiliates
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'affiliates') THEN
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'affiliates_referral_code_key') THEN
+            ALTER TABLE public.affiliates DROP CONSTRAINT affiliates_referral_code_key;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_affiliates_tenant_referral') THEN
+            ALTER TABLE public.affiliates ADD CONSTRAINT uq_affiliates_tenant_referral UNIQUE (tenant_id, referral_code);
+        END IF;
+    END IF;
+
+    -- قواعد المكافآت فريدة لكل مرحلة داخل الوكيل الواحد
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'partner_bonus_rules_milestone_key') THEN
+        ALTER TABLE public.partner_bonus_rules DROP CONSTRAINT partner_bonus_rules_milestone_key;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_partner_bonus_rules_tenant_milestone') THEN
+        ALTER TABLE public.partner_bonus_rules ADD CONSTRAINT uq_partner_bonus_rules_tenant_milestone UNIQUE (tenant_id, milestone);
+    END IF;
+
+    -- باقات الاشتراك: رمز الباقة فريد على مستوى الوكيل حصراً
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'billing_plans') THEN
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'billing_plans_code_key') THEN
+            ALTER TABLE public.billing_plans DROP CONSTRAINT billing_plans_code_key;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_billing_plans_tenant_code') THEN
+            ALTER TABLE public.billing_plans ADD CONSTRAINT uq_billing_plans_tenant_code UNIQUE (tenant_id, code);
+        END IF;
+    END IF;
+END $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- 📦 PART 3 OF 5: 20261101_tenant_isolation_part3_rls_lockdown.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 3
+-- File: 20261101_tenant_isolation_part3_rls_lockdown.sql
+-- Date: 2026-11-01
+-- Goal: Purge existing policies on TARGET tables only, enable universal RLS,
+--       enforce strict tenant isolation on operational tables (ZERO super admin bypass),
+--       lock down sovereign tables to service_role, and provide verification audit query.
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+-- 1️⃣ جلب وحذف السياسات السابقة على مصفوفة الجداول المستهدفة فقط (منع الحذف العشوائي)
+DO $$
+DECLARE
+    pol RECORD;
+    target_tables TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_leads', 'merchant_onboarding', 'partner_accounts',
+        'affiliates', 'referrals', 'partner_commissions',
+        'partner_bonus_awards', 'partner_bonus_rules', 'partner_targets',
+        'partner_audit_logs', 'affiliate_payouts', 'tenants',
+        'tenant_branding', 'tenant_integrations', 'platform_system_config',
+        'platform_integrations', 'reseller_master_auth', 'reseller_instances',
+        'super_admin_users', 'master_admins', 'pin_login_attempts',
+        'rate_limit_counters'
+    ];
+BEGIN
+    FOR pol IN 
+        SELECT schemaname, tablename, policyname 
+        FROM pg_policies 
+        WHERE schemaname = 'public' 
+          AND tablename = ANY(target_tables)
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I;', pol.policyname, pol.schemaname, pol.tablename);
+    END LOOP;
+END $$;
+
+-- 2️⃣ تفعيل RLS إجبارياً على كافة جداول النظام المستهدفة
+DO $$
+DECLARE
+    tbl TEXT;
+    target_tables TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_leads', 'merchant_onboarding', 'partner_accounts',
+        'affiliates', 'referrals', 'partner_commissions',
+        'partner_bonus_awards', 'partner_bonus_rules', 'partner_targets',
+        'partner_audit_logs', 'affiliate_payouts', 'tenants',
+        'tenant_branding', 'tenant_integrations', 'platform_system_config',
+        'platform_integrations', 'reseller_master_auth', 'reseller_instances',
+        'super_admin_users', 'master_admins', 'pin_login_attempts',
+        'rate_limit_counters'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY target_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 3️⃣ سياسات العزل الصارمة للجداول التشغيلية (فلترة قسرية بوكيل الجلسة current_tenant_id وبلا أي تجاوز للسوبر أدمن)
+DO $$
+DECLARE
+    tbl TEXT;
+    op_tables TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_transactions', 'billing_webhook_events',
+        'merchant_subscriptions', 'driver_settlements', 'merchant_leads',
+        'merchant_onboarding', 'partner_accounts', 'affiliates', 'referrals',
+        'partner_commissions', 'partner_bonus_awards', 'partner_bonus_rules',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY op_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('
+                CREATE POLICY "service_role_full_access" ON public.%I
+                FOR ALL TO service_role USING (true) WITH CHECK (true);
+            ', tbl);
+
+            -- التأكد من وجود عمود tenant_id لتفادي أي خطأ
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_schema = 'public' AND table_name = tbl AND column_name = 'tenant_id'
+            ) THEN
+                -- سياسة القراءة: يرى المستخدم فقط صفوف وكيله المطابقة لتوكنه حصراً
+                EXECUTE format('
+                    CREATE POLICY "tenant_isolation_select" ON public.%I
+                    FOR SELECT TO authenticated
+                    USING (tenant_id = public.current_tenant_id());
+                ', tbl);
+
+                -- سياسة الإدخال: يشترط تطابق tenant_id مع توكن المستخدم حصراً
+                EXECUTE format('
+                    CREATE POLICY "tenant_isolation_insert" ON public.%I
+                    FOR INSERT TO authenticated
+                    WITH CHECK (tenant_id = public.current_tenant_id());
+                ', tbl);
+
+                -- سياسة التعديل: تمنع تعديل أي صف خارج وكالة المستخدم
+                EXECUTE format('
+                    CREATE POLICY "tenant_isolation_update" ON public.%I
+                    FOR UPDATE TO authenticated
+                    USING (tenant_id = public.current_tenant_id())
+                    WITH CHECK (tenant_id = public.current_tenant_id());
+                ', tbl);
+
+                -- سياسة الحذف: محصورة بوكالة المستخدم حصراً
+                EXECUTE format('
+                    CREATE POLICY "tenant_isolation_delete" ON public.%I
+                    FOR DELETE TO authenticated
+                    USING (tenant_id = public.current_tenant_id());
+                ', tbl);
+            END IF;
+        END IF;
+    END LOOP;
+END $$;
+
+-- 4️⃣ سياسات الجداول السيادية والخاصة
+-- أ) جدول الوكلاء tenants
+CREATE POLICY "tenants_service_role" ON public.tenants
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "tenants_select_own" ON public.tenants
+FOR SELECT TO authenticated
+USING (
+    id = public.current_tenant_id()
+    OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+CREATE POLICY "tenants_super_admin_modify" ON public.tenants
+FOR ALL TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+-- ب) جدول باقات الاشتراك billing_plans: معزولة تماماً لكل وكيل (لا باقات مشتركة)
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'billing_plans') THEN
+        CREATE POLICY "billing_plans_service_role" ON public.billing_plans
+        FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'billing_plans' AND column_name = 'tenant_id') THEN
+            CREATE POLICY "billing_plans_select_tenant" ON public.billing_plans
+            FOR SELECT TO authenticated
+            USING (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            );
+
+            CREATE POLICY "billing_plans_super_admin_manage" ON public.billing_plans
+            FOR ALL TO authenticated
+            USING (
+                (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+                OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+            )
+            WITH CHECK (
+                (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+                OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+            );
+        END IF;
+    END IF;
+END $$;
+
+-- ج) جدول هوية الوكيل tenant_branding (بحماية ديناميكية في حال عدم وجود عمود tenant_id)
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'tenant_branding') THEN
+        CREATE POLICY "tenant_branding_service_role" ON public.tenant_branding
+        FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tenant_branding' AND column_name = 'tenant_id') THEN
+            CREATE POLICY "tenant_branding_tenant_manage" ON public.tenant_branding
+            FOR ALL TO authenticated
+            USING (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            )
+            WITH CHECK (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            );
+        ELSE
+            CREATE POLICY "tenant_branding_public_read" ON public.tenant_branding
+            FOR SELECT TO anon, authenticated
+            USING (true);
+
+            CREATE POLICY "tenant_branding_super_admin_manage" ON public.tenant_branding
+            FOR ALL TO authenticated
+            USING (
+                (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+                OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+            )
+            WITH CHECK (
+                (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+                OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+            );
+        END IF;
+    END IF;
+END $$;
+
+-- د) جدول تكاملات الوكيل tenant_integrations
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'tenant_integrations') THEN
+        CREATE POLICY "tenant_integrations_service_role" ON public.tenant_integrations
+        FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_schema = 'public' AND table_name = 'tenant_integrations' AND column_name = 'tenant_id'
+        ) THEN
+            CREATE POLICY "tenant_integrations_own_manage" ON public.tenant_integrations
+            FOR ALL TO authenticated
+            USING (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            )
+            WITH CHECK (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            );
+        END IF;
+    END IF;
+END $$;
+
+-- هـ) الجداول السيادية المحمية: حصر تام بـ service_role
+DO $$
+DECLARE
+    tbl TEXT;
+    sov_tables TEXT[] := ARRAY[
+        'platform_system_config', 'platform_integrations', 'reseller_master_auth',
+        'reseller_instances', 'master_admins', 'pin_login_attempts', 'rate_limit_counters'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY sov_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('
+                CREATE POLICY "sov_service_role_only" ON public.%I
+                FOR ALL TO service_role USING (true) WITH CHECK (true);
+            ', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- و) جدول مدراء النظام super_admin_users
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'super_admin_users') THEN
+        CREATE POLICY "super_admin_users_service_role" ON public.super_admin_users
+        FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        CREATE POLICY "super_admin_users_self_read" ON public.super_admin_users
+        FOR SELECT TO authenticated
+        USING (user_id = auth.uid());
+    END IF;
+END $$;
+
+-- 🔍 استعلام التحقق من السياسات بعد التطبيق
+SELECT schemaname, tablename, policyname, roles, cmd
+FROM pg_policies
+WHERE schemaname = 'public'
+ORDER BY tablename, policyname;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- 📦 PART 4 OF 5: 20261101_tenant_isolation_part4_security_definer_rpcs.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 4
+-- File: 20261101_tenant_isolation_part4_security_definer_rpcs.sql
+-- Date: 2026-11-01
+-- Goal: Hardened RPCs, master token verification, sanitized public domain lookups,
+--       strictly isolated billing plans, authentic bonus rule copying, super admin context switch,
+--       and fix for Sadeem agency administrator account.
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 1️⃣ دالة الشركاء المالية get_all_partner_financial_summaries
+CREATE OR REPLACE FUNCTION public.get_all_partner_financial_summaries(
+    p_partner_id UUID DEFAULT NULL,
+    p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_result JSONB := '{}'::jsonb;
+    v_partner_record RECORD;
+    v_target_tenant TEXT;
+    v_is_master_control BOOLEAN := FALSE;
+    v_earned_comm NUMERIC := 0;
+    v_paid_comm NUMERIC := 0;
+    v_pending_comm NUMERIC := 0;
+    v_earned_bonus NUMERIC := 0;
+    v_paid_bonus NUMERIC := 0;
+    v_total_payable NUMERIC := 0;
+    v_total_paid NUMERIC := 0;
+BEGIN
+    IF p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token) THEN
+        v_is_master_control := TRUE;
+    END IF;
+
+    v_target_tenant := public.current_tenant_id();
+
+    IF v_target_tenant IS NULL AND NOT v_is_master_control THEN
+        RAISE EXCEPTION 'Access Denied: Unverified tenant session.';
+    END IF;
+
+    FOR v_partner_record IN
+        SELECT 
+            pa.id, 
+            pa.affiliate_id, 
+            pa.display_name, 
+            COALESCE(pa.slug, LOWER(COALESCE(pa.referral_code, af.referral_code, 'alhaj'))) AS slug,
+            COALESCE(pa.referral_code, af.referral_code, 'ALHAJ') AS referral_code,
+            COALESCE(af.phone, '') AS phone,
+            '****' AS pin_code,
+            COALESCE(pa.commission_rate, 0.2000) AS commission_rate,
+            COALESCE(pa.acquisition_commission_rate, 0.2000) AS acquisition_commission_rate,
+            COALESCE(pa.recurring_commission_rate, 0.1000) AS recurring_commission_rate,
+            COALESCE(pa.target_value, 20) AS target_value,
+            COALESCE(pa.active, true) AS active,
+            pa.tenant_id,
+            pa.created_at
+        FROM public.partner_accounts pa
+        LEFT JOIN public.affiliates af ON af.id = pa.affiliate_id
+        WHERE (p_partner_id IS NULL OR pa.id = p_partner_id OR pa.affiliate_id = p_partner_id)
+          AND (v_is_master_control OR pa.tenant_id = v_target_tenant)
+        ORDER BY pa.created_at ASC
+    LOOP
+        v_earned_comm := 0;
+        v_paid_comm := 0;
+        v_pending_comm := 0;
+        v_earned_bonus := 0;
+        v_paid_bonus := 0;
+
+        SELECT
+            COALESCE(SUM(CASE WHEN status IN ('EARNED', 'AVAILABLE') THEN commission_amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status = 'PAID' THEN commission_amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status = 'PENDING' THEN commission_amount ELSE 0 END), 0)
+        FROM public.partner_commissions
+        WHERE (partner_account_id = v_partner_record.id OR affiliate_id = v_partner_record.affiliate_id)
+          AND status NOT IN ('REVERSED', 'CANCELLED', 'VOID')
+          AND (v_is_master_control OR tenant_id = v_target_tenant)
+        INTO v_earned_comm, v_paid_comm, v_pending_comm;
+
+        SELECT
+            COALESCE(SUM(CASE WHEN status = 'ACHIEVED' THEN bonus_amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status IN ('AWARDED', 'PAID') THEN bonus_amount ELSE 0 END), 0)
+        FROM public.partner_bonus_awards
+        WHERE partner_account_id = v_partner_record.id
+          AND (v_is_master_control OR tenant_id = v_target_tenant)
+        INTO v_earned_bonus, v_paid_bonus;
+
+        v_total_payable := (v_earned_comm - v_paid_comm) + (v_earned_bonus - v_paid_bonus);
+        v_total_paid := v_paid_comm + v_paid_bonus;
+
+        v_result := jsonb_set(
+            v_result,
+            ARRAY[v_partner_record.id::text],
+            jsonb_build_object(
+                'partner_id', v_partner_record.id,
+                'affiliate_id', v_partner_record.affiliate_id,
+                'display_name', v_partner_record.display_name,
+                'referral_code', v_partner_record.referral_code,
+                'phone', v_partner_record.phone,
+                'pin_code', '****',
+                'tenant_id', v_partner_record.tenant_id,
+                'commission_rate', v_partner_record.commission_rate,
+                'target_value', v_partner_record.target_value,
+                'active', v_partner_record.active,
+                'earned_commissions', v_earned_comm,
+                'paid_commissions', v_paid_comm,
+                'pending_commissions', v_pending_comm,
+                'earned_bonus', v_earned_bonus,
+                'paid_bonus', v_paid_bonus,
+                'total_payable', v_total_payable,
+                'total_paid', v_total_paid
+            )
+        );
+    END LOOP;
+
+    RETURN v_result;
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.get_all_partner_financial_summaries(UUID, TEXT) FROM PUBLIC, anon;
+    GRANT EXECUTE ON FUNCTION public.get_all_partner_financial_summaries(UUID, TEXT) TO authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 2️⃣ دالة جلب الوكيل الفعال بالدومين get_active_tenant_by_domain
+CREATE OR REPLACE FUNCTION public.get_active_tenant_by_domain(p_host TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant RECORD;
+BEGIN
+    IF p_host IS NULL OR TRIM(p_host) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_host := LOWER(TRIM(p_host));
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+    v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+    SELECT *
+    INTO v_tenant
+    FROM public.tenants
+    WHERE status = 'active'
+      AND (
+          LOWER(custom_domain) = v_clean_host
+          OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+          OR LOWER(slug) = v_clean_host
+      )
+    LIMIT 1;
+
+    IF v_tenant.id IS NOT NULL THEN
+        RETURN to_jsonb(v_tenant);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_active_tenant_by_domain(TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 3️⃣ زراعة الهاش السيادي في reseller_master_auth والتحقق منه حصرياً لـ service_role
+CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_token_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+DELETE FROM public.reseller_master_auth;
+INSERT INTO public.reseller_master_auth (id, master_token_hash, created_at)
+VALUES (
+    gen_random_uuid(),
+    '09678bf63a187557ac1887cdf7b25b8cf1c8d2c0e1ee1badea0d7b368c90afa2',
+    now()
+);
+
+CREATE OR REPLACE FUNCTION public.is_valid_master_token(p_token TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_token IS NULL OR TRIM(p_token) = '' THEN
+        RETURN FALSE;
+    END IF;
+
+    RETURN EXISTS (
+        SELECT 1 FROM public.reseller_master_auth 
+        WHERE master_token_hash = encode(digest(p_token, 'sha256'), 'hex')
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.is_valid_master_token(TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.is_valid_master_token(TEXT) TO service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.exec_master_sql(p_sql TEXT, p_master_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF NOT public.is_valid_master_token(p_master_token) THEN
+        RAISE EXCEPTION 'Unauthorized: Invalid master token.';
+    END IF;
+
+    EXECUTE p_sql;
+    RETURN jsonb_build_object('success', true, 'executed_at', now());
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.exec_master_sql(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 4️⃣ إجراء زراعة قواعد الحوافز الافتراضية بنسخ قواعد رادار الفعلية
+CREATE OR REPLACE FUNCTION public.seed_tenant_default_bonus_rules(p_tenant_id TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_tenant_id IS NULL OR TRIM(p_tenant_id) = '' THEN
+        RETURN;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.partner_bonus_rules WHERE tenant_id = p_tenant_id) THEN
+        INSERT INTO public.partner_bonus_rules (
+            milestone, bonus_amount, active, tenant_id, created_at, updated_at
+        )
+        SELECT 
+            pbr.milestone, pbr.bonus_amount, pbr.active, p_tenant_id, now(), now()
+        FROM public.partner_bonus_rules pbr
+        WHERE pbr.tenant_id = 'radar'
+        ON CONFLICT (tenant_id, milestone) DO NOTHING;
+
+        IF NOT EXISTS (SELECT 1 FROM public.partner_bonus_rules WHERE tenant_id = p_tenant_id) THEN
+            INSERT INTO public.partner_bonus_rules (milestone, bonus_amount, active, tenant_id)
+            VALUES 
+                (3, 100.00, true, p_tenant_id),
+                (5, 250.00, true, p_tenant_id),
+                (10, 500.00, true, p_tenant_id),
+                (20, 1000.00, true, p_tenant_id)
+            ON CONFLICT (tenant_id, milestone) DO NOTHING;
+        END IF;
+    END IF;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.seed_tenant_default_bonus_rules(TEXT) TO authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+SELECT public.seed_tenant_default_bonus_rules('sadeem');
+
+-- 5️⃣ دالة جلب باقات الاشتراك بحسب الدومين get_public_billing_plans (عزل تام: سديم يرى سديم ورادار يرى رادار وبلا باقات مشتركة)
+CREATE OR REPLACE FUNCTION public.get_public_billing_plans(p_host TEXT)
+RETURNS SETOF public.billing_plans
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant_id TEXT;
+BEGIN
+    IF p_host IS NULL OR TRIM(p_host) = '' THEN
+        RETURN;
+    END IF;
+
+    v_clean_host := LOWER(TRIM(p_host));
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+    v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+    SELECT id INTO v_tenant_id 
+    FROM public.tenants 
+    WHERE LOWER(custom_domain) = v_clean_host 
+       OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+       OR LOWER(slug) = v_clean_host
+    LIMIT 1;
+
+    -- إرجاع باقات هذا الوكيل حصراً دون أي باقات مشتركة
+    IF v_tenant_id IS NOT NULL THEN
+        RETURN QUERY
+        SELECT * FROM public.billing_plans
+        WHERE active = true AND tenant_id = v_tenant_id
+        ORDER BY amount ASC;
+    END IF;
+
+    RETURN;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_billing_plans(TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 6️⃣ دالة جلب هوية الوكيل الآمنة get_tenant_branding_by_domain
+CREATE OR REPLACE FUNCTION public.get_tenant_branding_by_domain(p_host TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_tenant JSONB;
+    v_tenant_id TEXT;
+BEGIN
+    v_tenant := public.get_active_tenant_by_domain(p_host);
+    IF v_tenant IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    v_tenant_id := v_tenant->>'id';
+
+    RETURN jsonb_build_object(
+        'tenant_id', v_tenant_id,
+        'tenant_name', v_tenant->>'name',
+        'slug', v_tenant->>'slug',
+        'custom_domain', v_tenant->>'custom_domain',
+        'brand_name', COALESCE(v_tenant->>'name', ''),
+        'brand_slogan', COALESCE(v_tenant->>'tagline', ''),
+        'logo_url', COALESCE(v_tenant->>'logo_url', ''),
+        'favicon_url', COALESCE(v_tenant->>'favicon_url', ''),
+        'primary_color', COALESCE(v_tenant->>'primary_color_hex', '#F59E0B'),
+        'secondary_color', COALESCE(v_tenant->>'accent_color_hex', '#10B981'),
+        'accent_color', COALESCE(v_tenant->>'accent_color_hex', '#10B981'),
+        'support_email', COALESCE(v_tenant->>'support_email', ''),
+        'support_phone', COALESCE(v_tenant->>'support_phone', '')
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_tenant_branding_by_domain(TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 7️⃣ دالة تحويل نطاق الوكيل للسوبر أدمن switch_super_admin_active_tenant
+-- 🔒 فحص أمني صارم: محظورة منعاً باتاً على مسؤولي الوكالات والعملاء، ومحصورة بمالك المنصة
+CREATE OR REPLACE FUNCTION public.switch_super_admin_active_tenant(p_target_tenant_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_uid UUID;
+    v_is_super BOOLEAN;
+    v_clean_tenant TEXT;
+BEGIN
+    v_uid := auth.uid();
+    IF v_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required.';
+    END IF;
+
+    -- التحقق الصارم من صفة السوبر أدمن
+    v_is_super := (
+        (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+        OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+        OR EXISTS (
+            SELECT 1 FROM public.super_admin_users 
+            WHERE user_id = v_uid AND role = 'super_admin' AND is_active = true
+        )
+    );
+
+    IF NOT v_is_super THEN
+        RAISE EXCEPTION 'Security Violation: Only platform Super Admin can switch tenant context.';
+    END IF;
+
+    v_clean_tenant := LOWER(TRIM(p_target_tenant_id));
+    IF NOT EXISTS (SELECT 1 FROM public.tenants WHERE id = v_clean_tenant) THEN
+        RAISE EXCEPTION 'Target tenant % does not exist.', v_clean_tenant;
+    END IF;
+
+    -- تعديل ادعاء tenant_id داخل raw_app_meta_data للـ super admin
+    UPDATE auth.users
+    SET raw_app_meta_data = raw_app_meta_data || jsonb_build_object('tenant_id', v_clean_tenant),
+        updated_at = now()
+    WHERE id = v_uid;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'user_id', v_uid,
+        'active_tenant', v_clean_tenant,
+        'message', 'Tenant context switched successfully'
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.switch_super_admin_active_tenant(TEXT) FROM PUBLIC, anon;
+    GRANT EXECUTE ON FUNCTION public.switch_super_admin_active_tenant(TEXT) TO authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 8️⃣ تثبيت وترقية حساب مسؤول وكالة سديم admin@sdeemalathr.com
+DO $$
+DECLARE
+    v_sadeem_user_id UUID;
+BEGIN
+    SELECT id INTO v_sadeem_user_id 
+    FROM auth.users 
+    WHERE LOWER(email) = 'admin@sdeemalathr.com';
+
+    IF v_sadeem_user_id IS NOT NULL THEN
+        UPDATE auth.users
+        SET raw_app_meta_data = raw_app_meta_data || jsonb_build_object(
+            'role', 'tenant_admin',
+            'tenant_id', 'sadeem',
+            'is_super_admin', false
+        ),
+        updated_at = now()
+        WHERE id = v_sadeem_user_id;
+    END IF;
+END $$;
+
+-- 9️⃣ تحديث دالة verify_super_admin_session لدعم مسؤولي الوكالات tenant_admin بسلاسة
+CREATE OR REPLACE FUNCTION public.verify_super_admin_session()
+RETURNS JSONB
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_super BOOLEAN;
+    v_email TEXT;
+    v_uid UUID;
+    v_admin RECORD;
+    v_role TEXT;
+    v_tenant_id TEXT;
+BEGIN
+    v_uid := auth.uid();
+    v_email := LOWER(COALESCE(auth.jwt() ->> 'email', 'service_role'));
+    v_role := auth.jwt() -> 'app_metadata' ->> 'role';
+    v_tenant_id := auth.jwt() -> 'app_metadata' ->> 'tenant_id';
+
+    -- أ) فحص إذا كان المستخدم مسؤول وكالة معتمد (tenant_admin)
+    IF v_role = 'tenant_admin' THEN
+        RETURN jsonb_build_object(
+            'authenticated', true,
+            'is_super_admin', true,
+            'role', 'tenant_admin',
+            'tenant_id', v_tenant_id,
+            'admin_id', v_uid,
+            'email', v_email,
+            'full_name', 'مسؤول الوكالة المعتمد',
+            'permissions', jsonb_build_object(
+                'can_manage_stores', true,
+                'can_manage_billing', true,
+                'can_view_financials', true,
+                'can_manage_partners', true
+            )
+        );
+    END IF;
+
+    -- ب) فحص مالك المنظومة الشامل (Super Admin)
+    v_is_super := (
+        (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+        OR v_role = 'super_admin'
+        OR auth.role() = 'service_role'
+        OR session_user IN ('postgres', 'supabase_admin')
+    );
+
+    IF NOT v_is_super THEN
+        -- فحص جدول super_admin_users
+        SELECT * INTO v_admin
+        FROM public.super_admin_users
+        WHERE (user_id = v_uid OR LOWER(email) = v_email) AND is_active = true
+        LIMIT 1;
+
+        IF v_admin.user_id IS NOT NULL THEN
+            v_is_super := TRUE;
+        END IF;
+    END IF;
+
+    IF NOT v_is_super THEN
+        RETURN jsonb_build_object(
+            'authenticated', false,
+            'is_super_admin', false,
+            'error', 'UNAUTHORIZED',
+            'message', 'الحساب الحالي غير مصرح له بإدارة المنصة'
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'authenticated', true,
+        'is_super_admin', true,
+        'role', 'super_admin',
+        'tenant_id', COALESCE(v_tenant_id, 'radar'),
+        'admin_id', v_uid,
+        'email', v_email,
+        'full_name', 'صلاح الطيب (مالك المنظومة)',
+        'permissions', jsonb_build_object(
+            'can_manage_stores', true,
+            'can_delete_stores', true,
+            'can_manage_billing', true,
+            'can_view_financials', true,
+            'can_manage_partners', true,
+            'can_send_notifications', true,
+            'can_manage_admins', true,
+            'can_reset_platform', true
+        )
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.verify_super_admin_session() TO authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 🔟 إجراء استرجاع صلاحية المالك (Super Admin Break-Glass Recovery)
+CREATE OR REPLACE FUNCTION public.master_restore_super_admin(p_email TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_email TEXT;
+    v_user_id UUID;
+BEGIN
+    IF auth.role() <> 'service_role' AND session_user NOT IN ('postgres', 'supabase_admin') THEN
+        RAISE EXCEPTION 'Access Denied: Only service_role can execute master break-glass recovery.';
+    END IF;
+
+    v_clean_email := LOWER(TRIM(p_email));
+    SELECT id INTO v_user_id FROM auth.users WHERE LOWER(email) = v_clean_email;
+
+    IF v_user_id IS NULL THEN
+        RAISE EXCEPTION 'User with email % not found.', v_clean_email;
+    END IF;
+
+    UPDATE auth.users
+    SET raw_app_meta_data = raw_app_meta_data || jsonb_build_object(
+        'role', 'super_admin',
+        'is_super_admin', true,
+        'tenant_id', 'radar'
+    ),
+    updated_at = now()
+    WHERE id = v_user_id;
+
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'super_admin_users') THEN
+        INSERT INTO public.super_admin_users (
+            user_id, email, full_name, role, is_active, created_at, updated_at
+        ) VALUES (
+            v_user_id, v_clean_email, 'صلاح الطيب (مالك المنظومة)', 'super_admin', true, now(), now()
+        ) ON CONFLICT (email) DO UPDATE
+        SET role = 'super_admin', is_active = true, updated_at = now();
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'user_id', v_user_id,
+        'email', v_clean_email,
+        'message', 'تم استرجاع وتثبيت صلاحية المالك (Super Admin) بنجاح فوري وبلا قيود'
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.master_restore_super_admin(TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.master_restore_super_admin(TEXT) TO service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+
+
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+-- 📦 PART 5 OF 5: 20261101_tenant_isolation_part5_public_storefront_rpcs.sql
+-- >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 5
+-- File: 20261101_tenant_isolation_part5_public_storefront_rpcs.sql
+-- Date: 2026-11-01
+-- Goal: Complete Public Storefront & Visitor RPCs (Menu, Specialists, Store by Slug,
+--       Referral Verification, Public Leads, Public Customer Profile, Public Customer Coupons)
+--       to prevent frontend crashes under strict RLS for anonymous (anon) visitors.
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+-- 1️⃣ دالة جلب بيانات المتجر بالرابط للزوار get_public_store_by_slug
+CREATE OR REPLACE FUNCTION public.get_public_store_by_slug(p_slug TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_slug TEXT;
+    v_store RECORD;
+BEGIN
+    IF p_slug IS NULL OR TRIM(p_slug) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_slug := LOWER(TRIM(p_slug));
+
+    SELECT *
+    INTO v_store
+    FROM public.stores
+    WHERE LOWER(slug) = v_clean_slug
+    LIMIT 1;
+
+    IF v_store.id IS NOT NULL THEN
+        RETURN to_jsonb(v_store);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_store_by_slug(TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 2️⃣ دالة جلب قائمة أصناف المتجر (المنيو) للزوار get_public_catalog_items
+CREATE OR REPLACE FUNCTION public.get_public_catalog_items(p_store_id UUID)
+RETURNS SETOF public.catalog_items
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_store_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.catalog_items
+    WHERE store_id = p_store_id AND is_available = true
+    ORDER BY category ASC, name ASC;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_catalog_items(UUID) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 3️⃣ دالة جلب أخصائيي المتجر لصفحة الحجوزات get_public_store_specialists
+CREATE OR REPLACE FUNCTION public.get_public_store_specialists(p_store_id UUID)
+RETURNS SETOF public.store_specialists
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_store_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.store_specialists
+    WHERE store_id = p_store_id AND is_active = true
+    ORDER BY name ASC;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_store_specialists(UUID) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 4️⃣ دالة جلب فروع المتجر العامة get_public_store_branches
+CREATE OR REPLACE FUNCTION public.get_public_store_branches(p_store_id UUID)
+RETURNS SETOF public.store_branches
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_store_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.store_branches
+    WHERE store_id = p_store_id
+    ORDER BY is_main DESC, created_at ASC;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_store_branches(UUID) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 5️⃣ دالة التحقق من كود إحالة المسوق verify_partner_referral_code
+-- 🔒 تنظيف صارم للدومين من www. والمنافذ والبروتوكول، وحظر تام لأي خلط بين وكالات النطاق
+CREATE OR REPLACE FUNCTION public.verify_partner_referral_code(
+    p_code TEXT,
+    p_host TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_code TEXT;
+    v_clean_host TEXT;
+    v_tenant_id TEXT;
+    v_partner RECORD;
+BEGIN
+    IF p_code IS NULL OR TRIM(p_code) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_code := UPPER(TRIM(p_code));
+
+    -- تنظيف النطاق تماماً من البروتوكول والمنافذ و www. كما في دالة get_active_tenant_by_domain
+    IF p_host IS NOT NULL AND TRIM(p_host) <> '' THEN
+        v_clean_host := LOWER(TRIM(p_host));
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+        v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+        SELECT id INTO v_tenant_id FROM public.tenants
+        WHERE LOWER(custom_domain) = v_clean_host
+           OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+           OR LOWER(slug) = v_clean_host
+        LIMIT 1;
+
+        -- 🔒 حظر أمني صارم: إذا كان p_host مرسل ولم يتطابق مع وكيل معتمد يُرفض الكود فوراً
+        IF v_tenant_id IS NULL THEN
+            RETURN NULL;
+        END IF;
+
+        -- فحص الكود محصوراً بوكالة النطاق فقط وبلا أي استثناء (يُمنع قبول مسوق من وكالة ثانية)
+        SELECT 
+            id, referral_code, slug, display_name, tenant_id, active
+        INTO v_partner
+        FROM public.partner_accounts
+        WHERE (UPPER(referral_code) = v_clean_code OR UPPER(COALESCE(slug, '')) = v_clean_code)
+          AND active = true
+          AND tenant_id = v_tenant_id
+        LIMIT 1;
+    ELSE
+        -- إذا لم يُرسل p_host نهائياً يُفحص وكيل الجلسة الموثقة
+        v_tenant_id := public.current_tenant_id();
+        IF v_tenant_id IS NULL THEN
+            RETURN NULL;
+        END IF;
+
+        SELECT 
+            id, referral_code, slug, display_name, tenant_id, active
+        INTO v_partner
+        FROM public.partner_accounts
+        WHERE (UPPER(referral_code) = v_clean_code OR UPPER(COALESCE(slug, '')) = v_clean_code)
+          AND active = true
+          AND tenant_id = v_tenant_id
+        LIMIT 1;
+    END IF;
+
+    IF v_partner.id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'id', v_partner.id,
+            'referral_code', v_partner.referral_code,
+            'slug', v_partner.slug,
+            'display_name', v_partner.display_name,
+            'tenant_id', v_partner.tenant_id,
+            'active', v_partner.active
+        );
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.verify_partner_referral_code(TEXT, TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 6️⃣ دالة تسجيل طلب انضمام تاجر جديد submit_merchant_lead_rpc
+CREATE OR REPLACE FUNCTION public.submit_merchant_lead_rpc(
+    p_payload JSONB,
+    p_host TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant_id TEXT;
+    v_lead_id UUID;
+    v_ref_code TEXT;
+BEGIN
+    IF p_payload IS NULL THEN
+        RAISE EXCEPTION 'Invalid lead payload.';
+    END IF;
+
+    v_ref_code := UPPER(TRIM(COALESCE(p_payload->>'referral_code', p_payload->>'referred_by_code', '')));
+
+    -- استخراج الوكيل من الشريك المحيل أولاً إن وجد
+    IF v_ref_code <> '' THEN
+        SELECT tenant_id INTO v_tenant_id FROM public.partner_accounts WHERE UPPER(referral_code) = v_ref_code LIMIT 1;
+    END IF;
+
+    -- إذا لم يتوفر من الشريك، يُستخرج من نطاق الدخول بعد تنظيفه
+    IF v_tenant_id IS NULL AND p_host IS NOT NULL AND TRIM(p_host) <> '' THEN
+        v_clean_host := LOWER(TRIM(p_host));
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+        v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+        SELECT id INTO v_tenant_id FROM public.tenants
+        WHERE LOWER(custom_domain) = v_clean_host
+           OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+           OR LOWER(slug) = v_clean_host
+        LIMIT 1;
+    END IF;
+
+    -- الافتراضي إلى رادار إذا تعذر كلياً تحديد النطاق
+    v_tenant_id := COALESCE(v_tenant_id, 'radar');
+
+    INSERT INTO public.merchant_leads (
+        id, store_name, manager_name, phone, normalized_phone, business_type, city,
+        status, referral_code, converted_store_id, tenant_id, created_at, updated_at
+    ) VALUES (
+        gen_random_uuid(),
+        COALESCE(p_payload->>'store_name', p_payload->>'merchant_name', 'متجر جديد'),
+        COALESCE(p_payload->>'manager_name', 'المدير'),
+        COALESCE(p_payload->>'phone', ''),
+        COALESCE(NULLIF(RIGHT(REGEXP_REPLACE(COALESCE(p_payload->>'phone', ''), '[^0-9]', '', 'g'), 9), ''), '000000000'),
+        COALESCE(p_payload->>'business_type', 'retail'),
+        COALESCE(p_payload->>'city', ''),
+        'NEW',
+        NULLIF(v_ref_code, ''),
+        NULLIF(COALESCE(p_payload->>'converted_store_id', p_payload->>'store_id'), '')::uuid,
+        v_tenant_id,
+        now(),
+        now()
+    )
+    RETURNING id INTO v_lead_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'lead_id', v_lead_id,
+        'tenant_id', v_tenant_id,
+        'message', 'Lead submitted successfully'
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.submit_merchant_lead_rpc(JSONB, TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 7️⃣ دالة جلب بطاقة العميل العامة بالهاتف get_public_customer_profile (لمنع تعطل getCustomer)
+CREATE OR REPLACE FUNCTION public.get_public_customer_profile(
+    p_store_id UUID,
+    p_phone TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_phone TEXT;
+    v_cust RECORD;
+BEGIN
+    IF p_store_id IS NULL OR p_phone IS NULL OR TRIM(p_phone) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_phone := RIGHT(REGEXP_REPLACE(TRIM(p_phone), '[^0-9]', '', 'g'), 9);
+
+    SELECT *
+    INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 9) = v_clean_phone
+    LIMIT 1;
+
+    IF v_cust.id IS NOT NULL THEN
+        RETURN to_jsonb(v_cust);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_customer_profile(UUID, TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 8️⃣ دالة جلب كوبونات العميل العامة get_public_customer_coupons (لمنع تعطل getCustomerCoupons)
+CREATE OR REPLACE FUNCTION public.get_public_customer_coupons(
+    p_store_id UUID,
+    p_phone TEXT DEFAULT NULL,
+    p_customer_id UUID DEFAULT NULL
+)
+RETURNS SETOF public.customer_coupons
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_phone TEXT;
+BEGIN
+    IF p_store_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    IF p_phone IS NOT NULL AND TRIM(p_phone) <> '' THEN
+        v_clean_phone := RIGHT(REGEXP_REPLACE(TRIM(p_phone), '[^0-9]', '', 'g'), 9);
+    END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.customer_coupons
+    WHERE store_id = p_store_id
+      AND (
+          (p_customer_id IS NOT NULL AND customer_id = p_customer_id)
+          OR (v_clean_phone IS NOT NULL AND RIGHT(REGEXP_REPLACE(COALESCE(customer_phone, ''), '[^0-9]', '', 'g'), 9) = v_clean_phone)
+      )
+    ORDER BY purchased_at DESC;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_customer_coupons(UUID, TEXT, UUID) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+
+-- ==============================================================================
 -- >>> FILE: 20261101_security_hardening_master.sql <<<
 -- ==============================================================================
 
@@ -11015,6 +22430,1898 @@ END $$;
 -- 9. SCHEMA CACHE RELOAD
 -- ==============================================================================
 NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261101_tenant_isolation_final_polish.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - FINAL RPC POLISH (Tenant Domain & Lead Normalization)
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION public.get_active_tenant_by_domain(p_host TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant RECORD;
+BEGIN
+    IF p_host IS NULL OR TRIM(p_host) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_host := LOWER(TRIM(p_host));
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+    v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+    SELECT *
+    INTO v_tenant
+    FROM public.tenants
+    WHERE status = 'active'
+      AND (
+          LOWER(custom_domain) = v_clean_host
+          OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+          OR LOWER(slug) = v_clean_host
+      )
+    LIMIT 1;
+
+    IF v_tenant.id IS NOT NULL THEN
+        RETURN to_jsonb(v_tenant);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_active_tenant_by_domain(TEXT) TO anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.submit_merchant_lead_rpc(
+    p_payload JSONB,
+    p_host TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant_id TEXT;
+    v_ref_code TEXT;
+    v_lead_id UUID;
+BEGIN
+    IF p_payload IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Payload is required');
+    END IF;
+
+    v_ref_code := UPPER(TRIM(COALESCE(p_payload->>'referral_code', p_payload->>'referred_by_code', '')));
+
+    IF v_ref_code <> '' THEN
+        SELECT tenant_id INTO v_tenant_id FROM public.partner_accounts WHERE UPPER(referral_code) = v_ref_code LIMIT 1;
+        IF v_tenant_id IS NULL THEN
+            SELECT tenant_id INTO v_tenant_id FROM public.affiliates WHERE UPPER(referral_code) = v_ref_code LIMIT 1;
+        END IF;
+    END IF;
+
+    IF v_tenant_id IS NULL AND p_host IS NOT NULL AND TRIM(p_host) <> '' THEN
+        v_clean_host := LOWER(TRIM(p_host));
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+        v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+        SELECT id INTO v_tenant_id FROM public.tenants
+        WHERE LOWER(custom_domain) = v_clean_host
+           OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+           OR LOWER(slug) = v_clean_host
+        LIMIT 1;
+    END IF;
+
+    v_tenant_id := COALESCE(v_tenant_id, 'radar');
+
+    INSERT INTO public.merchant_leads (
+        id, store_name, manager_name, phone, normalized_phone, business_type, city,
+        status, referral_code, converted_store_id, tenant_id, created_at, updated_at
+    ) VALUES (
+        gen_random_uuid(),
+        COALESCE(p_payload->>'store_name', p_payload->>'merchant_name', 'متجر جديد'),
+        COALESCE(p_payload->>'manager_name', 'المدير'),
+        COALESCE(p_payload->>'phone', ''),
+        COALESCE(NULLIF(RIGHT(REGEXP_REPLACE(COALESCE(p_payload->>'phone', ''), '[^0-9]', '', 'g'), 9), ''), '000000000'),
+        COALESCE(p_payload->>'business_type', 'retail'),
+        COALESCE(p_payload->>'city', ''),
+        'NEW',
+        NULLIF(v_ref_code, ''),
+        NULLIF(COALESCE(p_payload->>'converted_store_id', p_payload->>'store_id'), '')::uuid,
+        v_tenant_id,
+        now(),
+        now()
+    )
+    RETURNING id INTO v_lead_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'lead_id', v_lead_id,
+        'tenant_id', v_tenant_id,
+        'message', 'Lead submitted successfully'
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.submit_merchant_lead_rpc(JSONB, TEXT) TO anon, authenticated, service_role;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261101_tenant_isolation_part1_schema_and_backfill.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 1
+-- File: 20261101_tenant_isolation_part1_schema_and_backfill.sql
+-- Date: 2026-11-01
+-- Goal: Add tenant_id column, backfill from store relations, zero arbitrary defaults,
+--       clone billing plans independently per tenant, and fail migration if any orphan row exists.
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+-- 1️⃣ إضافة عمود tenant_id (nullable مبدئياً) لكافة الجداول التشغيلية بما فيها المتاجر
+DO $$
+DECLARE
+    tbl TEXT;
+    all_isolated TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_onboarding', 'merchant_leads', 'partner_accounts', 'affiliates',
+        'partner_bonus_rules', 'partner_commissions', 'partner_bonus_awards',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts', 'referrals',
+        'tenant_integrations'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY all_isolated LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS tenant_id TEXT REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;', tbl);
+        END IF;
+    END LOOP;
+
+    -- إضافة عمود tenant_id لجدول tenant_integrations وتعيينه وتغذيته برادار وسديم
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'tenant_integrations') THEN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tenant_integrations' AND column_name = 'tenant_id') THEN
+            ALTER TABLE public.tenant_integrations ADD COLUMN tenant_id TEXT REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE CASCADE;
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM public.tenant_integrations WHERE tenant_id = 'radar') THEN
+            INSERT INTO public.tenant_integrations (tenant_id, telegram_enabled, gemini_enabled, whatsapp_enabled)
+            VALUES ('radar', false, false, false);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM public.tenant_integrations WHERE tenant_id = 'sadeem') THEN
+            INSERT INTO public.tenant_integrations (tenant_id, telegram_enabled, gemini_enabled, whatsapp_enabled)
+            VALUES ('sadeem', false, false, false);
+        END IF;
+    END IF;
+
+    -- تعبئة جدول المتاجر stores أولاً ليكون مصدراً لكافة الجداول التابعة
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'stores') THEN
+        UPDATE public.stores SET tenant_id = 'radar' WHERE tenant_id IS NULL;
+        UPDATE public.stores 
+        SET tenant_id = 'sadeem'
+        WHERE slug = 'al-sayd' 
+           OR name ILIKE '%السعيد%' 
+           OR slug ILIKE '%sadeem%' 
+           OR slug ILIKE '%sadim%';
+    END IF;
+END $$;
+
+-- 2️⃣ تعبئة الجداول التابعة مباشرة لمتجر من stores.tenant_id
+DO $$
+DECLARE
+    tbl TEXT;
+    store_tables TEXT[] := ARRAY[
+        'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'service_bookings', 'audit_logs', 'store_staff', 'staff_sessions',
+        'store_wallets', 'store_branches', 'store_specialists', 'store_tables',
+        'store_inventory', 'store_drivers', 'store_orders', 'store_invoices',
+        'store_recipes', 'store_wallet_pass_configs', 'financial_ledger',
+        'merchant_subscriptions', 'billing_transactions', 'driver_settlements'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY store_tables LOOP
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_schema = 'public' AND table_name = tbl AND column_name = 'store_id'
+        ) THEN
+            EXECUTE format('
+                UPDATE public.%I t
+                SET tenant_id = s.tenant_id
+                FROM public.stores s
+                WHERE t.store_id::text = s.id::text AND t.tenant_id IS NULL;
+            ', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 3️⃣ تعبئة جدول الإشعارات الدائنة credit_notes (يحتوي store_id)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'credit_notes' AND column_name = 'store_id') THEN
+        UPDATE public.credit_notes cn
+        SET tenant_id = s.tenant_id
+        FROM public.stores s
+        WHERE cn.store_id::text = s.id::text AND cn.tenant_id IS NULL;
+    END IF;
+END $$;
+
+-- 4️⃣ تعبئة جدول أحداث الويب هوك billing_webhook_events من بيانات metadata->>store_id
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'billing_webhook_events' AND column_name = 'metadata') THEN
+        UPDATE public.billing_webhook_events bwe
+        SET tenant_id = s.tenant_id
+        FROM public.stores s
+        WHERE (bwe.metadata->>'store_id')::text = s.id::text AND bwe.tenant_id IS NULL;
+    END IF;
+END $$;
+
+-- 5️⃣ تعبئة جدول طلبات الانضمام merchant_leads بأمان ديناميكي
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'merchant_leads') THEN
+        -- فحص الربط بالمتجر إن وجد converted_store_id أو store_id
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'merchant_leads' AND column_name = 'converted_store_id') THEN
+            EXECUTE '
+                UPDATE public.merchant_leads ml
+                SET tenant_id = s.tenant_id
+                FROM public.stores s
+                WHERE ml.converted_store_id IS NOT NULL AND ml.converted_store_id::text = s.id::text AND ml.tenant_id IS NULL;
+            ';
+        ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'merchant_leads' AND column_name = 'store_id') THEN
+            EXECUTE '
+                UPDATE public.merchant_leads ml
+                SET tenant_id = s.tenant_id
+                FROM public.stores s
+                WHERE ml.store_id IS NOT NULL AND ml.store_id::text = s.id::text AND ml.tenant_id IS NULL;
+            ';
+        END IF;
+
+        -- فحص الربط بكود الإحالة إن وجد الحقل
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'merchant_leads' AND column_name = 'referral_code') THEN
+            EXECUTE '
+                UPDATE public.merchant_leads ml
+                SET tenant_id = pa.tenant_id
+                FROM public.partner_accounts pa
+                WHERE ml.tenant_id IS NULL AND ml.referral_code IS NOT NULL AND UPPER(pa.referral_code) = UPPER(ml.referral_code);
+            ';
+        ELSIF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'merchant_leads' AND column_name = 'referred_by_code') THEN
+            EXECUTE '
+                UPDATE public.merchant_leads ml
+                SET tenant_id = pa.tenant_id
+                FROM public.partner_accounts pa
+                WHERE ml.tenant_id IS NULL AND ml.referred_by_code IS NOT NULL AND UPPER(pa.referral_code) = UPPER(ml.referred_by_code);
+            ';
+        END IF;
+
+        UPDATE public.merchant_leads SET tenant_id = 'radar' WHERE tenant_id IS NULL;
+    END IF;
+END $$;
+
+-- 6️⃣ تعبئة باقات الاشتراك واستنساخها مستقلة لسديم (حظر الباقات المشتركة تماماً)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'billing_plans') THEN
+        -- نسبة الباقات الحالية إلى رادار صراحة
+        UPDATE public.billing_plans SET tenant_id = 'radar' WHERE tenant_id IS NULL;
+
+        -- فك قيد unique القديم على code فقط إن وجد لتمكين وجود نفس الرمز بكل وكيل
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'billing_plans_code_key') THEN
+            ALTER TABLE public.billing_plans DROP CONSTRAINT billing_plans_code_key;
+        END IF;
+
+        -- استنساخ باقات رادار لسديم كصفوف مستقلة تماماً بـ tenant_id = 'sadeem'
+        INSERT INTO public.billing_plans (
+            id, code, name, description, amount, currency, billing_interval, trial_days, active, tenant_id, metadata, created_at, updated_at
+        )
+        SELECT 
+            gen_random_uuid(), bp.code, bp.name, bp.description, bp.amount, bp.currency, bp.billing_interval, bp.trial_days, bp.active, 'sadeem', bp.metadata, now(), now()
+        FROM public.billing_plans bp
+        WHERE bp.tenant_id = 'radar'
+          AND NOT EXISTS (
+              SELECT 1 FROM public.billing_plans sbp 
+              WHERE sbp.tenant_id = 'sadeem' AND sbp.code = bp.code
+          );
+    END IF;
+END $$;
+
+-- 7️⃣ تعبئة منظومة الشركاء التاريخية المعروفة (محمد الحاج) لرادار بالاسم الصريح بأمان ديناميكي
+DO $$
+DECLARE
+    tbl TEXT;
+    partner_tables TEXT[] := ARRAY[
+        'partner_bonus_rules', 'partner_commissions', 'partner_bonus_awards',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts', 'referrals',
+        'tenant_integrations'
+    ];
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'partner_accounts') THEN
+        UPDATE public.partner_accounts SET tenant_id = 'radar' WHERE referral_code IN ('ALHAJ', 'r4775') AND tenant_id IS NULL;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'affiliates') THEN
+        UPDATE public.affiliates SET tenant_id = 'radar' WHERE tenant_id IS NULL;
+    END IF;
+
+    FOREACH tbl IN ARRAY partner_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('UPDATE public.%I SET tenant_id = ''radar'' WHERE tenant_id IS NULL;', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 8️⃣ فحص الحماية الصارم (Assertion Check): الفشل الإلزامي لو بقي صف واحد بدون وكيل في أي جدول
+DO $$
+DECLARE
+    tbl TEXT;
+    orphan_count BIGINT;
+    all_mandatory TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_onboarding', 'merchant_leads', 'partner_accounts', 'affiliates',
+        'partner_bonus_rules', 'partner_commissions', 'partner_bonus_awards',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts', 'referrals',
+        'tenant_integrations'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY all_mandatory LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('SELECT count(*) FROM public.%I WHERE tenant_id IS NULL;', tbl) INTO orphan_count;
+            IF orphan_count > 0 THEN
+                RAISE EXCEPTION 'MIGRATION ABORTED: Table % has % rows with NULL tenant_id. Manual verification required.', tbl, orphan_count;
+            END IF;
+        END IF;
+    END LOOP;
+END $$;
+
+-- 9️⃣ تطبيق قيد NOT NULL والفهارس بعد التأكد التام من خلو كافة الجداول من أي NULL
+DO $$
+DECLARE
+    tbl TEXT;
+    all_mandatory TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_onboarding', 'merchant_leads', 'partner_accounts', 'affiliates',
+        'partner_bonus_rules', 'partner_commissions', 'partner_bonus_awards',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts', 'referrals',
+        'tenant_integrations'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY all_mandatory LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('ALTER TABLE public.%I ALTER COLUMN tenant_id SET NOT NULL;', tbl);
+            EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%I_tenant_id ON public.%I(tenant_id);', tbl, tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261101_tenant_isolation_part2_triggers_and_constraints.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 2
+-- File: 20261101_tenant_isolation_part2_triggers_and_constraints.sql
+-- Date: 2026-11-01
+-- Goal: Context resolution, auto-injection triggers, immutability, and composite unique constraints
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+-- 1️⃣ دالة استخراج الوكيل الحصري من التوكن السيرفري المشفر (خالية تماماً من أي افتراضي radar)
+CREATE OR REPLACE FUNCTION public.current_tenant_id()
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_claim TEXT;
+    v_req_tenant TEXT;
+    v_headers JSONB;
+BEGIN
+    -- استخراج claim الوكيل من التوكن المشفر والموقع من GoTrue
+    v_claim := NULLIF(TRIM(auth.jwt() -> 'app_metadata' ->> 'tenant_id'), '');
+
+    -- إذا كان المستخدم سوبر أدمن، يُسمح بتحديد نطاق الوكيل بحسب الترويسة x-tenant-id
+    IF (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE 
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin' THEN
+        BEGIN
+            v_headers := NULLIF(current_setting('request.headers', true), '')::jsonb;
+            IF v_headers IS NOT NULL THEN
+                v_req_tenant := NULLIF(TRIM(v_headers ->> 'x-tenant-id'), '');
+                IF v_req_tenant IS NOT NULL AND EXISTS (SELECT 1 FROM public.tenants WHERE id = LOWER(v_req_tenant)) THEN
+                    RETURN LOWER(v_req_tenant);
+                END IF;
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END IF;
+
+    -- للمستخدمين العاديين، الاعتماد حصرياً على ادعاء التوكن
+    IF v_claim IS NOT NULL THEN
+        RETURN LOWER(v_claim);
+    END IF;
+
+    -- إذا لم يتوفر أي توكن أو ادعاء تعيد NULL قسراً لترفض العملية أمنياً
+    RETURN NULL;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.current_tenant_id() TO anon, authenticated, service_role;
+
+-- 2️⃣ قادح التعبئة التلقائية لجداول المتاجر (يسحب tenant_id من المتجر التابع له ويتجاوز قيمة العميل)
+CREATE OR REPLACE FUNCTION public.trg_auto_assign_tenant_from_store()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_store_tenant TEXT;
+BEGIN
+    IF NEW.store_id IS NOT NULL THEN
+        SELECT tenant_id INTO v_store_tenant FROM public.stores WHERE id::text = NEW.store_id::text;
+        IF v_store_tenant IS NOT NULL THEN
+            NEW.tenant_id := v_store_tenant;
+            RETURN NEW;
+        END IF;
+    END IF;
+
+    -- في حال عدم توفر المتجر يستخرج من التوكن السيرفري
+    NEW.tenant_id := COALESCE(public.current_tenant_id(), NEW.tenant_id);
+    
+    IF NEW.tenant_id IS NULL THEN
+        RAISE EXCEPTION 'Security Violation: Cannot write to store-tied table without a valid store or tenant context.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+-- 3️⃣ قادح التعبئة التلقائية لجداول الوكالة العامة (يسحب tenant_id من توكن الجلسة المشفر)
+-- فحص أمني دقيق: يشمل session_user لـ postgres و supabase_admin وترويسة request.jwt.claim.role في PostgREST
+CREATE OR REPLACE FUNCTION public.trg_auto_assign_tenant_from_jwt()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_jwt_tenant TEXT;
+    v_is_privileged BOOLEAN := FALSE;
+BEGIN
+    -- إذا كانت القيمة محددة مسبقاً من دالة سيرفرية موثوقة SECURITY DEFINER يتم اعتمادها
+    IF NEW.tenant_id IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+
+    v_jwt_tenant := public.current_tenant_id();
+
+    -- فحص صلاحيات التنفيذ السيرفرية العليا
+    IF (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE 
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin' 
+       OR session_user IN ('postgres', 'supabase_admin')
+       OR auth.role() = 'service_role'
+       OR NULLIF(current_setting('request.jwt.claim.role', true), '') = 'service_role' THEN
+        v_is_privileged := TRUE;
+    END IF;
+
+    IF v_is_privileged THEN
+        NEW.tenant_id := COALESCE(NEW.tenant_id, v_jwt_tenant);
+    ELSE
+        -- المستخدم العادي يفرض عليه توكنه قسراً وتُهمل أي قيمة أرسلها العميل
+        NEW.tenant_id := v_jwt_tenant;
+    END IF;
+
+    IF NEW.tenant_id IS NULL THEN
+        RAISE EXCEPTION 'Security Violation: Cannot insert record without verified tenant claim.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+-- 4️⃣ قادح منع التعديل على tenant_id بعد الإدخال نهائياً (Immutability Enforcement)
+CREATE OR REPLACE FUNCTION public.trg_prevent_tenant_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF OLD.tenant_id IS DISTINCT FROM NEW.tenant_id THEN
+        IF NOT (
+            (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE 
+            OR session_user IN ('postgres', 'supabase_admin')
+            OR auth.role() = 'service_role'
+            OR NULLIF(current_setting('request.jwt.claim.role', true), '') = 'service_role'
+        ) THEN
+            RAISE EXCEPTION 'Security Violation: tenant_id is immutable once assigned.';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+-- 5️⃣ ربط الزنادات بجداول النظام
+DO $$
+DECLARE
+    tbl TEXT;
+    store_tables TEXT[] := ARRAY[
+        'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'service_bookings', 'audit_logs', 'store_staff', 'staff_sessions',
+        'store_wallets', 'store_branches', 'store_specialists', 'store_tables',
+        'store_inventory', 'store_drivers', 'store_orders', 'store_invoices',
+        'store_recipes', 'store_wallet_pass_configs', 'financial_ledger',
+        'merchant_subscriptions', 'billing_transactions', 'driver_settlements'
+    ];
+    tenant_jwt_tables TEXT[] := ARRAY[
+        'stores', 'merchant_leads', 'merchant_onboarding', 'partner_accounts', 'affiliates',
+        'partner_bonus_awards', 'partner_bonus_rules', 'partner_targets',
+        'partner_commissions', 'partner_audit_logs', 'affiliate_payouts',
+        'referrals'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY store_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_assign_tenant_store ON public.%I;', tbl);
+            EXECUTE format('CREATE TRIGGER trg_assign_tenant_store BEFORE INSERT ON public.%I FOR EACH ROW EXECUTE FUNCTION public.trg_auto_assign_tenant_from_store();', tbl);
+            
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_lock_tenant_mutation ON public.%I;', tbl);
+            EXECUTE format('CREATE TRIGGER trg_lock_tenant_mutation BEFORE UPDATE OF tenant_id ON public.%I FOR EACH ROW EXECUTE FUNCTION public.trg_prevent_tenant_mutation();', tbl);
+        END IF;
+    END LOOP;
+
+    FOREACH tbl IN ARRAY tenant_jwt_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_assign_tenant_jwt ON public.%I;', tbl);
+            EXECUTE format('CREATE TRIGGER trg_assign_tenant_jwt BEFORE INSERT ON public.%I FOR EACH ROW EXECUTE FUNCTION public.trg_auto_assign_tenant_from_jwt();', tbl);
+
+            EXECUTE format('DROP TRIGGER IF EXISTS trg_lock_tenant_mutation ON public.%I;', tbl);
+            EXECUTE format('CREATE TRIGGER trg_lock_tenant_mutation BEFORE UPDATE OF tenant_id ON public.%I FOR EACH ROW EXECUTE FUNCTION public.trg_prevent_tenant_mutation();', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 6️⃣ ترقية القيود الفريدة لتكون مركبة (Composite Unique) تشمل tenant_id
+DO $$
+BEGIN
+    -- كود الإحالة فريد على مستوى الوكيل حصراً في جدول الشركاء
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'partner_accounts_referral_code_key') THEN
+        ALTER TABLE public.partner_accounts DROP CONSTRAINT partner_accounts_referral_code_key;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_partner_accounts_tenant_referral') THEN
+        ALTER TABLE public.partner_accounts ADD CONSTRAINT uq_partner_accounts_tenant_referral UNIQUE (tenant_id, referral_code);
+    END IF;
+
+    -- كود الإحالة فريد على مستوى الوكيل في جدول المسوقين affiliates
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'affiliates') THEN
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'affiliates_referral_code_key') THEN
+            ALTER TABLE public.affiliates DROP CONSTRAINT affiliates_referral_code_key;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_affiliates_tenant_referral') THEN
+            ALTER TABLE public.affiliates ADD CONSTRAINT uq_affiliates_tenant_referral UNIQUE (tenant_id, referral_code);
+        END IF;
+    END IF;
+
+    -- قواعد المكافآت فريدة لكل مرحلة داخل الوكيل الواحد
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'partner_bonus_rules_milestone_key') THEN
+        ALTER TABLE public.partner_bonus_rules DROP CONSTRAINT partner_bonus_rules_milestone_key;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_partner_bonus_rules_tenant_milestone') THEN
+        ALTER TABLE public.partner_bonus_rules ADD CONSTRAINT uq_partner_bonus_rules_tenant_milestone UNIQUE (tenant_id, milestone);
+    END IF;
+
+    -- باقات الاشتراك: رمز الباقة فريد على مستوى الوكيل حصراً
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'billing_plans') THEN
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'billing_plans_code_key') THEN
+            ALTER TABLE public.billing_plans DROP CONSTRAINT billing_plans_code_key;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_billing_plans_tenant_code') THEN
+            ALTER TABLE public.billing_plans ADD CONSTRAINT uq_billing_plans_tenant_code UNIQUE (tenant_id, code);
+        END IF;
+    END IF;
+END $$;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261101_tenant_isolation_part3_rls_lockdown.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 3
+-- File: 20261101_tenant_isolation_part3_rls_lockdown.sql
+-- Date: 2026-11-01
+-- Goal: Purge existing policies on TARGET tables only, enable universal RLS,
+--       enforce strict tenant isolation on operational tables (ZERO super admin bypass),
+--       lock down sovereign tables to service_role, and provide verification audit query.
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+-- 1️⃣ جلب وحذف السياسات السابقة على مصفوفة الجداول المستهدفة فقط (منع الحذف العشوائي)
+DO $$
+DECLARE
+    pol RECORD;
+    target_tables TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_leads', 'merchant_onboarding', 'partner_accounts',
+        'affiliates', 'referrals', 'partner_commissions',
+        'partner_bonus_awards', 'partner_bonus_rules', 'partner_targets',
+        'partner_audit_logs', 'affiliate_payouts', 'tenants',
+        'tenant_branding', 'tenant_integrations', 'platform_system_config',
+        'platform_integrations', 'reseller_master_auth', 'reseller_instances',
+        'super_admin_users', 'master_admins', 'pin_login_attempts',
+        'rate_limit_counters'
+    ];
+BEGIN
+    FOR pol IN 
+        SELECT schemaname, tablename, policyname 
+        FROM pg_policies 
+        WHERE schemaname = 'public' 
+          AND tablename = ANY(target_tables)
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I;', pol.policyname, pol.schemaname, pol.tablename);
+    END LOOP;
+END $$;
+
+-- 2️⃣ تفعيل RLS إجبارياً على كافة جداول النظام المستهدفة
+DO $$
+DECLARE
+    tbl TEXT;
+    target_tables TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_plans', 'billing_transactions',
+        'billing_webhook_events', 'merchant_subscriptions', 'driver_settlements',
+        'merchant_leads', 'merchant_onboarding', 'partner_accounts',
+        'affiliates', 'referrals', 'partner_commissions',
+        'partner_bonus_awards', 'partner_bonus_rules', 'partner_targets',
+        'partner_audit_logs', 'affiliate_payouts', 'tenants',
+        'tenant_branding', 'tenant_integrations', 'platform_system_config',
+        'platform_integrations', 'reseller_master_auth', 'reseller_instances',
+        'super_admin_users', 'master_admins', 'pin_login_attempts',
+        'rate_limit_counters'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY target_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY;', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- 3️⃣ سياسات العزل الصارمة للجداول التشغيلية (فلترة قسرية بوكيل الجلسة current_tenant_id وبلا أي تجاوز للسوبر أدمن)
+DO $$
+DECLARE
+    tbl TEXT;
+    op_tables TEXT[] := ARRAY[
+        'stores', 'store_customers', 'tiers', 'privileges', 'catalog_items',
+        'customer_coupons', 'pos_shifts', 'pos_cash_movements', 'pos_refunds',
+        'credit_notes', 'service_bookings', 'audit_logs', 'store_staff',
+        'staff_sessions', 'store_wallets', 'store_branches', 'store_specialists',
+        'store_tables', 'store_inventory', 'store_drivers', 'store_orders',
+        'store_invoices', 'store_recipes', 'store_wallet_pass_configs',
+        'financial_ledger', 'billing_transactions', 'billing_webhook_events',
+        'merchant_subscriptions', 'driver_settlements', 'merchant_leads',
+        'merchant_onboarding', 'partner_accounts', 'affiliates', 'referrals',
+        'partner_commissions', 'partner_bonus_awards', 'partner_bonus_rules',
+        'partner_targets', 'partner_audit_logs', 'affiliate_payouts'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY op_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('
+                CREATE POLICY "service_role_full_access" ON public.%I
+                FOR ALL TO service_role USING (true) WITH CHECK (true);
+            ', tbl);
+
+            -- التأكد من وجود عمود tenant_id لتفادي أي خطأ
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_schema = 'public' AND table_name = tbl AND column_name = 'tenant_id'
+            ) THEN
+                -- سياسة القراءة: يرى المستخدم فقط صفوف وكيله المطابقة لتوكنه حصراً
+                EXECUTE format('
+                    CREATE POLICY "tenant_isolation_select" ON public.%I
+                    FOR SELECT TO authenticated
+                    USING (tenant_id = public.current_tenant_id());
+                ', tbl);
+
+                -- سياسة الإدخال: يشترط تطابق tenant_id مع توكن المستخدم حصراً
+                EXECUTE format('
+                    CREATE POLICY "tenant_isolation_insert" ON public.%I
+                    FOR INSERT TO authenticated
+                    WITH CHECK (tenant_id = public.current_tenant_id());
+                ', tbl);
+
+                -- سياسة التعديل: تمنع تعديل أي صف خارج وكالة المستخدم
+                EXECUTE format('
+                    CREATE POLICY "tenant_isolation_update" ON public.%I
+                    FOR UPDATE TO authenticated
+                    USING (tenant_id = public.current_tenant_id())
+                    WITH CHECK (tenant_id = public.current_tenant_id());
+                ', tbl);
+
+                -- سياسة الحذف: محصورة بوكالة المستخدم حصراً
+                EXECUTE format('
+                    CREATE POLICY "tenant_isolation_delete" ON public.%I
+                    FOR DELETE TO authenticated
+                    USING (tenant_id = public.current_tenant_id());
+                ', tbl);
+            END IF;
+        END IF;
+    END LOOP;
+END $$;
+
+-- 4️⃣ سياسات الجداول السيادية والخاصة
+-- أ) جدول الوكلاء tenants
+CREATE POLICY "tenants_service_role" ON public.tenants
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE POLICY "tenants_select_own" ON public.tenants
+FOR SELECT TO authenticated
+USING (
+    id = public.current_tenant_id()
+    OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+CREATE POLICY "tenants_super_admin_modify" ON public.tenants
+FOR ALL TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+-- ب) جدول باقات الاشتراك billing_plans: معزولة تماماً لكل وكيل (لا باقات مشتركة)
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'billing_plans') THEN
+        CREATE POLICY "billing_plans_service_role" ON public.billing_plans
+        FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'billing_plans' AND column_name = 'tenant_id') THEN
+            CREATE POLICY "billing_plans_select_tenant" ON public.billing_plans
+            FOR SELECT TO authenticated
+            USING (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            );
+
+            CREATE POLICY "billing_plans_super_admin_manage" ON public.billing_plans
+            FOR ALL TO authenticated
+            USING (
+                (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+                OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+            )
+            WITH CHECK (
+                (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+                OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+            );
+        END IF;
+    END IF;
+END $$;
+
+-- ج) جدول هوية الوكيل tenant_branding (بحماية ديناميكية في حال عدم وجود عمود tenant_id)
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'tenant_branding') THEN
+        CREATE POLICY "tenant_branding_service_role" ON public.tenant_branding
+        FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tenant_branding' AND column_name = 'tenant_id') THEN
+            CREATE POLICY "tenant_branding_tenant_manage" ON public.tenant_branding
+            FOR ALL TO authenticated
+            USING (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            )
+            WITH CHECK (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            );
+        ELSE
+            CREATE POLICY "tenant_branding_public_read" ON public.tenant_branding
+            FOR SELECT TO anon, authenticated
+            USING (true);
+
+            CREATE POLICY "tenant_branding_super_admin_manage" ON public.tenant_branding
+            FOR ALL TO authenticated
+            USING (
+                (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+                OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+            )
+            WITH CHECK (
+                (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+                OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+            );
+        END IF;
+    END IF;
+END $$;
+
+-- د) جدول تكاملات الوكيل tenant_integrations
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'tenant_integrations') THEN
+        CREATE POLICY "tenant_integrations_service_role" ON public.tenant_integrations
+        FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_schema = 'public' AND table_name = 'tenant_integrations' AND column_name = 'tenant_id'
+        ) THEN
+            CREATE POLICY "tenant_integrations_own_manage" ON public.tenant_integrations
+            FOR ALL TO authenticated
+            USING (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            )
+            WITH CHECK (
+                tenant_id = public.current_tenant_id()
+                OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+            );
+        END IF;
+    END IF;
+END $$;
+
+-- هـ) الجداول السيادية المحمية: حصر تام بـ service_role
+DO $$
+DECLARE
+    tbl TEXT;
+    sov_tables TEXT[] := ARRAY[
+        'platform_system_config', 'platform_integrations', 'reseller_master_auth',
+        'reseller_instances', 'master_admins', 'pin_login_attempts', 'rate_limit_counters'
+    ];
+BEGIN
+    FOREACH tbl IN ARRAY sov_tables LOOP
+        IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = tbl) THEN
+            EXECUTE format('
+                CREATE POLICY "sov_service_role_only" ON public.%I
+                FOR ALL TO service_role USING (true) WITH CHECK (true);
+            ', tbl);
+        END IF;
+    END LOOP;
+END $$;
+
+-- و) جدول مدراء النظام super_admin_users
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'super_admin_users') THEN
+        CREATE POLICY "super_admin_users_service_role" ON public.super_admin_users
+        FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+        CREATE POLICY "super_admin_users_self_read" ON public.super_admin_users
+        FOR SELECT TO authenticated
+        USING (user_id = auth.uid());
+    END IF;
+END $$;
+
+-- 🔍 استعلام التحقق من السياسات بعد التطبيق
+SELECT schemaname, tablename, policyname, roles, cmd
+FROM pg_policies
+WHERE schemaname = 'public'
+ORDER BY tablename, policyname;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261101_tenant_isolation_part4_security_definer_rpcs.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 4
+-- File: 20261101_tenant_isolation_part4_security_definer_rpcs.sql
+-- Date: 2026-11-01
+-- Goal: Hardened RPCs, master token verification, sanitized public domain lookups,
+--       strictly isolated billing plans, authentic bonus rule copying, super admin context switch,
+--       and fix for Sadeem agency administrator account.
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 1️⃣ دالة الشركاء المالية get_all_partner_financial_summaries
+CREATE OR REPLACE FUNCTION public.get_all_partner_financial_summaries(
+    p_partner_id UUID DEFAULT NULL,
+    p_master_token TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_result JSONB := '{}'::jsonb;
+    v_partner_record RECORD;
+    v_target_tenant TEXT;
+    v_is_master_control BOOLEAN := FALSE;
+    v_earned_comm NUMERIC := 0;
+    v_paid_comm NUMERIC := 0;
+    v_pending_comm NUMERIC := 0;
+    v_earned_bonus NUMERIC := 0;
+    v_paid_bonus NUMERIC := 0;
+    v_total_payable NUMERIC := 0;
+    v_total_paid NUMERIC := 0;
+BEGIN
+    IF p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token) THEN
+        v_is_master_control := TRUE;
+    END IF;
+
+    v_target_tenant := public.current_tenant_id();
+
+    IF v_target_tenant IS NULL AND NOT v_is_master_control THEN
+        RAISE EXCEPTION 'Access Denied: Unverified tenant session.';
+    END IF;
+
+    FOR v_partner_record IN
+        SELECT 
+            pa.id, 
+            pa.affiliate_id, 
+            pa.display_name, 
+            COALESCE(pa.slug, LOWER(COALESCE(pa.referral_code, af.referral_code, 'alhaj'))) AS slug,
+            COALESCE(pa.referral_code, af.referral_code, 'ALHAJ') AS referral_code,
+            COALESCE(af.phone, '') AS phone,
+            '****' AS pin_code,
+            COALESCE(pa.commission_rate, 0.2000) AS commission_rate,
+            COALESCE(pa.acquisition_commission_rate, 0.2000) AS acquisition_commission_rate,
+            COALESCE(pa.recurring_commission_rate, 0.1000) AS recurring_commission_rate,
+            COALESCE(pa.target_value, 20) AS target_value,
+            COALESCE(pa.active, true) AS active,
+            pa.tenant_id,
+            pa.created_at
+        FROM public.partner_accounts pa
+        LEFT JOIN public.affiliates af ON af.id = pa.affiliate_id
+        WHERE (p_partner_id IS NULL OR pa.id = p_partner_id OR pa.affiliate_id = p_partner_id)
+          AND (v_is_master_control OR pa.tenant_id = v_target_tenant)
+        ORDER BY pa.created_at ASC
+    LOOP
+        v_earned_comm := 0;
+        v_paid_comm := 0;
+        v_pending_comm := 0;
+        v_earned_bonus := 0;
+        v_paid_bonus := 0;
+
+        SELECT
+            COALESCE(SUM(CASE WHEN status IN ('EARNED', 'AVAILABLE') THEN commission_amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status = 'PAID' THEN commission_amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status = 'PENDING' THEN commission_amount ELSE 0 END), 0)
+        FROM public.partner_commissions
+        WHERE (partner_account_id = v_partner_record.id OR affiliate_id = v_partner_record.affiliate_id)
+          AND status NOT IN ('REVERSED', 'CANCELLED', 'VOID')
+          AND (v_is_master_control OR tenant_id = v_target_tenant)
+        INTO v_earned_comm, v_paid_comm, v_pending_comm;
+
+        SELECT
+            COALESCE(SUM(CASE WHEN status = 'ACHIEVED' THEN bonus_amount ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status IN ('AWARDED', 'PAID') THEN bonus_amount ELSE 0 END), 0)
+        FROM public.partner_bonus_awards
+        WHERE partner_account_id = v_partner_record.id
+          AND (v_is_master_control OR tenant_id = v_target_tenant)
+        INTO v_earned_bonus, v_paid_bonus;
+
+        v_total_payable := (v_earned_comm - v_paid_comm) + (v_earned_bonus - v_paid_bonus);
+        v_total_paid := v_paid_comm + v_paid_bonus;
+
+        v_result := jsonb_set(
+            v_result,
+            ARRAY[v_partner_record.id::text],
+            jsonb_build_object(
+                'partner_id', v_partner_record.id,
+                'affiliate_id', v_partner_record.affiliate_id,
+                'display_name', v_partner_record.display_name,
+                'referral_code', v_partner_record.referral_code,
+                'phone', v_partner_record.phone,
+                'pin_code', '****',
+                'tenant_id', v_partner_record.tenant_id,
+                'commission_rate', v_partner_record.commission_rate,
+                'target_value', v_partner_record.target_value,
+                'active', v_partner_record.active,
+                'earned_commissions', v_earned_comm,
+                'paid_commissions', v_paid_comm,
+                'pending_commissions', v_pending_comm,
+                'earned_bonus', v_earned_bonus,
+                'paid_bonus', v_paid_bonus,
+                'total_payable', v_total_payable,
+                'total_paid', v_total_paid
+            )
+        );
+    END LOOP;
+
+    RETURN v_result;
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.get_all_partner_financial_summaries(UUID, TEXT) FROM PUBLIC, anon;
+    GRANT EXECUTE ON FUNCTION public.get_all_partner_financial_summaries(UUID, TEXT) TO authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 2️⃣ دالة جلب الوكيل الفعال بالدومين get_active_tenant_by_domain
+CREATE OR REPLACE FUNCTION public.get_active_tenant_by_domain(p_host TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant RECORD;
+BEGIN
+    IF p_host IS NULL OR TRIM(p_host) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_host := LOWER(TRIM(p_host));
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+    v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+    SELECT *
+    INTO v_tenant
+    FROM public.tenants
+    WHERE status = 'active'
+      AND (
+          LOWER(custom_domain) = v_clean_host
+          OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+          OR LOWER(slug) = v_clean_host
+      )
+    LIMIT 1;
+
+    IF v_tenant.id IS NOT NULL THEN
+        RETURN to_jsonb(v_tenant);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_active_tenant_by_domain(TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 3️⃣ زراعة الهاش السيادي في reseller_master_auth والتحقق منه حصرياً لـ service_role
+CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_token_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+DELETE FROM public.reseller_master_auth;
+INSERT INTO public.reseller_master_auth (id, master_token_hash, created_at)
+VALUES (
+    gen_random_uuid(),
+    '09678bf63a187557ac1887cdf7b25b8cf1c8d2c0e1ee1badea0d7b368c90afa2',
+    now()
+);
+
+CREATE OR REPLACE FUNCTION public.is_valid_master_token(p_token TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_token IS NULL OR TRIM(p_token) = '' THEN
+        RETURN FALSE;
+    END IF;
+
+    RETURN EXISTS (
+        SELECT 1 FROM public.reseller_master_auth 
+        WHERE master_token_hash = encode(digest(p_token, 'sha256'), 'hex')
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.is_valid_master_token(TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.is_valid_master_token(TEXT) TO service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.exec_master_sql(p_sql TEXT, p_master_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF NOT public.is_valid_master_token(p_master_token) THEN
+        RAISE EXCEPTION 'Unauthorized: Invalid master token.';
+    END IF;
+
+    EXECUTE p_sql;
+    RETURN jsonb_build_object('success', true, 'executed_at', now());
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.exec_master_sql(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 4️⃣ إجراء زراعة قواعد الحوافز الافتراضية بنسخ قواعد رادار الفعلية
+CREATE OR REPLACE FUNCTION public.seed_tenant_default_bonus_rules(p_tenant_id TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_tenant_id IS NULL OR TRIM(p_tenant_id) = '' THEN
+        RETURN;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.partner_bonus_rules WHERE tenant_id = p_tenant_id) THEN
+        INSERT INTO public.partner_bonus_rules (
+            milestone, bonus_amount, active, tenant_id, created_at, updated_at
+        )
+        SELECT 
+            pbr.milestone, pbr.bonus_amount, pbr.active, p_tenant_id, now(), now()
+        FROM public.partner_bonus_rules pbr
+        WHERE pbr.tenant_id = 'radar'
+        ON CONFLICT (tenant_id, milestone) DO NOTHING;
+
+        IF NOT EXISTS (SELECT 1 FROM public.partner_bonus_rules WHERE tenant_id = p_tenant_id) THEN
+            INSERT INTO public.partner_bonus_rules (milestone, bonus_amount, active, tenant_id)
+            VALUES 
+                (3, 100.00, true, p_tenant_id),
+                (5, 250.00, true, p_tenant_id),
+                (10, 500.00, true, p_tenant_id),
+                (20, 1000.00, true, p_tenant_id)
+            ON CONFLICT (tenant_id, milestone) DO NOTHING;
+        END IF;
+    END IF;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.seed_tenant_default_bonus_rules(TEXT) TO authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+SELECT public.seed_tenant_default_bonus_rules('sadeem');
+
+-- 5️⃣ دالة جلب باقات الاشتراك بحسب الدومين get_public_billing_plans (عزل تام: سديم يرى سديم ورادار يرى رادار وبلا باقات مشتركة)
+CREATE OR REPLACE FUNCTION public.get_public_billing_plans(p_host TEXT)
+RETURNS SETOF public.billing_plans
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant_id TEXT;
+BEGIN
+    IF p_host IS NULL OR TRIM(p_host) = '' THEN
+        RETURN;
+    END IF;
+
+    v_clean_host := LOWER(TRIM(p_host));
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+    v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+    SELECT id INTO v_tenant_id 
+    FROM public.tenants 
+    WHERE LOWER(custom_domain) = v_clean_host 
+       OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+       OR LOWER(slug) = v_clean_host
+    LIMIT 1;
+
+    -- إرجاع باقات هذا الوكيل حصراً دون أي باقات مشتركة
+    IF v_tenant_id IS NOT NULL THEN
+        RETURN QUERY
+        SELECT * FROM public.billing_plans
+        WHERE active = true AND tenant_id = v_tenant_id
+        ORDER BY amount ASC;
+    END IF;
+
+    RETURN;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_billing_plans(TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 6️⃣ دالة جلب هوية الوكيل الآمنة get_tenant_branding_by_domain
+CREATE OR REPLACE FUNCTION public.get_tenant_branding_by_domain(p_host TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_tenant JSONB;
+    v_tenant_id TEXT;
+BEGIN
+    v_tenant := public.get_active_tenant_by_domain(p_host);
+    IF v_tenant IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    v_tenant_id := v_tenant->>'id';
+
+    RETURN jsonb_build_object(
+        'tenant_id', v_tenant_id,
+        'tenant_name', v_tenant->>'name',
+        'slug', v_tenant->>'slug',
+        'custom_domain', v_tenant->>'custom_domain',
+        'brand_name', COALESCE(v_tenant->>'name', ''),
+        'brand_slogan', COALESCE(v_tenant->>'tagline', ''),
+        'logo_url', COALESCE(v_tenant->>'logo_url', ''),
+        'favicon_url', COALESCE(v_tenant->>'favicon_url', ''),
+        'primary_color', COALESCE(v_tenant->>'primary_color_hex', '#F59E0B'),
+        'secondary_color', COALESCE(v_tenant->>'accent_color_hex', '#10B981'),
+        'accent_color', COALESCE(v_tenant->>'accent_color_hex', '#10B981'),
+        'support_email', COALESCE(v_tenant->>'support_email', ''),
+        'support_phone', COALESCE(v_tenant->>'support_phone', '')
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_tenant_branding_by_domain(TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 7️⃣ دالة تحويل نطاق الوكيل للسوبر أدمن switch_super_admin_active_tenant
+-- 🔒 فحص أمني صارم: محظورة منعاً باتاً على مسؤولي الوكالات والعملاء، ومحصورة بمالك المنصة
+CREATE OR REPLACE FUNCTION public.switch_super_admin_active_tenant(p_target_tenant_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_uid UUID;
+    v_is_super BOOLEAN;
+    v_clean_tenant TEXT;
+BEGIN
+    v_uid := auth.uid();
+    IF v_uid IS NULL THEN
+        RAISE EXCEPTION 'Authentication required.';
+    END IF;
+
+    -- التحقق الصارم من صفة السوبر أدمن
+    v_is_super := (
+        (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+        OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+        OR EXISTS (
+            SELECT 1 FROM public.super_admin_users 
+            WHERE user_id = v_uid AND role = 'super_admin' AND is_active = true
+        )
+    );
+
+    IF NOT v_is_super THEN
+        RAISE EXCEPTION 'Security Violation: Only platform Super Admin can switch tenant context.';
+    END IF;
+
+    v_clean_tenant := LOWER(TRIM(p_target_tenant_id));
+    IF NOT EXISTS (SELECT 1 FROM public.tenants WHERE id = v_clean_tenant) THEN
+        RAISE EXCEPTION 'Target tenant % does not exist.', v_clean_tenant;
+    END IF;
+
+    -- تعديل ادعاء tenant_id داخل raw_app_meta_data للـ super admin
+    UPDATE auth.users
+    SET raw_app_meta_data = raw_app_meta_data || jsonb_build_object('tenant_id', v_clean_tenant),
+        updated_at = now()
+    WHERE id = v_uid;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'user_id', v_uid,
+        'active_tenant', v_clean_tenant,
+        'message', 'Tenant context switched successfully'
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.switch_super_admin_active_tenant(TEXT) FROM PUBLIC, anon;
+    GRANT EXECUTE ON FUNCTION public.switch_super_admin_active_tenant(TEXT) TO authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 8️⃣ تثبيت وترقية حساب مسؤول وكالة سديم admin@sdeemalathr.com
+DO $$
+DECLARE
+    v_sadeem_user_id UUID;
+BEGIN
+    SELECT id INTO v_sadeem_user_id 
+    FROM auth.users 
+    WHERE LOWER(email) = 'admin@sdeemalathr.com';
+
+    IF v_sadeem_user_id IS NOT NULL THEN
+        UPDATE auth.users
+        SET raw_app_meta_data = raw_app_meta_data || jsonb_build_object(
+            'role', 'tenant_admin',
+            'tenant_id', 'sadeem',
+            'is_super_admin', false
+        ),
+        updated_at = now()
+        WHERE id = v_sadeem_user_id;
+    END IF;
+END $$;
+
+-- 9️⃣ تحديث دالة verify_super_admin_session لدعم مسؤولي الوكالات tenant_admin بسلاسة
+CREATE OR REPLACE FUNCTION public.verify_super_admin_session()
+RETURNS JSONB
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_super BOOLEAN;
+    v_email TEXT;
+    v_uid UUID;
+    v_admin RECORD;
+    v_role TEXT;
+    v_tenant_id TEXT;
+BEGIN
+    v_uid := auth.uid();
+    v_email := LOWER(COALESCE(auth.jwt() ->> 'email', 'service_role'));
+    v_role := auth.jwt() -> 'app_metadata' ->> 'role';
+    v_tenant_id := auth.jwt() -> 'app_metadata' ->> 'tenant_id';
+
+    -- أ) فحص إذا كان المستخدم مسؤول وكالة معتمد (tenant_admin)
+    IF v_role = 'tenant_admin' THEN
+        RETURN jsonb_build_object(
+            'authenticated', true,
+            'is_super_admin', true,
+            'role', 'tenant_admin',
+            'tenant_id', v_tenant_id,
+            'admin_id', v_uid,
+            'email', v_email,
+            'full_name', 'مسؤول الوكالة المعتمد',
+            'permissions', jsonb_build_object(
+                'can_manage_stores', true,
+                'can_manage_billing', true,
+                'can_view_financials', true,
+                'can_manage_partners', true
+            )
+        );
+    END IF;
+
+    -- ب) فحص مالك المنظومة الشامل (Super Admin)
+    v_is_super := (
+        (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+        OR v_role = 'super_admin'
+        OR auth.role() = 'service_role'
+        OR session_user IN ('postgres', 'supabase_admin')
+    );
+
+    IF NOT v_is_super THEN
+        -- فحص جدول super_admin_users
+        SELECT * INTO v_admin
+        FROM public.super_admin_users
+        WHERE (user_id = v_uid OR LOWER(email) = v_email) AND is_active = true
+        LIMIT 1;
+
+        IF v_admin.user_id IS NOT NULL THEN
+            v_is_super := TRUE;
+        END IF;
+    END IF;
+
+    IF NOT v_is_super THEN
+        RETURN jsonb_build_object(
+            'authenticated', false,
+            'is_super_admin', false,
+            'error', 'UNAUTHORIZED',
+            'message', 'الحساب الحالي غير مصرح له بإدارة المنصة'
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'authenticated', true,
+        'is_super_admin', true,
+        'role', 'super_admin',
+        'tenant_id', COALESCE(v_tenant_id, 'radar'),
+        'admin_id', v_uid,
+        'email', v_email,
+        'full_name', 'صلاح الطيب (مالك المنظومة)',
+        'permissions', jsonb_build_object(
+            'can_manage_stores', true,
+            'can_delete_stores', true,
+            'can_manage_billing', true,
+            'can_view_financials', true,
+            'can_manage_partners', true,
+            'can_send_notifications', true,
+            'can_manage_admins', true,
+            'can_reset_platform', true
+        )
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.verify_super_admin_session() TO authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 🔟 إجراء استرجاع صلاحية المالك (Super Admin Break-Glass Recovery)
+CREATE OR REPLACE FUNCTION public.master_restore_super_admin(p_email TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_email TEXT;
+    v_user_id UUID;
+BEGIN
+    IF auth.role() <> 'service_role' AND session_user NOT IN ('postgres', 'supabase_admin') THEN
+        RAISE EXCEPTION 'Access Denied: Only service_role can execute master break-glass recovery.';
+    END IF;
+
+    v_clean_email := LOWER(TRIM(p_email));
+    SELECT id INTO v_user_id FROM auth.users WHERE LOWER(email) = v_clean_email;
+
+    IF v_user_id IS NULL THEN
+        RAISE EXCEPTION 'User with email % not found.', v_clean_email;
+    END IF;
+
+    UPDATE auth.users
+    SET raw_app_meta_data = raw_app_meta_data || jsonb_build_object(
+        'role', 'super_admin',
+        'is_super_admin', true,
+        'tenant_id', 'radar'
+    ),
+    updated_at = now()
+    WHERE id = v_user_id;
+
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'super_admin_users') THEN
+        INSERT INTO public.super_admin_users (
+            user_id, email, full_name, role, is_active, created_at, updated_at
+        ) VALUES (
+            v_user_id, v_clean_email, 'صلاح الطيب (مالك المنظومة)', 'super_admin', true, now(), now()
+        ) ON CONFLICT (email) DO UPDATE
+        SET role = 'super_admin', is_active = true, updated_at = now();
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'user_id', v_user_id,
+        'email', v_clean_email,
+        'message', 'تم استرجاع وتثبيت صلاحية المالك (Super Admin) بنجاح فوري وبلا قيود'
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    REVOKE ALL ON FUNCTION public.master_restore_super_admin(TEXT) FROM PUBLIC, anon, authenticated;
+    GRANT EXECUTE ON FUNCTION public.master_restore_super_admin(TEXT) TO service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261101_tenant_isolation_part5_public_storefront_rpcs.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE - TENANT ISOLATION MIGRATION: PART 5
+-- File: 20261101_tenant_isolation_part5_public_storefront_rpcs.sql
+-- Date: 2026-11-01
+-- Goal: Complete Public Storefront & Visitor RPCs (Menu, Specialists, Store by Slug,
+--       Referral Verification, Public Leads, Public Customer Profile, Public Customer Coupons)
+--       to prevent frontend crashes under strict RLS for anonymous (anon) visitors.
+-- Mode: Idempotent, reversible
+-- ==============================================================================
+
+-- 1️⃣ دالة جلب بيانات المتجر بالرابط للزوار get_public_store_by_slug
+CREATE OR REPLACE FUNCTION public.get_public_store_by_slug(p_slug TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_slug TEXT;
+    v_store RECORD;
+BEGIN
+    IF p_slug IS NULL OR TRIM(p_slug) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_slug := LOWER(TRIM(p_slug));
+
+    SELECT *
+    INTO v_store
+    FROM public.stores
+    WHERE LOWER(slug) = v_clean_slug
+    LIMIT 1;
+
+    IF v_store.id IS NOT NULL THEN
+        RETURN to_jsonb(v_store);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_store_by_slug(TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 2️⃣ دالة جلب قائمة أصناف المتجر (المنيو) للزوار get_public_catalog_items
+CREATE OR REPLACE FUNCTION public.get_public_catalog_items(p_store_id UUID)
+RETURNS SETOF public.catalog_items
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_store_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.catalog_items
+    WHERE store_id = p_store_id AND is_available = true
+    ORDER BY category ASC, name ASC;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_catalog_items(UUID) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 3️⃣ دالة جلب أخصائيي المتجر لصفحة الحجوزات get_public_store_specialists
+CREATE OR REPLACE FUNCTION public.get_public_store_specialists(p_store_id UUID)
+RETURNS SETOF public.store_specialists
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_store_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.store_specialists
+    WHERE store_id = p_store_id AND is_active = true
+    ORDER BY name ASC;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_store_specialists(UUID) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 4️⃣ دالة جلب فروع المتجر العامة get_public_store_branches
+CREATE OR REPLACE FUNCTION public.get_public_store_branches(p_store_id UUID)
+RETURNS SETOF public.store_branches
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_store_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.store_branches
+    WHERE store_id = p_store_id
+    ORDER BY is_main DESC, created_at ASC;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_store_branches(UUID) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 5️⃣ دالة التحقق من كود إحالة المسوق verify_partner_referral_code
+-- 🔒 تنظيف صارم للدومين من www. والمنافذ والبروتوكول، وحظر تام لأي خلط بين وكالات النطاق
+CREATE OR REPLACE FUNCTION public.verify_partner_referral_code(
+    p_code TEXT,
+    p_host TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_code TEXT;
+    v_clean_host TEXT;
+    v_tenant_id TEXT;
+    v_partner RECORD;
+BEGIN
+    IF p_code IS NULL OR TRIM(p_code) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_code := UPPER(TRIM(p_code));
+
+    -- تنظيف النطاق تماماً من البروتوكول والمنافذ و www. كما في دالة get_active_tenant_by_domain
+    IF p_host IS NOT NULL AND TRIM(p_host) <> '' THEN
+        v_clean_host := LOWER(TRIM(p_host));
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+        v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+        SELECT id INTO v_tenant_id FROM public.tenants
+        WHERE LOWER(custom_domain) = v_clean_host
+           OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+           OR LOWER(slug) = v_clean_host
+        LIMIT 1;
+
+        -- 🔒 حظر أمني صارم: إذا كان p_host مرسل ولم يتطابق مع وكيل معتمد يُرفض الكود فوراً
+        IF v_tenant_id IS NULL THEN
+            RETURN NULL;
+        END IF;
+
+        -- فحص الكود محصوراً بوكالة النطاق فقط وبلا أي استثناء (يُمنع قبول مسوق من وكالة ثانية)
+        SELECT 
+            id, referral_code, slug, display_name, tenant_id, active
+        INTO v_partner
+        FROM public.partner_accounts
+        WHERE (UPPER(referral_code) = v_clean_code OR UPPER(COALESCE(slug, '')) = v_clean_code)
+          AND active = true
+          AND tenant_id = v_tenant_id
+        LIMIT 1;
+    ELSE
+        -- إذا لم يُرسل p_host نهائياً يُفحص وكيل الجلسة الموثقة
+        v_tenant_id := public.current_tenant_id();
+        IF v_tenant_id IS NULL THEN
+            RETURN NULL;
+        END IF;
+
+        SELECT 
+            id, referral_code, slug, display_name, tenant_id, active
+        INTO v_partner
+        FROM public.partner_accounts
+        WHERE (UPPER(referral_code) = v_clean_code OR UPPER(COALESCE(slug, '')) = v_clean_code)
+          AND active = true
+          AND tenant_id = v_tenant_id
+        LIMIT 1;
+    END IF;
+
+    IF v_partner.id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'id', v_partner.id,
+            'referral_code', v_partner.referral_code,
+            'slug', v_partner.slug,
+            'display_name', v_partner.display_name,
+            'tenant_id', v_partner.tenant_id,
+            'active', v_partner.active
+        );
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.verify_partner_referral_code(TEXT, TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 6️⃣ دالة تسجيل طلب انضمام تاجر جديد submit_merchant_lead_rpc
+CREATE OR REPLACE FUNCTION public.submit_merchant_lead_rpc(
+    p_payload JSONB,
+    p_host TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant_id TEXT;
+    v_lead_id UUID;
+    v_ref_code TEXT;
+BEGIN
+    IF p_payload IS NULL THEN
+        RAISE EXCEPTION 'Invalid lead payload.';
+    END IF;
+
+    v_ref_code := UPPER(TRIM(COALESCE(p_payload->>'referral_code', p_payload->>'referred_by_code', '')));
+
+    -- استخراج الوكيل من الشريك المحيل أولاً إن وجد
+    IF v_ref_code <> '' THEN
+        SELECT tenant_id INTO v_tenant_id FROM public.partner_accounts WHERE UPPER(referral_code) = v_ref_code LIMIT 1;
+    END IF;
+
+    -- إذا لم يتوفر من الشريك، يُستخرج من نطاق الدخول بعد تنظيفه
+    IF v_tenant_id IS NULL AND p_host IS NOT NULL AND TRIM(p_host) <> '' THEN
+        v_clean_host := LOWER(TRIM(p_host));
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+        v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+        v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+        SELECT id INTO v_tenant_id FROM public.tenants
+        WHERE LOWER(custom_domain) = v_clean_host
+           OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+           OR LOWER(slug) = v_clean_host
+        LIMIT 1;
+    END IF;
+
+    -- الافتراضي إلى رادار إذا تعذر كلياً تحديد النطاق
+    v_tenant_id := COALESCE(v_tenant_id, 'radar');
+
+    INSERT INTO public.merchant_leads (
+        id, store_name, manager_name, phone, normalized_phone, business_type, city,
+        status, referral_code, converted_store_id, tenant_id, created_at, updated_at
+    ) VALUES (
+        gen_random_uuid(),
+        COALESCE(p_payload->>'store_name', p_payload->>'merchant_name', 'متجر جديد'),
+        COALESCE(p_payload->>'manager_name', 'المدير'),
+        COALESCE(p_payload->>'phone', ''),
+        COALESCE(NULLIF(RIGHT(REGEXP_REPLACE(COALESCE(p_payload->>'phone', ''), '[^0-9]', '', 'g'), 9), ''), '000000000'),
+        COALESCE(p_payload->>'business_type', 'retail'),
+        COALESCE(p_payload->>'city', ''),
+        'NEW',
+        NULLIF(v_ref_code, ''),
+        NULLIF(COALESCE(p_payload->>'converted_store_id', p_payload->>'store_id'), '')::uuid,
+        v_tenant_id,
+        now(),
+        now()
+    )
+    RETURNING id INTO v_lead_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'lead_id', v_lead_id,
+        'tenant_id', v_tenant_id,
+        'message', 'Lead submitted successfully'
+    );
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.submit_merchant_lead_rpc(JSONB, TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 7️⃣ دالة جلب بطاقة العميل العامة بالهاتف get_public_customer_profile (لمنع تعطل getCustomer)
+CREATE OR REPLACE FUNCTION public.get_public_customer_profile(
+    p_store_id UUID,
+    p_phone TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_phone TEXT;
+    v_cust RECORD;
+BEGIN
+    IF p_store_id IS NULL OR p_phone IS NULL OR TRIM(p_phone) = '' THEN
+        RETURN NULL;
+    END IF;
+
+    v_clean_phone := RIGHT(REGEXP_REPLACE(TRIM(p_phone), '[^0-9]', '', 'g'), 9);
+
+    SELECT *
+    INTO v_cust
+    FROM public.store_customers
+    WHERE store_id = p_store_id
+      AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 9) = v_clean_phone
+    LIMIT 1;
+
+    IF v_cust.id IS NOT NULL THEN
+        RETURN to_jsonb(v_cust);
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_customer_profile(UUID, TEXT) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- 8️⃣ دالة جلب كوبونات العميل العامة get_public_customer_coupons (لمنع تعطل getCustomerCoupons)
+CREATE OR REPLACE FUNCTION public.get_public_customer_coupons(
+    p_store_id UUID,
+    p_phone TEXT DEFAULT NULL,
+    p_customer_id UUID DEFAULT NULL
+)
+RETURNS SETOF public.customer_coupons
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_phone TEXT;
+BEGIN
+    IF p_store_id IS NULL THEN
+        RETURN;
+    END IF;
+
+    IF p_phone IS NOT NULL AND TRIM(p_phone) <> '' THEN
+        v_clean_phone := RIGHT(REGEXP_REPLACE(TRIM(p_phone), '[^0-9]', '', 'g'), 9);
+    END IF;
+
+    RETURN QUERY
+    SELECT *
+    FROM public.customer_coupons
+    WHERE store_id = p_store_id
+      AND (
+          (p_customer_id IS NOT NULL AND customer_id = p_customer_id)
+          OR (v_clean_phone IS NOT NULL AND RIGHT(REGEXP_REPLACE(COALESCE(customer_phone, ''), '[^0-9]', '', 'g'), 9) = v_clean_phone)
+      )
+    ORDER BY purchased_at DESC;
+END;
+$$;
+
+DO $$ BEGIN
+    GRANT EXECUTE ON FUNCTION public.get_public_customer_coupons(UUID, TEXT, UUID) TO anon, authenticated, service_role;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
 
 -- ==============================================================================
@@ -11890,6 +25197,1142 @@ GRANT EXECUTE ON FUNCTION public.redeem_coupon_secure(UUID, TEXT, TEXT, TEXT, TE
 
 -- 5. تحديث كاش PostgREST
 NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261102_modern_rakeen_subscription_plans_and_proration.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE: MODERN RAKEEN-STYLE SUBSCRIPTION PLANS & PRORATION ENGINE
+-- Migration: 20261102_modern_rakeen_subscription_plans_and_proration.sql
+-- ==============================================================================
+
+-- 1️⃣ Add New Flexible Monthly & Annual Pricing Columns to billing_plans
+ALTER TABLE public.billing_plans
+  ADD COLUMN IF NOT EXISTS monthly_amount NUMERIC NOT NULL DEFAULT 99.00,
+  ADD COLUMN IF NOT EXISTS yearly_amount NUMERIC NOT NULL DEFAULT 990.00,
+  ADD COLUMN IF NOT EXISTS extra_branch_price NUMERIC NOT NULL DEFAULT 49.00,
+  ADD COLUMN IF NOT EXISTS extra_branch_yearly_price NUMERIC NOT NULL DEFAULT 490.00,
+  ADD COLUMN IF NOT EXISTS tier_level INTEGER NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS badge_text TEXT DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS cumulative_note TEXT DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS features_list JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- 2️⃣ Populate Standard 3-Tier Data for Radar & Sadeem (Zero Leaks, 100% Tenant Isolation)
+
+-- 🟢 TIER 1: الأساسية (أساس)
+UPDATE public.billing_plans
+SET
+  tier_level = 1,
+  name = 'الباقة الأساسية',
+  description = 'تبيع، وتطبع، وتقفّل يومك - كاشير سريع وفاتورة ضريبية متوافقة',
+  monthly_amount = 99.00,
+  yearly_amount = 990.00,
+  extra_branch_price = 49.00,
+  extra_branch_yearly_price = 490.00,
+  trial_days = 14,
+  badge_text = NULL,
+  cumulative_note = NULL,
+  features_list = jsonb_build_array(
+    'كاشير سحابي سريع (POS) متوافق 100% مع هيئة الزكاة',
+    'فواتير ضريبية مبسطة مع رمز الاستجابة السريع QR',
+    'العمل عند انقطاع الإنترنت (Offline Mode)',
+    'إغلاق الورديات وتقفيل الصندوق واليوميات',
+    'إدارة المنيو والتصنيفات والمنتجات غير المحدودة',
+    'إدارة الطلبات والاسترجاع وسجل العمليات',
+    'تقارير المبيعات اليومية والشهرية',
+    'إدارة الموظفين وصلاحيات الكاشير',
+    'يشمل فرع واحد رئيسي'
+  ),
+  updated_at = NOW()
+WHERE code = 'BASIC';
+
+-- 🟡 TIER 2: النمو (عماد - الأكثر طلباً ⭐)
+UPDATE public.billing_plans
+SET
+  tier_level = 2,
+  name = 'باقة النمو (عماد)',
+  description = 'تعرف وش تكسب، والعميل يرجع لك - تشغيل كامل وبرنامج ولاء ذكي',
+  monthly_amount = 179.00,
+  yearly_amount = 1790.00,
+  extra_branch_price = 89.00,
+  extra_branch_yearly_price = 890.00,
+  trial_days = 14,
+  badge_text = 'الأكثر طلباً ⭐',
+  cumulative_note = 'كل اللي في الأساسية، وفوقها:',
+  features_list = jsonb_build_array(
+    'شاشة المطبخ KDS المباشرة وطباعة البونات التلقائية',
+    'شاشة العميل الذكية بالرمز السريع',
+    'برنامج الولاء ومحفظة البطاقات الرسمية (Apple Wallet & Google Wallet)',
+    'إدارة المخزون والوصفات وحساب التكاليف ونواقص المواد',
+    'قراءة فواتير الموردين بالتصوير الذكي',
+    'حساب تكلفة الأطباق وهامش صافي الربح في كل عملية',
+    'إدارة الطاولات والحجوزات والطلبات الداخلية',
+    'ربط تطبيقات التوصيل وتطبيق كابتن التوصيل 🛵',
+    'حملات إعادة استهداف العملاء عبر الواتساب',
+    'تصدير التقارير المالية التفصيلية Excel',
+    'يشمل فرع واحد رئيسي'
+  ),
+  updated_at = NOW()
+WHERE code = 'ADVANCED';
+
+-- 🟣 TIER 3: الاحترافية (صرح - الأشمل 👑)
+UPDATE public.billing_plans
+SET
+  tier_level = 3,
+  name = 'الباقة الاحترافية (صرح)',
+  description = 'يطلبون منك مباشرة، وتكبر لأكثر من فرع - توسع وهوية سيادية بدون عمولات',
+  monthly_amount = 279.00,
+  yearly_amount = 2790.00,
+  extra_branch_price = 139.00,
+  extra_branch_yearly_price = 1390.00,
+  trial_days = 14,
+  badge_text = 'الأشمل 👑',
+  cumulative_note = 'كل اللي في باقة النمو، وفوقها:',
+  features_list = jsonb_build_array(
+    'متجر إلكتروني ذكي للطلب والاستلام المباشر (صفر عمولة مبيعات)',
+    'صفحة حجز المواعيد والخدمات والطاولات أونلاين',
+    'تعدد الفروع مع تقارير مركزية موحدة لكل فروعك',
+    'ربط دومين مخصص خاص بمتجرك (Custom Domain)',
+    'بوابات دفع إلكترونية تابعة للتاجر (ميسر / تاب / تابي)',
+    'أولوية قصوى ودعم فني مخصص على مدار الساعة',
+    'يشمل فرعين مجاناً'
+  ),
+  updated_at = NOW()
+WHERE code = 'PRO';
+
+-- 3️⃣ Update get_public_billing_plans to Order by tier_level ASC
+CREATE OR REPLACE FUNCTION public.get_public_billing_plans(p_host TEXT)
+RETURNS SETOF public.billing_plans
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_tenant_id TEXT;
+BEGIN
+    IF p_host IS NULL OR TRIM(p_host) = '' THEN
+        RETURN;
+    END IF;
+
+    v_clean_host := LOWER(TRIM(p_host));
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^https?://', '');
+    v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+    SELECT id INTO v_tenant_id 
+    FROM public.tenants 
+    WHERE LOWER(custom_domain) = v_clean_host 
+       OR LOWER(REGEXP_REPLACE(REGEXP_REPLACE(custom_domain, '^https?://', ''), '^www\.', '')) = v_clean_host
+       OR LOWER(slug) = v_clean_host
+    LIMIT 1;
+
+    -- إرجاع باقات هذا الوكيل حصراً مرتبة بحسب المستوى
+    IF v_tenant_id IS NOT NULL THEN
+        RETURN QUERY
+        SELECT * FROM public.billing_plans
+        WHERE active = true AND tenant_id = v_tenant_id
+        ORDER BY tier_level ASC, monthly_amount ASC;
+    END IF;
+
+    RETURN;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_public_billing_plans(TEXT) TO anon, authenticated, service_role;
+
+-- 4️⃣ Central Security-Definer RPC: calculate_subscription_upgrade
+-- حساب الترقية وخصم الفرق بدقة متناهية مع حماية التجربة المجانية ومنع الرصيد السالب
+CREATE OR REPLACE FUNCTION public.calculate_subscription_upgrade(
+    p_store_id UUID,
+    p_target_plan_id UUID,
+    p_target_cycle TEXT DEFAULT 'MONTHLY'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_now TIMESTAMPTZ := NOW();
+    v_store RECORD;
+    v_target_plan RECORD;
+    v_current_plan RECORD;
+    v_has_current_plan BOOLEAN := false;
+    v_current_plan_json JSONB := NULL;
+    v_target_plan_json JSONB := NULL;
+    v_last_invoice RECORD;
+    v_target_cycle TEXT;
+    v_current_cycle TEXT := 'MONTHLY';
+    v_target_price NUMERIC := 0.00;
+    v_target_duration_months INTEGER := 1;
+    v_paid_amount NUMERIC := 0.00;
+    v_total_days NUMERIC := 30;
+    v_remaining_days NUMERIC := 0;
+    v_daily_rate NUMERIC := 0;
+    v_unused_credit NUMERIC := 0.00;
+    v_net_amount NUMERIC := 0.00;
+    v_vat_rate NUMERIC := 0.1500;
+    v_net_before_vat NUMERIC := 0.00;
+    v_vat_amount NUMERIC := 0.00;
+    v_is_trial BOOLEAN := true;
+BEGIN
+    -- 1. التحقق من وجود المتجر
+    SELECT * INTO v_store FROM public.stores WHERE id = p_store_id;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'المتجر غير موجود');
+    END IF;
+
+    -- 2. التحقق من وجود الباقة المستهدفة ونشاطها
+    SELECT * INTO v_target_plan FROM public.billing_plans WHERE id = p_target_plan_id AND active = true;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'الباقة المطلوبة غير موجودة أو غير نشطة');
+    END IF;
+
+    -- 3. عزل الوكلاء الصارم: منع الاشتراك في باقة تخص وكيلاً آخر
+    IF v_target_plan.tenant_id <> v_store.tenant_id THEN
+        RETURN jsonb_build_object('success', false, 'error', 'غير مصرح: لا يمكن الاشتراك في باقة تابعة لمنظومة أخرى');
+    END IF;
+
+    -- 4. تحديد دورة وسعر الباقة المستهدفة
+    v_target_cycle := UPPER(COALESCE(NULLIF(TRIM(p_target_cycle), ''), 'MONTHLY'));
+    IF v_target_cycle = 'YEARLY' THEN
+        v_target_price := v_target_plan.yearly_amount;
+        v_target_duration_months := 12;
+    ELSE
+        v_target_cycle := 'MONTHLY';
+        v_target_price := v_target_plan.monthly_amount;
+        v_target_duration_months := 1;
+    END IF;
+
+    -- 5. جلب بيانات الباقة الحالية إن وجدت
+    IF v_store.subscription_plan_id IS NOT NULL THEN
+        SELECT * INTO v_current_plan FROM public.billing_plans WHERE id = v_store.subscription_plan_id;
+        IF FOUND THEN v_has_current_plan := true; END IF;
+    ELSIF v_store.plan_code IS NOT NULL THEN
+        SELECT * INTO v_current_plan FROM public.billing_plans WHERE code = v_store.plan_code AND tenant_id = v_store.tenant_id LIMIT 1;
+        IF FOUND THEN v_has_current_plan := true; END IF;
+    END IF;
+
+    -- 6. فحص الفاتورة السابقة والتحقق من حالة الدفع الفعلي (حماية التجربة المجانية)
+    SELECT * INTO v_last_invoice
+    FROM public.store_invoices
+    WHERE store_id = p_store_id
+      AND status = 'paid'
+      AND invoice_type IN ('setup', 'renewal', 'upgrade')
+    ORDER BY paid_at DESC NULLS LAST, created_at DESC
+    LIMIT 1;
+
+    -- إذا كان التاجر دافعاً فعلياً واشتراكه نشط ولم ينته بعد:
+    IF v_last_invoice.id IS NOT NULL 
+       AND COALESCE(v_store.setup_fee_paid, false) = true 
+       AND v_store.subscription_end_date IS NOT NULL 
+       AND v_store.subscription_end_date > v_now THEN
+       
+        v_is_trial := false;
+        v_paid_amount := GREATEST(0.00, COALESCE(v_last_invoice.amount, 0.00));
+        
+        -- استنتاج الدورة السابقة (شهري أو سنوي)
+        IF v_paid_amount >= 900.00 
+           OR COALESCE(v_last_invoice.metadata->>'billing_cycle', '') = 'YEARLY'
+           OR (v_has_current_plan AND v_current_plan.billing_interval = 'YEARLY') THEN
+            v_current_cycle := 'YEARLY';
+        ELSE
+            v_current_cycle := 'MONTHLY';
+        END IF;
+
+        -- 🛡️ منع تقاطع الدورات: المشترك السنوي لا يُسمح له بالتحويل لشهري كترقية
+        IF v_current_cycle = 'YEARLY' AND v_target_cycle = 'MONTHLY' THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'error', 'حسابك في باقة سنوية حالياً. الترقية متاحة للباقات السنوية الأعلى فقط.'
+            );
+        END IF;
+
+        -- 🛡️ منع الترقية العكسية (لنفس الباقة أو باقة أقل في نفس الدورة)
+        IF v_target_cycle = v_current_cycle 
+           AND v_has_current_plan 
+           AND v_target_plan.tier_level <= COALESCE(v_current_plan.tier_level, 1) THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'error', 'الباقة المحددة مساوية لبقاتك الحالية أو أقل منها. الترقية تكون للباقات الأعلى فقط.'
+            );
+        END IF;
+
+        -- حساب إجمالي الأيام والأيام المتبقية
+        v_total_days := GREATEST(1.0, EXTRACT(EPOCH FROM (v_store.subscription_end_date - COALESCE(v_store.subscription_start_date, v_last_invoice.paid_at, v_now - INTERVAL '1 day'))) / 86400.0);
+        v_remaining_days := GREATEST(0.0, EXTRACT(EPOCH FROM (v_store.subscription_end_date - v_now)) / 86400.0);
+
+        -- حساب الرصيد المتبقي (Credit)
+        v_daily_rate := v_paid_amount / v_total_days;
+        v_unused_credit := ROUND(LEAST(v_paid_amount, v_daily_rate * v_remaining_days), 2);
+    ELSE
+        -- في التجربة المجانية أو بعد انتهاء الاشتراك: رصيد الخصم = صفر
+        v_is_trial := true;
+        v_unused_credit := 0.00;
+        v_remaining_days := 0.0;
+        v_current_cycle := 'TRIAL';
+    END IF;
+
+    -- 🛡️ حساب المبلغ الصافي مع منع الرصيد السالب نهائياً (GREATEST)
+    v_net_amount := GREATEST(0.00, ROUND(v_target_price - v_unused_credit, 2));
+
+    -- حساب تفاصيل الضريبة لـ ZATCA
+    IF v_net_amount > 0 THEN
+        v_net_before_vat := ROUND(v_net_amount / (1.0000 + v_vat_rate), 2);
+        v_vat_amount := ROUND(v_net_amount - v_net_before_vat, 2);
+    ELSE
+        v_net_before_vat := 0.00;
+        v_vat_amount := 0.00;
+    END IF;
+
+    -- إعداد كائن الباقة الحالية إذا وجدت بأمان لتفادي أخطاء السجلات غير المعينة
+    IF v_has_current_plan THEN
+        v_current_plan_json := jsonb_build_object(
+            'id', v_current_plan.id,
+            'code', v_current_plan.code,
+            'name', v_current_plan.name,
+            'tier_level', v_current_plan.tier_level,
+            'cycle', v_current_cycle,
+            'paid_amount', v_paid_amount
+        );
+    ELSE
+        v_current_plan_json := NULL;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'store_id', p_store_id,
+        'target_plan', jsonb_build_object(
+            'id', v_target_plan.id,
+            'code', v_target_plan.code,
+            'name', v_target_plan.name,
+            'tier_level', v_target_plan.tier_level,
+            'cycle', v_target_cycle,
+            'original_price', v_target_price,
+            'duration_months', v_target_duration_months
+        ),
+        'current_plan', v_current_plan_json,
+        'is_trial', v_is_trial,
+        'remaining_days', ROUND(v_remaining_days, 1),
+        'unused_credit', v_unused_credit,
+        'net_amount', v_net_amount,
+        'net_before_vat', v_net_before_vat,
+        'vat_amount', v_vat_amount,
+        'currency', 'SAR',
+        'has_discount', (v_unused_credit > 0)
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.calculate_subscription_upgrade(UUID, UUID, TEXT) TO anon, authenticated, service_role;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261102_modern_rakeen_subscription_plans_and_proration_v2.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE: MODERN RAKEEN-STYLE PRORATION ENGINE & TENANT SEEDING (V2)
+-- Migration: 20261102_modern_rakeen_subscription_plans_and_proration_v2.sql
+-- ==============================================================================
+
+-- 1️⃣ إدراج وتحديث الباقات الثلاثة (BASIC, ADVANCED, PRO) لكل وكيل حالي ومستقبلي
+DO $$
+DECLARE
+    r_tenant RECORD;
+BEGIN
+    FOR r_tenant IN SELECT id FROM public.tenants LOOP
+        -- 🟢 TIER 1: الأساسية (أساس)
+        INSERT INTO public.billing_plans (
+            tenant_id, code, name, description, amount, monthly_amount, yearly_amount,
+            extra_branch_price, extra_branch_yearly_price, tier_level, badge_text, cumulative_note,
+            features_list, metadata, currency, billing_interval, trial_days, active, updated_at
+        ) VALUES (
+            r_tenant.id, 'BASIC', 'الباقة الأساسية',
+            'تبيع، وتطبع، وتقفّل يومك - كاشير سريع وفاتورة ضريبية متوافقة',
+            99.00, 99.00, 990.00, 49.00, 490.00, 1, NULL, NULL,
+            jsonb_build_array(
+                'كاشير سحابي سريع (POS) متوافق 100% مع هيئة الزكاة',
+                'فواتير ضريبية مبسطة مع رمز الاستجابة السريع QR',
+                'العمل عند انقطاع الإنترنت (Offline Mode)',
+                'إغلاق الورديات وتقفيل الصندوق واليوميات',
+                'إدارة المنيو والتصنيفات والمنتجات غير المحدودة',
+                'إدارة الطلبات والاسترجاع وسجل العمليات',
+                'تقارير المبيعات اليومية والشهرية',
+                'إدارة الموظفين وصلاحيات الكاشير',
+                'يشمل فرع واحد رئيسي'
+            ),
+            jsonb_build_object('features', jsonb_build_array(
+                'كاشير سحابي سريع (POS) متوافق 100% مع هيئة الزكاة',
+                'فواتير ضريبية مبسطة مع رمز الاستجابة السريع QR',
+                'العمل عند انقطاع الإنترنت (Offline Mode)',
+                'إغلاق الورديات وتقفيل الصندوق واليوميات',
+                'إدارة المنيو والتصنيفات والمنتجات غير المحدودة'
+            )),
+            'ر.س', 'MONTHLY', 14, true, NOW()
+        )
+        ON CONFLICT (tenant_id, code) DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            amount = EXCLUDED.amount,
+            monthly_amount = EXCLUDED.monthly_amount,
+            yearly_amount = EXCLUDED.yearly_amount,
+            extra_branch_price = EXCLUDED.extra_branch_price,
+            extra_branch_yearly_price = EXCLUDED.extra_branch_yearly_price,
+            tier_level = EXCLUDED.tier_level,
+            badge_text = EXCLUDED.badge_text,
+            cumulative_note = EXCLUDED.cumulative_note,
+            features_list = EXCLUDED.features_list,
+            metadata = EXCLUDED.metadata,
+            trial_days = EXCLUDED.trial_days,
+            active = true,
+            updated_at = NOW();
+
+        -- 🟡 TIER 2: النمو (عماد - الأكثر طلباً ⭐)
+        INSERT INTO public.billing_plans (
+            tenant_id, code, name, description, amount, monthly_amount, yearly_amount,
+            extra_branch_price, extra_branch_yearly_price, tier_level, badge_text, cumulative_note,
+            features_list, metadata, currency, billing_interval, trial_days, active, updated_at
+        ) VALUES (
+            r_tenant.id, 'ADVANCED', 'باقة النمو (عماد)',
+            'تعرف وش تكسب، والعميل يرجع لك - تشغيل كامل وبرنامج ولاء ذكي',
+            179.00, 179.00, 1790.00, 89.00, 890.00, 2, 'الأكثر طلباً ⭐', 'كل اللي في الأساسية، وفوقها:',
+            jsonb_build_array(
+                'شاشة المطبخ KDS المباشرة وطباعة البونات التلقائية',
+                'شاشة العميل الذكية بالرمز السريع',
+                'برنامج الولاء ومحفظة البطاقات الرسمية (Apple Wallet & Google Wallet)',
+                'إدارة المخزون والوصفات وحساب التكاليف ونواقص المواد',
+                'قراءة فواتير الموردين بالتصوير الذكي',
+                'حساب تكلفة الأطباق وهامش صافي الربح في كل عملية',
+                'إدارة الطاولات والحجوزات والطلبات الداخلية',
+                'ربط تطبيقات التوصيل وتطبيق كابتن التوصيل 🛵',
+                'حملات إعادة استهداف العملاء عبر الواتساب',
+                'تصدير التقارير المالية التفصيلية Excel',
+                'يشمل فرع واحد رئيسي'
+            ),
+            jsonb_build_object('features', jsonb_build_array(
+                'شاشة المطبخ KDS المباشرة وطباعة البونات التلقائية',
+                'شاشة العميل الذكية بالرمز السريع',
+                'برنامج الولاء ومحفظة البطاقات الرسمية (Apple Wallet & Google Wallet)',
+                'إدارة المخزون والوصفات وحساب التكاليف ونواقص المواد'
+            )),
+            'ر.س', 'MONTHLY', 14, true, NOW()
+        )
+        ON CONFLICT (tenant_id, code) DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            amount = EXCLUDED.amount,
+            monthly_amount = EXCLUDED.monthly_amount,
+            yearly_amount = EXCLUDED.yearly_amount,
+            extra_branch_price = EXCLUDED.extra_branch_price,
+            extra_branch_yearly_price = EXCLUDED.extra_branch_yearly_price,
+            tier_level = EXCLUDED.tier_level,
+            badge_text = EXCLUDED.badge_text,
+            cumulative_note = EXCLUDED.cumulative_note,
+            features_list = EXCLUDED.features_list,
+            metadata = EXCLUDED.metadata,
+            trial_days = EXCLUDED.trial_days,
+            active = true,
+            updated_at = NOW();
+
+        -- 🟣 TIER 3: الاحترافية (صرح - الأشمل 👑)
+        INSERT INTO public.billing_plans (
+            tenant_id, code, name, description, amount, monthly_amount, yearly_amount,
+            extra_branch_price, extra_branch_yearly_price, tier_level, badge_text, cumulative_note,
+            features_list, metadata, currency, billing_interval, trial_days, active, updated_at
+        ) VALUES (
+            r_tenant.id, 'PRO', 'الباقة الاحترافية (صرح)',
+            'يطلبون منك مباشرة، وتكبر لأكثر من فرع - توسع وهوية سيادية بدون عمولات',
+            279.00, 279.00, 2790.00, 139.00, 1390.00, 3, 'الأشمل 👑', 'كل اللي في باقة النمو، وفوقها:',
+            jsonb_build_array(
+                'متجر إلكتروني ذكي للطلب والاستلام المباشر (صفر عمولة مبيعات)',
+                'صفحة حجز المواعيد والخدمات والطاولات أونلاين',
+                'تعدد الفروع مع تقارير مركزية موحدة لكل فروعك',
+                'ربط دومين مخصص خاص بمتجرك (Custom Domain)',
+                'بوابات دفع إلكترونية تابعة للتاجر (ميسر / تاب / تابي)',
+                'أولوية قصوى ودعم فني مخصص على مدار الساعة',
+                'يشمل فرعين مجاناً'
+            ),
+            jsonb_build_object('features', jsonb_build_array(
+                'متجر إلكتروني ذكي للطلب والاستلام المباشر (صفر عمولة مبيعات)',
+                'صفحة حجز المواعيد والخدمات والطاولات أونلاين',
+                'تعدد الفروع مع تقارير مركزية موحدة لكل فروعك'
+            )),
+            'ر.س', 'MONTHLY', 14, true, NOW()
+        )
+        ON CONFLICT (tenant_id, code) DO UPDATE SET
+            name = EXCLUDED.name,
+            description = EXCLUDED.description,
+            amount = EXCLUDED.amount,
+            monthly_amount = EXCLUDED.monthly_amount,
+            yearly_amount = EXCLUDED.yearly_amount,
+            extra_branch_price = EXCLUDED.extra_branch_price,
+            extra_branch_yearly_price = EXCLUDED.extra_branch_yearly_price,
+            tier_level = EXCLUDED.tier_level,
+            badge_text = EXCLUDED.badge_text,
+            cumulative_note = EXCLUDED.cumulative_note,
+            features_list = EXCLUDED.features_list,
+            metadata = EXCLUDED.metadata,
+            trial_days = EXCLUDED.trial_days,
+            active = true,
+            updated_at = NOW();
+    END LOOP;
+END;
+$$;
+
+-- 2️⃣ تفعيل التوليد التلقائي للباقات لكل وكيل جديد ينشأ في المنصة
+CREATE OR REPLACE FUNCTION public.trg_fn_seed_tenant_billing_plans()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    -- إنشاء الباقات الافتراضية الثلاث للوكيل الجديد تلقائياً
+    INSERT INTO public.billing_plans (
+        tenant_id, code, name, description, amount, monthly_amount, yearly_amount,
+        extra_branch_price, extra_branch_yearly_price, tier_level, badge_text, cumulative_note,
+        features_list, currency, billing_interval, trial_days, active
+    ) VALUES 
+    (
+        NEW.id, 'BASIC', 'الباقة الأساسية',
+        'تبيع، وتطبع، وتقفّل يومك - كاشير سريع وفاتورة ضريبية متوافقة',
+        99.00, 99.00, 990.00, 49.00, 490.00, 1, NULL, NULL,
+        jsonb_build_array(
+            'كاشير سحابي سريع (POS) متوافق 100% مع هيئة الزكاة',
+            'فواتير ضريبية مبسطة مع رمز الاستجابة السريع QR',
+            'العمل عند انقطاع الإنترنت (Offline Mode)',
+            'إغلاق الورديات وتقفيل الصندوق واليوميات',
+            'إدارة المنيو والتصنيفات والمنتجات غير المحدودة',
+            'إدارة الطلبات والاسترجاع وسجل العمليات',
+            'تقارير المبيعات اليومية والشهرية',
+            'إدارة الموظفين وصلاحيات الكاشير',
+            'يشمل فرع واحد رئيسي'
+        ),
+        'ر.س', 'MONTHLY', 14, true
+    ),
+    (
+        NEW.id, 'ADVANCED', 'باقة النمو (عماد)',
+        'تعرف وش تكسب، والعميل يرجع لك - تشغيل كامل وبرنامج ولاء ذكي',
+        179.00, 179.00, 1790.00, 89.00, 890.00, 2, 'الأكثر طلباً ⭐', 'كل اللي في الأساسية، وفوقها:',
+        jsonb_build_array(
+            'شاشة المطبخ KDS المباشرة وطباعة البونات التلقائية',
+            'شاشة العميل الذكية بالرمز السريع',
+            'برنامج الولاء ومحفظة البطاقات الرسمية (Apple Wallet & Google Wallet)',
+            'إدارة المخزون والوصفات وحساب التكاليف ونواقص المواد',
+            'قراءة فواتير الموردين بالتصوير الذكي',
+            'حساب تكلفة الأطباق وهامش صافي الربح في كل عملية',
+            'إدارة الطاولات والحجوزات والطلبات الداخلية',
+            'ربط تطبيقات التوصيل وتطبيق كابتن التوصيل 🛵',
+            'حملات إعادة استهداف العملاء عبر الواتساب',
+            'تصدير التقارير المالية التفصيلية Excel',
+            'يشمل فرع واحد رئيسي'
+        ),
+        'ر.س', 'MONTHLY', 14, true
+    ),
+    (
+        NEW.id, 'PRO', 'الباقة الاحترافية (صرح)',
+        'يطلبون منك مباشرة، وتكبر لأكثر من فرع - توسع وهوية سيادية بدون عمولات',
+        279.00, 279.00, 2790.00, 139.00, 1390.00, 3, 'الأشمل 👑', 'كل اللي في باقة النمو، وفوقها:',
+        jsonb_build_array(
+            'متجر إلكتروني ذكي للطلب والاستلام المباشر (صفر عمولة مبيعات)',
+            'صفحة حجز المواعيد والخدمات والطاولات أونلاين',
+            'تعدد الفروع مع تقارير مركزية موحدة لكل فروعك',
+            'ربط دومين مخصص خاص بمتجرك (Custom Domain)',
+            'بوابات دفع إلكترونية تابعة للتاجر (ميسر / تاب / تابي)',
+            'أولوية قصوى ودعم فني مخصص على مدار الساعة',
+            'يشمل فرعين مجاناً'
+        ),
+        'ر.س', 'MONTHLY', 14, true
+    )
+    ON CONFLICT (tenant_id, code) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_tenants_seed_billing_plans ON public.tenants;
+CREATE TRIGGER trg_tenants_seed_billing_plans
+AFTER INSERT ON public.tenants
+FOR EACH ROW
+EXECUTE FUNCTION public.trg_fn_seed_tenant_billing_plans();
+
+-- 3️⃣ دالة calculate_subscription_upgrade المحصنة بالكامل (إغلاق ثغرة النزول وتصحيح التواريخ)
+CREATE OR REPLACE FUNCTION public.calculate_subscription_upgrade(
+    p_store_id UUID,
+    p_target_plan_id UUID,
+    p_target_cycle TEXT DEFAULT 'MONTHLY'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_now TIMESTAMPTZ := NOW();
+    v_store RECORD;
+    v_target_plan RECORD;
+    v_current_plan RECORD;
+    v_has_current_plan BOOLEAN := false;
+    v_current_plan_json JSONB := NULL;
+    v_last_invoice RECORD;
+    v_target_cycle TEXT;
+    v_current_cycle TEXT := 'MONTHLY';
+    v_target_price NUMERIC := 0.00;
+    v_target_duration_months INTEGER := 1;
+    v_paid_amount NUMERIC := 0.00;
+    v_cycle_start TIMESTAMPTZ;
+    v_total_days NUMERIC := 30;
+    v_remaining_days NUMERIC := 0;
+    v_daily_rate NUMERIC := 0;
+    v_unused_credit NUMERIC := 0.00;
+    v_net_amount NUMERIC := 0.00;
+    v_vat_rate NUMERIC := 0.1500;
+    v_net_before_vat NUMERIC := 0.00;
+    v_vat_amount NUMERIC := 0.00;
+    v_is_trial BOOLEAN := true;
+BEGIN
+    -- 1. التحقق من وجود المتجر
+    SELECT * INTO v_store FROM public.stores WHERE id = p_store_id;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'المتجر غير موجود');
+    END IF;
+
+    -- 2. التحقق من وجود الباقة المطلوبة ونشاطها
+    SELECT * INTO v_target_plan FROM public.billing_plans WHERE id = p_target_plan_id AND active = true;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'الباقة المطلوبة غير موجودة أو غير نشطة');
+    END IF;
+
+    -- 3. عزل الوكلاء: منع الاشتراك في باقة تخص وكيلاً آخر
+    IF v_target_plan.tenant_id <> v_store.tenant_id THEN
+        RETURN jsonb_build_object('success', false, 'error', 'غير مصرح: لا يمكن الاشتراك في باقة تابعة لمنظومة أخرى');
+    END IF;
+
+    -- 4. تحديد دورة وسعر الباقة المستهدفة
+    v_target_cycle := UPPER(COALESCE(NULLIF(TRIM(p_target_cycle), ''), 'MONTHLY'));
+    IF v_target_cycle = 'YEARLY' THEN
+        v_target_price := v_target_plan.yearly_amount;
+        v_target_duration_months := 12;
+    ELSE
+        v_target_cycle := 'MONTHLY';
+        v_target_price := v_target_plan.monthly_amount;
+        v_target_duration_months := 1;
+    END IF;
+
+    -- 5. جلب بيانات الباقة الحالية إن وجدت
+    IF v_store.subscription_plan_id IS NOT NULL THEN
+        SELECT * INTO v_current_plan FROM public.billing_plans WHERE id = v_store.subscription_plan_id;
+        IF FOUND THEN v_has_current_plan := true; END IF;
+    ELSIF v_store.plan_code IS NOT NULL THEN
+        SELECT * INTO v_current_plan FROM public.billing_plans WHERE code = v_store.plan_code AND tenant_id = v_store.tenant_id LIMIT 1;
+        IF FOUND THEN v_has_current_plan := true; END IF;
+    END IF;
+
+    -- 6. فحص الفاتورة السابقة والتحقق من حالة الدفع الفعلي (حماية التجربة المجانية)
+    SELECT * INTO v_last_invoice
+    FROM public.store_invoices
+    WHERE store_id = p_store_id
+      AND status = 'paid'
+      AND invoice_type IN ('setup', 'renewal', 'upgrade')
+    ORDER BY paid_at DESC NULLS LAST, created_at DESC
+    LIMIT 1;
+
+    -- إذا كان التاجر دافعاً فعلياً واشتراكه نشط ولم ينته بعد:
+    IF v_last_invoice.id IS NOT NULL 
+       AND COALESCE(v_store.setup_fee_paid, false) = true 
+       AND v_store.subscription_end_date IS NOT NULL 
+       AND v_store.subscription_end_date > v_now THEN
+       
+        v_is_trial := false;
+        v_paid_amount := GREATEST(0.00, COALESCE(v_last_invoice.amount, 0.00));
+        
+        -- استنتاج الدورة السابقة بدقة متناهية بدون افتراضات عشوائية
+        IF COALESCE(v_last_invoice.metadata->>'billing_cycle', '') <> '' THEN
+            v_current_cycle := UPPER(v_last_invoice.metadata->>'billing_cycle');
+        ELSIF ((v_store.subscription_end_date - COALESCE(v_last_invoice.paid_at, v_now)) > INTERVAL '60 days') THEN
+            v_current_cycle := 'YEARLY';
+        ELSE
+            v_current_cycle := 'MONTHLY';
+        END IF;
+
+        -- 🛡️ منع تقاطع الدورات: المشترك السنوي لا يُسمح له بالتحويل لشهري كترقية
+        IF v_current_cycle = 'YEARLY' AND v_target_cycle = 'MONTHLY' THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'error', 'حسابك في باقة سنوية حالياً. الترقية متاحة للباقات السنوية الأعلى فقط.'
+            );
+        END IF;
+
+        -- 🛡️ إغلاق ثغرة النزول لمستوى مميزات أقل (Downgrade Block):
+        -- يرفض دائماً الانتقال لباقة ذات tier_level أقل، مهما كانت الدورة المستهدفة
+        IF v_has_current_plan AND v_target_plan.tier_level < v_current_plan.tier_level THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'error', 'لا يمكن الانتقال لباقة ذات مميزات أقل (المستوى ' || v_target_plan.tier_level || ' أقل من مستواك الحالي ' || v_current_plan.tier_level || '). الترقية تكون للباقات الأعلى فقط.'
+            );
+        END IF;
+
+        -- 🛡️ منع الترقية العكسية أو المتطابقة في نفس دورة الفوترة
+        IF v_target_cycle = v_current_cycle 
+           AND v_has_current_plan 
+           AND v_target_plan.tier_level <= v_current_plan.tier_level THEN
+            RETURN jsonb_build_object(
+                'success', false,
+                'error', 'الباقة المحددة مساوية لباقتك الحالية أو أقل منها في نفس الدورة. الترقية تكون للباقات الأعلى فقط.'
+            );
+        END IF;
+
+        -- 🛡️ تصحيح حساب v_total_days: تقديم تاريخ دفع الفاتورة الأخيرة على تاريخ بدء المتجر القديم
+        v_cycle_start := COALESCE(v_last_invoice.paid_at, v_store.subscription_start_date, v_now - INTERVAL '30 days');
+        v_total_days := GREATEST(1.0, EXTRACT(EPOCH FROM (v_store.subscription_end_date - v_cycle_start)) / 86400.0);
+
+        -- ضبط إجمالي الأيام وفق دورة الفوترة المنطقية لمنع أي شذوذ تواريخ
+        IF v_current_cycle = 'YEARLY' AND (v_total_days < 300 OR v_total_days > 400) THEN
+            v_total_days := 365.0;
+        ELSIF v_current_cycle = 'MONTHLY' AND (v_total_days < 25 OR v_total_days > 35) THEN
+            v_total_days := 30.0;
+        END IF;
+
+        v_remaining_days := GREATEST(0.0, EXTRACT(EPOCH FROM (v_store.subscription_end_date - v_now)) / 86400.0);
+
+        -- حساب الرصيد المتبقي (Credit)
+        v_daily_rate := v_paid_amount / v_total_days;
+        v_unused_credit := ROUND(LEAST(v_paid_amount, v_daily_rate * v_remaining_days), 2);
+    ELSE
+        -- في التجربة المجانية أو بعد انتهاء الاشتراك: رصيد الخصم = صفر
+        v_is_trial := true;
+        v_unused_credit := 0.00;
+        v_remaining_days := 0.0;
+        v_current_cycle := 'TRIAL';
+    END IF;
+
+    -- 🛡️ حساب المبلغ الصافي مع منع الرصيد السالب نهائياً (GREATEST)
+    v_net_amount := GREATEST(0.00, ROUND(v_target_price - v_unused_credit, 2));
+
+    -- حساب تفاصيل الضريبة لـ ZATCA
+    IF v_net_amount > 0 THEN
+        v_net_before_vat := ROUND(v_net_amount / (1.0000 + v_vat_rate), 2);
+        v_vat_amount := ROUND(v_net_amount - v_net_before_vat, 2);
+    ELSE
+        v_net_before_vat := 0.00;
+        v_vat_amount := 0.00;
+    END IF;
+
+    IF v_has_current_plan THEN
+        v_current_plan_json := jsonb_build_object(
+            'id', v_current_plan.id,
+            'code', v_current_plan.code,
+            'name', v_current_plan.name,
+            'tier_level', v_current_plan.tier_level,
+            'cycle', v_current_cycle,
+            'paid_amount', v_paid_amount
+        );
+    ELSE
+        v_current_plan_json := NULL;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'store_id', p_store_id,
+        'target_plan', jsonb_build_object(
+            'id', v_target_plan.id,
+            'code', v_target_plan.code,
+            'name', v_target_plan.name,
+            'tier_level', v_target_plan.tier_level,
+            'cycle', v_target_cycle,
+            'original_price', v_target_price,
+            'duration_months', v_target_duration_months
+        ),
+        'current_plan', v_current_plan_json,
+        'is_trial', v_is_trial,
+        'remaining_days', ROUND(v_remaining_days, 1),
+        'unused_credit', v_unused_credit,
+        'net_amount', v_net_amount,
+        'net_before_vat', v_net_before_vat,
+        'vat_amount', v_vat_amount,
+        'currency', 'SAR',
+        'has_discount', (v_unused_credit > 0)
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.calculate_subscription_upgrade(UUID, UUID, TEXT) TO anon, authenticated, service_role;
+
+-- 4️⃣ تحديث دالة التنفيذ الفعلي للدفع السحابي (process_store_payment_atomic)
+-- لضمان التحقق السيرفري الصارم عند الترقية (عدم الوثوق بالمبلغ من الواجهة) واحتساب عمولة المسوق على الصافي فقط
+CREATE OR REPLACE FUNCTION public.process_store_payment_atomic(
+    p_store_id uuid,
+    p_invoice_type text,
+    p_amount numeric,
+    p_payment_method text DEFAULT 'mada'::text,
+    p_gateway text DEFAULT 'moyasar'::text,
+    p_gateway_payment_id text DEFAULT NULL::text,
+    p_plan_id text DEFAULT NULL::text,
+    p_plan_code text DEFAULT NULL::text,
+    p_plan_name text DEFAULT NULL::text,
+    p_duration_months integer DEFAULT 1,
+    p_vat_rate numeric DEFAULT 0.15,
+    p_gateway_fee numeric DEFAULT NULL::numeric,
+    p_webhook_event_id text DEFAULT NULL::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+    v_store RECORD;
+    v_lead_id UUID := NULL;
+    v_lead_status TEXT := NULL;
+    v_lead_affiliate_id UUID := NULL;
+    v_lead_ref_code TEXT := NULL;
+    v_partner_active BOOLEAN := false;
+    v_partner_acq_rate NUMERIC(5, 4) := NULL;
+    v_partner_comm_rate NUMERIC(5, 4) := NULL;
+    v_partner_rec_rate NUMERIC(5, 4) := NULL;
+    v_store_ref_code TEXT := NULL;
+    v_existing_inv_id UUID;
+    v_existing_inv_num TEXT;
+    v_existing_ledg_id UUID;
+    v_existing_wh_id UUID;
+
+    v_is_sandbox BOOLEAN;
+    v_clean_gateway TEXT;
+    v_clean_method TEXT;
+    v_gw_payment_id TEXT;
+    v_tx_id TEXT;
+    v_webhook_event_id TEXT;
+    v_invoice_num TEXT;
+    v_invoice_id UUID;
+    v_ledger_id UUID;
+
+    v_gross NUMERIC(12, 2);
+    v_vat_rate NUMERIC(5, 4);
+    v_net_before_vat NUMERIC(12, 2);
+    v_vat_amount NUMERIC(12, 2);
+    v_gw_fee NUMERIC(12, 2);
+    v_comm_rate NUMERIC(5, 4) := 0.0000;
+    v_comm_amount NUMERIC(12, 2) := 0.00;
+    v_net_platform NUMERIC(12, 2);
+
+    v_is_acquisition BOOLEAN;
+    v_comm_type VARCHAR(50);
+    v_partner_id UUID := NULL;
+    v_partner_name TEXT := NULL;
+
+    v_duration_days INTEGER;
+    v_base_end TIMESTAMPTZ;
+    v_new_end TIMESTAMPTZ;
+    v_now TIMESTAMPTZ := clock_timestamp();
+    v_comm_id UUID := NULL;
+    v_idempotency_key TEXT;
+    v_gw_rate NUMERIC(5, 4);
+    v_gw_fixed NUMERIC(12, 2);
+    v_sub_plan_uuid UUID := NULL;
+BEGIN
+    -- 0. Strict Server Authority Guard
+    IF NOT (
+        public.is_super_admin()
+        OR auth.role() = 'service_role'
+        OR (p_master_token IS NOT NULL AND public.is_valid_master_token(p_master_token))
+    ) THEN
+        RAISE EXCEPTION 'permission denied for function process_store_payment_atomic' USING ERRCODE = '42501';
+    END IF;
+
+    -- 1. Validate Store
+    SELECT * INTO v_store FROM public.stores WHERE id = p_store_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'STORE_NOT_FOUND: المتجر غير موجود (%).', p_store_id;
+    END IF;
+
+    -- 2. Validate Invoice Type
+    IF p_invoice_type NOT IN ('setup', 'renewal', 'upgrade', 'extra_cashier') THEN
+        RAISE EXCEPTION 'INVALID_INVOICE_TYPE: نوع الفاتورة غير صالح (%).', p_invoice_type;
+    END IF;
+
+    v_gross := ROUND(COALESCE(p_amount, 0.00), 2);
+
+    -- 🛡️ التحقق السيرفري الصارم عند الترقية (عدم قبول السعر من الفرونت إند إطلاقاً):
+    IF p_invoice_type = 'upgrade' AND (p_plan_id IS NOT NULL OR p_plan_code IS NOT NULL) THEN
+        DECLARE
+            v_calc_plan_id UUID := NULL;
+            v_calc_res JSONB;
+            v_calc_net NUMERIC;
+            v_calc_cycle TEXT := CASE WHEN COALESCE(p_duration_months, 1) >= 12 THEN 'YEARLY' ELSE 'MONTHLY' END;
+        BEGIN
+            IF p_plan_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+                v_calc_plan_id := p_plan_id::uuid;
+            ELSE
+                SELECT id INTO v_calc_plan_id FROM public.billing_plans 
+                WHERE code = UPPER(COALESCE(p_plan_code, p_plan_id)) 
+                  AND tenant_id = v_store.tenant_id 
+                LIMIT 1;
+            END IF;
+
+            IF v_calc_plan_id IS NOT NULL THEN
+                v_calc_res := public.calculate_subscription_upgrade(p_store_id, v_calc_plan_id, v_calc_cycle);
+                IF (v_calc_res->>'success')::boolean IS TRUE THEN
+                    v_calc_net := (v_calc_res->>'net_amount')::numeric;
+                    -- فرض السعر السيرفري المحسوب آلياً بعد خصم الرصيد
+                    v_gross := v_calc_net;
+                ELSE
+                    RAISE EXCEPTION 'UPGRADE_CALCULATION_FAILED: %', (v_calc_res->>'error');
+                END IF;
+            END IF;
+        END;
+    END IF;
+
+    IF v_gross < 0 THEN
+        RAISE EXCEPTION 'INVALID_AMOUNT: المبلغ لا يمكن أن يكون سالباً (%).', v_gross;
+    END IF;
+
+    -- 3. Identify Sandbox vs Live
+    v_clean_gateway := lower(BTRIM(COALESCE(p_gateway, 'moyasar')));
+    v_clean_method := lower(BTRIM(COALESCE(p_payment_method, 'mada')));
+    v_is_sandbox := (v_clean_gateway LIKE '%sandbox%' OR v_clean_method = 'sandbox');
+
+    v_gw_payment_id := COALESCE(NULLIF(BTRIM(p_gateway_payment_id), ''), 'pay_' || v_clean_gateway || '_' || replace(gen_random_uuid()::text, '-', ''));
+    IF v_is_sandbox AND v_gw_payment_id NOT LIKE 'SANDBOX_%' THEN
+        v_gw_payment_id := 'SANDBOX_' || v_gw_payment_id;
+    END IF;
+
+    v_tx_id := CASE WHEN v_is_sandbox THEN 'SANDBOX_tx_' || v_gw_payment_id ELSE 'tx_' || v_gw_payment_id END;
+    v_webhook_event_id := COALESCE(NULLIF(BTRIM(p_webhook_event_id), ''), 'evt_' || v_gw_payment_id);
+
+    -- 4. Idempotency Check
+    SELECT id INTO v_existing_wh_id FROM public.billing_webhook_events WHERE provider = UPPER(v_clean_gateway) AND event_id = v_webhook_event_id AND processed = true LIMIT 1;
+    SELECT id, invoice_number INTO v_existing_inv_id, v_existing_inv_num FROM public.store_invoices WHERE gateway_payment_id = v_gw_payment_id LIMIT 1;
+    SELECT id INTO v_existing_ledg_id FROM public.financial_ledger WHERE transaction_id = v_tx_id OR (payment_id = v_gw_payment_id AND transaction_type = 'PAYMENT') LIMIT 1;
+
+    IF v_existing_inv_id IS NOT NULL OR v_existing_ledg_id IS NOT NULL OR v_existing_wh_id IS NOT NULL THEN
+        RETURN jsonb_build_object(
+            'success', true,
+            'idempotent', true,
+            'is_sandbox', v_is_sandbox,
+            'message', 'تمت معالجة هذه العملية مسبقاً (عملية مكررة آمنة)',
+            'invoice_id', v_existing_inv_id,
+            'invoice_number', v_existing_inv_num,
+            'ledger_id', v_existing_ledg_id,
+            'transaction_id', v_tx_id,
+            'gateway_payment_id', v_gw_payment_id,
+            'webhook_event_id', v_webhook_event_id,
+            'store_id', p_store_id
+        );
+    END IF;
+
+    -- 5. Record Webhook Event
+    INSERT INTO public.billing_webhook_events (
+        tenant_id, provider, event_id, event_type, signature_verified, payload_hash, processed, processed_at, created_at, metadata
+    ) VALUES (
+        v_store.tenant_id, UPPER(v_clean_gateway), v_webhook_event_id, 'PAYMENT_' || UPPER(p_invoice_type), true,
+        md5(v_gw_payment_id || ':' || p_store_id::text || ':' || v_gross::text), true, v_now, v_now,
+        jsonb_build_object('store_id', p_store_id, 'gateway_payment_id', v_gw_payment_id, 'amount', v_gross, 'invoice_type', p_invoice_type, 'is_sandbox', v_is_sandbox)
+    )
+    ON CONFLICT (provider, event_id) DO UPDATE SET processed = true, processed_at = v_now, signature_verified = true;
+
+    -- 6. VAT & Net Amounts
+    v_vat_rate := GREATEST(0.0000, COALESCE(p_vat_rate, 0.1500));
+    IF v_vat_rate > 0 THEN
+        v_net_before_vat := ROUND(v_gross / (1.0000 + v_vat_rate), 2);
+        v_vat_amount := ROUND(v_gross - v_net_before_vat, 2);
+    ELSE
+        v_net_before_vat := v_gross;
+        v_vat_amount := 0.00;
+    END IF;
+
+    -- 7. Gateway Fee
+    IF p_gateway_fee IS NOT NULL AND p_gateway_fee >= 0 THEN
+        v_gw_fee := ROUND(p_gateway_fee, 2);
+    ELSE
+        IF v_is_sandbox OR v_clean_gateway = 'manual' THEN
+            v_gw_rate := 0.0000; v_gw_fixed := 0.00;
+        ELSIF v_clean_method = 'mada' THEN
+            v_gw_rate := 0.0100; v_gw_fixed := 1.00;
+        ELSIF v_clean_method IN ('credit_card', 'visa', 'mastercard') THEN
+            v_gw_rate := 0.0275; v_gw_fixed := 1.00;
+        ELSIF v_clean_method = 'apple_pay' THEN
+            v_gw_rate := 0.0220; v_gw_fixed := 1.00;
+        ELSE
+            v_gw_rate := 0.0150; v_gw_fixed := 1.00;
+        END IF;
+
+        IF v_gross > 0 AND NOT v_is_sandbox AND v_clean_gateway <> 'manual' THEN
+            v_gw_fee := ROUND((v_gross * v_gw_rate) + v_gw_fixed, 2);
+        ELSE
+            v_gw_fee := 0.00;
+        END IF;
+    END IF;
+
+    -- 8. Partner & Commission Identification (Match via merchant_leads)
+    SELECT id, status, affiliate_id, referral_code
+    INTO v_lead_id, v_lead_status, v_lead_affiliate_id, v_lead_ref_code
+    FROM public.merchant_leads
+    WHERE converted_store_id = p_store_id
+       OR (v_store.manager_contact IS NOT NULL AND phone = v_store.manager_contact)
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    IF v_lead_id IS NOT NULL THEN
+        IF v_lead_affiliate_id IS NOT NULL THEN
+            SELECT id, display_name, active, acquisition_commission_rate, commission_rate, recurring_commission_rate
+            INTO v_partner_id, v_partner_name, v_partner_active, v_partner_acq_rate, v_partner_comm_rate, v_partner_rec_rate
+            FROM public.partner_accounts
+            WHERE id = v_lead_affiliate_id OR affiliate_id = v_lead_affiliate_id
+            LIMIT 1;
+        ELSIF v_lead_ref_code IS NOT NULL AND BTRIM(v_lead_ref_code) <> '' THEN
+            SELECT id, display_name, active, acquisition_commission_rate, commission_rate, recurring_commission_rate
+            INTO v_partner_id, v_partner_name, v_partner_active, v_partner_acq_rate, v_partner_comm_rate, v_partner_rec_rate
+            FROM public.partner_accounts
+            WHERE lower(referral_code) = lower(BTRIM(v_lead_ref_code))
+               OR lower(slug) = lower(BTRIM(v_lead_ref_code))
+            LIMIT 1;
+        END IF;
+    END IF;
+
+    v_is_acquisition := (p_invoice_type = 'setup' OR v_store.setup_fee_paid IS NOT TRUE);
+
+    IF v_partner_id IS NOT NULL AND v_partner_active IS NOT FALSE THEN
+        IF v_is_acquisition THEN
+            v_comm_rate := COALESCE(v_partner_acq_rate, v_partner_comm_rate, 0.2000);
+            v_comm_type := 'STORE_ACQUISITION';
+        ELSE
+            v_comm_rate := COALESCE(v_partner_rec_rate, 0.1000);
+            v_comm_type := CASE WHEN p_invoice_type = 'upgrade' THEN 'SUBSCRIPTION_UPGRADE' ELSE 'SUBSCRIPTION_RENEWAL' END;
+        END IF;
+
+        -- 🛡️ عمولة المسوق تُحسب حصراً على الصافي الفعلي المدفوع (الفرق)
+        v_comm_amount := ROUND(v_net_before_vat * v_comm_rate, 2);
+    ELSE
+        v_comm_rate := 0.0000;
+        v_comm_amount := 0.00;
+        v_comm_type := 'NONE';
+    END IF;
+
+    -- 9. Net Platform
+    v_net_platform := ROUND(v_gross - v_vat_amount - v_gw_fee - v_comm_amount, 2);
+
+    -- 10. Compute Duration & Dates
+    v_duration_days := GREATEST(1, COALESCE(p_duration_months, 1) * 30);
+    IF p_invoice_type = 'renewal' AND v_store.subscription_end_date IS NOT NULL AND v_store.subscription_end_date > v_now THEN
+        v_base_end := v_store.subscription_end_date;
+    ELSE
+        v_base_end := v_now;
+    END IF;
+    v_new_end := v_base_end + (v_duration_days || ' days')::INTERVAL;
+
+    -- 11. Invoice Number
+    v_invoice_num := (CASE WHEN v_is_sandbox THEN 'INV-SBX-' ELSE 'INV-' END)
+                     || to_char(v_now, 'YYYYMMDD') || '-' || upper(substr(md5(v_gw_payment_id || random()::text), 1, 6));
+
+    -- 12. Resolve Plan UUID
+    v_sub_plan_uuid := NULL;
+    IF p_plan_id IS NOT NULL AND BTRIM(p_plan_id) <> '' THEN
+        IF p_plan_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            v_sub_plan_uuid := p_plan_id::uuid;
+        ELSE
+            SELECT id INTO v_sub_plan_uuid FROM public.billing_plans WHERE code = UPPER(p_plan_id) AND tenant_id = v_store.tenant_id LIMIT 1;
+        END IF;
+    ELSIF p_plan_code IS NOT NULL AND BTRIM(p_plan_code) <> '' THEN
+        SELECT id INTO v_sub_plan_uuid FROM public.billing_plans WHERE code = UPPER(p_plan_code) AND tenant_id = v_store.tenant_id LIMIT 1;
+    END IF;
+
+    -- 13. Insert Invoice
+    INSERT INTO public.store_invoices (
+        store_id, tenant_id, invoice_number, invoice_type, plan_id, plan_name,
+        amount, vat_amount, net_amount, currency, status,
+        payment_method, gateway, gateway_payment_id, paid_at,
+        created_at, updated_at, metadata
+    ) VALUES (
+        p_store_id, v_store.tenant_id, v_invoice_num, p_invoice_type, v_sub_plan_uuid,
+        COALESCE(p_plan_name, 'اشتراك منصة الأثر'),
+        v_gross, v_vat_amount, v_net_before_vat, 'SAR', 'paid',
+        v_clean_method, v_clean_gateway, v_gw_payment_id, v_now,
+        v_now, v_now,
+        jsonb_build_object(
+            'is_sandbox', v_is_sandbox,
+            'plan_code', p_plan_code,
+            'duration_months', p_duration_months,
+            'billing_cycle', CASE WHEN p_duration_months >= 12 THEN 'YEARLY' ELSE 'MONTHLY' END,
+            'net_before_vat', v_net_before_vat,
+            'gateway_fee', v_gw_fee,
+            'partner_commission', v_comm_amount,
+            'affiliate_id', v_partner_id
+        )
+    )
+    RETURNING id INTO v_invoice_id;
+
+    -- 14. Financial Ledger Entry
+    INSERT INTO public.financial_ledger (
+        transaction_id, invoice_id, store_id, tenant_id, affiliate_id, payment_id,
+        transaction_type, gross_amount, vat_amount, gateway_fee,
+        affiliate_commission, net_platform_amount, status,
+        effective_at, created_at, created_by, metadata
+    ) VALUES (
+        v_tx_id, v_invoice_id, p_store_id, v_store.tenant_id, v_partner_id, v_gw_payment_id,
+        'PAYMENT', v_gross, v_vat_amount, v_gw_fee,
+        v_comm_amount, v_net_platform, 'SETTLED',
+        v_now, v_now, 'system_payment_processor',
+        jsonb_build_object(
+            'invoice_number', v_invoice_num,
+            'invoice_type', p_invoice_type,
+            'gateway', v_clean_gateway,
+            'payment_method', v_clean_method,
+            'comm_type', v_comm_type,
+            'comm_rate', v_comm_rate,
+            'is_sandbox', v_is_sandbox
+        )
+    )
+    RETURNING id INTO v_ledger_id;
+
+    -- 15. Partner Commission Ledger
+    IF v_partner_id IS NOT NULL AND v_comm_amount > 0 THEN
+        INSERT INTO public.partner_commissions (
+            tenant_id, partner_id, store_id, invoice_id,
+            commission_type, amount, status, effective_date,
+            created_at, updated_at
+        ) VALUES (
+            v_store.tenant_id, v_partner_id, p_store_id, v_invoice_id,
+            v_comm_type, v_comm_amount, 'PENDING', v_now,
+            v_now, v_now
+        )
+        RETURNING id INTO v_comm_id;
+    END IF;
+
+    -- 16. Update Store Subscription State
+    UPDATE public.stores
+    SET setup_fee_paid = true,
+        subscription_status = 'active',
+        subscription_plan = COALESCE(p_plan_name, stores.subscription_plan),
+        plan_code = COALESCE(p_plan_code, stores.plan_code),
+        subscription_plan_id = COALESCE(v_sub_plan_uuid, stores.subscription_plan_id),
+        subscription_start_date = CASE WHEN p_invoice_type = 'setup' OR stores.subscription_start_date IS NULL THEN v_now ELSE stores.subscription_start_date END,
+        subscription_end_date = v_new_end,
+        renewal_amount = v_gross,
+        updated_at = v_now
+    WHERE id = p_store_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'invoice_id', v_invoice_id,
+        'invoice_number', v_invoice_num,
+        'ledger_id', v_ledger_id,
+        'commission_id', v_comm_id,
+        'commission_amount', v_comm_amount,
+        'gross_amount', v_gross,
+        'net_platform_amount', v_net_platform,
+        'subscription_end_date', v_new_end,
+        'is_sandbox', v_is_sandbox
+    );
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.process_store_payment_atomic(UUID, TEXT, NUMERIC, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INTEGER, NUMERIC, NUMERIC, TEXT, TEXT) TO authenticated, service_role;
 
 
 -- ==============================================================================
@@ -12786,6 +27229,473 @@ GRANT EXECUTE ON FUNCTION public.check_and_update_store_subscription(UUID) TO an
 
 
 -- ==============================================================================
+-- >>> FILE: 20261105_enhance_partner_financial_summaries_metadata.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🚀 تحديث دالة get_all_partner_financial_summaries لربط بيانات المسوقين كاملة 
+-- ==============================================================================
+CREATE OR REPLACE FUNCTION public.get_all_partner_financial_summaries(
+    p_partner_id UUID DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_result JSONB := '{}'::jsonb;
+    v_partner_record RECORD;
+    v_has_affiliate_id_col BOOLEAN := FALSE;
+    v_has_bonus_awards_tbl BOOLEAN := FALSE;
+    v_has_bonuses_tbl BOOLEAN := FALSE;
+    v_has_commissions_tbl BOOLEAN := FALSE;
+    v_has_partner_accounts BOOLEAN := FALSE;
+    v_has_affiliates BOOLEAN := FALSE;
+    v_earned_comm NUMERIC := 0;
+    v_paid_comm NUMERIC := 0;
+    v_pending_comm NUMERIC := 0;
+    v_earned_bonus NUMERIC := 0;
+    v_paid_bonus NUMERIC := 0;
+    v_total_payable NUMERIC := 0;
+    v_total_paid NUMERIC := 0;
+BEGIN
+    SELECT EXISTS (
+        SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'partner_commissions'
+    ) INTO v_has_commissions_tbl;
+
+    SELECT EXISTS (
+        SELECT FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'partner_commissions' AND column_name = 'affiliate_id'
+    ) INTO v_has_affiliate_id_col;
+
+    SELECT EXISTS (
+        SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'partner_bonus_awards'
+    ) INTO v_has_bonus_awards_tbl;
+
+    SELECT EXISTS (
+        SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'partner_bonuses'
+    ) INTO v_has_bonuses_tbl;
+
+    SELECT EXISTS (
+        SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'partner_accounts'
+    ) INTO v_has_partner_accounts;
+
+    SELECT EXISTS (
+        SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'affiliates'
+    ) INTO v_has_affiliates;
+
+    IF v_has_partner_accounts THEN
+        FOR v_partner_record IN
+            SELECT 
+                pa.id, 
+                pa.affiliate_id, 
+                pa.display_name, 
+                COALESCE(pa.slug, LOWER(aff.referral_code), 'alhaj') AS slug,
+                COALESCE(aff.referral_code, UPPER(pa.slug), 'ALHAJ') AS referral_code,
+                COALESCE(aff.phone, '') AS phone,
+                '1234' AS pin_code,
+                0.2000 AS commission_rate,
+                0.1000 AS recurring_commission_rate,
+                20 AS target_value,
+                COALESCE(pa.active, aff.status = 'ACTIVE', true) AS active
+            FROM public.partner_accounts pa
+            LEFT JOIN public.affiliates aff ON pa.affiliate_id = aff.id
+            WHERE (p_partner_id IS NULL OR pa.id = p_partner_id OR pa.affiliate_id = p_partner_id)
+            ORDER BY pa.created_at ASC
+        LOOP
+            v_earned_comm := 0;
+            v_paid_comm := 0;
+            v_pending_comm := 0;
+            v_earned_bonus := 0;
+            v_paid_bonus := 0;
+
+            IF v_has_commissions_tbl THEN
+                BEGIN
+                    IF v_has_affiliate_id_col THEN
+                        EXECUTE '
+                            SELECT
+                                COALESCE(SUM(CASE WHEN status IN (''EARNED'', ''AVAILABLE'') THEN commission_amount ELSE 0 END), 0),
+                                COALESCE(SUM(CASE WHEN status = ''PAID'' THEN commission_amount ELSE 0 END), 0),
+                                COALESCE(SUM(CASE WHEN status = ''PENDING'' THEN commission_amount ELSE 0 END), 0)
+                            FROM public.partner_commissions
+                            WHERE (partner_account_id = $1 
+                                   OR affiliate_id = $1
+                                   OR ($2 IS NOT NULL AND (partner_account_id = $2 OR affiliate_id = $2)))
+                              AND status NOT IN (''REVERSED'', ''CANCELLED'', ''VOID'')
+                        ' INTO v_earned_comm, v_paid_comm, v_pending_comm
+                        USING v_partner_record.id, v_partner_record.affiliate_id;
+                    ELSE
+                        EXECUTE '
+                            SELECT
+                                COALESCE(SUM(CASE WHEN status IN (''EARNED'', ''AVAILABLE'') THEN commission_amount ELSE 0 END), 0),
+                                COALESCE(SUM(CASE WHEN status = ''PAID'' THEN commission_amount ELSE 0 END), 0),
+                                COALESCE(SUM(CASE WHEN status = ''PENDING'' THEN commission_amount ELSE 0 END), 0)
+                            FROM public.partner_commissions
+                            WHERE (partner_account_id = $1 OR ($2 IS NOT NULL AND partner_account_id = $2))
+                              AND status NOT IN (''REVERSED'', ''CANCELLED'', ''VOID'')
+                        ' INTO v_earned_comm, v_paid_comm, v_pending_comm
+                        USING v_partner_record.id, v_partner_record.affiliate_id;
+                    END IF;
+                EXCEPTION WHEN OTHERS THEN
+                    v_earned_comm := 0;
+                    v_paid_comm := 0;
+                    v_pending_comm := 0;
+                END;
+            END IF;
+
+            IF v_has_bonus_awards_tbl THEN
+                BEGIN
+                    EXECUTE '
+                        SELECT
+                            COALESCE(SUM(CASE WHEN status = ''ACHIEVED'' THEN bonus_amount ELSE 0 END), 0),
+                            COALESCE(SUM(CASE WHEN status IN (''AWARDED'', ''PAID'') THEN bonus_amount ELSE 0 END), 0)
+                        FROM public.partner_bonus_awards
+                        WHERE partner_account_id = $1 OR ($2 IS NOT NULL AND partner_account_id = $2)
+                    ' INTO v_earned_bonus, v_paid_bonus
+                    USING v_partner_record.id, v_partner_record.affiliate_id;
+                EXCEPTION WHEN OTHERS THEN
+                    v_earned_bonus := 0;
+                    v_paid_bonus := 0;
+                END;
+            ELSIF v_has_bonuses_tbl THEN
+                BEGIN
+                    EXECUTE '
+                        SELECT
+                            COALESCE(SUM(CASE WHEN status = ''ACHIEVED'' THEN bonus_amount ELSE 0 END), 0),
+                            COALESCE(SUM(CASE WHEN status IN (''AWARDED'', ''PAID'') THEN bonus_amount ELSE 0 END), 0)
+                        FROM public.partner_bonuses
+                        WHERE partner_id = $1
+                    ' INTO v_earned_bonus, v_paid_bonus
+                    USING v_partner_record.id;
+                EXCEPTION WHEN OTHERS THEN
+                    v_earned_bonus := 0;
+                    v_paid_bonus := 0;
+                END;
+            END IF;
+
+            v_total_payable := GREATEST(0, (v_earned_comm + v_earned_bonus));
+            v_total_paid := (v_paid_comm + v_paid_bonus);
+
+            v_result := jsonb_set(
+                v_result,
+                ARRAY[v_partner_record.id::text],
+                jsonb_build_object(
+                    'partner_id', v_partner_record.id,
+                    'affiliate_id', v_partner_record.affiliate_id,
+                    'display_name', v_partner_record.display_name,
+                    'slug', v_partner_record.slug,
+                    'referral_code', v_partner_record.referral_code,
+                    'phone', v_partner_record.phone,
+                    'pin_code', v_partner_record.pin_code,
+                    'commission_rate', v_partner_record.commission_rate,
+                    'recurring_commission_rate', v_partner_record.recurring_commission_rate,
+                    'target_value', v_partner_record.target_value,
+                    'active', v_partner_record.active,
+                    'earned_commissions', v_earned_comm,
+                    'paid_commissions', v_paid_comm,
+                    'pending_commissions', v_pending_comm,
+                    'bonuses_earned', v_earned_bonus,
+                    'bonuses_paid', v_paid_bonus,
+                    'total_payable', v_total_payable,
+                    'total_paid', v_total_paid,
+                    'currency', 'SAR'
+                ),
+                TRUE
+            );
+        END LOOP;
+    ELSIF v_has_affiliates THEN
+        FOR v_partner_record IN
+            SELECT 
+                id, 
+                id AS affiliate_id, 
+                name AS display_name, 
+                LOWER(referral_code) AS slug,
+                UPPER(referral_code) AS referral_code,
+                phone,
+                '1234' AS pin_code,
+                0.2000 AS commission_rate,
+                0.1000 AS recurring_commission_rate,
+                20 AS target_value,
+                (status = 'ACTIVE') AS active
+            FROM public.affiliates
+            WHERE (p_partner_id IS NULL OR id = p_partner_id)
+            ORDER BY created_at ASC
+        LOOP
+            v_result := jsonb_set(
+                v_result,
+                ARRAY[v_partner_record.id::text],
+                jsonb_build_object(
+                    'partner_id', v_partner_record.id,
+                    'affiliate_id', v_partner_record.affiliate_id,
+                    'display_name', v_partner_record.display_name,
+                    'slug', v_partner_record.slug,
+                    'referral_code', v_partner_record.referral_code,
+                    'phone', v_partner_record.phone,
+                    'pin_code', v_partner_record.pin_code,
+                    'commission_rate', v_partner_record.commission_rate,
+                    'recurring_commission_rate', v_partner_record.recurring_commission_rate,
+                    'target_value', v_partner_record.target_value,
+                    'active', v_partner_record.active,
+                    'earned_commissions', 0,
+                    'paid_commissions', 0,
+                    'pending_commissions', 0,
+                    'bonuses_earned', 0,
+                    'bonuses_paid', 0,
+                    'total_payable', 0,
+                    'total_paid', 0,
+                    'currency', 'SAR'
+                ),
+                TRUE
+            );
+        END LOOP;
+    END IF;
+
+    RETURN v_result;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_all_partner_financial_summaries(UUID) TO anon, authenticated, service_role;
+
+
+-- ==============================================================================
+-- >>> FILE: 20261105_fix_pos_shifts_split_and_closing_columns.sql <<<
+-- ==============================================================================
+
+-- 1. إضافة أعمدة إغلاق ومطابقة الصندوق الناقصة
+ALTER TABLE public.pos_shifts 
+ADD COLUMN IF NOT EXISTS closing_cash NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS actual_cash NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS cash_difference NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS discrepancy NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS expected_cash NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS total_sales NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS cash_sales NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS card_sales NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS split_sales NUMERIC(10, 2) DEFAULT 0,
+ADD COLUMN IF NOT EXISTS orders_count INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS closing_notes TEXT;
+
+-- 2. تحديث دالة إغلاق الوردية لتفكيك الدفع المجزأ (Split) ذرياً في السيرفر
+CREATE OR REPLACE FUNCTION public.close_pos_shift_secure(
+  p_store_id uuid, 
+  p_shift_id uuid, 
+  p_actual_cash numeric, 
+  p_notes text DEFAULT NULL::text, 
+  p_staff_token text DEFAULT NULL::text, 
+  p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+  v_is_auth BOOLEAN := FALSE;
+  v_staff_store_id UUID := NULL;
+  v_staff_id_str TEXT := NULL;
+  v_token TEXT := NULL;
+  v_shift RECORD;
+  v_orders_count INTEGER := 0;
+  v_total_sales NUMERIC(12,2) := 0.00;
+  v_cash_sales NUMERIC(12,2) := 0.00;
+  v_card_sales NUMERIC(12,2) := 0.00;
+  v_split_sales NUMERIC(12,2) := 0.00;
+  v_tax_amount NUMERIC(12,2) := 0.00;
+  v_discount_amount NUMERIC(12,2) := 0.00;
+  v_refunds_count INTEGER := 0;
+  v_total_refunds NUMERIC(12,2) := 0.00;
+  v_cash_refunds NUMERIC(12,2) := 0.00;
+  v_card_refunds NUMERIC(12,2) := 0.00;
+  v_movements_count INTEGER := 0;
+  v_total_cash_in NUMERIC(12,2) := 0.00;
+  v_total_cash_out NUMERIC(12,2) := 0.00;
+  v_expected_cash NUMERIC(12,2) := 0.00;
+  v_actual_cash NUMERIC(12,2) := ROUND(GREATEST(0, COALESCE(p_actual_cash, 0)), 2);
+  v_cash_difference NUMERIC(12,2) := 0.00;
+  v_closed_shift RECORD;
+BEGIN
+  IF p_store_id IS NULL OR p_shift_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'MISSING_SHIFT_ID', 'message', 'معرف المتجر والوردية مطلوبان.');
+  END IF;
+
+  -- 1. التحقق من صلاحية الكاشير/المدير
+  IF public.is_super_admin() OR auth.role() = 'service_role' OR public.is_valid_master_token(p_master_token) THEN
+    v_is_auth := TRUE;
+  ELSIF public.has_store_access(p_store_id) THEN
+    v_is_auth := TRUE;
+  ELSE
+    v_token := COALESCE(
+      NULLIF(BTRIM(p_staff_token), ''),
+      NULLIF(current_setting('request.headers', true), '')::json->>'x-staff-token'
+    );
+    IF v_token IS NOT NULL AND v_token <> '' THEN
+      SELECT s.store_id, s.staff_id
+      INTO v_staff_store_id, v_staff_id_str
+      FROM public._staff_session(v_token, false) s
+      LIMIT 1;
+
+      IF v_staff_store_id = p_store_id THEN
+        v_is_auth := TRUE;
+      END IF;
+    END IF;
+  END IF;
+
+  IF NOT v_is_auth THEN
+    RETURN jsonb_build_object(
+      'success', false,
+      'error', 'UNAUTHORIZED_STAFF',
+      'message', 'غير مصرح: يتطلب إغلاق الوردية جلسة كاشير أو مدير صالحة.'
+    );
+  END IF;
+
+  -- 2. قفل سجل الوردية
+  SELECT * INTO v_shift
+  FROM public.pos_shifts
+  WHERE id = p_shift_id AND store_id = p_store_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'SHIFT_NOT_FOUND', 'message', 'الوردية غير موجودة.');
+  END IF;
+
+  IF lower(COALESCE(v_shift.status, '')) <> 'open' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'SHIFT_ALREADY_CLOSED', 'message', 'هذه الوردية مغلقة مسبقاً.');
+  END IF;
+
+  -- 3. حساب المبيعات وتفكيك مبالغ الدفع المجزأ ذرياً
+  SELECT
+    COUNT(*)::integer,
+    ROUND(COALESCE(SUM(COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0)), 0), 2),
+    ROUND(COALESCE(SUM(
+      CASE 
+        WHEN lower(COALESCE(o.payment_method, 'cash')) = 'cash' 
+          THEN COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0)
+        WHEN lower(COALESCE(o.payment_method, 'cash')) = 'split'
+          THEN COALESCE(NULLIF(o.fulfillment_details->>'split_cash', '')::numeric, 0)
+        ELSE 0 
+      END
+    ), 0), 2),
+    ROUND(COALESCE(SUM(
+      CASE 
+        WHEN lower(COALESCE(o.payment_method, 'cash')) IN ('card', 'mada', 'credit_card', 'apple_pay', 'online') 
+          THEN COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0)
+        WHEN lower(COALESCE(o.payment_method, 'cash')) = 'split'
+          THEN COALESCE(
+            NULLIF(o.fulfillment_details->>'split_card', '')::numeric,
+            COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) - COALESCE(NULLIF(o.fulfillment_details->>'split_cash', '')::numeric, 0)
+          )
+        ELSE 0 
+      END
+    ), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(o.payment_method, 'cash')) = 'split' THEN COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) ELSE 0 END), 0), 2),
+    ROUND(COALESCE(SUM(COALESCE(NULLIF(o.tax_amount, 0), COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) - (COALESCE(NULLIF(o.total_price, 0), o.total_amount, 0) / 1.15))), 0), 2),
+    ROUND(COALESCE(SUM(COALESCE(o.discount_amount, 0)), 0), 2)
+  INTO
+    v_orders_count,
+    v_total_sales,
+    v_cash_sales,
+    v_card_sales,
+    v_split_sales,
+    v_tax_amount,
+    v_discount_amount
+  FROM public.store_orders o
+  WHERE o.store_id = p_store_id
+    AND lower(COALESCE(o.status, '')) <> 'cancelled'
+    AND (
+      o.shift_id = v_shift.id
+      OR (
+        o.shift_id IS NULL
+        AND o.created_at >= v_shift.opened_at
+        AND (v_shift.branch_id IS NULL OR o.branch_id IS NULL OR o.branch_id = v_shift.branch_id)
+      )
+    );
+
+  -- 4. حساب المرتجعات الفعلية
+  SELECT
+    COUNT(*)::integer,
+    ROUND(COALESCE(SUM(COALESCE(r.total_refunded, 0)), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(r.refund_method, 'cash')) = 'cash' THEN COALESCE(r.total_refunded, 0) ELSE 0 END), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(r.refund_method, 'cash')) <> 'cash' THEN COALESCE(r.total_refunded, 0) ELSE 0 END), 0), 2)
+  INTO
+    v_refunds_count,
+    v_total_refunds,
+    v_cash_refunds,
+    v_card_refunds
+  FROM public.pos_refunds r
+  WHERE r.store_id = p_store_id
+    AND (
+      r.shift_id = v_shift.id
+      OR (
+        r.shift_id IS NULL
+        AND r.created_at >= v_shift.opened_at
+        AND (v_shift.branch_id IS NULL OR r.branch_id IS NULL OR r.branch_id = v_shift.branch_id)
+      )
+    );
+
+  -- 5. حساب الحركات النقدية الفعلية
+  SELECT
+    COUNT(*)::integer,
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(NULLIF(m.type, ''), m.movement_type)) = 'cash_in' THEN COALESCE(m.amount, 0) ELSE 0 END), 0), 2),
+    ROUND(COALESCE(SUM(CASE WHEN lower(COALESCE(NULLIF(m.type, ''), m.movement_type)) = 'cash_out' THEN COALESCE(m.amount, 0) ELSE 0 END), 0), 2)
+  INTO
+    v_movements_count,
+    v_total_cash_in,
+    v_total_cash_out
+  FROM public.pos_cash_movements m
+  WHERE m.store_id = p_store_id
+    AND m.shift_id = v_shift.id;
+
+  -- 6. معادلة النقد المتوقع
+  v_expected_cash := ROUND(
+    COALESCE(v_shift.opening_cash, 0)
+    + v_cash_sales
+    - v_cash_refunds
+    + v_total_cash_in
+    - v_total_cash_out,
+    2
+  );
+  v_cash_difference := ROUND(v_actual_cash - v_expected_cash, 2);
+
+  -- 7. تحديث وإغلاق الوردية
+  UPDATE public.pos_shifts
+  SET
+    status = 'closed',
+    closed_at = now(),
+    closing_cash = v_actual_cash,
+    actual_cash = v_actual_cash,
+    expected_cash = v_expected_cash,
+    cash_difference = v_cash_difference,
+    discrepancy = v_cash_difference,
+    total_sales = v_total_sales,
+    cash_sales = v_cash_sales,
+    card_sales = v_card_sales,
+    split_sales = v_split_sales,
+    tax_amount = v_tax_amount,
+    discount_amount = v_discount_amount,
+    orders_count = v_orders_count,
+    total_refunds = v_total_refunds,
+    cash_refunds = v_cash_refunds,
+    card_refunds = v_card_refunds,
+    refunds_count = v_refunds_count,
+    total_cash_in = v_total_cash_in,
+    total_cash_out = v_total_cash_out,
+    cash_movements_count = v_movements_count,
+    notes = COALESCE(p_notes, notes),
+    updated_at = now()
+  WHERE id = v_shift.id
+  RETURNING * INTO v_closed_shift;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'shift', to_jsonb(v_closed_shift)
+  );
+END;
+$function$;
+
+
+-- ==============================================================================
 -- >>> FILE: 20261105_platform_payment_gateways_and_manual_activation.sql <<<
 -- ==============================================================================
 
@@ -13440,6 +28350,1787 @@ DROP POLICY IF EXISTS "staff_sessions_no_anon_write" ON public.staff_sessions;
 
 -- 6. Reload PostgREST schema cache
 NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261112_sec05_fix_billing_plans_and_admin_rls.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- RADAR & SADEEM PLATFORM MIGRATION: SEC-05
+-- Complete RLS & Atomic Storage Hardening for Billing Plans & Admin Operations
+-- ==============================================================================
+
+-- 1. Hardening public.billing_plans grants & RLS policies
+GRANT ALL ON public.billing_plans TO authenticated, service_role;
+GRANT SELECT ON public.billing_plans TO anon;
+
+DROP POLICY IF EXISTS billing_plans_select_active ON public.billing_plans;
+CREATE POLICY billing_plans_select_active ON public.billing_plans
+FOR SELECT TO anon, authenticated
+USING (active = true OR is_super_admin());
+
+DROP POLICY IF EXISTS billing_plans_super_admin_manage ON public.billing_plans;
+CREATE POLICY billing_plans_super_admin_manage ON public.billing_plans
+FOR ALL TO authenticated
+USING (is_super_admin())
+WITH CHECK (is_super_admin());
+
+DROP POLICY IF EXISTS billing_plans_service_role_all ON public.billing_plans;
+CREATE POLICY billing_plans_service_role_all ON public.billing_plans
+FOR ALL TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 2. Dedicated Atomic RPC: update_billing_plan_atomic
+CREATE OR REPLACE FUNCTION public.update_billing_plan_atomic(
+    p_plan_id text,
+    p_name text,
+    p_description text DEFAULT NULL,
+    p_amount numeric DEFAULT NULL,
+    p_duration_months integer DEFAULT 1,
+    p_trial_days integer DEFAULT 7,
+    p_features text[] DEFAULT '{}'::text[],
+    p_active boolean DEFAULT true
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_plan record;
+    v_interval text;
+    v_is_uuid boolean;
+    v_clean_months integer;
+BEGIN
+    -- Security verification
+    IF NOT (is_super_admin() OR auth.role() = 'service_role' OR current_user = 'postgres') THEN
+        RAISE EXCEPTION 'Unauthorized: Only platform Super Admin can modify billing plans';
+    END IF;
+
+    -- Normalize duration & interval
+    v_clean_months := GREATEST(1, COALESCE(p_duration_months, 1));
+    v_interval := CASE WHEN v_clean_months = 12 THEN 'YEARLY' ELSE 'MONTHLY' END;
+    v_is_uuid := p_plan_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
+    -- Atomic DB Update
+    IF v_is_uuid THEN
+        UPDATE public.billing_plans
+        SET 
+            name = COALESCE(NULLIF(TRIM(p_name), ''), name),
+            description = COALESCE(p_description, description),
+            amount = COALESCE(p_amount, amount),
+            billing_interval = v_interval,
+            trial_days = COALESCE(p_trial_days, trial_days),
+            active = COALESCE(p_active, active),
+            metadata = jsonb_set(
+                jsonb_set(COALESCE(metadata, '{}'::jsonb), '{duration_months}', to_jsonb(v_clean_months)),
+                '{features}',
+                to_jsonb(p_features)
+            ),
+            updated_at = NOW()
+        WHERE id = p_plan_id::uuid
+        RETURNING * INTO v_plan;
+    ELSE
+        UPDATE public.billing_plans
+        SET 
+            name = COALESCE(NULLIF(TRIM(p_name), ''), name),
+            description = COALESCE(p_description, description),
+            amount = COALESCE(p_amount, amount),
+            billing_interval = v_interval,
+            trial_days = COALESCE(p_trial_days, trial_days),
+            active = COALESCE(p_active, active),
+            metadata = jsonb_set(
+                jsonb_set(COALESCE(metadata, '{}'::jsonb), '{duration_months}', to_jsonb(v_clean_months)),
+                '{features}',
+                to_jsonb(p_features)
+            ),
+            updated_at = NOW()
+        WHERE code = p_plan_id
+        RETURNING * INTO v_plan;
+    END IF;
+
+    IF v_plan.id IS NULL THEN
+        RAISE EXCEPTION 'Billing plan not found with ID/code: %', p_plan_id;
+    END IF;
+
+    RETURN to_jsonb(v_plan);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.update_billing_plan_atomic TO anon, authenticated, service_role;
+
+-- 3. Hardening RLS on blocked administrative tables
+-- merchant_subscriptions
+GRANT ALL ON public.merchant_subscriptions TO authenticated, service_role;
+DROP POLICY IF EXISTS merchant_subscriptions_super_admin_all ON public.merchant_subscriptions;
+CREATE POLICY merchant_subscriptions_super_admin_all ON public.merchant_subscriptions
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS merchant_subscriptions_service_role_all ON public.merchant_subscriptions;
+CREATE POLICY merchant_subscriptions_service_role_all ON public.merchant_subscriptions
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- billing_transactions
+GRANT ALL ON public.billing_transactions TO authenticated, service_role;
+DROP POLICY IF EXISTS billing_transactions_super_admin_all ON public.billing_transactions;
+CREATE POLICY billing_transactions_super_admin_all ON public.billing_transactions
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS billing_transactions_service_role_all ON public.billing_transactions;
+CREATE POLICY billing_transactions_service_role_all ON public.billing_transactions
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- affiliate_payouts
+GRANT ALL ON public.affiliate_payouts TO authenticated, service_role;
+DROP POLICY IF EXISTS affiliate_payouts_super_admin_all ON public.affiliate_payouts;
+CREATE POLICY affiliate_payouts_super_admin_all ON public.affiliate_payouts
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS affiliate_payouts_service_role_all ON public.affiliate_payouts;
+CREATE POLICY affiliate_payouts_service_role_all ON public.affiliate_payouts
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- partner_audit_logs
+GRANT ALL ON public.partner_audit_logs TO authenticated, service_role;
+DROP POLICY IF EXISTS partner_audit_logs_super_admin_all ON public.partner_audit_logs;
+CREATE POLICY partner_audit_logs_super_admin_all ON public.partner_audit_logs
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS partner_audit_logs_service_role_all ON public.partner_audit_logs;
+CREATE POLICY partner_audit_logs_service_role_all ON public.partner_audit_logs
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- merchant_onboarding
+GRANT ALL ON public.merchant_onboarding TO authenticated, service_role;
+DROP POLICY IF EXISTS merchant_onboarding_super_admin_all ON public.merchant_onboarding;
+CREATE POLICY merchant_onboarding_super_admin_all ON public.merchant_onboarding
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS merchant_onboarding_service_role_all ON public.merchant_onboarding;
+CREATE POLICY merchant_onboarding_service_role_all ON public.merchant_onboarding
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- partner_accounts
+GRANT ALL ON public.partner_accounts TO authenticated, service_role;
+DROP POLICY IF EXISTS partner_accounts_super_admin_all ON public.partner_accounts;
+CREATE POLICY partner_accounts_super_admin_all ON public.partner_accounts
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS partner_accounts_service_role_all ON public.partner_accounts;
+CREATE POLICY partner_accounts_service_role_all ON public.partner_accounts
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- partner_commissions
+GRANT ALL ON public.partner_commissions TO authenticated, service_role;
+DROP POLICY IF EXISTS partner_commissions_super_admin_all ON public.partner_commissions;
+CREATE POLICY partner_commissions_super_admin_all ON public.partner_commissions
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS partner_commissions_service_role_all ON public.partner_commissions;
+CREATE POLICY partner_commissions_service_role_all ON public.partner_commissions
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- partner_bonus_awards & partner_bonus_rules & partner_targets
+GRANT ALL ON public.partner_bonus_awards TO authenticated, service_role;
+DROP POLICY IF EXISTS partner_bonus_awards_super_admin_all ON public.partner_bonus_awards;
+CREATE POLICY partner_bonus_awards_super_admin_all ON public.partner_bonus_awards
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS partner_bonus_awards_service_role_all ON public.partner_bonus_awards;
+CREATE POLICY partner_bonus_awards_service_role_all ON public.partner_bonus_awards
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+GRANT ALL ON public.partner_bonus_rules TO authenticated, service_role;
+DROP POLICY IF EXISTS partner_bonus_rules_super_admin_all ON public.partner_bonus_rules;
+CREATE POLICY partner_bonus_rules_super_admin_all ON public.partner_bonus_rules
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS partner_bonus_rules_service_role_all ON public.partner_bonus_rules;
+CREATE POLICY partner_bonus_rules_service_role_all ON public.partner_bonus_rules
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+GRANT ALL ON public.partner_targets TO authenticated, service_role;
+DROP POLICY IF EXISTS partner_targets_super_admin_all ON public.partner_targets;
+CREATE POLICY partner_targets_super_admin_all ON public.partner_targets
+FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+DROP POLICY IF EXISTS partner_targets_service_role_all ON public.partner_targets;
+CREATE POLICY partner_targets_service_role_all ON public.partner_targets
+FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261113_al_athar_core_unified_tenants.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE (منصة الأثر السحابية) - UNIFIED MULTI-TENANT ARCHITECTURE
+-- Migration: 20261113_al_athar_core_unified_tenants.sql
+-- Production Hardened Version: Strict app_metadata RLS, RESTRICTIVE Tenant Firewalls,
+-- Domain Normalization (www-strip), Sovereign Field Locking & Webhook Security
+-- ==============================================================================
+
+-- 0️⃣ دالة تحديث حقل updated_at تلقائياً
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 1️⃣ جدول الوكلاء المركزي (Tenants Hub)
+CREATE TABLE IF NOT EXISTS public.tenants (
+    id TEXT PRIMARY KEY, -- e.g. 'radar', 'sadeem'
+    name TEXT NOT NULL,
+    name_en TEXT,
+    tagline TEXT DEFAULT 'منظومة الولاء ونقاط البيع السحابية الذكية',
+    slug TEXT NOT NULL UNIQUE,
+    custom_domain TEXT UNIQUE,
+    logo_url TEXT DEFAULT '/favicon.png',
+    favicon_url TEXT DEFAULT '/favicon.png',
+    support_phone TEXT DEFAULT '+966500000000',
+    support_whatsapp TEXT DEFAULT '966500000000',
+    support_email TEXT DEFAULT 'support@radar.sa',
+    primary_color_hex TEXT DEFAULT '#F59E0B',
+    accent_color_hex TEXT DEFAULT '#10B981',
+    pwa_name TEXT DEFAULT 'منظومة نقاط البيع والولاء',
+    copyright_holder TEXT DEFAULT 'جميع الحقوق محفوظة',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'maintenance')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ربط Trigger تحديث الوقت بجدول الوكلاء
+DROP TRIGGER IF EXISTS trg_tenants_updated_at ON public.tenants;
+CREATE TRIGGER trg_tenants_updated_at
+BEFORE UPDATE ON public.tenants
+FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+-- 🛡️ حماية الحقول السيادية في جدول الوكلاء من تلاعب الـ tenant_admin
+CREATE OR REPLACE FUNCTION public.protect_tenant_critical_fields()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_is_super BOOLEAN;
+BEGIN
+    v_is_super := (
+        COALESCE(( current_setting('request.jwt.claims', true)::jsonb -> 'app_metadata' ->> 'is_super_admin' )::boolean, false) IS TRUE
+        OR ( current_setting('request.jwt.claims', true)::jsonb -> 'app_metadata' ->> 'role' ) = 'super_admin'
+        OR current_user IN ('postgres', 'service_role', 'supabase_admin')
+    );
+
+    IF NOT v_is_super THEN
+        IF NEW.id IS DISTINCT FROM OLD.id
+           OR NEW.slug IS DISTINCT FROM OLD.slug
+           OR NEW.custom_domain IS DISTINCT FROM OLD.custom_domain
+           OR NEW.status IS DISTINCT FROM OLD.status THEN
+            RAISE EXCEPTION 'Unauthorized: Only SuperAdmin can modify id, slug, custom_domain, or status.';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_protect_tenant_critical_fields ON public.tenants;
+CREATE TRIGGER trg_protect_tenant_critical_fields
+BEFORE UPDATE ON public.tenants
+FOR EACH ROW EXECUTE FUNCTION public.protect_tenant_critical_fields();
+
+-- تفعيل حماية RLS لجدول الوكلاء
+ALTER TABLE public.tenants ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public read active tenants" ON public.tenants;
+DROP POLICY IF EXISTS "SuperAdmin manage tenants" ON public.tenants;
+DROP POLICY IF EXISTS "TenantAdmin update own tenant" ON public.tenants;
+
+-- سياسة 1: قراءة عامة للوكلاء النشطين فقط
+CREATE POLICY "Public read active tenants"
+ON public.tenants
+FOR SELECT
+TO anon, authenticated
+USING (
+    status = 'active'
+    OR (
+        (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+        AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = id
+    )
+);
+
+-- سياسة 2: تحكم كامل للسوبر أدمن فقط (عبر app_metadata حصراً)
+CREATE POLICY "SuperAdmin manage tenants"
+ON public.tenants
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+-- سياسة 3: السماح للوكيل النشط بتحديث بيانات هويته الفرعية فقط
+CREATE POLICY "TenantAdmin update own tenant"
+ON public.tenants
+FOR UPDATE
+TO authenticated
+USING (
+    status = 'active'
+    AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = id
+)
+WITH CHECK (
+    status = 'active'
+    AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = id
+);
+
+-- 2️⃣ بذر السجلات التأسيسية للوكلاء (Radar & Sadeem)
+INSERT INTO public.tenants (
+    id, name, name_en, tagline, slug, custom_domain, 
+    logo_url, favicon_url, support_phone, support_whatsapp, support_email, 
+    primary_color_hex, accent_color_hex, pwa_name, copyright_holder, status
+)
+VALUES 
+(
+    'radar', 'رادار', 'Radar', 'منظومة الولاء ونقاط البيع السحابية الذكية', 'radar', 'myradar.sarl',
+    '/radar-logo-dark.jpg', '/favicon.png', '+966500000000', '966500000000', 'support@radar.sa',
+    '#F59E0B', '#10B981', 'رادار - نقاط البيع والولاء', 'منظومة رادار السحابية', 'active'
+),
+(
+    'sadeem', 'سديم الأثر', 'Sadim Al-Athir', 'منظومة نقاط البيع السحابية وإدارة المطاعم والمقاهي', 'sadeem', 'sdeemalathr.com',
+    '/favicon.ico', '/favicon.ico', '+966500000000', '966500000000', 'info@sadim-alathir.com',
+    '#10B981', '#0EA5E9', 'سديم الأثر POS', 'مؤسسة سديم الأثر لتقنية المعلومات', 'active'
+)
+ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    name_en = EXCLUDED.name_en,
+    tagline = EXCLUDED.tagline,
+    custom_domain = EXCLUDED.custom_domain,
+    primary_color_hex = EXCLUDED.primary_color_hex,
+    accent_color_hex = EXCLUDED.accent_color_hex,
+    pwa_name = EXCLUDED.pwa_name,
+    copyright_holder = EXCLUDED.copyright_holder;
+
+-- 3️⃣ جدول تكاملات الوكيل المستقلة (Telegram, Gemini AI, WhatsApp)
+CREATE TABLE IF NOT EXISTS public.tenant_integrations (
+    tenant_id TEXT PRIMARY KEY REFERENCES public.tenants(id) ON DELETE CASCADE,
+    
+    -- Telegram
+    telegram_bot_token TEXT,
+    telegram_bot_username TEXT,
+    telegram_admin_chat_id TEXT,
+    telegram_webhook_secret TEXT NOT NULL DEFAULT replace(gen_random_uuid()::text, '-', ''),
+    telegram_enabled BOOLEAN NOT NULL DEFAULT false,
+    
+    -- Gemini AI
+    gemini_api_key TEXT,
+    gemini_model TEXT NOT NULL DEFAULT 'gemini-flash-lite-latest',
+    gemini_enabled BOOLEAN NOT NULL DEFAULT false,
+    
+    -- WhatsApp Gateway
+    whatsapp_provider TEXT NOT NULL DEFAULT 'meta',
+    whatsapp_phone_number_id TEXT,
+    whatsapp_access_token TEXT,
+    whatsapp_verify_token TEXT NOT NULL DEFAULT replace(gen_random_uuid()::text, '-', ''),
+    whatsapp_app_secret TEXT,
+    whatsapp_enabled BOOLEAN NOT NULL DEFAULT false,
+    whatsapp_tier_1000_price NUMERIC NOT NULL DEFAULT 150,
+    
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- فهارس منع تكرار نفس البوت أو رقم الواتساب بين وكيلين
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tenant_telegram_bot 
+ON public.tenant_integrations (LOWER(telegram_bot_username)) 
+WHERE telegram_bot_username IS NOT NULL AND telegram_bot_username <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_tenant_whatsapp_phone_id 
+ON public.tenant_integrations (whatsapp_phone_number_id) 
+WHERE whatsapp_phone_number_id IS NOT NULL AND whatsapp_phone_number_id <> '';
+
+-- ربط Trigger تحديث الوقت بجدول التكاملات
+DROP TRIGGER IF EXISTS trg_tenant_integrations_updated_at ON public.tenant_integrations;
+CREATE TRIGGER trg_tenant_integrations_updated_at
+BEFORE UPDATE ON public.tenant_integrations
+FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+-- تفعيل حماية RLS لجدول التكاملات
+ALTER TABLE public.tenant_integrations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "SuperAdmin manage tenant_integrations" ON public.tenant_integrations;
+DROP POLICY IF EXISTS "TenantAdmin manage own integrations" ON public.tenant_integrations;
+
+-- سياسة 1: تحكم كامل للسوبر أدمن
+CREATE POLICY "SuperAdmin manage tenant_integrations"
+ON public.tenant_integrations
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+-- سياسة 2: كل وكيل (tenant_admin) يدير مفاتيحه الخاصة فقط
+CREATE POLICY "TenantAdmin manage own integrations"
+ON public.tenant_integrations
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+-- بذر أولي للتكاملات
+INSERT INTO public.tenant_integrations (tenant_id, telegram_enabled, gemini_enabled, whatsapp_enabled)
+VALUES 
+    ('radar', false, false, false),
+    ('sadeem', false, false, false)
+ON CONFLICT (tenant_id) DO NOTHING;
+
+-- 4️⃣ ربط جدول المتاجر (stores) بالوكيل مع الفهرسة وحماية السيادة
+ALTER TABLE public.stores 
+ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
+REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+CREATE INDEX IF NOT EXISTS idx_stores_tenant_id ON public.stores(tenant_id);
+
+-- ربط المتاجر القائمة بوكلائها
+UPDATE public.stores 
+SET tenant_id = 'sadeem'
+WHERE slug = 'al-sayd' 
+   OR name ILIKE '%السعيد%' 
+   OR slug ILIKE '%sadeem%' 
+   OR slug ILIKE '%sadim%';
+
+-- 🛡️ حماية الحقول السيادية في جدول المتاجر
+CREATE OR REPLACE FUNCTION public.protect_store_critical_fields()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_claims JSONB;
+    v_is_super BOOLEAN;
+    v_is_own_tenant_admin BOOLEAN;
+BEGIN
+    v_claims := COALESCE(NULLIF(current_setting('request.jwt.claims', true), ''), '{}')::jsonb;
+
+    v_is_super := (
+        COALESCE((v_claims -> 'app_metadata' ->> 'is_super_admin')::boolean, false) IS TRUE
+        OR (v_claims -> 'app_metadata' ->> 'role') = 'super_admin'
+        OR current_user IN ('postgres', 'service_role', 'supabase_admin')
+    );
+
+    v_is_own_tenant_admin := (
+        (v_claims -> 'app_metadata' ->> 'role') = 'tenant_admin'
+        AND (v_claims -> 'app_metadata' ->> 'tenant_id') = OLD.tenant_id
+    );
+
+    IF NOT v_is_super THEN
+        IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.id IS DISTINCT FROM OLD.id THEN
+            RAISE EXCEPTION 'Unauthorized: Cannot modify store id or tenant_id.';
+        END IF;
+
+        IF NOT v_is_own_tenant_admin THEN
+            IF NEW.slug IS DISTINCT FROM OLD.slug OR NEW.status IS DISTINCT FROM OLD.status THEN
+                RAISE EXCEPTION 'Unauthorized: Only SuperAdmin or TenantAdmin can modify store slug or status.';
+            END IF;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_protect_store_critical_fields ON public.stores;
+CREATE TRIGGER trg_protect_store_critical_fields
+BEFORE UPDATE ON public.stores
+FOR EACH ROW EXECUTE FUNCTION public.protect_store_critical_fields();
+
+ALTER TABLE public.stores ENABLE ROW LEVEL SECURITY;
+
+-- 🛡️ إسقاط السياسات القديمة
+DROP POLICY IF EXISTS "stores_select_policy" ON public.stores;
+DROP POLICY IF EXISTS "stores_update_policy" ON public.stores;
+DROP POLICY IF EXISTS "stores_insert_policy" ON public.stores;
+DROP POLICY IF EXISTS "stores_delete_policy" ON public.stores;
+DROP POLICY IF EXISTS "Public stores read active" ON public.stores;
+DROP POLICY IF EXISTS "Public read active stores" ON public.stores;
+DROP POLICY IF EXISTS "SuperAdmin manage all stores" ON public.stores;
+DROP POLICY IF EXISTS "TenantAdmin manage own stores" ON public.stores;
+DROP POLICY IF EXISTS "Store owners update settings" ON public.stores;
+DROP POLICY IF EXISTS "ServiceRole full stores access" ON public.stores;
+DROP POLICY IF EXISTS "Strict tenant_admin isolation on stores" ON public.stores;
+
+-- 🔒 جدار ناري قسري (RESTRICTIVE): عزل تام للمتاجر
+CREATE POLICY "Strict tenant_admin isolation on stores"
+ON public.stores
+AS RESTRICTIVE
+FOR ALL
+TO authenticated
+USING (
+    COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') <> 'tenant_admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') <> 'tenant_admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+CREATE POLICY "Public read active stores"
+ON public.stores
+FOR SELECT
+TO anon, authenticated
+USING (status = 'active');
+
+CREATE POLICY "SuperAdmin manage all stores"
+ON public.stores
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+CREATE POLICY "TenantAdmin manage own stores"
+ON public.stores
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+CREATE POLICY "Store owners update settings"
+ON public.stores
+FOR UPDATE
+TO authenticated
+USING (status = 'active')
+WITH CHECK (status = 'active');
+
+CREATE POLICY "ServiceRole full stores access"
+ON public.stores
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 5️⃣ ربط طلبات انضمام التجار (merchant_leads) بالوكيل
+ALTER TABLE public.merchant_leads 
+ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
+REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+CREATE INDEX IF NOT EXISTS idx_merchant_leads_tenant_id ON public.merchant_leads(tenant_id);
+
+CREATE OR REPLACE FUNCTION public.sync_merchant_lead_tenant_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.affiliate_id IS NOT NULL THEN
+        SELECT tenant_id INTO NEW.tenant_id
+        FROM public.affiliates
+        WHERE id = NEW.affiliate_id;
+    END IF;
+    NEW.tenant_id := COALESCE(NULLIF(TRIM(NEW.tenant_id), ''), 'radar');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_merchant_lead_tenant_id ON public.merchant_leads;
+CREATE TRIGGER trg_sync_merchant_lead_tenant_id
+BEFORE INSERT ON public.merchant_leads
+FOR EACH ROW EXECUTE FUNCTION public.sync_merchant_lead_tenant_id();
+
+ALTER TABLE public.merchant_leads ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "merchant_leads_anon_update_policy" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_auth_all_policy" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_select_all" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_insert_all" ON public.merchant_leads;
+DROP POLICY IF EXISTS "Service Role Full Leads Access" ON public.merchant_leads;
+DROP POLICY IF EXISTS "SuperAdmin Full Leads Access" ON public.merchant_leads;
+DROP POLICY IF EXISTS "service_role_merchant_leads_full_access" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_service_role_all" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_super_admin_all" ON public.merchant_leads;
+DROP POLICY IF EXISTS "merchant_leads_anon_insert_policy" ON public.merchant_leads;
+DROP POLICY IF EXISTS "TenantAdmin manage own leads" ON public.merchant_leads;
+DROP POLICY IF EXISTS "SuperAdmin manage all leads" ON public.merchant_leads;
+DROP POLICY IF EXISTS "ServiceRole full leads access" ON public.merchant_leads;
+DROP POLICY IF EXISTS "Strict tenant_admin isolation on leads" ON public.merchant_leads;
+
+CREATE POLICY "Strict tenant_admin isolation on leads"
+ON public.merchant_leads
+AS RESTRICTIVE
+FOR ALL
+TO authenticated
+USING (
+    COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') <> 'tenant_admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') <> 'tenant_admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+CREATE POLICY "merchant_leads_anon_insert_policy"
+ON public.merchant_leads
+FOR INSERT
+TO anon, authenticated
+WITH CHECK (true);
+
+CREATE POLICY "SuperAdmin manage all leads"
+ON public.merchant_leads
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+CREATE POLICY "TenantAdmin manage own leads"
+ON public.merchant_leads
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+CREATE POLICY "ServiceRole full leads access"
+ON public.merchant_leads
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 6️⃣ ربط الشركاء والمسوقين (affiliates) بالوكيل
+ALTER TABLE public.affiliates 
+ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
+REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+CREATE INDEX IF NOT EXISTS idx_affiliates_tenant_id ON public.affiliates(tenant_id);
+
+ALTER TABLE public.affiliates ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "affiliates_manage_all" ON public.affiliates;
+DROP POLICY IF EXISTS "affiliates_read_public" ON public.affiliates;
+DROP POLICY IF EXISTS "SuperAdmin affiliates access" ON public.affiliates;
+DROP POLICY IF EXISTS "service_role_affiliates_full_access" ON public.affiliates;
+DROP POLICY IF EXISTS "affiliates_super_admin_all" ON public.affiliates;
+DROP POLICY IF EXISTS "affiliates_service_role_all" ON public.affiliates;
+DROP POLICY IF EXISTS "Public read active affiliates" ON public.affiliates;
+DROP POLICY IF EXISTS "TenantAdmin manage own affiliates" ON public.affiliates;
+DROP POLICY IF EXISTS "SuperAdmin manage all affiliates" ON public.affiliates;
+DROP POLICY IF EXISTS "ServiceRole full affiliates access" ON public.affiliates;
+DROP POLICY IF EXISTS "Strict tenant_admin isolation on affiliates" ON public.affiliates;
+
+CREATE POLICY "Strict tenant_admin isolation on affiliates"
+ON public.affiliates
+AS RESTRICTIVE
+FOR ALL
+TO authenticated
+USING (
+    COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') <> 'tenant_admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') <> 'tenant_admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+CREATE POLICY "Public read active affiliates"
+ON public.affiliates
+FOR SELECT
+TO anon, authenticated
+USING (status = 'active');
+
+CREATE POLICY "SuperAdmin manage all affiliates"
+ON public.affiliates
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+CREATE POLICY "TenantAdmin manage own affiliates"
+ON public.affiliates
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+CREATE POLICY "ServiceRole full affiliates access"
+ON public.affiliates
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 7️⃣ ربط اشتراكات المتاجر (merchant_subscriptions) بالوكيل
+ALTER TABLE public.merchant_subscriptions 
+ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'radar' 
+REFERENCES public.tenants(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+CREATE INDEX IF NOT EXISTS idx_merchant_subscriptions_tenant_id ON public.merchant_subscriptions(tenant_id);
+
+UPDATE public.merchant_subscriptions s
+SET tenant_id = st.tenant_id
+FROM public.stores st
+WHERE s.store_id = st.id;
+
+CREATE OR REPLACE FUNCTION public.sync_subscription_tenant_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.store_id IS NOT NULL THEN
+        SELECT tenant_id INTO NEW.tenant_id
+        FROM public.stores
+        WHERE id = NEW.store_id;
+    END IF;
+    NEW.tenant_id := COALESCE(NEW.tenant_id, 'radar');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_subscription_tenant_id ON public.merchant_subscriptions;
+CREATE TRIGGER trg_sync_subscription_tenant_id
+BEFORE INSERT OR UPDATE OF store_id ON public.merchant_subscriptions
+FOR EACH ROW EXECUTE FUNCTION public.sync_subscription_tenant_id();
+
+ALTER TABLE public.merchant_subscriptions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "merchant_subscriptions_super_admin_all" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "merchant_subscriptions_service_role_all" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "SuperAdmin manage all subscriptions" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "TenantAdmin manage own subscriptions" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "Stores can read own subscriptions" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "ServiceRole full subscriptions access" ON public.merchant_subscriptions;
+DROP POLICY IF EXISTS "Strict tenant_admin isolation on subscriptions" ON public.merchant_subscriptions;
+
+CREATE POLICY "Strict tenant_admin isolation on subscriptions"
+ON public.merchant_subscriptions
+AS RESTRICTIVE
+FOR ALL
+TO authenticated
+USING (
+    COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') <> 'tenant_admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') <> 'tenant_admin'
+    OR (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+CREATE POLICY "SuperAdmin manage all subscriptions"
+ON public.merchant_subscriptions
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+);
+
+CREATE POLICY "TenantAdmin manage own subscriptions"
+ON public.merchant_subscriptions
+FOR ALL
+TO authenticated
+USING (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+)
+WITH CHECK (
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'tenant_admin'
+    AND (auth.jwt() -> 'app_metadata' ->> 'tenant_id') = tenant_id
+);
+
+CREATE POLICY "Stores can read own subscriptions"
+ON public.merchant_subscriptions
+FOR SELECT
+TO anon, authenticated
+USING (true);
+
+CREATE POLICY "ServiceRole full subscriptions access"
+ON public.merchant_subscriptions
+FOR ALL
+TO service_role
+USING (true)
+WITH CHECK (true);
+
+-- 8️⃣ دوال الويب هوك (Webhook Resolution for Telegram & WhatsApp)
+CREATE OR REPLACE FUNCTION public.resolve_tenant_for_webhook(
+    p_tenant_id TEXT DEFAULT NULL,
+    p_whatsapp_phone_id TEXT DEFAULT NULL,
+    p_telegram_secret TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_rec RECORD;
+BEGIN
+    SELECT ti.*, t.name AS tenant_name, t.status AS tenant_status
+    INTO v_rec
+    FROM public.tenant_integrations ti
+    JOIN public.tenants t ON t.id = ti.tenant_id
+    WHERE t.status = 'active'
+      AND (
+          (p_tenant_id IS NOT NULL AND ti.tenant_id = p_tenant_id)
+          OR (p_whatsapp_phone_id IS NOT NULL AND ti.whatsapp_phone_number_id = p_whatsapp_phone_id)
+          OR (p_telegram_secret IS NOT NULL AND ti.telegram_webhook_secret = p_telegram_secret)
+      )
+    LIMIT 1;
+
+    IF v_rec IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    RETURN to_jsonb(v_rec);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.resolve_tenant_for_webhook(TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.resolve_tenant_for_webhook(TEXT, TEXT, TEXT) TO service_role;
+
+-- 9️⃣ دالة التعرف اللحظي على هوية الوكيل حسب الدومين (مع معالجة www.)
+CREATE OR REPLACE FUNCTION public.get_active_tenant_by_domain(p_host TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_clean_host TEXT;
+    v_rec RECORD;
+BEGIN
+    v_clean_host := LOWER(TRIM(COALESCE(p_host, '')));
+    IF v_clean_host LIKE '%:%' THEN
+        v_clean_host := SPLIT_PART(v_clean_host, ':', 1);
+    END IF;
+    v_clean_host := REGEXP_REPLACE(v_clean_host, '^www\.', '');
+
+    SELECT * INTO v_rec
+    FROM public.tenants
+    WHERE REGEXP_REPLACE(LOWER(custom_domain), '^www\.', '') = v_clean_host
+      AND status = 'active'
+    LIMIT 1;
+
+    IF v_rec IS NULL AND v_clean_host <> '' THEN
+        SELECT * INTO v_rec
+        FROM public.tenants
+        WHERE (v_clean_host LIKE '%' || LOWER(slug) || '%' OR v_clean_host LIKE '%' || LOWER(id) || '%')
+          AND status = 'active'
+        LIMIT 1;
+    END IF;
+
+    IF v_rec IS NULL THEN
+        SELECT * INTO v_rec
+        FROM public.tenants
+        WHERE id = 'radar'
+        LIMIT 1;
+    END IF;
+
+    IF v_rec IS NULL THEN
+        RETURN jsonb_build_object(
+            'id', 'radar',
+            'brand_name', 'رادار',
+            'brand_english_name', 'Radar',
+            'domain', 'myradar.sarl'
+        );
+    END IF;
+
+    RETURN jsonb_build_object(
+        'id', v_rec.id,
+        'brand_name', v_rec.name,
+        'brand_english_name', v_rec.name_en,
+        'tagline', v_rec.tagline,
+        'logo_url', v_rec.logo_url,
+        'favicon_url', v_rec.favicon_url,
+        'domain', v_rec.custom_domain,
+        'support_phone', v_rec.support_phone,
+        'support_whatsapp', v_rec.support_whatsapp,
+        'support_email', v_rec.support_email,
+        'primary_color_hex', v_rec.primary_color_hex,
+        'accent_color_hex', v_rec.accent_color_hex,
+        'pwa_name', v_rec.pwa_name,
+        'copyright_holder', v_rec.copyright_holder,
+        'is_white_label', (v_rec.id <> 'radar')
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_active_tenant_by_domain(TEXT) TO anon, authenticated, service_role;
+
+-- 🔟 دالة جلب تكاملات الوكيل العامة للواجهة
+CREATE OR REPLACE FUNCTION public.get_tenant_integrations_public(p_tenant_id TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_rec RECORD;
+BEGIN
+    SELECT * INTO v_rec
+    FROM public.tenant_integrations
+    WHERE tenant_id = p_tenant_id
+    LIMIT 1;
+
+    RETURN jsonb_build_object(
+        'tenant_id', p_tenant_id,
+        'telegram_enabled', COALESCE(v_rec.telegram_enabled, false),
+        'telegram_bot_username', v_rec.telegram_bot_username,
+        'gemini_enabled', COALESCE(v_rec.gemini_enabled, false),
+        'whatsapp_enabled', COALESCE(v_rec.whatsapp_enabled, false),
+        'whatsapp_tier_1000_price', COALESCE(v_rec.whatsapp_tier_1000_price, 150),
+        'apple_wallet_enabled', true,
+        'google_wallet_enabled', true
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_tenant_integrations_public(TEXT) TO anon, authenticated, service_role;
+
+-- 1️⃣1️⃣ تحديث كاش السيرفر فوراً
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261114_al_athar_core_sovereign_master_engine.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE (منصة الأثر السحابية) - SOVEREIGN MASTER CONTROL ENGINE
+-- Migration: 20261114_al_athar_core_sovereign_master_engine.sql
+-- Standalone Sovereign Command Center (localhost:3001) RPCs & Centralized Wallets
+-- ==============================================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- 0️⃣ إضافة عمود إيميل المسؤول وتحديث شعار سديم الرسمي
+ALTER TABLE public.tenants ADD COLUMN IF NOT EXISTS admin_email TEXT;
+
+UPDATE public.tenants
+SET logo_url = '/sadeem-logo.svg',
+    favicon_url = '/sadeem-logo.svg'
+WHERE id = 'sadeem';
+
+-- 1️⃣ جدول التوكن السيادي للوحة القيادة المركزية
+CREATE TABLE IF NOT EXISTS public.reseller_master_auth (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_token_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.reseller_master_auth ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.reseller_master_auth FROM anon, authenticated;
+
+-- زرع الهاش المشفر للتوكن السيادي للمالك صلاح (SOVEREIGN_MASTER_TOKEN)
+DELETE FROM public.reseller_master_auth;
+INSERT INTO public.reseller_master_auth (master_token_hash) 
+VALUES (crypt('rsm_Y2C8Y5g9es8O2cjRGvD6WaFn2onAH79Qi37T53iUoV29KzkZHLe70txYpkkDzKF', gen_salt('bf')));
+
+-- 2️⃣ دالة التحقق الأمني من التوكن السيادي
+CREATE OR REPLACE FUNCTION public.is_valid_master_token(p_token TEXT)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+BEGIN
+    IF p_token IS NULL OR TRIM(p_token) = '' THEN
+        RETURN FALSE;
+    END IF;
+
+    RETURN EXISTS (
+        SELECT 1 FROM public.reseller_master_auth 
+        WHERE master_token_hash = crypt(p_token, master_token_hash)
+    );
+END;
+$$;
+
+-- 3️⃣ دالة جلب كافة الوكلاء وإحصائيات المتاجر للوحة القيادة
+CREATE OR REPLACE FUNCTION public.master_get_tenants(p_master_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_auth BOOLEAN := FALSE;
+    v_result JSONB;
+BEGIN
+    IF public.is_valid_master_token(p_master_token) 
+       OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+       OR current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
+        v_is_auth := TRUE;
+    END IF;
+
+    IF NOT v_is_auth THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    SELECT jsonb_agg(
+        jsonb_build_object(
+            'id', t.id,
+            'name', t.name,
+            'name_en', t.name_en,
+            'tagline', t.tagline,
+            'slug', t.slug,
+            'custom_domain', t.custom_domain,
+            'logo_url', t.logo_url,
+            'favicon_url', t.favicon_url,
+            'support_phone', t.support_phone,
+            'support_whatsapp', t.support_whatsapp,
+            'support_email', t.support_email,
+            'primary_color_hex', t.primary_color_hex,
+            'accent_color_hex', t.accent_color_hex,
+            'pwa_name', t.pwa_name,
+            'copyright_holder', t.copyright_holder,
+            'status', t.status,
+            'admin_email', t.admin_email,
+            'created_at', t.created_at,
+            'updated_at', t.updated_at,
+            'stores_count', COALESCE((SELECT COUNT(*) FROM public.stores s WHERE s.tenant_id = t.id), 0)
+        ) ORDER BY t.created_at ASC
+    ) INTO v_result
+    FROM public.tenants t;
+
+    RETURN COALESCE(v_result, '[]'::jsonb);
+END;
+$$;
+
+-- 4️⃣ دالة تحديث بيانات وهوية وحالة الوكيل (تعديل الهوية وKill Switch)
+CREATE OR REPLACE FUNCTION public.master_update_tenant(
+    p_master_token TEXT,
+    p_tenant_id TEXT,
+    p_data JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_auth BOOLEAN := FALSE;
+    v_domain TEXT;
+BEGIN
+    IF public.is_valid_master_token(p_master_token) 
+       OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+       OR current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
+        v_is_auth := TRUE;
+    END IF;
+
+    IF NOT v_is_auth THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    -- تنظيف الدومين إذا تم تمريره
+    IF p_data ? 'custom_domain' THEN
+        v_domain := NULLIF(TRIM(p_data->>'custom_domain'), '');
+        IF v_domain IS NOT NULL THEN
+            v_domain := regexp_replace(v_domain, '^https?://', '', 'i');
+            v_domain := regexp_replace(v_domain, '/.*$', '', 'i');
+            v_domain := regexp_replace(v_domain, '^www\.', '', 'i');
+        END IF;
+    END IF;
+
+    UPDATE public.tenants
+    SET
+        name = COALESCE(p_data->>'name', name),
+        name_en = CASE WHEN p_data ? 'name_en' THEN p_data->>'name_en' ELSE name_en END,
+        tagline = CASE WHEN p_data ? 'tagline' THEN p_data->>'tagline' ELSE tagline END,
+        custom_domain = CASE WHEN p_data ? 'custom_domain' THEN v_domain ELSE custom_domain END,
+        logo_url = CASE WHEN p_data ? 'logo_url' THEN p_data->>'logo_url' ELSE logo_url END,
+        favicon_url = CASE WHEN p_data ? 'favicon_url' THEN p_data->>'favicon_url' ELSE favicon_url END,
+        support_phone = CASE WHEN p_data ? 'support_phone' THEN p_data->>'support_phone' ELSE support_phone END,
+        support_whatsapp = CASE WHEN p_data ? 'support_whatsapp' THEN p_data->>'support_whatsapp' ELSE support_whatsapp END,
+        support_email = CASE WHEN p_data ? 'support_email' THEN p_data->>'support_email' ELSE support_email END,
+        primary_color_hex = CASE WHEN p_data ? 'primary_color_hex' THEN p_data->>'primary_color_hex' ELSE primary_color_hex END,
+        accent_color_hex = CASE WHEN p_data ? 'accent_color_hex' THEN p_data->>'accent_color_hex' ELSE accent_color_hex END,
+        pwa_name = CASE WHEN p_data ? 'pwa_name' THEN p_data->>'pwa_name' ELSE pwa_name END,
+        copyright_holder = CASE WHEN p_data ? 'copyright_holder' THEN p_data->>'copyright_holder' ELSE copyright_holder END,
+        status = COALESCE(p_data->>'status', status),
+        updated_at = now()
+    WHERE id = p_tenant_id;
+
+    RETURN jsonb_build_object('success', true, 'tenant_id', p_tenant_id);
+END;
+$$;
+
+-- 5️⃣ دالة تدشين وكيل استراتيجي جديد
+CREATE OR REPLACE FUNCTION public.master_create_tenant(
+    p_master_token TEXT,
+    p_data JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_auth BOOLEAN := FALSE;
+    v_id TEXT;
+    v_slug TEXT;
+    v_domain TEXT;
+BEGIN
+    IF public.is_valid_master_token(p_master_token) 
+       OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+       OR current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
+        v_is_auth := TRUE;
+    END IF;
+
+    IF NOT v_is_auth THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    v_slug := LOWER(TRIM(p_data->>'slug'));
+    v_id := COALESCE(NULLIF(LOWER(TRIM(p_data->>'id')), ''), v_slug);
+
+    IF v_id IS NULL OR v_id = '' THEN
+        RAISE EXCEPTION 'Tenant slug/id is required';
+    END IF;
+
+    IF p_data ? 'custom_domain' THEN
+        v_domain := NULLIF(TRIM(p_data->>'custom_domain'), '');
+        IF v_domain IS NOT NULL THEN
+            v_domain := regexp_replace(v_domain, '^https?://', '', 'i');
+            v_domain := regexp_replace(v_domain, '/.*$', '', 'i');
+            v_domain := regexp_replace(v_domain, '^www\.', '', 'i');
+        END IF;
+    END IF;
+
+    INSERT INTO public.tenants (
+        id, name, name_en, tagline, slug, custom_domain,
+        logo_url, favicon_url, support_phone, support_whatsapp,
+        support_email, primary_color_hex, accent_color_hex,
+        pwa_name, copyright_holder, status
+    ) VALUES (
+        v_id,
+        COALESCE(p_data->>'name', 'وكيل جديد'),
+        p_data->>'name_en',
+        COALESCE(p_data->>'tagline', 'منظومة الولاء ونقاط البيع السحابية الذكية'),
+        v_slug,
+        v_domain,
+        COALESCE(p_data->>'logo_url', '/favicon.png'),
+        COALESCE(p_data->>'favicon_url', '/favicon.png'),
+        COALESCE(p_data->>'support_phone', '+966500000000'),
+        COALESCE(p_data->>'support_whatsapp', '966500000000'),
+        COALESCE(p_data->>'support_email', 'support@al-athar.cloud'),
+        COALESCE(p_data->>'primary_color_hex', '#F59E0B'),
+        COALESCE(p_data->>'accent_color_hex', '#10B981'),
+        COALESCE(p_data->>'pwa_name', p_data->>'name'),
+        COALESCE(p_data->>'copyright_holder', 'جميع الحقوق محفوظة'),
+        'active'
+    );
+
+    RETURN jsonb_build_object('success', true, 'tenant_id', v_id);
+END;
+$$;
+
+-- 6️⃣ دالة جلب معرفات المحافظ الرقمية الحصرية للوحة القيادة
+CREATE OR REPLACE FUNCTION public.master_get_wallet_credentials(p_master_token TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_auth BOOLEAN := FALSE;
+    v_rec RECORD;
+BEGIN
+    IF public.is_valid_master_token(p_master_token) 
+       OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+       OR current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
+        v_is_auth := TRUE;
+    END IF;
+
+    IF NOT v_is_auth THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    SELECT
+        COALESCE(apple_wallet_enabled, false) AS apple_wallet_enabled,
+        COALESCE(apple_pass_type_id, '') AS apple_pass_type_id,
+        COALESCE(apple_team_id, '') AS apple_team_id,
+        COALESCE(apple_cert_p12_base64, '') AS apple_cert_p12_base64,
+        COALESCE(apple_cert_password, '') AS apple_cert_password,
+        COALESCE(google_wallet_enabled, false) AS google_wallet_enabled,
+        COALESCE(google_issuer_id, '') AS google_issuer_id,
+        COALESCE(google_client_email, '') AS google_client_email,
+        COALESCE(google_private_key, '') AS google_private_key
+    INTO v_rec
+    FROM public.platform_integrations
+    ORDER BY created_at DESC
+    LIMIT 1;
+
+    IF v_rec IS NULL THEN
+        RETURN jsonb_build_object(
+            'apple_wallet_enabled', false,
+            'apple_pass_type_id', '',
+            'apple_team_id', '',
+            'apple_cert_p12_base64', '',
+            'apple_cert_password', '',
+            'google_wallet_enabled', false,
+            'google_issuer_id', '',
+            'google_client_email', '',
+            'google_private_key', ''
+        );
+    END IF;
+
+    RETURN to_jsonb(v_rec);
+END;
+$$;
+
+-- 7️⃣ دالة حفظ وتحديث معرفات المحافظ الرقمية المركزية
+CREATE OR REPLACE FUNCTION public.master_save_wallet_credentials(
+    p_master_token TEXT,
+    p_data JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_auth BOOLEAN := FALSE;
+    v_id UUID;
+BEGIN
+    IF public.is_valid_master_token(p_master_token) 
+       OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+       OR current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
+        v_is_auth := TRUE;
+    END IF;
+
+    IF NOT v_is_auth THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    SELECT id INTO v_id FROM public.platform_integrations LIMIT 1;
+
+    IF v_id IS NULL THEN
+        INSERT INTO public.platform_integrations (
+            apple_wallet_enabled, apple_pass_type_id, apple_team_id,
+            apple_cert_p12_base64, apple_cert_password,
+            google_wallet_enabled, google_issuer_id, google_client_email,
+            google_private_key
+        ) VALUES (
+            COALESCE((p_data->>'apple_wallet_enabled')::boolean, false),
+            p_data->>'apple_pass_type_id',
+            p_data->>'apple_team_id',
+            p_data->>'apple_cert_p12_base64',
+            p_data->>'apple_cert_password',
+            COALESCE((p_data->>'google_wallet_enabled')::boolean, false),
+            p_data->>'google_issuer_id',
+            p_data->>'google_client_email',
+            p_data->>'google_private_key'
+        );
+    ELSE
+        UPDATE public.platform_integrations
+        SET
+            apple_wallet_enabled = COALESCE((p_data->>'apple_wallet_enabled')::boolean, apple_wallet_enabled),
+            apple_pass_type_id = CASE WHEN p_data ? 'apple_pass_type_id' THEN p_data->>'apple_pass_type_id' ELSE apple_pass_type_id END,
+            apple_team_id = CASE WHEN p_data ? 'apple_team_id' THEN p_data->>'apple_team_id' ELSE apple_team_id END,
+            apple_cert_p12_base64 = CASE WHEN p_data ? 'apple_cert_p12_base64' THEN p_data->>'apple_cert_p12_base64' ELSE apple_cert_p12_base64 END,
+            apple_cert_password = CASE WHEN p_data ? 'apple_cert_password' THEN p_data->>'apple_cert_password' ELSE apple_cert_password END,
+            google_wallet_enabled = COALESCE((p_data->>'google_wallet_enabled')::boolean, google_wallet_enabled),
+            google_issuer_id = CASE WHEN p_data ? 'google_issuer_id' THEN p_data->>'google_issuer_id' ELSE google_issuer_id END,
+            google_client_email = CASE WHEN p_data ? 'google_client_email' THEN p_data->>'google_client_email' ELSE google_client_email END,
+            google_private_key = CASE WHEN p_data ? 'google_private_key' THEN p_data->>'google_private_key' ELSE google_private_key END,
+            updated_at = now()
+        WHERE id = v_id;
+    END IF;
+
+    RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+-- 8️⃣ دالة تنفيذ أوامر الـ SQL الإدارية عن بعد عبر التوكن السيادي
+CREATE OR REPLACE FUNCTION public.exec_master_sql(
+    p_sql TEXT,
+    p_master_token TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_auth BOOLEAN := FALSE;
+    v_start_time TIMESTAMPTZ := clock_timestamp();
+    v_execution_ms NUMERIC;
+BEGIN
+    IF public.is_valid_master_token(p_master_token) 
+       OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+       OR current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
+        v_is_auth := TRUE;
+    END IF;
+
+    IF NOT v_is_auth THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    IF TRIM(COALESCE(p_sql, '')) = '' THEN
+        RAISE EXCEPTION 'SQL statement cannot be empty';
+    END IF;
+
+    EXECUTE p_sql;
+
+    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'message', 'SQL script executed successfully by Sovereign Master Engine',
+        'duration_ms', v_execution_ms,
+        'executed_at', now()
+    );
+EXCEPTION WHEN OTHERS THEN
+    v_execution_ms := ROUND((EXTRACT(EPOCH FROM (clock_timestamp() - v_start_time)) * 1000)::numeric, 2);
+    RETURN jsonb_build_object(
+        'success', false,
+        'error', SQLERRM,
+        'code', SQLSTATE,
+        'duration_ms', v_execution_ms,
+        'executed_at', now()
+    );
+END;
+$$;
+
+-- 9️⃣ دالة تعيين أو تصفير حساب وكلمة مرور الوكيل مباشرة من لوحة التحكم
+CREATE OR REPLACE FUNCTION public.master_provision_tenant_admin(
+    p_master_token TEXT,
+    p_tenant_id TEXT,
+    p_email TEXT,
+    p_password TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+    v_is_auth BOOLEAN := FALSE;
+    v_user_id UUID;
+    v_clean_email TEXT;
+    v_encrypted_pw TEXT;
+BEGIN
+    IF public.is_valid_master_token(p_master_token) 
+       OR (auth.jwt() -> 'app_metadata' ->> 'is_super_admin')::boolean IS TRUE
+       OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'super_admin'
+       OR current_user IN ('postgres', 'service_role', 'supabase_admin') THEN
+        v_is_auth := TRUE;
+    END IF;
+
+    IF NOT v_is_auth THEN
+        RAISE EXCEPTION 'Access Denied: Invalid Sovereign Token (401 Unauthorized)';
+    END IF;
+
+    v_clean_email := LOWER(TRIM(p_email));
+    IF v_clean_email IS NULL OR v_clean_email = '' OR v_clean_email NOT LIKE '%@%' THEN
+        RAISE EXCEPTION 'البريد الإلكتروني غير صالح';
+    END IF;
+
+    IF p_password IS NULL OR LENGTH(TRIM(p_password)) < 6 THEN
+        RAISE EXCEPTION 'كلمة المرور يجب ألا تقل عن 6 خانات';
+    END IF;
+
+    v_encrypted_pw := crypt(p_password, gen_salt('bf'));
+
+    SELECT id INTO v_user_id FROM auth.users WHERE LOWER(email) = v_clean_email;
+
+    IF v_user_id IS NULL THEN
+        v_user_id := gen_random_uuid();
+        INSERT INTO auth.users (
+            instance_id,
+            id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            confirmation_token,
+            recovery_token,
+            email_change_token_new,
+            email_change_token_current,
+            email_change,
+            phone,
+            phone_change,
+            phone_change_token,
+            reauthentication_token,
+            email_change_confirm_status,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            is_super_admin,
+            is_sso_user,
+            is_anonymous,
+            created_at,
+            updated_at
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000000',
+            v_user_id,
+            'authenticated',
+            'authenticated',
+            v_clean_email,
+            v_encrypted_pw,
+            now(),
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            0,
+            jsonb_build_object(
+                'provider', 'email',
+                'providers', array['email'],
+                'role', 'tenant_admin',
+                'is_super_admin', true,
+                'tenant_id', p_tenant_id
+            ),
+            jsonb_build_object(
+                'full_name', 'مسؤول وكالة (' || p_tenant_id || ')'
+            ),
+            false,
+            false,
+            false,
+            now(),
+            now()
+        );
+
+        INSERT INTO auth.identities (
+            id,
+            user_id,
+            identity_data,
+            provider,
+            provider_id,
+            last_sign_in_at,
+            created_at,
+            updated_at
+        ) VALUES (
+            gen_random_uuid(),
+            v_user_id,
+            jsonb_build_object('sub', v_user_id::text, 'email', v_clean_email, 'email_verified', true),
+            'email',
+            v_clean_email,
+            now(),
+            now(),
+            now()
+        );
+    ELSE
+        -- 🧹 إصلاح وتحديث كافة الحقول النصية لمنع أخطاء GoTrue Schema NULL Scans
+        UPDATE auth.users
+        SET encrypted_password = v_encrypted_pw,
+            email_confirmed_at = COALESCE(email_confirmed_at, now()),
+            banned_until = NULL,
+            confirmation_token = COALESCE(confirmation_token, ''),
+            recovery_token = COALESCE(recovery_token, ''),
+            email_change = COALESCE(email_change, ''),
+            email_change_token_new = COALESCE(email_change_token_new, ''),
+            email_change_token_current = COALESCE(email_change_token_current, ''),
+            phone = COALESCE(phone, ''),
+            phone_change = COALESCE(phone_change, ''),
+            phone_change_token = COALESCE(phone_change_token, ''),
+            reauthentication_token = COALESCE(reauthentication_token, ''),
+            email_change_confirm_status = COALESCE(email_change_confirm_status, 0),
+            is_super_admin = COALESCE(is_super_admin, false),
+            is_sso_user = COALESCE(is_sso_user, false),
+            is_anonymous = COALESCE(is_anonymous, false),
+            aud = 'authenticated',
+            role = 'authenticated',
+            instance_id = '00000000-0000-0000-0000-000000000000',
+            raw_app_meta_data = jsonb_build_object(
+                'provider', 'email',
+                'providers', array['email'],
+                'role', 'tenant_admin',
+                'is_super_admin', true,
+                'tenant_id', p_tenant_id
+            ),
+            updated_at = now()
+        WHERE id = v_user_id;
+
+        IF EXISTS (SELECT 1 FROM auth.identities WHERE user_id = v_user_id AND provider = 'email') THEN
+            UPDATE auth.identities
+            SET identity_data = jsonb_build_object('sub', v_user_id::text, 'email', v_clean_email, 'email_verified', true),
+                provider_id = v_clean_email,
+                last_sign_in_at = now(),
+                updated_at = now()
+            WHERE user_id = v_user_id AND provider = 'email';
+        ELSE
+            INSERT INTO auth.identities (
+                id,
+                user_id,
+                identity_data,
+                provider,
+                provider_id,
+                last_sign_in_at,
+                created_at,
+                updated_at
+            ) VALUES (
+                gen_random_uuid(),
+                v_user_id,
+                jsonb_build_object('sub', v_user_id::text, 'email', v_clean_email, 'email_verified', true),
+                'email',
+                v_clean_email,
+                now(),
+                now(),
+                now()
+            );
+        END IF;
+    END IF;
+
+    UPDATE public.tenants
+    SET admin_email = v_clean_email,
+        updated_at = now()
+    WHERE id = p_tenant_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'user_id', v_user_id,
+        'email', v_clean_email,
+        'tenant_id', p_tenant_id,
+        'message', 'تم تعيين حساب وكلمة مرور الوكيل بنجاح فوراً'
+    );
+END;
+$$;
+
+-- 🔟 منح الصلاحيات لدوال الـ RPC
+GRANT EXECUTE ON FUNCTION public.is_valid_master_token(TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.master_get_tenants(TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.master_update_tenant(TEXT, TEXT, JSONB) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.master_create_tenant(TEXT, JSONB) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.master_get_wallet_credentials(TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.master_save_wallet_credentials(TEXT, JSONB) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.exec_master_sql(TEXT, TEXT) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.master_provision_tenant_admin(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated, service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- >>> FILE: 20261115_fix_process_affiliate_payout_atomic.sql <<<
+-- ==============================================================================
+
+-- ==============================================================================
+-- 🏛️ AL-ATHAR CORE: Fix process_affiliate_payout_atomic RPC
+-- Resolves: column "partner_account_id" does not exist error
+-- Ensures: Atomic partner payout processing with proper column mappings and CTE row locking
+-- ==============================================================================
+
+CREATE OR REPLACE FUNCTION public.process_affiliate_payout_atomic(
+    p_partner_id uuid,
+    p_admin_user text DEFAULT 'Super Admin'::text,
+    p_transfer_ref text DEFAULT NULL::text,
+    p_bank_name text DEFAULT 'تحويل بنكي مباشر'::text,
+    p_iban text DEFAULT NULL::text,
+    p_notes text DEFAULT NULL::text,
+    p_master_token text DEFAULT NULL::text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'extensions'
+AS $function$
+DECLARE
+    v_affiliate RECORD;
+    v_partner_account RECORD;
+    v_effective_affiliate_id UUID;
+    v_effective_partner_id UUID;
+    v_partner_name TEXT;
+    v_tenant_id TEXT;
+    v_total_due NUMERIC := 0.00;
+    v_payout_id UUID;
+    v_payout_num TEXT;
+    v_tx_id TEXT;
+    v_count INT := 0;
+    v_ledger_id UUID;
+BEGIN
+    -- 1. البحث عن الشريك والتحقق منه سواء تم تمرير معرف partner_accounts.id أو affiliates.id
+    SELECT * INTO v_partner_account
+    FROM public.partner_accounts
+    WHERE id = p_partner_id OR affiliate_id = p_partner_id
+    LIMIT 1;
+
+    IF FOUND THEN
+        v_effective_partner_id := v_partner_account.id;
+        v_effective_affiliate_id := v_partner_account.affiliate_id;
+        v_partner_name := v_partner_account.display_name;
+        v_tenant_id := v_partner_account.tenant_id;
+    ELSE
+        SELECT * INTO v_affiliate
+        FROM public.affiliates
+        WHERE id = p_partner_id
+        LIMIT 1;
+
+        IF FOUND THEN
+            v_effective_affiliate_id := v_affiliate.id;
+            v_partner_name := v_affiliate.name;
+            v_tenant_id := v_affiliate.tenant_id;
+        ELSE
+            RETURN jsonb_build_object('success', false, 'error', 'حساب الشريك غير موجود في النظام');
+        END IF;
+    END IF;
+
+    -- 2. قفل وحساب إجمالي العمولات المكتسبة الجاهزة للصرف (عبر CTE لتفادي خطأ FOR UPDATE مع التجميع)
+    WITH locked_commissions AS (
+        SELECT id, commission_amount
+        FROM public.partner_commissions
+        WHERE (
+            (v_effective_affiliate_id IS NOT NULL AND affiliate_id = v_effective_affiliate_id)
+            OR (v_effective_partner_id IS NOT NULL AND partner_account_id = v_effective_partner_id)
+        )
+        AND status IN ('EARNED', 'AVAILABLE')
+        FOR UPDATE
+    )
+    SELECT COALESCE(SUM(commission_amount), 0.00), COUNT(*)
+    INTO v_total_due, v_count
+    FROM locked_commissions;
+
+    IF v_total_due <= 0.00 OR v_count = 0 THEN
+        RETURN jsonb_build_object('success', false, 'error', 'لا توجد عمولات مستحقة وجاهزة للصرف لهذا الشريك');
+    END IF;
+
+    -- 3. توليد أرقام الصرف والقيد المالي
+    v_payout_num := 'PAY-' || to_char(NOW(), 'YYYYMMDD') || '-' || UPPER(SUBSTRING(gen_random_uuid()::text, 1, 6));
+    v_tx_id := 'tx_payout_' || v_payout_num;
+
+    -- 4. إدراج القيد المحاسبي في financial_ledger أولاً للحصول على معرف القيد
+    INSERT INTO public.financial_ledger (
+        tenant_id,
+        transaction_id,
+        transaction_type,
+        store_id,
+        affiliate_id,
+        gross_amount,
+        vat_amount,
+        gateway_fee,
+        affiliate_commission,
+        net_platform_amount,
+        status,
+        created_by,
+        metadata,
+        created_at
+    ) VALUES (
+        v_tenant_id,
+        v_tx_id,
+        'PAYOUT',
+        NULL,
+        v_effective_affiliate_id::text,
+        -v_total_due,
+        0.00,
+        0.00,
+        -v_total_due,
+        0.00,
+        'SETTLED',
+        COALESCE(p_admin_user, 'Super Admin'),
+        jsonb_build_object(
+            'partner_name', v_partner_name,
+            'payout_number', v_payout_num,
+            'bank_name', p_bank_name,
+            'iban', p_iban,
+            'transfer_reference', p_transfer_ref,
+            'notes', p_notes,
+            'currency', 'SAR'
+        ),
+        NOW()
+    ) RETURNING id INTO v_ledger_id;
+
+    -- 5. إدراج سجل الصرف الرسمي في جدول affiliate_payouts بمطابقة كاملة للأعمدة
+    INSERT INTO public.affiliate_payouts (
+        tenant_id,
+        affiliate_id,
+        payout_number,
+        partner_name,
+        amount,
+        commissions_count,
+        bank_name,
+        iban,
+        transfer_reference,
+        status,
+        notes,
+        disbursed_by,
+        ledger_entry_id,
+        disbursed_at,
+        created_at
+    ) VALUES (
+        v_tenant_id,
+        COALESCE(v_effective_affiliate_id::text, v_effective_partner_id::text),
+        v_payout_num,
+        v_partner_name,
+        v_total_due,
+        v_count,
+        COALESCE(p_bank_name, 'تحويل بنكي مباشر'),
+        COALESCE(p_iban, 'N/A'),
+        COALESCE(p_transfer_ref, 'TRX-' || to_char(NOW(), 'YYYYMMDD') || '-' || UPPER(SUBSTRING(gen_random_uuid()::text, 1, 5))),
+        'COMPLETED',
+        p_notes,
+        p_admin_user,
+        v_ledger_id,
+        NOW(),
+        NOW()
+    ) RETURNING id INTO v_payout_id;
+
+    -- 6. تحديث حالة العمولات إلى تم الصرف PAID
+    UPDATE public.partner_commissions
+    SET status = 'PAID',
+        updated_at = NOW()
+    WHERE (
+        (v_effective_affiliate_id IS NOT NULL AND affiliate_id = v_effective_affiliate_id)
+        OR (v_effective_partner_id IS NOT NULL AND partner_account_id = v_effective_partner_id)
+    )
+    AND status IN ('EARNED', 'AVAILABLE');
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'payout_id', v_payout_id,
+        'payout_number', v_payout_num,
+        'amount_paid', v_total_due,
+        'commissions_count', v_count,
+        'transaction_id', v_tx_id
+    );
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.process_affiliate_payout_atomic TO anon, authenticated, service_role;
 
 
 -- ==============================================================================
