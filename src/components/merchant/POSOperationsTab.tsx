@@ -38,7 +38,7 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-
+import { getSupabaseClient } from '../../lib/supabase';
 interface POSOperationsTabProps {
   store: Store;
   branches?: StoreBranch[];
@@ -79,8 +79,9 @@ export const POSOperationsTab: React.FC<POSOperationsTabProps> = ({
   const [viewingMovement, setViewingMovement] = useState<POSCashMovement | null>(null);
 
   // Fetch Live Data
-  const loadOperationsData = async () => {
-    setLoading(true);
+  const loadOperationsData = async (silent?: any) => {
+  const isSilent = silent === true;
+  if (!isSilent) setLoading(true);
     try {
       const [fetchedShifts, fetchedMovements, fetchedOrders, fetchedSpecialists] = await Promise.all([
         LoyaltyService.getStoreShifts(store.id, { limit: 100 }),
@@ -95,13 +96,64 @@ export const POSOperationsTab: React.FC<POSOperationsTabProps> = ({
     } catch (err) {
       console.warn('Failed to load merchant POS operations data:', err);
     } finally {
-      setLoading(false);
+      if (!isSilent) setLoading(false);
     }
   };
 
   useEffect(() => {
+    if (!store?.id) return;
+
+    // 1. تحميل أولي للبيانات
     loadOperationsData();
-  }, [store.id]);
+
+    // 2. تحديث تلقائي صامت عند الرجوع للتبويب
+    const handleFocus = () => {
+      loadOperationsData(true);
+    };
+    window.addEventListener('focus', handleFocus);
+
+    // 3. اشتراك لحظي مقيد حصرياً بـ store_id لمنع تداخل المتاجر
+    const supabaseClient = getSupabaseClient();
+    let channel: any = null;
+
+    if (supabaseClient) {
+      channel = supabaseClient
+        .channel(`pos-ops-realtime-${store.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'pos_shifts',
+            filter: `store_id=eq.${store.id}`,
+          },
+          () => {
+            loadOperationsData(true);
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'pos_cash_movements',
+            filter: `store_id=eq.${store.id}`,
+          },
+          () => {
+            loadOperationsData(true);
+          }
+        )
+        .subscribe();
+    }
+
+    // 4. إلغاء الاشتراك والمستمع لتفريغ الذاكرة
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      if (channel && supabaseClient) {
+        supabaseClient.removeChannel(channel);
+      }
+    };
+  }, [store?.id]);
 
   // Date Filtering Helper
   const filterByDate = (dateStr: string) => {
@@ -426,8 +478,7 @@ export const POSOperationsTab: React.FC<POSOperationsTabProps> = ({
             </button>
           ))}
           <button
-            onClick={loadOperationsData}
-            title="تحديث البيانات"
+onClick={() => loadOperationsData()}            title="تحديث البيانات"
             className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
           >
             <History className="w-4 h-4" />
