@@ -12496,20 +12496,19 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         }
 
         const { data, error } = await query;
-        if (!error && data) return data as POSShift[];
+        if (error) {
+          console.error('getStoreShifts Supabase Error:', error);
+          return [];
+        }
+        return (data || []) as POSShift[];
       } catch (err) {
-        console.warn('getStoreShifts DB error:', err);
+        console.error('getStoreShifts DB Exception:', err);
+        return [];
       }
     }
 
-    const localHistory = getLocalData<POSShift[]>(`radar_pos_shift_history_${storeId}`, []);
-    return localHistory.filter((s) => {
-      const matchStore = s.store_id === resolvedStoreId || s.store_id === storeId;
-      const matchBranch = !cleanBranch || cleanBranchUUID(s.branch_id) === cleanBranch;
-      const matchStaff = !options?.staffId || s.staff_id === options.staffId;
-      const matchStatus = !options?.status || options.status === 'all' || s.status === options.status;
-      return matchStore && matchBranch && matchStaff && matchStatus;
-    });
+    return [];
+
   },
 
   // صياغة سند قبض / صرف نقدية لواتساب
