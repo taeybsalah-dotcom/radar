@@ -2882,20 +2882,26 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           : await query.eq('slug', currentStore.slug).select(await storeCols(supabase)).maybeSingle();
 
         // 🛡️ مزامنة سيرفرية موثوقة لـ fulfillment_settings عبر RPC لضمان حفظها 100%
+        let rpcFulfillmentSaved = false;
         if (isUUID(currentStore.id) && mergedFulfillment) {
           try {
-            await (supabase as any).rpc('update_store_fulfillment_settings', {
+            const staffTok = getActiveStaffToken();
+            const rpcRes = await (supabase as any).rpc('update_store_fulfillment_settings', {
               p_store_id: currentStore.id,
               p_fulfillment_settings: mergedFulfillment,
+              ...(staffTok ? { p_staff_token: staffTok } : {}),
             });
+            if (!rpcRes?.error && rpcRes?.data?.success) {
+              rpcFulfillmentSaved = true;
+            }
           } catch (rpcErr) {
             console.warn('update_store_fulfillment_settings RPC notice:', rpcErr);
           }
         }
 
-        if (!res.error && res.data) {
+        if ((!res.error && res.data) || rpcFulfillmentSaved) {
           updatedSupabaseStore = {
-            ...(res.data as any),
+            ...((res.data as any) || currentStore),
             ...pickStoreAssets(safeDbUpdates),
             ...themePayload,
             fulfillment_settings: mergedFulfillment,
