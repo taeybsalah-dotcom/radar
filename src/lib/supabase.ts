@@ -8308,12 +8308,15 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         const staffToken = this.getStaffToken(resolvedStoreId, 'any') || getActiveStaffToken();
         const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('add_customer_points_secure', {
           p_store_id: resolvedStoreId,
-          p_phone: cleanPhone,
+          p_phone: normPhone || cleanPhone,
           p_points: pointsEarned,
           p_staff_token: staffToken || null,
           p_customer_name: customerName || null,
-          p_purchase_amount: purchaseAmount || null,
+          p_purchase_amount: purchaseAmount ?? null,
           p_invoice_number: reason || null,
+          p_entry_method: actionType === 'SERVICE_BOOKING' ? 'service_booking' : 'pos_cashier',
+          p_branch_id: cleanBranchUUID(branchId),
+          p_branch_name: branchName || null,
         });
 
         if (!rpcErr && rpcRes && rpcRes.success) {
