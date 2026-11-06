@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Store, UserRole } from './types';
+import { Store, UserRole, getStoreActiveModules } from './types';
 import { LoyaltyService } from './lib/supabase';
 import { LoyaltyEvents, CLIENT_INSTANCE_ID } from './lib/events';
 import { debounce } from './lib/debounce';
@@ -92,6 +92,7 @@ import { RadarQuickSwitcher } from './components/RadarQuickSwitcher';
 type PortalTab =
   | 'super-admin'
   | 'cashier'
+  | 'scanner'
   | 'customer'
   | 'admin'
   | 'join'
@@ -314,6 +315,45 @@ function parseRouteParams() {
     };
   }
 
+  // 6.1. Check Loyalty Scanner Route (/scan, /scanner, portal=scanner, portal=scan, #scanner, #scan)
+  const isScannerPath =
+    pathname === '/scan' ||
+    pathname === '/scan/' ||
+    pathname === '/scanner' ||
+    pathname === '/scanner/' ||
+    portalParam === 'scanner' ||
+    portalParam === 'scan' ||
+    rawHash === 'scanner' ||
+    rawHash === 'scan' ||
+    rawHash.endsWith('-scan') ||
+    rawHash.endsWith('-scanner');
+  if (isScannerPath) {
+    let resolvedScannerSlug =
+      slugParam ||
+      (rawHash.endsWith('-scanner')
+        ? rawHash.replace(/-scanner$/, '')
+        : rawHash.endsWith('-scan')
+        ? rawHash.replace(/-scan$/, '')
+        : null);
+    if (!resolvedScannerSlug) {
+      try {
+        const rawAuth = localStorage.getItem('radar_unified_auth_user');
+        if (rawAuth) {
+          const parsed = JSON.parse(rawAuth);
+          if (parsed && parsed.role === 'cashier' && (parsed.storeSlug || parsed.storeId)) {
+            resolvedScannerSlug = parsed.storeSlug || parsed.storeId;
+          }
+        }
+      } catch {}
+    }
+    return {
+      portal: 'scanner' as const,
+      isPreview: previewParam,
+      storeSlug: resolvedScannerSlug || null,
+      partnerSlug: null,
+    };
+  }
+
   // 6.5. Check Kitchen Display System Route (/kds, /kitchen, portal=kds, portal=kitchen, #kds, #kitchen)
   const isKDSPath =
     pathname === '/kds' ||
@@ -383,6 +423,14 @@ function parseRouteParams() {
   if (effectiveSegments.length >= 2) {
     const firstSeg = effectiveSegments[0];
     const secondSeg = effectiveSegments[1].toLowerCase();
+    if (secondSeg === 'scan' || secondSeg === 'scanner' || secondSeg === 'loyalty') {
+      return {
+        portal: 'scanner' as const,
+        isPreview: previewParam,
+        storeSlug: firstSeg,
+        partnerSlug: null,
+      };
+    }
     if (secondSeg === 'pos' || secondSeg === 'cashier') {
       return {
         portal: 'cashier' as const,
@@ -452,6 +500,8 @@ function parseRouteParams() {
     'super-admin',
     'superadmin',
     'pos',
+    'scan',
+    'scanner',
     'track',
     'onboarding',
     'owner',
@@ -702,7 +752,7 @@ export function App() {
 
         const isTargetCurrent =
           (activeTab === 'admin' && isMatchingStore) ||
-          (activeTab === 'cashier' && isMatchingStore) ||
+          ((activeTab === 'cashier' || activeTab === 'scanner') && isMatchingStore) ||
           (activeTab === 'partner' && isMatchingPartner) ||
           isMatchingSuperAdmin;
 
@@ -716,7 +766,7 @@ export function App() {
               ? 'partner'
               : activeTab === 'admin'
               ? 'store'
-              : activeTab === 'cashier'
+              : activeTab === 'cashier' || activeTab === 'scanner'
               ? 'cashier'
               : 'customer';
 
@@ -847,7 +897,7 @@ export function App() {
         if (found) {
           setStore(found);
           const targetPortal =
-            config.portal && ['cashier', 'customer', 'admin', 'kds', 'driver'].includes(config.portal)
+            config.portal && ['cashier', 'scanner', 'customer', 'admin', 'kds', 'driver'].includes(config.portal)
               ? config.portal
               : 'customer';
           setActiveTab(targetPortal);
@@ -885,8 +935,8 @@ export function App() {
         }
       }
 
-      // 7. Resolving target store if portal is cashier, admin, customer, kds, or driver with slug
-      if (config.portal && config.storeSlug && ['cashier', 'customer', 'admin', 'kds', 'driver'].includes(config.portal)) {
+      // 7. Resolving target store if portal is cashier, scanner, admin, customer, kds, or driver with slug
+      if (config.portal && config.storeSlug && ['cashier', 'scanner', 'customer', 'admin', 'kds', 'driver'].includes(config.portal)) {
         const targetStore = await LoyaltyService.resolveStore(config.storeSlug);
         if (targetStore) {
           setStore(targetStore);
@@ -914,7 +964,7 @@ export function App() {
 
   const handleSelectStoreFromSuperAdmin = (
     selectedStore: Store,
-    targetTab: 'cashier' | 'customer' | 'admin' = 'admin'
+    targetTab: 'cashier' | 'scanner' | 'customer' | 'admin' = 'admin'
   ) => {
     setStore(selectedStore);
     setActiveTab(targetTab);
@@ -1049,6 +1099,8 @@ export function App() {
               <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-900/80 border border-amber-500/30 text-amber-400">
                 {activeTab === 'customer'
                   ? '📱 بوابة الزبون (PWA)'
+                  : activeTab === 'scanner' || (activeTab === 'cashier' && !getStoreActiveModules(store).pos)
+                  ? '📷 بوابة ماسح الولاء'
                   : activeTab === 'cashier'
                   ? '⚡ بوابة الكاشير (POS)'
                   : '💼 لوحة التاجر (Admin)'}
@@ -1133,9 +1185,18 @@ export function App() {
           {activeTab === 'cashier' && store && (
             <ProtectedRoute
               allowedRoles={['cashier', 'merchant', 'super_admin']}
-              portalName="نظام الكاشير (Cashier POS)"
+              portalName={!getStoreActiveModules(store).pos ? 'بوابة ماسح الولاء والمكافآت' : 'نظام الكاشير (Cashier POS)'}
             >
-              <CashierPOS store={store} />
+              <CashierPOS store={store} scannerOnlyMode={!getStoreActiveModules(store).pos} />
+            </ProtectedRoute>
+          )}
+
+          {activeTab === 'scanner' && store && (
+            <ProtectedRoute
+              allowedRoles={['cashier', 'merchant', 'super_admin']}
+              portalName="بوابة ماسح الولاء والمكافآت"
+            >
+              <CashierPOS store={store} scannerOnlyMode={true} />
             </ProtectedRoute>
           )}
 
@@ -1252,6 +1313,8 @@ export function App() {
             portalName={
               activeTab === 'partner'
                 ? 'بوابة الشريك والمسوق'
+                : activeTab === 'scanner' || (activeTab === 'cashier' && store && !getStoreActiveModules(store).pos)
+                ? 'بوابة ماسح الولاء'
                 : activeTab === 'cashier'
                 ? 'بوابة الكاشير'
                 : activeTab === 'admin'
@@ -1262,7 +1325,7 @@ export function App() {
                 ? 'تطبيق كابتن التوصيل'
                 : store?.name || 'محفظة الولاء'
             }
-            role={role || activeTab}
+            role={role || (activeTab === 'scanner' ? 'cashier' : activeTab)}
           />
         )}
       </main>
@@ -1300,7 +1363,13 @@ export function App() {
             } else if (targetPortal === 'partner') {
               window.location.href = window.location.origin + '/partner';
             } else if (targetStoreSlug) {
-              window.location.href = `${window.location.origin}/${targetStoreSlug}${targetPortal === 'customer' ? '' : '/' + targetPortal}`;
+              const subpath =
+                targetPortal === 'customer'
+                  ? ''
+                  : targetPortal === 'scanner'
+                  ? '/scan'
+                  : '/' + targetPortal;
+              window.location.href = `${window.location.origin}/${targetStoreSlug}${subpath}`;
             }
           }}
         />

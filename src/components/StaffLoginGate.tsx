@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Store, StoreStaff, StoreBranch } from '../types';
+import { Store, StoreStaff, StoreBranch, getStoreActiveModules } from '../types';
 import { LoyaltyService, cleanBranchUUID } from '../lib/supabase';
 import { LoyaltyEvents } from '../lib/events';
 import { useAuth } from '../context/AuthContext';
@@ -27,13 +27,16 @@ interface StaffLoginGateProps {
   store: Store;
   requiredRole: 'admin' | 'cashier';
   onAuthenticated: (staff: StoreStaff) => void;
+  scannerOnlyMode?: boolean;
 }
 
 export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
   store,
   requiredRole,
   onAuthenticated,
+  scannerOnlyMode,
 }) => {
+  const isScannerMode = Boolean(scannerOnlyMode) || !getStoreActiveModules(store).pos;
   const { login: authLogin } = useAuth();
 
   // Mode: 'LOGIN' | 'FORGOT_PIN' | 'RESET_PIN'
@@ -329,13 +332,17 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
             </div>
           ) : (
             <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-slate-800 to-slate-900 border-2 border-amber-500/40 flex items-center justify-center text-3xl mx-auto shadow-xl shadow-amber-500/10">
-              {requiredRole === 'admin' ? '💼' : '⚡'}
+              {requiredRole === 'admin' ? '💼' : isScannerMode ? '📷' : '⚡'}
             </div>
           )}
 
           <div>
             <h2 className="text-xl font-black text-white">
-              {requiredRole === 'admin' ? 'بوابة مدير المتجر' : 'شاشة كاشير نقطة البيع'}
+              {requiredRole === 'admin'
+                ? 'بوابة مدير المتجر'
+                : isScannerMode
+                ? 'بوابة ماسح الولاء والمكافآت'
+                : 'شاشة كاشير نقطة البيع'}
             </h2>
             <p className="text-xs text-amber-400 font-bold mt-1">متجر: {store.name}</p>
           </div>
@@ -374,7 +381,7 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
                     <Building2 className="w-3.5 h-3.5 text-amber-400" />
-                    الفرع المراد بدء الوردية فيه:
+                    {isScannerMode ? 'الفرع الحالي لموظف مسح الولاء:' : 'الفرع المراد بدء الوردية فيه:'}
                   </label>
                   <span className="text-[10px] text-amber-400 font-bold bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
                     إجباري للتحقق 🔒
@@ -503,6 +510,8 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
               <p className="text-xs text-slate-300 leading-relaxed">
                 {requiredRole === 'admin'
                   ? 'أدخل رقم جوالك المسجل لتوليد رمز استعادة فوري وتعيين رقم سري جديد دون الحاجة لرسائل SMS مكلفة.'
+                  : isScannerMode
+                  ? 'بصفتك موظف مسح الولاء، يمكنك طلب إعادة تعيين رمز الدخول الخاص بك من مدير المتجر مباشرة.'
                   : 'بصفتك كاشير، يمكنك طلب إعادة تعيين رمز الدخول الخاص بك من مدير المتجر مباشرة.'}
               </p>
             </div>
@@ -536,14 +545,14 @@ export const StaffLoginGate: React.FC<StaffLoginGateProps> = ({
             ) : (
               <div className="space-y-3">
                 <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 leading-relaxed text-right">
-                  💡 <strong>ملاحظة للكاشير:</strong> لسلامة العمليات المالية، يستطيع مدير المتجر تعيين رمز PIN جديد لك في ثوانٍ من داخل لوحة تحكم المتجر (قسم طاقم العمل والـ PIN).
+                  💡 <strong>{isScannerMode ? 'ملاحظة للموظف:' : 'ملاحظة للكاشير:'}</strong> يستطيع مدير المتجر تعيين رمز PIN جديد لك في ثوانٍ من داخل لوحة تحكم المتجر (قسم طاقم العمل والـ PIN).
                 </div>
                 {store.manager_contact && (
                   <button
                     type="button"
                     onClick={() => {
                       const contact = store.manager_contact || '';
-                      const msg = `مرحباً مدير متجر ${store.name}، نسيت رمز الـ PIN الخاص بحساب الكاشير، يرجى إعادة تعيينه لي من لوحة التحكم.`;
+                      const msg = `مرحباً مدير متجر ${store.name}، نسيت رمز الـ PIN الخاص بحسابي (${isScannerMode ? 'موظف ماسح الولاء' : 'الكاشير'})، يرجى إعادة تعيينه لي من لوحة التحكم.`;
                       window.open(`https://wa.me/966${contact.replace(/^0/, '')}?text=${encodeURIComponent(msg)}`, '_blank');
                     }}
                     className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition"

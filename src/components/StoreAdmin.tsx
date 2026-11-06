@@ -220,39 +220,42 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
   // 🔄 Synchronize StoreAdmin state whenever initialStore prop changes
   useEffect(() => {
-    if (initialStore && initialStore.id && initialStore.id !== store?.id) {
+    if (initialStore && initialStore.id) {
+      const isDifferentStore = initialStore.id !== store?.id;
       setStore(initialStore);
-      setStoreName(initialStore.name || '');
-      setStoreSlug(initialStore.slug || '');
-      setCustomDomain(initialStore.custom_domain || '');
-      setManagerName(initialStore.manager_name || '');
-      setManagerContact(initialStore.manager_contact || '');
-      setPrimaryColor(initialStore.primary_color || '#0F172A');
-      setSecondaryColor(initialStore.secondary_color || '#F59E0B');
-      setThemeMode((initialStore.theme_mode as any) || 'light');
-      setBackgroundColor(initialStore.background_color || '#F8FAFC');
-      setCardColor(initialStore.card_color || '#FFFFFF');
-      setPointsPerRiyal(initialStore.points_per_riyal || 1.0);
-      setStoreLogoUrl(initialStore.logo_url || '');
+      if (isDifferentStore) {
+        setStoreName(initialStore.name || '');
+        setStoreSlug(initialStore.slug || '');
+        setCustomDomain(initialStore.custom_domain || '');
+        setManagerName(initialStore.manager_name || '');
+        setManagerContact(initialStore.manager_contact || '');
+        setPrimaryColor(initialStore.primary_color || '#0F172A');
+        setSecondaryColor(initialStore.secondary_color || '#F59E0B');
+        setThemeMode((initialStore.theme_mode as any) || 'light');
+        setBackgroundColor(initialStore.background_color || '#F8FAFC');
+        setCardColor(initialStore.card_color || '#FFFFFF');
+        setPointsPerRiyal(initialStore.points_per_riyal || 1.0);
+        setStoreLogoUrl(initialStore.logo_url || '');
 
-      const existing = LoyaltyService.getStaffSession(initialStore.id, 'admin', initialStore.slug);
-      if (existing) {
-        setAuthenticatedAdmin(existing);
-      } else if (isSuperAdminSession) {
-        setAuthenticatedAdmin({
-          id: `sa_${initialStore.id}`,
-          store_id: initialStore.id,
-          name: 'مالك المنصة (Super Admin)',
-          phone: '0500000000',
-          role: 'admin',
-          is_active: true,
-          can_manual_input_phone: true,
-        });
-      } else {
-        setAuthenticatedAdmin(null);
+        const existing = LoyaltyService.getStaffSession(initialStore.id, 'admin', initialStore.slug);
+        if (existing) {
+          setAuthenticatedAdmin(existing);
+        } else if (isSuperAdminSession) {
+          setAuthenticatedAdmin({
+            id: `sa_${initialStore.id}`,
+            store_id: initialStore.id,
+            name: 'مالك المنصة (Super Admin)',
+            phone: '0500000000',
+            role: 'admin',
+            is_active: true,
+            can_manual_input_phone: true,
+          });
+        } else {
+          setAuthenticatedAdmin(null);
+        }
       }
     }
-  }, [initialStore?.id, initialStore?.slug, isSuperAdminSession]);
+  }, [initialStore, isSuperAdminSession]);
 
   // Settings & Loyalty Modifier State
   const [storeName, setStoreName] = useState<string>(currentStore?.name || '');
@@ -465,7 +468,24 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       setEnableDrivers(s.enable_drivers !== false);
       setEnableInventory(s.enable_inventory !== false);
     }
-  }, [store?.id, currentStore?.id]);
+  }, [
+    store?.id,
+    currentStore?.id,
+    store?.enable_orders,
+    store?.enable_bookings,
+    store?.enable_loyalty,
+    store?.enable_pos,
+    store?.enable_kds,
+    store?.enable_drivers,
+    store?.enable_inventory,
+    store?.owner_enable_orders,
+    store?.owner_enable_bookings,
+    store?.owner_enable_loyalty,
+    store?.owner_enable_pos,
+    store?.owner_enable_kds,
+    store?.owner_enable_drivers,
+    store?.owner_enable_inventory,
+  ]);
 
   type SaaSModuleKey = 'orders' | 'bookings' | 'loyalty' | 'pos' | 'kds' | 'drivers' | 'inventory';
 
@@ -998,24 +1018,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     []
   );
 
-  // Sync state if initialStore prop updates from parent (with safe preservation of local fulfillment state)
+  // Sync state if initialStore prop updates from parent
   useEffect(() => {
     if (initialStore && initialStore.id) {
       setStore((prev) => {
         if (prev && prev.id === initialStore.id) {
           return normalizeStore({
+            ...prev,
             ...initialStore,
             fulfillment_settings: {
-              ...(initialStore.fulfillment_settings || {}),
               ...(prev.fulfillment_settings || {}),
+              ...(initialStore.fulfillment_settings || {}),
               wallet_pass_config: {
-                ...((initialStore.fulfillment_settings as any)?.wallet_pass_config || {}),
                 ...((prev.fulfillment_settings as any)?.wallet_pass_config || {}),
+                ...((initialStore.fulfillment_settings as any)?.wallet_pass_config || {}),
               },
             },
           });
         }
-        return initialStore;
+        return normalizeStore(initialStore);
       });
       saveActiveStoreBranding(initialStore);
     }
@@ -1182,20 +1203,25 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
           },
           (payload: any) => {
             if (!isSubscribed || !payload.new) return;
-            setStore((prev) => ({ ...prev, ...payload.new }));
-            if (payload.new.name) setStoreName(payload.new.name);
-            if (payload.new.slug) setStoreSlug(payload.new.slug);
-            if (payload.new.primary_color) setPrimaryColor(payload.new.primary_color);
-            if (payload.new.secondary_color) setSecondaryColor(payload.new.secondary_color);
-            if (payload.new.theme_mode) setThemeMode(payload.new.theme_mode);
-            if (payload.new.background_color) setBackgroundColor(payload.new.background_color);
-            if (payload.new.card_color) setCardColor(payload.new.card_color);
-            if (payload.new.theme_preset !== undefined) setSelectedThemePreset(payload.new.theme_preset || '');
-            if (payload.new.enable_orders !== undefined) setEnableOrders(payload.new.enable_orders);
-            if (payload.new.enable_bookings !== undefined) setEnableBookings(payload.new.enable_bookings);
-            if (payload.new.enable_loyalty !== undefined) setEnableLoyalty(payload.new.enable_loyalty);
-            if (payload.new.status) {
-              setSubscriptionInfo((prev: any) => prev ? { ...prev, status: payload.new.status } : prev);
+            const normalizedNew = normalizeStore(payload.new);
+            setStore((prev) => normalizeStore({ ...prev, ...normalizedNew }));
+            if (normalizedNew.name) setStoreName(normalizedNew.name);
+            if (normalizedNew.slug) setStoreSlug(normalizedNew.slug);
+            if (normalizedNew.primary_color) setPrimaryColor(normalizedNew.primary_color);
+            if (normalizedNew.secondary_color) setSecondaryColor(normalizedNew.secondary_color);
+            if (normalizedNew.theme_mode) setThemeMode(normalizedNew.theme_mode);
+            if (normalizedNew.background_color) setBackgroundColor(normalizedNew.background_color);
+            if (normalizedNew.card_color) setCardColor(normalizedNew.card_color);
+            if (normalizedNew.theme_preset !== undefined) setSelectedThemePreset(normalizedNew.theme_preset || '');
+            setEnableOrders(normalizedNew.enable_orders !== false);
+            setEnableBookings(normalizedNew.enable_bookings !== false);
+            setEnableLoyalty(normalizedNew.enable_loyalty !== false);
+            setEnablePos(normalizedNew.enable_pos !== false);
+            setEnableKds(normalizedNew.enable_kds !== false);
+            setEnableDrivers(normalizedNew.enable_drivers !== false);
+            setEnableInventory(normalizedNew.enable_inventory !== false);
+            if (normalizedNew.status) {
+              setSubscriptionInfo((prev: any) => prev ? { ...prev, status: normalizedNew.status } : prev);
             }
           }
         )
@@ -3083,7 +3109,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         origin: { y: 0.6 },
         colors: ['#F59E0B', '#10B981', '#3B82F6', '#EC4899'],
       });
-      setStaffActionSuccess('🎉 تمت ترقية سعة الكاشير بنجاح (+1 نقطة بيع إضافية)! يمكنك الآن إضافة موظف كاشير جديد.');
+      setStaffActionSuccess(
+        !activeStoreModules.pos
+          ? '🎉 تمت ترقية سعة أجهزة مسح الولاء بنجاح (+1 مقعد إضافي)! يمكنك الآن إضافة موظف ولاء جديد.'
+          : '🎉 تمت ترقية سعة الكاشير بنجاح (+1 نقطة بيع إضافية)! يمكنك الآن إضافة موظف كاشير جديد.'
+      );
       setIsAddStaffOpen(true);
       setTimeout(() => setStaffActionSuccess(null), 5000);
     } catch (e) {
@@ -3325,17 +3355,22 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     return true;
   });
 
+  const activeStoreModules = useMemo(() => getStoreActiveModules(store || currentStore), [store, currentStore]);
+
   const baseDomain = store.custom_domain
     ? `https://${store.custom_domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}`
     : `${window.location.origin}/?store=${store.slug}`;
   const custUrl = store.custom_domain ? `${baseDomain}/?portal=customer` : `${baseDomain}&portal=customer`;
-  const posUrl = store.custom_domain ? `${baseDomain}/?portal=cashier` : `${baseDomain}&portal=cashier`;
+  const scannerUrl = store.custom_domain ? `${baseDomain}/?portal=scanner` : `${baseDomain}&portal=scanner`;
+  const posUrl = !activeStoreModules.pos
+    ? scannerUrl
+    : store.custom_domain
+    ? `${baseDomain}/?portal=cashier`
+    : `${baseDomain}&portal=cashier`;
   const adminUrl = store.custom_domain ? `${baseDomain}/?portal=admin` : `${baseDomain}&portal=admin`;
 
   const productItemsCount = catalogItems.filter((i) => i.item_type !== 'service').length;
   const serviceItemsCount = catalogItems.filter((i) => i.item_type === 'service').length;
-
-  const activeStoreModules = useMemo(() => getStoreActiveModules(store || currentStore), [store, currentStore]);
 
   const catalogTabs = useMemo(() => {
     const list: SubTabItem<'products' | 'services' | 'modifiers' | 'fulfillment'>[] = [];
@@ -3433,12 +3468,20 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     );
   }
 
+  const isPureLoyaltyMode =
+    activeStoreModules.loyalty &&
+    !activeStoreModules.orders &&
+    !activeStoreModules.bookings &&
+    !activeStoreModules.pos;
+
   const rawTabsConfig = [
     {
       id: 'analytics' as AdminTab,
       label: 'التحليلات ومؤشرات الأداء',
       shortLabel: 'التحليلات والأداء',
-      description: 'مؤشرات تفاعل الزبائن، المبيعات، ومعدل عودة العملاء المباشرة',
+      description: isPureLoyaltyMode
+        ? 'مؤشرات تفاعل الزبائن، النقاط المكتسبة، ومعدل عودة العملاء المباشرة'
+        : 'مؤشرات تفاعل الزبائن، المبيعات، ومعدل عودة العملاء المباشرة',
       icon: BarChart3,
       badge: null,
       glowColor: 'bg-emerald-500/20',
@@ -3542,7 +3585,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       id: 'staff' as AdminTab,
       label: 'طاقم العمل ورموز الـ PIN',
       shortLabel: 'طاقم العمل والـ PIN',
-      description: 'إدارة الكاشيرية، المشرفين، رموز PIN السريعة، وصلاحيات الفروع',
+      description: isPureLoyaltyMode
+        ? 'إدارة موظفي مسح الولاء، المشرفين، رموز PIN السريعة، وصلاحيات الفروع'
+        : 'إدارة الكاشيرية، المشرفين، رموز PIN السريعة، وصلاحيات الفروع',
       icon: ShieldCheck,
       badge: `${staffList.length}`,
       glowColor: 'bg-indigo-500/20',
@@ -3560,7 +3605,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       shortLabel: activeStoreModules.orders ? 'الفروع والطاولات' : 'الفروع والمواقع',
       description: activeStoreModules.orders
         ? 'ساعات العمل، الفروع النشطة، طاولات الصالة، وملصقات QR الذكية'
-        : 'ساعات العمل، الفروع النشطة، ومواقع تقديم الخدمة المعتمدة',
+        : 'ساعات العمل، الفروع النشطة، ومواقع إشعارات القرب الجغرافي (GPS)',
       icon: Building2,
       badge: 'محدث ⚡',
       glowColor: 'bg-cyan-500/20',
@@ -3572,9 +3617,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     },
     {
       id: 'settings' as AdminTab,
-      label: 'الإعدادات والفوترة وطرق الدفع',
+      label: isPureLoyaltyMode ? 'إعدادات المتجر والهوية والاشتراك' : 'الإعدادات والفوترة وطرق الدفع',
       shortLabel: 'الإعدادات والفوترة',
-      description: 'سياسة الدفع (أونلاين/كاش)، الهوية والألوان، والاشتراك',
+      description: isPureLoyaltyMode
+        ? 'الهوية والألوان، بطاقة المحفظة الرقمية، الأمان، والاشتراك'
+        : 'سياسة الدفع (أونلاين/كاش)، الهوية والألوان، والاشتراك',
       icon: Sliders,
       badge: isStoreSuspended
         ? 'معلق ⚠️'
@@ -3587,12 +3634,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       iconBg: 'bg-amber-500/15',
       iconBorder: 'border-amber-500/30',
       iconColor: 'text-amber-400',
-      statHighlight: 'بوابة الدفع الإلكتروني والاشتراك',
+      statHighlight: isPureLoyaltyMode ? 'الهوية، المحفظة الرقمية والاشتراك' : 'بوابة الدفع الإلكتروني والاشتراك',
       isVisible: true,
     },
   ];
 
   const tabsConfig = rawTabsConfig.filter((t) => t.isVisible);
+
+  useEffect(() => {
+    if (activeTab !== 'hub' && !tabsConfig.some((t) => t.id === activeTab)) {
+      setActiveTab('hub');
+    }
+  }, [tabsConfig, activeTab]);
 
   const currentTabConfig = tabsConfig.find((t) => t.id === activeTab);
 
@@ -3757,7 +3810,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
             <button
               onClick={() => {
-                const plainText = `مرحباً بك في ${store.name} ⚡\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${posUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
+                const staffPortalLabel = !activeStoreModules.pos
+                  ? '📷 *2. رابط بوابة ماسح الولاء للموظفين:*'
+                  : '⚡ *2. رابط شاشة الكاشير السريعة (POS):*';
+                const plainText = `مرحباً بك في ${store.name} ⚡\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n${staffPortalLabel}\n${posUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
                 window.open(`https://wa.me/?text=${encodeURIComponent(plainText)}`, '_blank');
               }}
               className={`px-3.5 py-2 rounded-xl border font-semibold text-xs flex items-center space-x-1.5 rtl:space-x-reverse transition active:scale-95 ${
@@ -3838,12 +3894,16 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   <p className="text-[11px] text-slate-400 font-mono truncate select-all bg-slate-900/60 p-2 rounded-xl border border-slate-800/60">{custUrl}</p>
                 </div>
 
-                {/* 2. رابط الكاشير POS */}
+                {/* 2. رابط الكاشير POS أو بوابة ماسح الولاء */}
                 <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-white flex items-center gap-1.5">
                       <Globe className="w-4 h-4 text-amber-400" />
-                      <span>رابط شاشة الكاشير السريعة (POS)</span>
+                      <span>
+                        {!activeStoreModules.pos
+                          ? 'رابط بوابة ماسح الولاء للموظفين (Scanner) 📷'
+                          : 'رابط شاشة الكاشير السريعة (POS)'}
+                      </span>
                     </span>
                     <div className="flex items-center gap-1.5">
                       <a
@@ -3893,7 +3953,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 <button
                   type="button"
                   onClick={() => {
-                    const plainText = `مرحباً بك في ${store.name} ⚡\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${posUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
+                    const staffPortalLabel = !activeStoreModules.pos
+                      ? '📷 *2. رابط بوابة ماسح الولاء للموظفين:*'
+                      : '⚡ *2. رابط شاشة الكاشير السريعة (POS):*';
+                    const plainText = `مرحباً بك في ${store.name} ⚡\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n${staffPortalLabel}\n${posUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
                     window.open(`https://wa.me/?text=${encodeURIComponent(plainText)}`, '_blank');
                   }}
                   className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 transition shadow-md shadow-emerald-600/20"
@@ -3981,10 +4044,12 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                   {/* Quick Counters */}
                   <div className="flex items-center gap-2 flex-wrap">
-                    <div className="px-3.5 py-2 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
-                      <span className="text-[10px] text-slate-400 block font-bold">المنتجات والخدمات</span>
-                      <span className="text-base font-black text-amber-400 font-mono">{catalogItems.length}</span>
-                    </div>
+                    {(activeStoreModules.orders || activeStoreModules.bookings) && (
+                      <div className="px-3.5 py-2 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                        <span className="text-[10px] text-slate-400 block font-bold">المنتجات والخدمات</span>
+                        <span className="text-base font-black text-amber-400 font-mono">{catalogItems.length}</span>
+                      </div>
+                    )}
                     <div className="px-3.5 py-2 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
                       <span className="text-[10px] text-slate-400 block font-bold">قاعدة العملاء</span>
                       <span className="text-base font-black text-blue-400 font-mono">{customers.length}</span>
@@ -6818,7 +6883,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  إضافة الكاشير والمدراء وتحديد صلاحية المسح الإجباري بالكاميرا 🔒 أو الإدخال اليدوي
+                  {!activeStoreModules.pos
+                    ? 'إضافة موظفي مسح الولاء والمدراء وتحديد صلاحية المسح الإجباري بالكاميرا 🔒 أو الإدخال اليدوي'
+                    : 'إضافة الكاشير والمدراء وتحديد صلاحية المسح الإجباري بالكاميرا 🔒 أو الإدخال اليدوي'}
                 </p>
               </div>
             </div>
@@ -6829,7 +6896,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 className="px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition"
               >
                 <Zap className="w-3.5 h-3.5" />
-                <span>شراء كاشير إضافي (200 ر.س)</span>
+                <span>
+                  {!activeStoreModules.pos
+                    ? 'إضافة مقعد ماسح ولاء إضافي (200 ر.س)'
+                    : 'شراء كاشير إضافي (200 ر.س)'}
+                </span>
               </button>
 
               <button
@@ -6843,21 +6914,27 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center space-x-2 rtl:space-x-reverse shadow-sm transition self-start sm:self-auto"
               >
                 <UserPlus className="w-4 h-4 text-amber-400" />
-                <span>+ إضافة كاشير / مدير جديد</span>
+                <span>
+                  {!activeStoreModules.pos
+                    ? '+ إضافة موظف ولاء / مدير جديد'
+                    : '+ إضافة كاشير / مدير جديد'}
+                </span>
               </button>
             </div>
           </div>
 
-          {/* Cashier Quota & Capacity Status Box */}
+          {/* Cashier / Loyalty Scanner Quota & Capacity Status Box */}
           <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
             <div className="flex items-center space-x-3 rtl:space-x-reverse">
               <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold">
-                ⚡
+                {!activeStoreModules.pos ? '📷' : '⚡'}
               </div>
               <div>
-                <span className="font-bold text-white block">سعة نقاط البيع (الكاشير):</span>
+                <span className="font-bold text-white block">
+                  {!activeStoreModules.pos ? 'سعة أجهزة مسح الولاء:' : 'سعة نقاط البيع (الكاشير):'}
+                </span>
                 <span className="text-slate-400 text-[11px]">
-                  مستغل حالياً <strong className="text-white">{activeCashiersCount}</strong> من أصل <strong className="text-amber-400">{maxCashiersAllowed}</strong> كاشير متاح في باقتك.
+                  مستغل حالياً <strong className="text-white">{activeCashiersCount}</strong> من أصل <strong className="text-amber-400">{maxCashiersAllowed}</strong> {!activeStoreModules.pos ? 'موظف مسح ولاء' : 'كاشير'} متاح في باقتك.
                 </span>
               </div>
             </div>
@@ -6878,6 +6955,48 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               }`}>
                 {isCashierLimitReached ? 'اكتملت السعة' : `${activeCashiersCount}/${maxCashiersAllowed} متاح`}
               </span>
+            </div>
+          </div>
+
+          {/* 🔗 Quick Staff Portal Login Link Box */}
+          <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-emerald-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                <Camera className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="font-bold text-white block">
+                  {!activeStoreModules.pos
+                    ? 'رابط دخول موظفي مسح الولاء والمكافآت (Scanner Portal):'
+                    : 'رابط دخول موظفي الكاشير والمسح (POS / Scanner):'}
+                </span>
+                <p className="text-[11px] text-slate-400 font-mono truncate select-all mt-0.5">
+                  {posUrl}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <a
+                href={posUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-[11px] flex items-center gap-1.5 transition"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                <span>فتح الشاشة</span>
+              </a>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(posUrl, 'staff_portal_link')}
+                className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 font-bold text-[11px] flex items-center gap-1.5 transition"
+              >
+                {copiedLinkKey === 'staff_portal_link' ? (
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+                <span>{copiedLinkKey === 'staff_portal_link' ? 'تم النسخ!' : 'نسخ رابط الموظف'}</span>
+              </button>
             </div>
           </div>
 
@@ -6912,7 +7031,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     </td>
                     <td className="py-3.5 px-3">
                       <span className="inline-flex items-center px-2.5 py-1 rounded-xl text-[11px] font-medium bg-slate-800 text-slate-200 border border-slate-700">
-                        {staff.role === 'admin' ? 'مدير المتجر' : 'كاشير POS'}
+                        {staff.role === 'admin'
+                          ? 'مدير المتجر'
+                          : !activeStoreModules.pos
+                          ? 'موظف ماسح ولاء 📷'
+                          : 'كاشير POS'}
                       </span>
                     </td>
                     <td className="py-3.5 px-3 font-mono text-slate-300">
@@ -8525,17 +8648,21 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                 iconColor: 'text-amber-400',
                 statHighlight: `${sliderImages.length} شرائح بالسلايدر • ألوان مخصصة`,
               },
-              {
-                id: 'payments' as SettingsSection,
-                label: 'طرق وسياسة الدفع الإلكتروني',
-                description: 'بوابة الدفع (مدى/Apple Pay)، إلزامية الدفع أونلاين أو كاش في الفرع',
-                icon: CreditCard,
-                glowColor: 'bg-emerald-500/20',
-                iconBg: 'bg-emerald-500/15',
-                iconBorder: 'border-emerald-500/30',
-                iconColor: 'text-emerald-400',
-                statHighlight: onlinePaymentEnabled ? 'بوابة الدفع: مفعلة ✅' : 'الدفع: كاش فقط 💵',
-              },
+              ...(isPureLoyaltyMode
+                ? []
+                : [
+                    {
+                      id: 'payments' as SettingsSection,
+                      label: 'طرق وسياسة الدفع الإلكتروني',
+                      description: 'بوابة الدفع (مدى/Apple Pay)، إلزامية الدفع أونلاين أو كاش في الفرع',
+                      icon: CreditCard,
+                      glowColor: 'bg-emerald-500/20',
+                      iconBg: 'bg-emerald-500/15',
+                      iconBorder: 'border-emerald-500/30',
+                      iconColor: 'text-emerald-400',
+                      statHighlight: onlinePaymentEnabled ? 'بوابة الدفع: مفعلة ✅' : 'الدفع: كاش فقط 💵',
+                    },
+                  ]),
               {
                 id: 'wallet_passes' as SettingsSection,
                 label: 'بطاقة Apple Wallet & Google Wallet',
@@ -8618,12 +8745,14 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
                         {/* Quick Status Pills */}
                         <div className="flex items-center gap-2 flex-wrap">
-                          <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
-                            <span className="text-[10px] text-slate-400 block font-bold">بوابة الدفع</span>
-                            <span className={`text-xs font-black font-mono ${onlinePaymentEnabled ? 'text-emerald-400' : 'text-slate-400'}`}>
-                              {onlinePaymentEnabled ? 'مفعلة ✅' : 'كاش 💵'}
-                            </span>
-                          </div>
+                          {!isPureLoyaltyMode && (
+                            <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
+                              <span className="text-[10px] text-slate-400 block font-bold">بوابة الدفع</span>
+                              <span className={`text-xs font-black font-mono ${onlinePaymentEnabled ? 'text-emerald-400' : 'text-slate-400'}`}>
+                                {onlinePaymentEnabled ? 'مفعلة ✅' : 'كاش 💵'}
+                              </span>
+                            </div>
+                          )}
                           <div className="px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-center">
                             <span className="text-[10px] text-slate-400 block font-bold">بوت تليجرام</span>
                             <span className={`text-xs font-black font-mono ${telegramChatId ? 'text-sky-400' : 'text-slate-400'}`}>
@@ -9618,7 +9747,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
       {/* ======================================================== */}
       {/* 💳 2. SUB-SECTION: مركز إدارة المدفوعات والتحصيل (Unified Payments) */}
       {/* ======================================================== */}
-      {settingsSection === 'payments' && (
+      {settingsSection === 'payments' && !isPureLoyaltyMode && (
         <div className="rounded-3xl p-6 sm:p-8 bg-slate-900/90 border border-slate-800 space-y-8 animate-fade-in shadow-xl">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
@@ -12248,7 +12377,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   type="text"
                   value={newStaffName}
                   onChange={(e) => setNewStaffName(e.target.value)}
-                  placeholder="مثال: خالد الكاشير"
+                  placeholder={!activeStoreModules.pos ? 'مثال: خالد (موظف مسح الولاء)' : 'مثال: خالد الكاشير'}
                   className="w-full bg-slate-950 border border-slate-800 focus:border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition"
                   required
                 />
@@ -12282,8 +12411,10 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
                     }`}
                   >
-                    <span>كاشير (Cashier)</span>
-                    <span className="text-[10px] text-slate-500 font-normal">شاشة المسح ونقاط الفواتير</span>
+                    <span>{!activeStoreModules.pos ? 'موظف ماسح ولاء 📷' : 'كاشير (Cashier)'}</span>
+                    <span className="text-[10px] text-slate-500 font-normal">
+                      {!activeStoreModules.pos ? 'شاشة مسح الباركود والنقاط والعروض' : 'شاشة المسح ونقاط الفواتير'}
+                    </span>
                   </button>
 
                   <button
@@ -12304,7 +12435,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               {newStaffRole === 'cashier' && (
                 <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
                   <label className="text-xs font-medium text-slate-300 block">
-                    صلاحية المسح ومكافحة التلاعب لهذا الكاشير:
+                    {!activeStoreModules.pos
+                      ? 'صلاحية المسح ومكافحة التلاعب لهذا الموظف:'
+                      : 'صلاحية المسح ومكافحة التلاعب لهذا الكاشير:'}
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -12394,7 +12527,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               <div>
                 <h3 className="text-base font-bold text-white">تعديل الرقم السري للموظف</h3>
                 <p className="text-xs text-slate-400">
-                  {editingStaffForPin.name} ({editingStaffForPin.role === 'admin' ? 'مدير المتجر' : 'كاشير'})
+                  {editingStaffForPin.name} (
+                  {editingStaffForPin.role === 'admin'
+                    ? 'مدير المتجر'
+                    : !activeStoreModules.pos
+                    ? 'موظف ماسح ولاء'
+                    : 'كاشير'}
+                  )
                 </p>
               </div>
             </div>
@@ -14007,7 +14146,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] font-black uppercase tracking-wider">
                     ترقية الطاقة الاستيعابية
                   </span>
-                  <h3 className="text-xl font-black text-white mt-1">إضافة مقعد كاشير إضافي</h3>
+                  <h3 className="text-xl font-black text-white mt-1">
+                    {!activeStoreModules.pos ? 'إضافة مقعد ماسح ولاء إضافي' : 'إضافة مقعد كاشير إضافي'}
+                  </h3>
                 </div>
               </div>
 
@@ -14031,13 +14172,17 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </div>
                   <div className="flex items-center space-x-2 rtl:space-x-reverse text-slate-300">
                     <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>تفعيل فوري للمقعد دون انقطاع العمل في نقاط البيع</span>
+                    <span>
+                      {!activeStoreModules.pos
+                        ? 'تفعيل فوري للمقعد دون انقطاع العمل في أجهزة مسح الولاء'
+                        : 'تفعيل فوري للمقعد دون انقطاع العمل في نقاط البيع'}
+                    </span>
                   </div>
                 </div>
               </div>
 
               <p className="text-[11px] text-slate-400 leading-relaxed text-center">
-                لقد بلغت الحد الأقصى الافتراضي ({storeWallet?.cashier_limit || 2} حسابات كاشير). يمكنك إتمام التفعيل الفوري الآن للمتابعة.
+                لقد بلغت الحد الأقصى الافتراضي ({storeWallet?.cashier_limit || 2} {!activeStoreModules.pos ? 'حسابات موظفي مسح ولاء' : 'حسابات كاشير'}). يمكنك إتمام التفعيل الفوري الآن للمتابعة.
               </p>
 
               <div className="space-y-2.5 pt-1">
@@ -14085,11 +14230,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
 
               <div className="p-4 rounded-2xl bg-rose-950/20 border border-rose-900/40 text-rose-200 text-xs space-y-2.5 leading-relaxed">
                 <p>
-                  أنت على وشك منح الموظف <strong className="text-white underline">{securityWarningStaff.name}</strong> إمكانية إدخال أرقام الجوالات يدوياً في شاشة الكاشير.
+                  أنت على وشك منح الموظف <strong className="text-white underline">{securityWarningStaff.name}</strong> إمكانية إدخال أرقام الجوالات يدوياً في {!activeStoreModules.pos ? 'شاشة مسح الولاء' : 'شاشة الكاشير'}.
                 </p>
                 <div className="p-3 rounded-xl bg-black/40 border border-rose-800/30 space-y-1 text-[11px] text-slate-300">
                   <p className="font-bold text-rose-300">⚠️ المخاطر المحتملة (Risk of Fraud):</p>
-                  <p>• قد يقوم الكاشير بتسجيل نقاط لحسابات وهمية أو أشخاص غير متواجدين في المتجر.</p>
+                  <p>• قد يقوم الموظف بتسجيل نقاط لحسابات وهمية أو أشخاص غير متواجدين في المتجر.</p>
                   <p>• النظام الآمن الموصى به يعتمد حصرياً على مسح كاميرا QR لإثبات الحضور الفعلي للعميل.</p>
                   <p>• سيتم وسم وتتبع أي عملية يدوية في سجل التدقيق المالي والأمني (Audit Logs).</p>
                 </div>

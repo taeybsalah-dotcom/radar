@@ -121,6 +121,20 @@ export function updateDynamicPWA(store: Store | null, portal: string = 'customer
       secondaryColor = effectiveStore?.secondary_color || '#F59E0B';
       break;
 
+    case 'scanner':
+      pageTitle = effectiveStore?.name
+        ? `${effectiveStore.name} - ماسح الولاء`
+        : 'بوابة ماسح الولاء';
+      manifestName = effectiveStore?.name
+        ? `${effectiveStore.name} - بوابة ماسح الولاء`
+        : `ماسح الولاء | ${tenantBrand}`;
+      manifestShortName = effectiveStore?.name
+        ? `${effectiveStore.name.slice(0, 8)} ماسح`
+        : 'ماسح الولاء';
+      primaryColor = effectiveStore?.primary_color || '#0F172A';
+      secondaryColor = effectiveStore?.secondary_color || '#F59E0B';
+      break;
+
     case 'cashier':
       pageTitle = effectiveStore?.name
         ? `${effectiveStore.name} - الكاشير`

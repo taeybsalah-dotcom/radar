@@ -16,7 +16,7 @@ import {
   Crown,
   Coins,
 } from 'lucide-react';
-import { Store } from '../types';
+import { Store, getStoreActiveModules } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 
 interface RadarQuickSwitcherProps {
@@ -89,6 +89,8 @@ export const RadarQuickSwitcher: React.FC<RadarQuickSwitcherProps> = ({
         return { label: 'بوابة الشريك (Partner)', icon: '🤝', color: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' };
       case 'admin':
         return { label: 'لوحة التاجر (Merchant)', icon: '💼', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30' };
+      case 'scanner':
+        return { label: 'بوابة ماسح الولاء', icon: '📷', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' };
       case 'cashier':
         return { label: 'كاشير المحل (POS)', icon: '⚡', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' };
       case 'customer':
@@ -248,17 +250,23 @@ export const RadarQuickSwitcher: React.FC<RadarQuickSwitcherProps> = ({
                 <span className="text-[10px] font-bold">محفظة الزبون</span>
               </button>
 
-              <button
-                disabled={!selectedStoreSlug}
-                onClick={() => {
-                  setIsOpen(false);
-                  window.location.href = `${window.location.origin}/${selectedStoreSlug}/pos`;
-                }}
-                className="p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-yellow-500/50 disabled:opacity-40 text-slate-300 hover:text-yellow-300 text-center transition flex flex-col items-center gap-1"
-              >
-                <span className="text-base">⚡</span>
-                <span className="text-[10px] font-bold">كاشير المحل</span>
-              </button>
+              {(() => {
+                const selectedObj = stores.find((s) => s.slug === selectedStoreSlug);
+                const isSelectedScannerOnly = selectedObj ? !getStoreActiveModules(selectedObj).pos : false;
+                return (
+                  <button
+                    disabled={!selectedStoreSlug}
+                    onClick={() => {
+                      setIsOpen(false);
+                      window.location.href = `${window.location.origin}/${selectedStoreSlug}/${isSelectedScannerOnly ? 'scan' : 'pos'}`;
+                    }}
+                    className="p-2 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-yellow-500/50 disabled:opacity-40 text-slate-300 hover:text-yellow-300 text-center transition flex flex-col items-center gap-1"
+                  >
+                    <span className="text-base">{isSelectedScannerOnly ? '📷' : '⚡'}</span>
+                    <span className="text-[10px] font-bold">{isSelectedScannerOnly ? 'ماسح الولاء' : 'كاشير المحل'}</span>
+                  </button>
+                );
+              })()}
 
               <button
                 disabled={!selectedStoreSlug}

@@ -70,9 +70,10 @@ import { InventoryService } from '../lib/inventoryService';
 
 interface CashierPOSProps {
   store: Store;
+  scannerOnlyMode?: boolean;
 }
 
-export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
+export const CashierPOS: React.FC<CashierPOSProps> = ({ store, scannerOnlyMode }) => {
   // 🛡️ ZERO ADMIN FALLBACK: Check staff session & valid token for cashier or admin operating POS
   const [authenticatedCashier, setAuthenticatedCashier] = useState<StoreStaff | null>(() => {
     if (!store?.id) return null;
@@ -125,7 +126,19 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store }) => {
   // ⚡ Debounce / Duplicate Scan Suppression Ref (Section 15 & 51)
   const lastScanRef = useRef<{ rawData: string; timestamp: number } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'register' | 'orders' | 'bookings' | 'scanner' | 'rewards'>('register');
+  // 🎛️ Store Active Modules (SaaS & Merchant Settings)
+  const activeModules = useMemo(() => getStoreActiveModules(store), [store]);
+  const isScannerOnly = Boolean(scannerOnlyMode) || !activeModules.pos;
+
+  const [activeTab, setActiveTab] = useState<'register' | 'orders' | 'bookings' | 'scanner' | 'rewards'>(() =>
+    !scannerOnlyMode && getStoreActiveModules(store).pos ? 'register' : 'scanner'
+  );
+
+  useEffect(() => {
+    if (isScannerOnly && activeTab !== 'scanner' && activeTab !== 'rewards') {
+      setActiveTab('scanner');
+    }
+  }, [isScannerOnly, activeTab]);
   const [loading, setLoading] = useState(false);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerAction, setScannerAction] = useState<'SMART' | 'REDEEM'>('SMART');
@@ -860,9 +873,6 @@ ${portalUrl}`;
     }
   };
 
-  // 🎛️ Store Active Modules (SaaS & Merchant Settings)
-  const activeModules = useMemo(() => getStoreActiveModules(store), [store]);
-
   // 📦 Orders & Bookings Organization State
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | 'new' | 'preparing' | 'completed'>('all');
   const [bookingStatusFilter, setBookingStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'past'>('all');
@@ -871,12 +881,15 @@ ${portalUrl}`;
 
   // Auto-sync tab if active modules change
   useEffect(() => {
-    if (!activeModules.orders && activeTab === 'orders') {
-      setActiveTab(activeModules.bookings ? 'bookings' : 'register');
+    const fallbackTab = activeModules.pos ? 'register' : 'scanner';
+    if (!activeModules.pos && activeTab === 'register') {
+      setActiveTab('scanner');
+    } else if (!activeModules.orders && activeTab === 'orders') {
+      setActiveTab(activeModules.bookings ? 'bookings' : fallbackTab);
     } else if (!activeModules.bookings && activeTab === 'bookings') {
-      setActiveTab(activeModules.orders ? 'orders' : 'register');
+      setActiveTab(activeModules.orders ? 'orders' : fallbackTab);
     }
-  }, [activeModules.orders, activeModules.bookings, activeTab]);
+  }, [activeModules.pos, activeModules.orders, activeModules.bookings, activeTab]);
 
   // 🔊 Unlock Web Audio API on first user interaction (click/touch/key) to comply with browser Autoplay Policy
   useEffect(() => {
@@ -1527,8 +1540,8 @@ ${portalUrl}`;
       if (scanResult.type === 'PASS' && scanResult.customerPhone) {
         playBeepSound('success');
 
-        // إذا كان الكاشير في تبويب نقطة البيع (register) يتم ربط العميل فوراً بالسلة وتطبيق الخصومات
-        if (activeTab === 'register') {
+        // إذا كان الكاشير في تبويب نقطة البيع (register) وموديول POS مفعل يتم ربط العميل فوراً بالسلة وتطبيق الخصومات
+        if (activeTab === 'register' && activeModules.pos) {
           try {
             const freshCust = await LoyaltyService.getCustomer(store.id, scanResult.customerPhone);
             if (freshCust) {
@@ -1933,6 +1946,7 @@ ${portalUrl}`;
       <StaffLoginGate
         store={store}
         requiredRole="cashier"
+        scannerOnlyMode={isScannerOnly}
         onAuthenticated={(staff) => {
           setAuthenticatedCashier(staff);
           setActiveStaff(staff);
@@ -2063,6 +2077,11 @@ ${portalUrl}`;
                   {store.store_code || `RD-${store.id.replace(/-/g, '').substring(0, 4).toUpperCase()}`}
                 </span>
               )}
+              {isScannerOnly && (
+                <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+                  📷 بوابة ماسح الولاء
+                </span>
+              )}
             </div>
             
             {/* Cashier & Branch underneath store name */}
@@ -2073,7 +2092,7 @@ ${portalUrl}`;
                   : 'bg-slate-100/90 border-slate-200 text-slate-700'
               }`}>
                 <User className={`w-3.5 h-3.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`} />
-                <span>الكاشير: <strong className={`font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{activeStaff?.name || authenticatedCashier.name}</strong></span>
+                <span>{isScannerOnly ? 'الموظف:' : 'الكاشير:'} <strong className={`font-bold ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>{activeStaff?.name || authenticatedCashier.name}</strong></span>
                 <button
                   type="button"
                   onClick={() => {
@@ -2107,41 +2126,45 @@ ${portalUrl}`;
         {/* Left side: System Controls & Integrated Logout Button */}
         <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2 text-xs">
           <NotificationBell
-            portalName={`كاشير (${store.name})`}
+            portalName={isScannerOnly ? `ماسح الولاء (${store.name})` : `كاشير (${store.name})`}
             portalFilter="cashier"
             storeId={store.id}
             userId={activeStaff?.id || authenticatedCashier?.id}
           />
 
           {/* 🔔 Live Audio Alert Toggle */}
-          <button
-            type="button"
-            onClick={toggleSound}
-            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
-              isSoundMuted
-                ? isDarkTheme
-                  ? 'bg-rose-950/30 text-rose-300 border-rose-800/40 hover:bg-rose-900/40'
-                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                : isDarkTheme
-                ? 'bg-emerald-950/30 text-emerald-300 border-emerald-800/40 hover:bg-emerald-900/40 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
-                : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-            }`}
-            title={isSoundMuted ? 'تفعيل جرس التنبيه الصوتي' : 'كتم جرس التنبيه الصوتي'}
-          >
-            {isSoundMuted ? (
-              <VolumeX className="w-3.5 h-3.5 text-rose-500" />
-            ) : (
-              <Volume2 className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
-            )}
-            <span>{isSoundMuted ? 'صامت 🔕' : 'جرس التنبيه 🔔'}</span>
-          </button>
+          {!isScannerOnly && (activeModules.orders || activeModules.bookings) && (
+            <button
+              type="button"
+              onClick={toggleSound}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
+                isSoundMuted
+                  ? isDarkTheme
+                    ? 'bg-rose-950/30 text-rose-300 border-rose-800/40 hover:bg-rose-900/40'
+                    : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                  : isDarkTheme
+                  ? 'bg-emerald-950/30 text-emerald-300 border-emerald-800/40 hover:bg-emerald-900/40 shadow-[0_0_12px_rgba(16,185,129,0.2)]'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+              }`}
+              title={isSoundMuted ? 'تفعيل جرس التنبيه الصوتي' : 'كتم جرس التنبيه الصوتي'}
+            >
+              {isSoundMuted ? (
+                <VolumeX className="w-3.5 h-3.5 text-rose-500" />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
+              )}
+              <span>{isSoundMuted ? 'صامت 🔕' : 'جرس التنبيه 🔔'}</span>
+            </button>
+          )}
 
           {/* 🌐 Network & Offline Sync Status Pill */}
           <button
             type="button"
-            onClick={() => setIsOfflineModalOpen(true)}
+            onClick={() => {
+              if (!isScannerOnly && activeModules.pos) setIsOfflineModalOpen(true);
+            }}
             className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
-              !OfflineSyncEngine.isOnline() || OfflineSyncEngine.getQueuedOrders(store.id).length > 0
+              !OfflineSyncEngine.isOnline() || (!isScannerOnly && activeModules.pos && OfflineSyncEngine.getQueuedOrders(store.id).length > 0)
                 ? isDarkTheme
                   ? 'bg-amber-950/30 text-amber-300 border-amber-800/50 hover:bg-amber-900/40'
                   : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
@@ -2149,7 +2172,7 @@ ${portalUrl}`;
                 ? 'bg-emerald-950/20 text-emerald-300 border-emerald-800/40 hover:bg-emerald-900/30'
                 : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
             }`}
-            title="حالة الاتصال ومزامنة فواتير الأوفلاين"
+            title="حالة الاتصال بالشبكة"
           >
             {OfflineSyncEngine.isOnline() ? (
               <Wifi className="w-3.5 h-3.5 text-emerald-500" />
@@ -2157,7 +2180,7 @@ ${portalUrl}`;
               <WifiOff className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
             )}
             <span>{OfflineSyncEngine.isOnline() ? 'أونلاين 🟢' : 'أوفلاين 🟡'}</span>
-            {OfflineSyncEngine.getQueuedOrders(store.id).length > 0 && (
+            {!isScannerOnly && activeModules.pos && OfflineSyncEngine.getQueuedOrders(store.id).length > 0 && (
               <span className="w-4 h-4 rounded-full bg-amber-500 text-black font-black text-[10px] flex items-center justify-center animate-bounce">
                 {OfflineSyncEngine.getQueuedOrders(store.id).length}
               </span>
@@ -2165,7 +2188,7 @@ ${portalUrl}`;
           </button>
 
           {/* 📱 Screens Barcode Modal Button (for kitchen/salon tablets) */}
-          {(activeModules.orders || activeModules.bookings) && (
+          {!isScannerOnly && (activeModules.orders || activeModules.bookings) && (
             <button
               type="button"
               onClick={() => {
@@ -2185,19 +2208,21 @@ ${portalUrl}`;
           )}
 
           {/* 🔒 Cashier Shift Close & Z-Report Button */}
-          <button
-            type="button"
-            onClick={() => setIsShiftCloseModalOpen(true)}
-            className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
-              isDarkTheme
-                ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-            }`}
-            title="تقفيل الصندوق وجرد الوردية (Z-Report)"
-          >
-            <Lock className="w-3.5 h-3.5 text-amber-500" />
-            <span>تقفيل الصندوق (Z-Report) 🔒</span>
-          </button>
+          {!isScannerOnly && activeModules.pos && (
+            <button
+              type="button"
+              onClick={() => setIsShiftCloseModalOpen(true)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 rtl:space-x-reverse transition shadow-sm ${
+                isDarkTheme
+                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
+              }`}
+              title="تقفيل الصندوق وجرد الوردية (Z-Report)"
+            >
+              <Lock className="w-3.5 h-3.5 text-amber-500" />
+              <span>تقفيل الصندوق (Z-Report) 🔒</span>
+            </button>
+          )}
 
           {/* Logout Button (Unified in line) */}
           <button
@@ -2217,7 +2242,7 @@ ${portalUrl}`;
       </div>
 
       {/* 🔔 Background Notification Permission Banner (For Mobile Background Alerts) */}
-      {notificationPermission !== 'granted' && (
+      {!isScannerOnly && (activeModules.orders || activeModules.bookings) && notificationPermission !== 'granted' && (
         <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border border-amber-500/30 flex flex-wrap items-center justify-between gap-3 text-xs shadow-lg animate-fade-in">
           <div className="flex items-center gap-2.5">
             <Bell className="w-4 h-4 text-amber-400 shrink-0 animate-bounce" />
@@ -2236,7 +2261,7 @@ ${portalUrl}`;
       )}
 
       {/* 📱 iOS Add to Home Screen Guidance for 100% Locked Screen Notifications */}
-      {isIos && !isStandalone && (
+      {(activeModules.orders || activeModules.bookings) && isIos && !isStandalone && (
         <div className="p-3 rounded-2xl bg-gradient-to-r from-blue-500/20 via-blue-500/10 to-transparent border border-blue-500/30 flex items-center justify-between gap-3 text-xs shadow-lg animate-fade-in text-blue-100">
           <div className="flex items-center gap-2.5">
             <span className="text-base shrink-0">📱</span>
@@ -2248,7 +2273,7 @@ ${portalUrl}`;
       )}
 
       {/* 🛎️ Real-Time Floating Incoming Alert Toast with Loop Ringer & Instant Actions */}
-      {incomingAlert && (
+      {incomingAlert && ((incomingAlert.type === 'order' && activeModules.orders) || (incomingAlert.type === 'booking' && activeModules.bookings) || incomingAlert.type === 'coupon') && (
         <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/25 via-slate-900 to-amber-500/15 border-2 border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.35)] flex flex-wrap items-center justify-between gap-4 animate-fade-in relative overflow-hidden">
           <div className="absolute top-0 right-0 left-0 h-1 bg-amber-500 animate-pulse"></div>
           <div className="flex items-center gap-3 min-w-0">
@@ -2367,7 +2392,7 @@ ${portalUrl}`;
       )}
 
       {/* 🛒 TAB 1: Complete Cloud POS Register (نقطة البيع والسلة الذكية) */}
-      {activeTab === 'register' && (
+      {activeTab === 'register' && activeModules.pos && (
         <CashierRegisterTab
           store={store}
           activeStaff={(activeStaff || authenticatedCashier)!}
@@ -2455,7 +2480,7 @@ ${portalUrl}`;
                 </div>
                 <div className="min-w-0">
                   <strong className={`block text-[11px] truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>باركود العميل</strong>
-                  <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>طلب الفاتورة وإضافة النقاط</span>
+                  <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>إضافة الأختام أو النقاط فوراً</span>
                 </div>
               </div>
 
@@ -4064,29 +4089,31 @@ ${portalUrl}`;
             ? 'shadow-[0_-8px_30px_rgba(0,0,0,0.5)] bg-slate-950/95 backdrop-blur-3xl border border-white/10'
             : 'shadow-[0_-4px_25px_rgba(0,0,0,0.08)] bg-white/95 backdrop-blur-3xl border border-slate-200/90'
         }`}>
-          <button
-            type="button"
-            onClick={() => setActiveTab('register')}
-            style={activeTab === 'register' ? {
-              backgroundColor: brandColors.secondary,
-              color: brandColors.contrastOnSecondary,
-              boxShadow: `0 6px 18px -3px ${brandColors.glow}`
-            } : undefined}
-            className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
-              activeTab === 'register'
-                ? `font-black scale-105 ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
-                : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
-            }`}
-          >
-            <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
-            <span>نقطة البيع</span>
-            {activeTab === 'register' && (
-              <span className="w-4 h-0.5 rounded-full bg-current opacity-80" />
-            )}
-          </button>
+          {!isScannerOnly && activeModules.pos && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('register')}
+              style={activeTab === 'register' ? {
+                backgroundColor: brandColors.secondary,
+                color: brandColors.contrastOnSecondary,
+                boxShadow: `0 6px 18px -3px ${brandColors.glow}`
+              } : undefined}
+              className={`flex-1 py-2 px-1 rounded-2xl text-[10px] sm:text-xs flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
+                activeTab === 'register'
+                  ? `font-black scale-105 ${brandColors.contrastOnSecondary === '#FFFFFF' ? 'keep-white text-white' : 'text-slate-950'}`
+                  : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
+              }`}
+            >
+              <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
+              <span>نقطة البيع</span>
+              {activeTab === 'register' && (
+                <span className="w-4 h-0.5 rounded-full bg-current opacity-80" />
+              )}
+            </button>
+          )}
 
           {/* Orders Button (ShoppingBag) */}
-          {activeModules.orders && (
+          {!isScannerOnly && activeModules.orders && (
             <button
               type="button"
               onClick={() => setActiveTab('orders')}
@@ -4122,7 +4149,7 @@ ${portalUrl}`;
           )}
 
           {/* Bookings Button (Calendar) */}
-          {activeModules.bookings && (
+          {!isScannerOnly && activeModules.bookings && (
             <button
               type="button"
               onClick={() => setActiveTab('bookings')}
@@ -4204,10 +4231,15 @@ ${portalUrl}`;
       </div>
     
 
-{/* 💰 MODAL: Enter Invoice Amount for Customer (نافذة إدخال مبلغ الفاتورة) */}
-      {isAmountModalOpen && pendingCustomerScan && (
+{/* 💰 MODAL: Enter Invoice Amount or Add Stamp for Customer (نافذة إضافة الأختام والنقاط المباشرة) */}
+      {isAmountModalOpen && pendingCustomerScan && (() => {
+        const walletConfig = WalletPassService.getWalletConfig(store);
+        const isStampsMode = walletConfig.loyalty_mode === 'stamps';
+        const stampUnitAmount = Math.max(1, Math.ceil(1 / Math.max(0.01, Number(store.points_per_riyal) || 1)));
+
+        return (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl p-6 sm:p-8 max-w-md w-full space-y-6 shadow-2xl relative animate-scale-up">
+          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl p-6 sm:p-8 max-w-md w-full space-y-5 shadow-2xl relative animate-scale-up">
             
             <button
               type="button"
@@ -4222,11 +4254,13 @@ ${portalUrl}`;
 
             <div className="text-center space-y-2">
               <div className="w-16 h-16 rounded-3xl bg-amber-500/20 border-2 border-amber-500/40 flex items-center justify-center text-3xl mx-auto shadow-lg shadow-amber-500/20">
-                💳
+                {isStampsMode ? (walletConfig.stamps_icon || '☕') : '💳'}
               </div>
-              <h3 className="text-xl font-black text-white">إدخال مبلغ فاتورة المشتريات</h3>
+              <h3 className="text-xl font-black text-white">
+                {isStampsMode ? 'إضافة ختم أو نقاط ولاء للعميل' : 'إضافة نقاط ولاء للعميل'}
+              </h3>
               <p className="text-xs text-slate-400">
-                تم مسح باركود العميل بنجاح! أدخل قيمة الفاتورة لاحتساب النقاط فوراً:
+                تم مسح باركود العميل بنجاح! تتم الإضافة مباشرة لسجل العميل (دون الحاجة لفتح وردية كاشير):
               </p>
             </div>
 
@@ -4241,6 +4275,73 @@ ${portalUrl}`;
               <div className="text-left rtl:text-right font-mono text-amber-400 font-bold" dir="ltr">
                 {pendingCustomerScan.phone}
               </div>
+            </div>
+
+            {/* ⚡ زر سريع لإضافة ختم زيارة واحد بنقرة واحدة (بدون مبلغ فاتورة) */}
+            <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/15 border border-emerald-500/40 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="text-xl shrink-0">{walletConfig.stamps_icon || '⭐'}</span>
+                <div className="min-w-0">
+                  <span className="text-white font-black block text-xs">إضافة سريعة بنقرة واحدة</span>
+                  <span className="text-[10px] text-emerald-300 block truncate">
+                    إيداع فوري في بطاقة العميل بدون فاتورة
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={async () => {
+                  const effectiveStaff = activeStaff || authenticatedCashier;
+                  setLoading(true);
+                  setErrorMessage(null);
+                  try {
+                    const res = await LoyaltyService.processPurchase(
+                      store.id,
+                      pendingCustomerScan.phone,
+                      stampUnitAmount,
+                      `إضافة ختم زيارة مباشر بواسطة: ${effectiveStaff?.name || 'الموظف'}`,
+                      pendingCustomerScan.qrTokenObj,
+                      effectiveStaff?.id,
+                      effectiveStaff?.name,
+                      pendingCustomerScan.entryMethod,
+                      cleanBranchUUID(activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id) || null,
+                      activeBranchObj?.name || null
+                    );
+                    setCustomer(res.customer);
+                    setIsAmountModalOpen(false);
+                    setPendingCustomerScan(null);
+                    setInvoiceAmount('');
+                    setManualInput('');
+                    setSuccessResult({
+                      message: `تم بنجاح إضافة ختم زيارة (+${res.pointsEarned} نقطة) لبطاقة العميل فوراً! 🎉`,
+                      points: res.pointsEarned,
+                      phone: pendingCustomerScan.phone,
+                      tier: res.currentTier,
+                      balance: res.customer.wallet_balance,
+                      type: 'PURCHASE',
+                    });
+                    playBeepSound('success');
+                    LoyaltyEvents.emit({
+                      type: 'POINTS_ADDED',
+                      storeId: store.id,
+                      phone: pendingCustomerScan.phone,
+                      points: res.pointsEarned,
+                      newBalance: res.customer.wallet_balance,
+                      newLifetimeXP: res.customer.lifetime_xp,
+                      currentTier: res.currentTier,
+                    });
+                  } catch (err: any) {
+                    setErrorMessage(err.message || 'تعذر إضافة الختم للعميل');
+                    playBeepSound('error');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs active:scale-95 transition shadow-lg shadow-emerald-500/20 shrink-0"
+              >
+                +1 ختم زيارة ⚡
+              </button>
             </div>
 
             {/* 🎁 خيار إكرام العميل المميز بهدية أو لعبة مباشرة */}
@@ -4280,7 +4381,7 @@ ${portalUrl}`;
             <form onSubmit={handleConfirmPurchaseAmount} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 block">
-                  مبلغ الفاتورة الحالي (بالريال السعودي):
+                  أو أدخل قيمة العملية لاحتساب النقاط تلقائياً (بالريال):
                 </label>
                 <div className="relative">
                   <input
@@ -4343,7 +4444,8 @@ ${portalUrl}`;
 
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* 🛡️ MODAL: Manager Approval for High Invoice (طلب موافقة مدير المتجر على الفاتورة الكبيرة) */}
       {isManagerApprovalModalOpen && pendingCustomerScan && (
@@ -4567,7 +4669,7 @@ ${portalUrl}`;
       )}
 
       {/* 🔒 Shift Closing & Z-Report Modal */}
-      {isShiftCloseModalOpen && (
+      {isShiftCloseModalOpen && activeModules.pos && (
         <CashierShiftCloseModal
           store={store}
           activeStaff={(activeStaff || authenticatedCashier)!}
@@ -4584,7 +4686,7 @@ ${portalUrl}`;
       )}
 
       {/* 🔄 POS Returns & Tax Credit Note Modal */}
-      {isRefundModalOpen && (
+      {isRefundModalOpen && activeModules.pos && (
         <CashierRefundModal
           store={store}
           activeStaff={(activeStaff || authenticatedCashier)!}
@@ -4601,7 +4703,7 @@ ${portalUrl}`;
       )}
 
       {/* 🌐 Offline Mode & Auto-Sync Modal */}
-      {isOfflineModalOpen && (
+      {isOfflineModalOpen && activeModules.pos && (
         <OfflineSyncModal
           store={store}
           isOpen={isOfflineModalOpen}
@@ -4615,7 +4717,7 @@ ${portalUrl}`;
       )}
 
       {/* 💵 POS Cash In / Out Movements Modal */}
-      {isCashMovementModalOpen && (
+      {isCashMovementModalOpen && activeModules.pos && (
         <CashierCashMovementModal
           store={store}
           activeStaff={(activeStaff || authenticatedCashier)!}

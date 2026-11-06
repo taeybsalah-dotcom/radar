@@ -508,23 +508,66 @@ export function getStoreActiveModules(store?: Partial<Store> | null) {
     };
   }
 
-  // 1. كلمة المالك العليا (SaaS Plan Permission)
-  const ownerOrders = store.owner_enable_orders !== false;
-  const ownerBookings = store.owner_enable_bookings !== false;
-  const ownerLoyalty = store.owner_enable_loyalty !== false;
-  const ownerPos = store.owner_enable_pos !== false;
-  const ownerKds = store.owner_enable_kds !== false && ownerOrders;
-  const ownerDrivers = store.owner_enable_drivers !== false;
-  const ownerInventory = store.owner_enable_inventory !== false;
+  const fs = (
+    typeof store.fulfillment_settings === 'object' && store.fulfillment_settings !== null
+      ? store.fulfillment_settings
+      : {}
+  ) as Record<string, any>;
 
-  // 2. حالة المتجر الفعلية (Effective Module State)
-  const orders = ownerOrders && store.enable_orders !== false;
-  const bookings = ownerBookings && store.enable_bookings !== false;
-  const loyalty = ownerLoyalty && store.enable_loyalty !== false;
-  const pos = ownerPos && store.enable_pos !== false;
-  const kds = ownerKds && store.enable_kds !== false && orders;
-  const drivers = ownerDrivers && store.enable_drivers !== false;
-  const inventory = ownerInventory && store.enable_inventory !== false;
+  const businessType = (store.business_type || fs.business_type || 'custom') as
+    | 'restaurant_cafe'
+    | 'salon_spa'
+    | 'car_wash'
+    | 'retail_loyalty'
+    | 'custom';
+
+  const pickBool = (topVal: boolean | undefined, fsVal: any, defaultVal = true): boolean => {
+    if (typeof fsVal === 'boolean') return fsVal;
+    if (typeof topVal === 'boolean') return topVal;
+    return defaultVal;
+  };
+
+  const isLoyaltyOnlyPreset = businessType === 'retail_loyalty';
+
+  // 1. كلمة المالك العليا (SaaS Plan Permission)
+  const ownerOrders = isLoyaltyOnlyPreset
+    ? false
+    : pickBool(store.owner_enable_orders, fs.owner_enable_orders, true);
+  const ownerBookings = isLoyaltyOnlyPreset
+    ? false
+    : pickBool(store.owner_enable_bookings, fs.owner_enable_bookings, true);
+  const ownerLoyalty = pickBool(store.owner_enable_loyalty, fs.owner_enable_loyalty, true);
+  const ownerPos = isLoyaltyOnlyPreset
+    ? false
+    : pickBool(store.owner_enable_pos, fs.owner_enable_pos, true);
+  const ownerKds =
+    !isLoyaltyOnlyPreset &&
+    pickBool(store.owner_enable_kds, fs.owner_enable_kds, true) &&
+    ownerOrders;
+  const ownerDrivers = isLoyaltyOnlyPreset
+    ? false
+    : pickBool(store.owner_enable_drivers, fs.owner_enable_drivers, true);
+  const ownerInventory = isLoyaltyOnlyPreset
+    ? false
+    : pickBool(store.owner_enable_inventory, fs.owner_enable_inventory, true);
+
+  // 2. إعدادات التاجر الداخلية
+  const merchantOrders = pickBool(store.enable_orders, fs.enable_orders, true);
+  const merchantBookings = pickBool(store.enable_bookings, fs.enable_bookings, true);
+  const merchantLoyalty = pickBool(store.enable_loyalty, fs.enable_loyalty, true);
+  const merchantPos = pickBool(store.enable_pos, fs.enable_pos, true);
+  const merchantKds = pickBool(store.enable_kds, fs.enable_kds, true);
+  const merchantDrivers = pickBool(store.enable_drivers, fs.enable_drivers, true);
+  const merchantInventory = pickBool(store.enable_inventory, fs.enable_inventory, true);
+
+  // 3. حالة المتجر الفعلية (Effective Module State)
+  const orders = ownerOrders && merchantOrders;
+  const bookings = ownerBookings && merchantBookings;
+  const loyalty = ownerLoyalty && merchantLoyalty;
+  const pos = ownerPos && merchantPos;
+  const kds = ownerKds && merchantKds && orders;
+  const drivers = ownerDrivers && merchantDrivers;
+  const inventory = ownerInventory && merchantInventory;
 
   return {
     orders,
@@ -541,15 +584,15 @@ export function getStoreActiveModules(store?: Partial<Store> | null) {
     ownerKds,
     ownerDrivers,
     ownerInventory,
-    merchantOrders: store.enable_orders !== false,
-    merchantBookings: store.enable_bookings !== false,
-    merchantLoyalty: store.enable_loyalty !== false,
-    merchantPos: store.enable_pos !== false,
-    merchantKds: store.enable_kds !== false,
-    merchantDrivers: store.enable_drivers !== false,
-    merchantInventory: store.enable_inventory !== false,
+    merchantOrders,
+    merchantBookings,
+    merchantLoyalty,
+    merchantPos,
+    merchantKds,
+    merchantDrivers,
+    merchantInventory,
     hasAtLeastOneActive: orders || bookings || loyalty || pos,
-    businessType: store.business_type || 'custom',
+    businessType,
   };
 }
 

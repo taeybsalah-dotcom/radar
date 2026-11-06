@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Store, StoreBranch, StoreStaff, BranchDaySchedule, DeliveryDistanceTier } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Store, StoreBranch, StoreStaff, BranchDaySchedule, DeliveryDistanceTier, getStoreActiveModules } from '../types';
 import { LoyaltyService } from '../lib/supabase';
 import { checkBranchOpenStatus, DEFAULT_BRANCH_SCHEDULE } from '../lib/branchUtils';
 import { DEFAULT_DELIVERY_TIERS, DEFAULT_MAX_DELIVERY_RADIUS_KM, extractCoordsFromMapUrl } from '../lib/deliveryPricing';
@@ -46,7 +46,21 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
   staffList,
   onStaffUpdated,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'hub' | 'branches' | 'tables' | 'drivers'>('hub');
+  const activeModules = useMemo(() => getStoreActiveModules(store), [store]);
+  const hasExtraBranchSubTabs = activeModules.orders || activeModules.drivers;
+  const [activeSubTab, setActiveSubTab] = useState<'hub' | 'branches' | 'tables' | 'drivers'>(() =>
+    hasExtraBranchSubTabs ? 'hub' : 'branches'
+  );
+
+  useEffect(() => {
+    if (!hasExtraBranchSubTabs && activeSubTab !== 'branches') {
+      setActiveSubTab('branches');
+    } else if (!activeModules.orders && activeSubTab === 'tables') {
+      setActiveSubTab(hasExtraBranchSubTabs ? 'hub' : 'branches');
+    } else if (!activeModules.drivers && activeSubTab === 'drivers') {
+      setActiveSubTab(hasExtraBranchSubTabs ? 'hub' : 'branches');
+    }
+  }, [hasExtraBranchSubTabs, activeModules.orders, activeModules.drivers, activeSubTab]);
   const [branches, setBranches] = useState<StoreBranch[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -478,7 +492,7 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
         </div>
       )}
 
-      {activeSubTab === 'hub' ? (
+      {activeSubTab === 'hub' && hasExtraBranchSubTabs ? (
         /* 🔲 Executive Subtabs Grid Navigation */
         <SubTabsHubGrid<'branches' | 'tables' | 'drivers'>
           activeTab={'branches'}
@@ -486,12 +500,14 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
             setActiveSubTab(tab);
             window.scrollTo({ top: 150, behavior: 'smooth' });
           }}
-          columns="3"
+          columns={activeModules.orders && activeModules.drivers ? '3' : '2'}
           tabs={[
             {
               id: 'branches',
               label: 'الفروع ومواعيد العمل',
-              description: 'إدارة شبكة الفروع، ساعات وأيام العمل الأسبوعية، والموقع الجغرافي ونطاقات التوصيل',
+              description: activeModules.orders || activeModules.drivers
+                ? 'إدارة شبكة الفروع، ساعات وأيام العمل الأسبوعية، والموقع الجغرافي ونطاقات التوصيل'
+                : 'إدارة شبكة الفروع، ساعات وأيام العمل الأسبوعية، وإحداثيات الموقع الجغرافي (GPS)',
               icon: Building2,
               badge: `${branches.length} فروع`,
               glowColor: 'bg-cyan-500/20',
@@ -500,88 +516,98 @@ export const BranchesManagementTab: React.FC<BranchesManagementTabProps> = ({
               iconColor: 'text-cyan-400',
               statHighlight: `${branches.length} فرع مسجل بالمتجر`,
             },
-            {
-              id: 'tables',
-              label: 'إدارة الصالة وطاولات الطعام',
-              description: 'توزيع طاولات المطعم/المقهى، ملصقات QR الذكية للطلب والدفع، وحالة الإشغال الفورية',
-              icon: Utensils,
-              badge: 'ملصقات QR 🍽️',
-              glowColor: 'bg-amber-500/20',
-              iconBg: 'bg-amber-500/15',
-              iconBorder: 'border-amber-500/30',
-              iconColor: 'text-amber-400',
-              statHighlight: 'طاولات الصالة وQR',
-            },
-            {
-              id: 'drivers',
-              label: 'كباتن وأسطول التوصيل',
-              description: 'إدارة السائقين، تعيين طلبات التوصيل، تتبع حالة الطلب، وبوابة الكابتن المستقلة',
-              icon: Bike,
-              badge: 'أسطول نشط 🛵',
-              glowColor: 'bg-emerald-500/20',
-              iconBg: 'bg-emerald-500/15',
-              iconBorder: 'border-emerald-500/30',
-              iconColor: 'text-emerald-400',
-              statHighlight: 'إدارة الكباتن وبوابة السائق',
-            },
+            ...(activeModules.orders
+              ? [
+                  {
+                    id: 'tables' as const,
+                    label: 'إدارة الصالة وطاولات الطعام',
+                    description: 'توزيع طاولات المطعم/المقهى، ملصقات QR الذكية للطلب والدفع، وحالة الإشغال الفورية',
+                    icon: Utensils,
+                    badge: 'ملصقات QR 🍽️',
+                    glowColor: 'bg-amber-500/20',
+                    iconBg: 'bg-amber-500/15',
+                    iconBorder: 'border-amber-500/30',
+                    iconColor: 'text-amber-400',
+                    statHighlight: 'طاولات الصالة وQR',
+                  },
+                ]
+              : []),
+            ...(activeModules.drivers
+              ? [
+                  {
+                    id: 'drivers' as const,
+                    label: 'كباتن وأسطول التوصيل',
+                    description: 'إدارة السائقين، تعيين طلبات التوصيل، تتبع حالة الطلب، وبوابة الكابتن المستقلة',
+                    icon: Bike,
+                    badge: 'أسطول نشط 🛵',
+                    glowColor: 'bg-emerald-500/20',
+                    iconBg: 'bg-emerald-500/15',
+                    iconBorder: 'border-emerald-500/30',
+                    iconColor: 'text-emerald-400',
+                    statHighlight: 'إدارة الكباتن وبوابة السائق',
+                  },
+                ]
+              : []),
           ]}
         />
       ) : (
         /* ⬅️ Focused Header when a sub-section is open */
         <>
-          <SubSectionFocusedHeader
-            title={
-              activeSubTab === 'branches'
-                ? 'الفروع ومواعيد العمل الأسبوعية'
-                : activeSubTab === 'tables'
-                ? 'إدارة الصالة وطاولات الطعام وملصقات QR'
-                : 'كباتن وأسطول التوصيل'
-            }
-            badge={
-              activeSubTab === 'branches'
-                ? `${branches.length} فرع`
-                : activeSubTab === 'tables'
-                ? 'الصالة وQR'
-                : 'أسطول التوصيل'
-            }
-            icon={
-              activeSubTab === 'branches'
-                ? Building2
-                : activeSubTab === 'tables'
-                ? Utensils
-                : Bike
-            }
-            iconBg={
-              activeSubTab === 'branches'
-                ? 'bg-cyan-500/15'
-                : activeSubTab === 'tables'
-                ? 'bg-amber-500/15'
-                : 'bg-emerald-500/15'
-            }
-            iconBorder={
-              activeSubTab === 'branches'
-                ? 'border-cyan-500/30'
-                : activeSubTab === 'tables'
-                ? 'border-amber-500/30'
-                : 'border-emerald-500/30'
-            }
-            iconColor={
-              activeSubTab === 'branches'
-                ? 'text-cyan-400'
-                : activeSubTab === 'tables'
-                ? 'text-amber-400'
-                : 'text-emerald-400'
-            }
-            backLabel="العودة لأقسام الفروع والصالة"
-            onBack={() => setActiveSubTab('hub')}
-            activeId={activeSubTab}
-            onSelectQuickJump={(id) => setActiveSubTab(id as any)}
-            quickJumpOptions={[
-              { id: 'branches', label: 'الفروع ومواعيد العمل' },
-              { id: 'tables', label: 'إدارة الصالة والطاولات' },
-              { id: 'drivers', label: 'كباتن وأسطول التوصيل' },
-            ]}
-          />
+          {hasExtraBranchSubTabs && (
+            <SubSectionFocusedHeader
+              title={
+                activeSubTab === 'branches'
+                  ? 'الفروع ومواعيد العمل الأسبوعية'
+                  : activeSubTab === 'tables'
+                  ? 'إدارة الصالة وطاولات الطعام وملصقات QR'
+                  : 'كباتن وأسطول التوصيل'
+              }
+              badge={
+                activeSubTab === 'branches'
+                  ? `${branches.length} فرع`
+                  : activeSubTab === 'tables'
+                  ? 'الصالة وQR'
+                  : 'أسطول التوصيل'
+              }
+              icon={
+                activeSubTab === 'branches'
+                  ? Building2
+                  : activeSubTab === 'tables'
+                  ? Utensils
+                  : Bike
+              }
+              iconBg={
+                activeSubTab === 'branches'
+                  ? 'bg-cyan-500/15'
+                  : activeSubTab === 'tables'
+                  ? 'bg-amber-500/15'
+                  : 'bg-emerald-500/15'
+              }
+              iconBorder={
+                activeSubTab === 'branches'
+                  ? 'border-cyan-500/30'
+                  : activeSubTab === 'tables'
+                  ? 'border-amber-500/30'
+                  : 'border-emerald-500/30'
+              }
+              iconColor={
+                activeSubTab === 'branches'
+                  ? 'text-cyan-400'
+                  : activeSubTab === 'tables'
+                  ? 'text-amber-400'
+                  : 'text-emerald-400'
+              }
+              backLabel="العودة لأقسام الفروع"
+              onBack={() => setActiveSubTab('hub')}
+              activeId={activeSubTab}
+              onSelectQuickJump={(id) => setActiveSubTab(id as any)}
+              quickJumpOptions={[
+                { id: 'branches', label: 'الفروع ومواعيد العمل' },
+                ...(activeModules.orders ? [{ id: 'tables', label: 'إدارة الصالة والطاولات' }] : []),
+                ...(activeModules.drivers ? [{ id: 'drivers', label: 'كباتن وأسطول التوصيل' }] : []),
+              ]}
+            />
+          )}
 
           {activeSubTab === 'tables' ? (
             <TablesManagementView store={store} branches={branches} />

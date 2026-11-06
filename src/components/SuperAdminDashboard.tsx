@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Store, StoreOnboardingPayload, MerchantLead, LeadStatus, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage, getStoreUnifiedStage } from '../types';
+import { Store, StoreOnboardingPayload, MerchantLead, LeadStatus, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage, getStoreUnifiedStage, getStoreActiveModules } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
 import { getActiveTenantConfig } from '../config/tenant';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
@@ -85,7 +85,7 @@ import { clearAllInboxNotifications } from '../lib/notifications';
 import { playBeepSound } from '../lib/sound';
 
 interface SuperAdminDashboardProps {
-  onSelectStore: (store: Store, targetTab?: 'cashier' | 'customer' | 'admin') => void;
+  onSelectStore: (store: Store, targetTab?: 'cashier' | 'scanner' | 'customer' | 'admin') => void;
 }
 
 export type SuperAdminSubTab = 'hub' | 'stores' | 'partners' | 'billing' | 'integrations' | 'team';
@@ -295,6 +295,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       setEditOwnerEnableKds(true);
       setEditOwnerEnableDrivers(true);
       setEditOwnerEnableInventory(true);
+      setEditEnableOrders(true);
+      setEditEnableBookings(false);
+      setEditEnableLoyalty(true);
     } else if (preset === 'salon_spa') {
       setEditOwnerEnableOrders(false);
       setEditOwnerEnableBookings(true);
@@ -303,6 +306,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       setEditOwnerEnableKds(false);
       setEditOwnerEnableDrivers(false);
       setEditOwnerEnableInventory(false);
+      setEditEnableOrders(false);
+      setEditEnableBookings(true);
+      setEditEnableLoyalty(true);
     } else if (preset === 'car_wash') {
       setEditOwnerEnableOrders(false);
       setEditOwnerEnableBookings(true);
@@ -311,14 +317,20 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       setEditOwnerEnableKds(false);
       setEditOwnerEnableDrivers(true);
       setEditOwnerEnableInventory(false);
+      setEditEnableOrders(false);
+      setEditEnableBookings(true);
+      setEditEnableLoyalty(true);
     } else if (preset === 'retail_loyalty') {
       setEditOwnerEnableOrders(false);
       setEditOwnerEnableBookings(false);
       setEditOwnerEnableLoyalty(true);
-      setEditOwnerEnablePos(true);
+      setEditOwnerEnablePos(false);
       setEditOwnerEnableKds(false);
       setEditOwnerEnableDrivers(false);
       setEditOwnerEnableInventory(false);
+      setEditEnableOrders(false);
+      setEditEnableBookings(false);
+      setEditEnableLoyalty(true);
     } else if (preset === 'enterprise') {
       setEditOwnerEnableOrders(true);
       setEditOwnerEnableBookings(true);
@@ -327,6 +339,9 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       setEditOwnerEnableKds(true);
       setEditOwnerEnableDrivers(true);
       setEditOwnerEnableInventory(true);
+      setEditEnableOrders(true);
+      setEditEnableBookings(true);
+      setEditEnableLoyalty(true);
     }
   };
 
@@ -630,17 +645,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
     setEditPointsPerRiyal(storeToEdit.points_per_riyal || 1.0);
     setEditLogoUrl(storeToEdit.logo_url || '');
     setEditLogoStats(null);
-    setEditOwnerEnableOrders(storeToEdit.owner_enable_orders !== false);
-    setEditOwnerEnableBookings(storeToEdit.owner_enable_bookings !== false);
-    setEditOwnerEnableLoyalty(storeToEdit.owner_enable_loyalty !== false);
-    setEditOwnerEnablePos(storeToEdit.owner_enable_pos !== false);
-    setEditOwnerEnableKds(storeToEdit.owner_enable_kds !== false);
-    setEditOwnerEnableDrivers(storeToEdit.owner_enable_drivers !== false);
-    setEditOwnerEnableInventory(storeToEdit.owner_enable_inventory !== false);
-    setEditBusinessType(storeToEdit.business_type || 'custom');
-    setEditEnableOrders(storeToEdit.enable_orders !== false);
-    setEditEnableBookings(storeToEdit.enable_bookings !== false);
-    setEditEnableLoyalty(storeToEdit.enable_loyalty !== false);
+    const activeMods = getStoreActiveModules(storeToEdit);
+    setEditOwnerEnableOrders(activeMods.ownerOrders);
+    setEditOwnerEnableBookings(activeMods.ownerBookings);
+    setEditOwnerEnableLoyalty(activeMods.ownerLoyalty);
+    setEditOwnerEnablePos(activeMods.ownerPos);
+    setEditOwnerEnableKds(activeMods.ownerKds);
+    setEditOwnerEnableDrivers(activeMods.ownerDrivers);
+    setEditOwnerEnableInventory(activeMods.ownerInventory);
+    setEditBusinessType(activeMods.businessType || 'custom');
+    setEditEnableOrders(activeMods.merchantOrders);
+    setEditEnableBookings(activeMods.merchantBookings);
+    setEditEnableLoyalty(activeMods.merchantLoyalty);
     setEditWaQuota(100);
     setEditWaUsed(0);
     LoyaltyService.getStoreWallet(storeToEdit.id).then((w) => {
@@ -711,9 +727,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
         owner_enable_drivers: editOwnerEnableDrivers,
         owner_enable_inventory: editOwnerEnableInventory,
         business_type: editBusinessType as any,
-        enable_orders: editEnableOrders,
-        enable_bookings: editEnableBookings,
-        enable_loyalty: editEnableLoyalty,
+        enable_orders: editOwnerEnableOrders ? editEnableOrders : false,
+        enable_bookings: editOwnerEnableBookings ? editEnableBookings : false,
+        enable_loyalty: editOwnerEnableLoyalty ? editEnableLoyalty : false,
+        enable_pos: editOwnerEnablePos ? (editingStore.enable_pos !== false) : false,
+        enable_kds: editOwnerEnableKds ? (editingStore.enable_kds !== false) : false,
+        enable_drivers: editOwnerEnableDrivers ? (editingStore.enable_drivers !== false) : false,
+        enable_inventory: editOwnerEnableInventory ? (editingStore.enable_inventory !== false) : false,
       });
 
       // Update store wallet WhatsApp quota in DB
@@ -2337,19 +2357,23 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         {/* WhatsApp Handover Quick Button */}
                         <button
                           onClick={() => {
+                            const isScannerMode = !getStoreActiveModules(s).pos;
                             const adminUrl = s.custom_domain
                               ? `https://${s.custom_domain}/?portal=admin`
                               : `${window.location.origin}/?store=${s.slug}&portal=admin`;
                             const cashierUrl = s.custom_domain
-                              ? `https://${s.custom_domain}/?portal=cashier`
-                              : `${window.location.origin}/?store=${s.slug}&portal=cashier`;
+                              ? `https://${s.custom_domain}/?portal=${isScannerMode ? 'scanner' : 'cashier'}`
+                              : `${window.location.origin}/?store=${s.slug}&portal=${isScannerMode ? 'scanner' : 'cashier'}`;
                             const custUrl = s.custom_domain
                               ? `https://${s.custom_domain}/?portal=customer`
                               : `${window.location.origin}/?store=${s.slug}&portal=customer`;
 
                             const cleanPhone = (s.manager_contact || '').replace(/\D/g, '');
                             const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
-                            const plainText = `مرحباً بك ${s.name} ⚡\nروابط نظام الولاء والمكافآت (${getActiveTenantConfig().brandEnglishName || getActiveTenantConfig().brandName}) لمتجركم:\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${cashierUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
+                            const staffPortalHeading = isScannerMode
+                              ? '📷 *2. رابط بوابة ماسح الولاء للموظفين:*'
+                              : '⚡ *2. رابط شاشة الكاشير السريعة (POS):*';
+                            const plainText = `مرحباً بك ${s.name} ⚡\nروابط نظام الولاء والمكافآت (${getActiveTenantConfig().brandEnglishName || getActiveTenantConfig().brandName}) لمتجركم:\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n\n${staffPortalHeading}\n${cashierUrl}\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}`;
                             const encodedMsg = encodeURIComponent(plainText);
                             const waUrl = intlPhone ? `https://wa.me/${intlPhone}?text=${encodedMsg}` : `https://wa.me/?text=${encodedMsg}`;
                             window.open(waUrl, '_blank');
@@ -2604,13 +2628,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                         </button>
 
                         <button
-                          onClick={() => onSelectStore(s, 'cashier')}
+                          onClick={() => onSelectStore(s, !getStoreActiveModules(s).pos ? 'scanner' : 'cashier')}
                           className={`px-3.5 py-2 rounded-xl font-semibold flex items-center space-x-1.5 rtl:space-x-reverse transition ${
                             isDark ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200'
                           }`}
                         >
                           <Globe className="w-4 h-4 text-blue-500" />
-                          <span>بوابة الكاشير (POS)</span>
+                          <span>{!getStoreActiveModules(s).pos ? 'بوابة ماسح الولاء 📷' : 'بوابة الكاشير (POS)'}</span>
                         </button>
 
                         <button
@@ -3356,7 +3380,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                       type="button"
                       onClick={() => applyIndustryPreset('retail_loyalty')}
                       className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition ${
-                        !editOwnerEnableOrders && !editOwnerEnableBookings && editOwnerEnableLoyalty
+                        !editOwnerEnableOrders &&
+                        !editOwnerEnableBookings &&
+                        !editOwnerEnablePos &&
+                        !editOwnerEnableKds &&
+                        !editOwnerEnableDrivers &&
+                        !editOwnerEnableInventory &&
+                        editOwnerEnableLoyalty
                           ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md font-black'
                           : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-emerald-500/40'
                       }`}
@@ -3402,7 +3432,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           </span>
                           <button
                             type="button"
-                            onClick={() => setEditOwnerEnableOrders(!editOwnerEnableOrders)}
+                            onClick={() => {
+                              const next = !editOwnerEnableOrders;
+                              setEditOwnerEnableOrders(next);
+                              setEditEnableOrders(next);
+                              if (next && editBusinessType === 'retail_loyalty') setEditBusinessType('custom');
+                            }}
                             className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
                               editOwnerEnableOrders
                                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
@@ -3424,7 +3459,12 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           </span>
                           <button
                             type="button"
-                            onClick={() => setEditOwnerEnableBookings(!editOwnerEnableBookings)}
+                            onClick={() => {
+                              const next = !editOwnerEnableBookings;
+                              setEditOwnerEnableBookings(next);
+                              setEditEnableBookings(next);
+                              if (next && editBusinessType === 'retail_loyalty') setEditBusinessType('custom');
+                            }}
                             className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
                               editOwnerEnableBookings
                                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
@@ -3446,7 +3486,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           </span>
                           <button
                             type="button"
-                            onClick={() => setEditOwnerEnablePos(!editOwnerEnablePos)}
+                            onClick={() => {
+                              const next = !editOwnerEnablePos;
+                              setEditOwnerEnablePos(next);
+                              if (next && editBusinessType === 'retail_loyalty') setEditBusinessType('custom');
+                            }}
                             className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
                               editOwnerEnablePos
                                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
@@ -3476,7 +3520,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           </span>
                           <button
                             type="button"
-                            onClick={() => setEditOwnerEnableKds(!editOwnerEnableKds)}
+                            onClick={() => {
+                              const next = !editOwnerEnableKds;
+                              setEditOwnerEnableKds(next);
+                              if (next && editBusinessType === 'retail_loyalty') setEditBusinessType('custom');
+                            }}
                             className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
                               editOwnerEnableKds
                                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
@@ -3498,7 +3546,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           </span>
                           <button
                             type="button"
-                            onClick={() => setEditOwnerEnableDrivers(!editOwnerEnableDrivers)}
+                            onClick={() => {
+                              const next = !editOwnerEnableDrivers;
+                              setEditOwnerEnableDrivers(next);
+                              if (next && editBusinessType === 'retail_loyalty') setEditBusinessType('custom');
+                            }}
                             className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
                               editOwnerEnableDrivers
                                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
@@ -3520,7 +3572,11 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                           </span>
                           <button
                             type="button"
-                            onClick={() => setEditOwnerEnableInventory(!editOwnerEnableInventory)}
+                            onClick={() => {
+                              const next = !editOwnerEnableInventory;
+                              setEditOwnerEnableInventory(next);
+                              if (next && editBusinessType === 'retail_loyalty') setEditBusinessType('custom');
+                            }}
                             className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition ${
                               editOwnerEnableInventory
                                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
@@ -3725,18 +3781,23 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 </div>
               </div>
 
-              {/* 2. Cashier POS Link */}
+              {/* 2. Cashier POS / Loyalty Scanner Link */}
               <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-blue-400 font-bold flex items-center gap-1">
                     <Smartphone className="w-3.5 h-3.5" />
-                    <span>⚡ 2. رابط شاشة الكاشير السريعة (POS):</span>
+                    <span>
+                      {!getStoreActiveModules(onboardedResult.store).pos
+                        ? '📷 2. رابط بوابة ماسح الولاء للموظفين:'
+                        : '⚡ 2. رابط شاشة الكاشير السريعة (POS):'}
+                    </span>
                   </span>
                   <button
                     onClick={() => {
+                      const portalKey = !getStoreActiveModules(onboardedResult.store).pos ? 'scanner' : 'cashier';
                       const url = onboardedResult.store.custom_domain
-                        ? `https://${onboardedResult.store.custom_domain}/?portal=cashier`
-                        : `${window.location.origin}/?store=${onboardedResult.store.slug}&portal=cashier`;
+                        ? `https://${onboardedResult.store.custom_domain}/?portal=${portalKey}`
+                        : `${window.location.origin}/?store=${onboardedResult.store.slug}&portal=${portalKey}`;
                       copyToClipboard(url, 'pos');
                     }}
                     className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1 text-[11px]"
@@ -3747,8 +3808,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
                 </div>
                 <div className="text-[11px] text-slate-300 break-all bg-slate-900/90 p-2 rounded-xl border border-slate-800 select-all">
                   {onboardedResult.store.custom_domain
-                    ? `https://${onboardedResult.store.custom_domain}/?portal=cashier`
-                    : `${window.location.origin}/?store=${onboardedResult.store.slug}&portal=cashier`}
+                    ? `https://${onboardedResult.store.custom_domain}/?portal=${!getStoreActiveModules(onboardedResult.store).pos ? 'scanner' : 'cashier'}`
+                    : `${window.location.origin}/?store=${onboardedResult.store.slug}&portal=${!getStoreActiveModules(onboardedResult.store).pos ? 'scanner' : 'cashier'}`}
                 </div>
               </div>
 
@@ -3789,20 +3850,24 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
               {/* WhatsApp Share Button */}
               <button
                 onClick={() => {
+                  const isScannerMode = !getStoreActiveModules(onboardedResult.store).pos;
                   const adminUrl = onboardedResult.store.custom_domain
                     ? `https://${onboardedResult.store.custom_domain}/?portal=admin`
                     : `${window.location.origin}/?store=${onboardedResult.store.slug}&portal=admin`;
                   const cashierUrl = onboardedResult.store.custom_domain
-                    ? `https://${onboardedResult.store.custom_domain}/?portal=cashier`
-                    : `${window.location.origin}/?store=${onboardedResult.store.slug}&portal=cashier`;
+                    ? `https://${onboardedResult.store.custom_domain}/?portal=${isScannerMode ? 'scanner' : 'cashier'}`
+                    : `${window.location.origin}/?store=${onboardedResult.store.slug}&portal=${isScannerMode ? 'scanner' : 'cashier'}`;
                   const custUrl = onboardedResult.store.custom_domain
                     ? `https://${onboardedResult.store.custom_domain}/?portal=customer`
                     : `${window.location.origin}/?store=${onboardedResult.store.slug}&portal=customer`;
 
                   const cleanPhone = (onboardedResult.store.manager_contact || '').replace(/\D/g, '');
                   const intlPhone = cleanPhone.startsWith('0') ? '966' + cleanPhone.substring(1) : cleanPhone;
+                  const staffPortalTitle = isScannerMode
+                    ? '📷 *2. رابط بوابة ماسح الولاء للموظفين:*'
+                    : '⚡ *2. رابط شاشة الكاشير السريعة (POS):*';
 
-                  const plainText = `مرحباً بك ${onboardedResult.store.name} ⚡\nتم بنجاح تفعيل وتشغيل نظام الولاء والمكافآت (${getActiveTenantConfig().brandEnglishName || getActiveTenantConfig().brandName}) لمتجركم!\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n🔑 رمز الدخول السري (PIN): ${onboardedResult.managerPin}\n(من هنا تدير العروض، النقاط، الرتب، والكاشيرات)\n\n⚡ *2. رابط شاشة الكاشير السريعة (POS):*\n${cashierUrl}\n(شاشة مسح باركود الزبائن وصرف الكوبونات)\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}\n(الرابط المخصص لنشره للزبائن أو وضعه في البايو للتسجيل)\n\nنتمنى لكم تجربة مميزة ومبيعات مضاعفة! 🚀`;
+                  const plainText = `مرحباً بك ${onboardedResult.store.name} ⚡\nتم بنجاح تفعيل وتشغيل نظام الولاء والمكافآت (${getActiveTenantConfig().brandEnglishName || getActiveTenantConfig().brandName}) لمتجركم!\n\n💼 *1. رابط لوحة تحكم وإدارة المتجر (المدير):*\n${adminUrl}\n🔑 رمز الدخول السري (PIN): ${onboardedResult.managerPin}\n(من هنا تدير العروض، النقاط، الرتب، والموظفين)\n\n${staffPortalTitle}\n${cashierUrl}\n(شاشة مسح باركود الزبائن وصرف الكوبونات)\n\n📱 *3. رابط بطاقة ومحفظة الزبائن:*\n${custUrl}\n(الرابط المخصص لنشره للزبائن أو وضعه في البايو للتسجيل)\n\nنتمنى لكم تجربة مميزة ومبيعات مضاعفة! 🚀`;
                   
                   const encodedMsg = encodeURIComponent(plainText);
                   const waUrl = intlPhone ? `https://wa.me/${intlPhone}?text=${encodedMsg}` : `https://wa.me/?text=${encodedMsg}`;
