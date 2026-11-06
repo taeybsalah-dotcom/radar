@@ -620,6 +620,142 @@ export function normalizeStore(s: any): Store {
   const effectiveCardTextColor = s.card_text_color || parsedFulfill?.card_text_color || localExistingStore?.card_text_color || undefined;
   const effectiveThemePreset = s.theme_preset || parsedFulfill?.theme_preset || localExistingStore?.theme_preset || undefined;
 
+  const resolveModuleFlag = (
+    primaryVal: any,
+    fulfillVal: any,
+    localVal: any,
+    defaultVal = true
+  ): boolean => {
+    if (typeof fulfillVal === 'boolean') return fulfillVal;
+    if (typeof primaryVal === 'boolean') return primaryVal;
+    if (typeof localVal === 'boolean') return localVal;
+    return defaultVal;
+  };
+
+  const effectiveBusinessType =
+    s.business_type ||
+    parsedFulfill?.business_type ||
+    localExistingStore?.business_type ||
+    undefined;
+
+  const isLoyaltyOnlyPreset = effectiveBusinessType === 'retail_loyalty';
+
+  const resolvedOwnerOrders = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.owner_enable_orders,
+        parsedFulfill?.owner_enable_orders,
+        localExistingStore?.owner_enable_orders,
+        true
+      );
+  const resolvedOwnerBookings = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.owner_enable_bookings,
+        parsedFulfill?.owner_enable_bookings,
+        localExistingStore?.owner_enable_bookings,
+        true
+      );
+  const resolvedOwnerLoyalty = resolveModuleFlag(
+    s.owner_enable_loyalty,
+    parsedFulfill?.owner_enable_loyalty,
+    localExistingStore?.owner_enable_loyalty,
+    true
+  );
+  const resolvedOwnerPos = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.owner_enable_pos,
+        parsedFulfill?.owner_enable_pos,
+        localExistingStore?.owner_enable_pos,
+        true
+      );
+  const resolvedOwnerKds = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.owner_enable_kds,
+        parsedFulfill?.owner_enable_kds,
+        localExistingStore?.owner_enable_kds,
+        true
+      );
+  const resolvedOwnerDrivers = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.owner_enable_drivers,
+        parsedFulfill?.owner_enable_drivers,
+        localExistingStore?.owner_enable_drivers,
+        true
+      );
+  const resolvedOwnerInventory = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.owner_enable_inventory,
+        parsedFulfill?.owner_enable_inventory,
+        localExistingStore?.owner_enable_inventory,
+        true
+      );
+
+  const resolvedEnableOrders = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.enable_orders,
+        parsedFulfill?.enable_orders,
+        localExistingStore?.enable_orders,
+        resolvedOwnerOrders
+      );
+  const resolvedEnableBookings = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.enable_bookings,
+        parsedFulfill?.enable_bookings,
+        localExistingStore?.enable_bookings,
+        resolvedOwnerBookings
+      );
+  const resolvedEnableLoyalty = resolveModuleFlag(
+    s.enable_loyalty,
+    parsedFulfill?.enable_loyalty,
+    localExistingStore?.enable_loyalty,
+    resolvedOwnerLoyalty
+  );
+  const resolvedEnablePos = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.enable_pos,
+        parsedFulfill?.enable_pos,
+        localExistingStore?.enable_pos,
+        resolvedOwnerPos
+      );
+  const resolvedEnableKds = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.enable_kds,
+        parsedFulfill?.enable_kds,
+        localExistingStore?.enable_kds,
+        resolvedOwnerKds
+      );
+  const resolvedEnableDrivers = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.enable_drivers,
+        parsedFulfill?.enable_drivers,
+        localExistingStore?.enable_drivers,
+        resolvedOwnerDrivers
+      );
+  const resolvedEnableInventory = isLoyaltyOnlyPreset
+    ? false
+    : resolveModuleFlag(
+        s.enable_inventory,
+        parsedFulfill?.enable_inventory,
+        localExistingStore?.enable_inventory,
+        resolvedOwnerInventory
+      );
+  const resolvedPosWhatsappReceipt = resolveModuleFlag(
+    s.enable_pos_whatsapp_receipt,
+    parsedFulfill?.enable_pos_whatsapp_receipt,
+    localExistingStore?.enable_pos_whatsapp_receipt,
+    true
+  );
+
   return {
     ...s,
     primary_color: s.primary_color || localExistingStore?.primary_color || '#0F172A',
@@ -646,12 +782,22 @@ export function normalizeStore(s: any): Store {
     trial_end_date: trialEnd,
     manager_contact,
     slider_images: slider_images.filter((img) => img && typeof img === 'object' && Boolean(img.image_url)),
-    enable_orders: s.enable_orders !== false,
-    enable_bookings: s.enable_bookings !== false,
-    enable_loyalty: s.enable_loyalty !== false,
-    owner_enable_orders: s.owner_enable_orders !== false,
-    owner_enable_bookings: s.owner_enable_bookings !== false,
-    owner_enable_loyalty: s.owner_enable_loyalty !== false,
+    business_type: effectiveBusinessType,
+    enable_orders: resolvedEnableOrders,
+    enable_bookings: resolvedEnableBookings,
+    enable_loyalty: resolvedEnableLoyalty,
+    enable_pos: resolvedEnablePos,
+    enable_kds: resolvedEnableKds,
+    enable_drivers: resolvedEnableDrivers,
+    enable_inventory: resolvedEnableInventory,
+    owner_enable_orders: resolvedOwnerOrders,
+    owner_enable_bookings: resolvedOwnerBookings,
+    owner_enable_loyalty: resolvedOwnerLoyalty,
+    owner_enable_pos: resolvedOwnerPos,
+    owner_enable_kds: resolvedOwnerKds,
+    owner_enable_drivers: resolvedOwnerDrivers,
+    owner_enable_inventory: resolvedOwnerInventory,
+    enable_pos_whatsapp_receipt: resolvedPosWhatsappReceipt,
     fulfillment_settings: (() => {
       let raw = parsedFulfill;
       const rawConfig = raw?.wallet_pass_config || (localExistingStore?.fulfillment_settings as any)?.wallet_pass_config;
@@ -671,6 +817,22 @@ export function normalizeStore(s: any): Store {
         card_color: effectiveCardColor,
         card_text_color: effectiveCardTextColor,
         theme_preset: effectiveThemePreset,
+        business_type: effectiveBusinessType,
+        enable_orders: resolvedEnableOrders,
+        enable_bookings: resolvedEnableBookings,
+        enable_loyalty: resolvedEnableLoyalty,
+        enable_pos: resolvedEnablePos,
+        enable_kds: resolvedEnableKds,
+        enable_drivers: resolvedEnableDrivers,
+        enable_inventory: resolvedEnableInventory,
+        owner_enable_orders: resolvedOwnerOrders,
+        owner_enable_bookings: resolvedOwnerBookings,
+        owner_enable_loyalty: resolvedOwnerLoyalty,
+        owner_enable_pos: resolvedOwnerPos,
+        owner_enable_kds: resolvedOwnerKds,
+        owner_enable_drivers: resolvedOwnerDrivers,
+        owner_enable_inventory: resolvedOwnerInventory,
+        enable_pos_whatsapp_receipt: resolvedPosWhatsappReceipt,
         wallet_pass_config: rawConfig,
       };
     })(),
@@ -2652,6 +2814,45 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
     const supabase = getSupabaseClient();
     let updatedSupabaseStore: Store | null = null;
+
+    // Package white-label theme, SaaS module toggles, and extra config into fulfillment_settings JSONB
+    const themePayload: any = {};
+    if (updates.theme_mode !== undefined) themePayload.theme_mode = updates.theme_mode;
+    if (updates.background_color !== undefined) themePayload.background_color = updates.background_color;
+    if (updates.card_color !== undefined) themePayload.card_color = updates.card_color;
+    if (updates.card_text_color !== undefined) themePayload.card_text_color = updates.card_text_color;
+    if (updates.theme_preset !== undefined) themePayload.theme_preset = updates.theme_preset;
+    if (updates.admin_pin !== undefined) themePayload.admin_pin = updates.admin_pin;
+    if (updates.catalog_enabled !== undefined) themePayload.catalog_enabled = updates.catalog_enabled;
+    if (updates.max_cashier_invoice_amount !== undefined) themePayload.max_cashier_invoice_amount = updates.max_cashier_invoice_amount;
+    if (updates.business_type !== undefined) themePayload.business_type = updates.business_type;
+    if (updates.enable_orders !== undefined) themePayload.enable_orders = updates.enable_orders;
+    if (updates.enable_bookings !== undefined) themePayload.enable_bookings = updates.enable_bookings;
+    if (updates.enable_loyalty !== undefined) themePayload.enable_loyalty = updates.enable_loyalty;
+    if (updates.enable_pos !== undefined) themePayload.enable_pos = updates.enable_pos;
+    if (updates.enable_kds !== undefined) themePayload.enable_kds = updates.enable_kds;
+    if (updates.enable_drivers !== undefined) themePayload.enable_drivers = updates.enable_drivers;
+    if (updates.enable_inventory !== undefined) themePayload.enable_inventory = updates.enable_inventory;
+    if (updates.owner_enable_orders !== undefined) themePayload.owner_enable_orders = updates.owner_enable_orders;
+    if (updates.owner_enable_bookings !== undefined) themePayload.owner_enable_bookings = updates.owner_enable_bookings;
+    if (updates.owner_enable_loyalty !== undefined) themePayload.owner_enable_loyalty = updates.owner_enable_loyalty;
+    if (updates.owner_enable_pos !== undefined) themePayload.owner_enable_pos = updates.owner_enable_pos;
+    if (updates.owner_enable_kds !== undefined) themePayload.owner_enable_kds = updates.owner_enable_kds;
+    if (updates.owner_enable_drivers !== undefined) themePayload.owner_enable_drivers = updates.owner_enable_drivers;
+    if (updates.owner_enable_inventory !== undefined) themePayload.owner_enable_inventory = updates.owner_enable_inventory;
+    if (updates.enable_pos_whatsapp_receipt !== undefined) themePayload.enable_pos_whatsapp_receipt = updates.enable_pos_whatsapp_receipt;
+
+    const currentFulfillment =
+      typeof currentStore.fulfillment_settings === 'object' && currentStore.fulfillment_settings !== null
+        ? currentStore.fulfillment_settings
+        : {};
+
+    const mergedFulfillment = {
+      ...currentFulfillment,
+      ...(typeof updates.fulfillment_settings === 'object' && updates.fulfillment_settings !== null ? updates.fulfillment_settings : {}),
+      ...themePayload,
+    };
+
     if (supabase) {
       try {
         const {
@@ -2660,28 +2861,6 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           matchedStore,
           ...allRawUpdates
         } = stripDataUrls({ ...(updates as any) });
-
-        // Package white-label theme and extra config into fulfillment_settings JSONB
-        const themePayload: any = {};
-        if (updates.theme_mode !== undefined) themePayload.theme_mode = updates.theme_mode;
-        if (updates.background_color !== undefined) themePayload.background_color = updates.background_color;
-        if (updates.card_color !== undefined) themePayload.card_color = updates.card_color;
-        if (updates.card_text_color !== undefined) themePayload.card_text_color = updates.card_text_color;
-        if (updates.theme_preset !== undefined) themePayload.theme_preset = updates.theme_preset;
-        if (updates.admin_pin !== undefined) themePayload.admin_pin = updates.admin_pin;
-        if (updates.catalog_enabled !== undefined) themePayload.catalog_enabled = updates.catalog_enabled;
-        if (updates.max_cashier_invoice_amount !== undefined) themePayload.max_cashier_invoice_amount = updates.max_cashier_invoice_amount;
-
-        const currentFulfillment =
-          typeof currentStore.fulfillment_settings === 'object' && currentStore.fulfillment_settings !== null
-            ? currentStore.fulfillment_settings
-            : {};
-
-        const mergedFulfillment = {
-          ...currentFulfillment,
-          ...(typeof allRawUpdates.fulfillment_settings === 'object' ? allRawUpdates.fulfillment_settings : {}),
-          ...themePayload,
-        };
 
         const validCols = new Set(
           STORE_SAFE_COLS.split(',').map((c) => c.trim()).filter(Boolean)
@@ -2715,7 +2894,12 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
         }
 
         if (!res.error && res.data) {
-          updatedSupabaseStore = { ...(res.data as any), ...pickStoreAssets(safeDbUpdates), ...themePayload } as Store;
+          updatedSupabaseStore = {
+            ...(res.data as any),
+            ...pickStoreAssets(safeDbUpdates),
+            ...themePayload,
+            fulfillment_settings: mergedFulfillment,
+          } as Store;
           noteStoreAssetUpdates(currentStore.id, safeDbUpdates);
         } else if (res.error) {
           console.warn('Supabase updateStoreSettings error:', res.error);
@@ -2729,6 +2913,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       ...currentStore,
       ...updates,
       ...(updatedSupabaseStore || {}),
+      ...themePayload,
+      fulfillment_settings: mergedFulfillment,
       theme_mode: updates.theme_mode || currentStore.theme_mode || 'light',
       background_color: updates.background_color || currentStore.background_color,
       card_color: updates.card_color || currentStore.card_color,
