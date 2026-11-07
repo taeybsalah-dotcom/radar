@@ -51,16 +51,25 @@ function getSecureLogoUrl(url?: string | null): string {
   if (!url || typeof url !== 'string') return fallback;
   const trimmed = url.trim();
   if (!trimmed || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return fallback;
-  // Google Wallet strictly requires PNG or JPG format - reject WEBP/SVG/GIF
   const lower = trimmed.toLowerCase();
-  if (lower.includes('.webp') || lower.includes('.svg') || lower.includes('.gif')) {
+  if (lower.includes('.svg') || lower.includes('.gif')) {
     return fallback;
   }
-  if (trimmed.startsWith('https://')) return trimmed;
-  if (trimmed.startsWith('http://')) return trimmed.replace(/^http:\/\//, 'https://');
-  if (trimmed.startsWith('//')) return `https:${trimmed}`;
-  if (trimmed.startsWith('/')) return `https://sdeemalathr.com${trimmed}`;
-  return fallback;
+  const httpsUrl = trimmed.startsWith('https://')
+    ? trimmed
+    : trimmed.startsWith('http://')
+      ? trimmed.replace(/^http:\/\//, 'https://')
+      : trimmed.startsWith('//')
+        ? `https:${trimmed}`
+        : trimmed.startsWith('/')
+          ? `https://sdeemalathr.com${trimmed}`
+          : '';
+  if (!httpsUrl) return fallback;
+  // Convert WebP store logos to PNG URL automatically for Google Wallet compatibility
+  if (lower.includes('.webp')) {
+    return `https://wsrv.nl/?url=${encodeURIComponent(httpsUrl)}&output=png&w=256&h=256`;
+  }
+  return httpsUrl;
 }
 
 async function restGet(supabaseUrl: string, serviceKey: string, path: string): Promise<any[]> {
@@ -179,9 +188,9 @@ export async function onRequestPost(context: any): Promise<Response> {
     const loyaltyMode = walletConfig?.loyalty_mode || 'points';
     const isStamps = loyaltyMode === 'stamps';
     const stampsTarget = walletConfig?.stamps_target || 6;
-    const currentStamps = balance % stampsTarget;
+    const currentStamps = balance > 0 && balance % stampsTarget === 0 ? stampsTarget : (balance % stampsTarget);
 
-    const logoUrl = getSecureLogoUrl(store?.logo_url);
+    const logoUrl = getSecureLogoUrl(store?.logo_url || store?.fulfillment_settings?.logo_url);
 
     const safeStoreId = String(store?.id || store_id).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);
     const safeCustId = String(customer?.id || customer_id || 'guest').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 16);

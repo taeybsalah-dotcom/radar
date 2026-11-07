@@ -483,3 +483,245 @@ export const StreakBanner: React.FC<StreakBannerProps> = ({
     </div>
   );
 };
+
+// ==============================================================================
+// 🎴 4. خلفية البطاقة التفاعلية للألعاب واكشط واربح (Interactive Card Back)
+// ==============================================================================
+
+interface EmbeddedCardBackGamificationProps {
+  store: Store;
+  scratchRewardTitle: string;
+  enableSpinWheel: boolean;
+  enableScratchCard: boolean;
+  enableStreaks: boolean;
+  currentStreak: number;
+  streakTargetDays: number;
+  streakRewardTitle: string;
+  onFlipBack: () => void;
+  onOpenSpinWheel: () => void;
+  onRewardRevealed?: () => void;
+}
+
+export const EmbeddedCardBackGamification: React.FC<EmbeddedCardBackGamificationProps> = ({
+  store,
+  scratchRewardTitle,
+  enableSpinWheel,
+  enableStreaks,
+  currentStreak,
+  streakTargetDays,
+  streakRewardTitle,
+  onFlipBack,
+  onOpenSpinWheel,
+  onRewardRevealed,
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isRevealed, setIsRevealed] = useState(false);
+  const isDrawingRef = useRef(false);
+
+  const initCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    canvas.width = 280;
+    canvas.height = 115;
+
+    const grad = ctx.createLinearGradient(0, 0, 280, 115);
+    grad.addColorStop(0, '#D4AF37');
+    grad.addColorStop(0.5, '#FFF3B0');
+    grad.addColorStop(1, '#AA771C');
+
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillStyle = '#422006';
+    ctx.textAlign = 'center';
+    ctx.fillText('🪙 اكشط البطاقة الذهبية واربح فوراً ✨', 140, 52);
+
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = '#78350F';
+    ctx.fillText('امسح بإصبعك أو الماوس للكشف عن هديتك', 140, 76);
+  }, []);
+
+  useEffect(() => {
+    setIsRevealed(false);
+    const t = setTimeout(initCanvas, 60);
+    return () => clearTimeout(t);
+  }, [initCanvas]);
+
+  const checkCompletion = () => {
+    if (isRevealed) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let transparentPixels = 0;
+    const totalPixels = imgData.data.length / 4;
+
+    for (let i = 3; i < imgData.data.length; i += 16) {
+      if (imgData.data[i] === 0) {
+        transparentPixels++;
+      }
+    }
+
+    if (transparentPixels / (totalPixels / 4) > 0.32) {
+      setIsRevealed(true);
+      playBeepSound('success');
+      try {
+        confetti({
+          particleCount: 90,
+          spread: 70,
+          origin: { y: 0.6 },
+        });
+      } catch {}
+      if (onRewardRevealed) onRewardRevealed();
+    }
+  };
+
+  const scratch = (clientX: number, clientY: number) => {
+    if (isRevealed) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
+
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    ctx.arc(x, y, 18, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (Math.random() < 0.25) {
+      checkCompletion();
+    }
+  };
+
+  const resolvedLogo = store.logo_url || (store as any)?.fulfillment_settings?.logo_url;
+
+  return (
+    <div className="relative z-10 space-y-3 animate-fadeIn text-right" dir="rtl">
+      {/* Top Header on Back of Card */}
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-white/15">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-10 h-10 rounded-full bg-white text-slate-950 border-2 border-amber-400/60 flex items-center justify-center shrink-0 overflow-hidden font-black text-sm shadow-md">
+            {resolvedLogo ? (
+              <img src={resolvedLogo} alt={store.name} className="w-full h-full object-cover" />
+            ) : (
+              <span>{store.name.slice(0, 1)}</span>
+            )}
+          </div>
+          <div className="min-w-0">
+            <h4 className="text-sm font-black text-white truncate">
+              خلفية بطاقة {store.name} 🎰
+            </h4>
+            <p className="text-[10px] text-amber-300 font-bold">
+              منطقة الألعاب التفاعلية واكشط واربح
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={onFlipBack}
+          className="px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/25 text-white font-black text-[11px] flex items-center gap-1 transition active:scale-95 shrink-0"
+        >
+          <RotateCw className="w-3.5 h-3.5" />
+          <span>وجه البطاقة</span>
+        </button>
+      </div>
+
+      {/* Embedded Scratch & Win Canvas Directly on Card Back */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="font-black text-amber-300 flex items-center gap-1">
+            <Gift className="w-3.5 h-3.5" />
+            <span>بطاقة اكشط واربح المدمجة:</span>
+          </span>
+          {isRevealed && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsRevealed(false);
+                setTimeout(initCanvas, 50);
+              }}
+              className="text-[10px] text-emerald-300 hover:underline font-bold"
+            >
+              إعادة تغطية البطاقة 🔄
+            </button>
+          )}
+        </div>
+
+        <div className="relative w-full max-w-[280px] h-[115px] mx-auto rounded-2xl overflow-hidden shadow-xl border-2 border-amber-400/50 select-none">
+          {/* Secret Prize Under Foil */}
+          <div className="absolute inset-0 bg-gradient-to-br from-emerald-950 via-slate-900 to-emerald-900 flex flex-col items-center justify-center p-3 text-center">
+            <Trophy className="w-6 h-6 text-amber-400 mb-0.5" />
+            <div className="text-amber-300 text-[10px] font-bold">🎉 مبارك! هديتك الفورية:</div>
+            <div className="text-white font-black text-sm mt-0.5 line-clamp-1">
+              {scratchRewardTitle || 'هدية أو خصم خاص من المتجر 🎁'}
+            </div>
+            <div className="text-emerald-400 text-[9px] font-bold mt-1">
+              أبرز البطاقة للكاشير لاستلام هديتك ✓
+            </div>
+          </div>
+
+          {/* Interactive Gold Scratch Foil */}
+          {!isRevealed && (
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 w-full h-full z-10 cursor-pointer touch-none"
+              onMouseDown={() => (isDrawingRef.current = true)}
+              onMouseUp={() => (isDrawingRef.current = false)}
+              onMouseMove={(e) => {
+                if (isDrawingRef.current) scratch(e.clientX, e.clientY);
+              }}
+              onTouchStart={() => (isDrawingRef.current = true)}
+              onTouchEnd={() => (isDrawingRef.current = false)}
+              onTouchMove={(e) => {
+                if (e.touches[0]) scratch(e.touches[0].clientX, e.touches[0].clientY);
+              }}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Spin Wheel & Streaks Row on Card Back */}
+      <div className="space-y-2 pt-1">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenSpinWheel}
+            className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:brightness-110 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-lg transition active:scale-95"
+          >
+            <Sparkles className="w-4 h-4 text-slate-950" />
+            <span>{enableSpinWheel ? 'تدوير عجلة الحظ 🎡' : 'تشغيل عجلة الحظ 🎡'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onFlipBack}
+            className="py-2.5 px-3.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold text-xs transition active:scale-95"
+          >
+            العودة للباركود 📱
+          </button>
+        </div>
+
+        {enableStreaks && (
+          <StreakBanner
+            currentStreak={currentStreak}
+            targetDays={streakTargetDays}
+            rewardTitle={streakRewardTitle}
+          />
+        )}
+      </div>
+    </div>
+  );
+};

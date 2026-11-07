@@ -576,7 +576,21 @@ export async function generateSignedApplePass(params: ApplePassSignParams): Prom
             if (isPng || isJpg) {
               storeLogoU8 = bytes;
             } else {
-              console.warn('Custom logo format is neither PNG nor JPEG, skipping:', rawLogo);
+              // If the stored logo is WebP, convert it to PNG on the fly so the store's actual logo appears
+              try {
+                const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(rawLogo)}&output=png&w=160&h=160`;
+                const proxyRes = await fetch(proxyUrl);
+                if (proxyRes.ok) {
+                  const proxyAb = await proxyRes.arrayBuffer();
+                  const proxyBytes = new Uint8Array(proxyAb);
+                  const proxyIsPng = proxyBytes[0] === 0x89 && proxyBytes[1] === 0x50 && proxyBytes[2] === 0x4E && proxyBytes[3] === 0x47;
+                  if (proxyIsPng) {
+                    storeLogoU8 = proxyBytes;
+                  }
+                }
+              } catch (proxyErr) {
+                console.warn('WebP to PNG proxy conversion notice:', proxyErr);
+              }
             }
           }
         }

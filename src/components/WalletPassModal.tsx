@@ -254,9 +254,9 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5">
                       <div className="w-10 h-10 rounded-full bg-black/60 border border-white/20 p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-inner">
-                        {store.logo_url ? (
+                        {(store.logo_url || (store as any)?.fulfillment_settings?.logo_url) ? (
                           <img
-                            src={store.logo_url}
+                            src={store.logo_url || (store as any)?.fulfillment_settings?.logo_url}
                             alt={store.name}
                             className="w-full h-full object-cover rounded-full"
                           />
@@ -286,20 +286,25 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                   </div>
 
                   {/* Main Points / Stamps Block */}
-                  {config.loyalty_mode === 'stamps' ? (
+                  {config.loyalty_mode === 'stamps' ? (() => {
+                    const target = config.stamps_target || 6;
+                    const bal = customerPoints || 0;
+                    const curStamps = bal > 0 && bal % target === 0 ? target : (bal % target);
+                    const remStamps = target - curStamps;
+                    return (
                     <div className="my-2 p-3.5 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-white/70 block font-bold">
-                          الأختام المجمعة: <strong className="text-amber-400 font-mono">{(customerPoints || 0) % (config.stamps_target || 6)} من {config.stamps_target || 6}</strong>
+                          الأختام المجمعة: <strong className="text-amber-400 font-mono">{curStamps} من {target}</strong>
                         </span>
                         <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/20 px-2 py-0.5 rounded-full">
-                          {((config.stamps_target || 6) - ((customerPoints || 0) % (config.stamps_target || 6))) === 0 ? 'مكتملة! 🎉' : `باقي ${(config.stamps_target || 6) - ((customerPoints || 0) % (config.stamps_target || 6))} أختام للهدية`}
+                          {remStamps === 0 ? 'مكتملة! 🎉' : `باقي ${remStamps} أختام للهدية`}
                         </span>
                       </div>
 
                       <div className="grid grid-cols-6 gap-1.5 py-1">
-                        {Array.from({ length: config.stamps_target || 6 }).map((_, idx) => {
-                          const isStamped = idx < ((customerPoints || 0) % (config.stamps_target || 6));
+                        {Array.from({ length: target }).map((_, idx) => {
+                          const isStamped = idx < curStamps;
                           return (
                             <div
                               key={idx}
@@ -322,7 +327,8 @@ export const WalletPassModal: React.FC<WalletPassModalProps> = ({
                         </span>
                       </div>
                     </div>
-                  ) : (
+                    );
+                  })() : (
                     <div className="my-2 p-3.5 rounded-2xl bg-black/40 border border-white/10 backdrop-blur-md flex items-center justify-between">
                       <div>
                         <span className="text-[10px] text-white/70 block font-bold">

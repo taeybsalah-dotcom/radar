@@ -170,10 +170,12 @@ export async function onRequestGet(context: any): Promise<Response> {
       walletConfig.loyalty_mode = modeParam;
     }
 
-    // دعم تمرير الشعار كمعامل بديل أو تحويل المسار النسبي إلى رابط كامل
+    // دعم تمرير الشعار كمعامل بديل أو استخراجه من fulfillment_settings أو تحويل المسار النسبي إلى رابط كامل
     const logoParam = url.searchParams.get('logo_url') || url.searchParams.get('logo');
     if (logoParam) {
       store.logo_url = logoParam;
+    } else if (!store.logo_url && store.fulfillment_settings?.logo_url) {
+      store.logo_url = store.fulfillment_settings.logo_url;
     }
     if (store.logo_url && store.logo_url.startsWith('/')) {
       store.logo_url = `${url.origin}${store.logo_url}`;

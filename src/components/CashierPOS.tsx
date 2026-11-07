@@ -195,12 +195,14 @@ export const CashierPOS: React.FC<CashierPOSProps> = ({ store, scannerOnlyMode }
     setActiveTab('register');
   };
 
-  // 💰 Invoice Amount Modal State (For Customer Points Accumulation)
+  // 💰 Invoice Amount / Stamps Modal State (For Customer Points or Stamps Accumulation)
   const [isAmountModalOpen, setIsAmountModalOpen] = useState(false);
   const [invoiceAmount, setInvoiceAmount] = useState<number | ''>('');
+  const [stampCountToAdd, setStampCountToAdd] = useState<number>(1);
   const [pendingCustomerScan, setPendingCustomerScan] = useState<{
     phone: string;
     name?: string;
+    balance?: number;
     qrTokenObj?: DynamicQRToken;
     entryMethod: 'qr_scan' | 'manual';
   } | null>(null);
@@ -1560,8 +1562,10 @@ ${portalUrl}`;
         setPendingCustomerScan({
           phone: scanResult.customerPhone,
           name: scanResult.customerName,
+          balance: scanResult.customerBalance ?? 0,
           entryMethod,
         });
+        setStampCountToAdd(1);
         setInvoiceAmount('');
         setIsAmountModalOpen(true);
         setLoading(false);
@@ -1667,9 +1671,6 @@ ${portalUrl}`;
       } catch {}
     } catch (err: any) {
       setErrorMessage(err.message || 'فشلت عملية إضافة النقاط');
-      if (err.message && (err.message.includes('جلسة الكاشير') || err.message.includes('UNAUTHORIZED_STAFF'))) {
-        setAuthenticatedCashier(null);
-      }
       playBeepSound('error');
     } finally {
       setLoading(false);
@@ -2444,7 +2445,9 @@ ${portalUrl}`;
                   مسح الباركود الذكي الفوري
                 </h2>
                 <p className={`text-xs ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
-                  يميز النظام تلقائياً باركود العميل لإضافة النقاط، أو باركود الكوبون لحرقه فوراً دون أي لبس.
+                  {WalletPassService.getWalletConfig(store).loyalty_mode === 'stamps'
+                    ? 'يميز النظام تلقائياً باركود العميل لإضافة الأختام وصرف هدية البطاقة المكتملة، أو باركود الكوبون لحرقه فوراً.'
+                    : 'يميز النظام تلقائياً باركود العميل لإضافة النقاط، أو باركود الكوبون لحرقه فوراً دون أي لبس.'}
                 </p>
               </div>
             </div>
@@ -2480,7 +2483,11 @@ ${portalUrl}`;
                 </div>
                 <div className="min-w-0">
                   <strong className={`block text-[11px] truncate ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>باركود العميل</strong>
-                  <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>إضافة الأختام أو النقاط فوراً</span>
+                  <span className={`text-[10px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {WalletPassService.getWalletConfig(store).loyalty_mode === 'stamps'
+                      ? 'إضافة ختم زيارة فوري ☕'
+                      : 'إضافة النقاط بالمبلغ فوراً'}
+                  </span>
                 </div>
               </div>
 
@@ -2566,11 +2573,21 @@ ${portalUrl}`;
                       </p>
                     ) : successResult.type === 'PURCHASE' ? (
                       <p className="text-xs text-emerald-400 font-mono mt-0.5">
-                        العميل: <strong className="text-white">{successResult.phone}</strong> | النقاط المكتسبة: +{successResult.points} | الرصيد الجديد: {successResult.balance} نقطة ({successResult.tier})
+                        {WalletPassService.getWalletConfig(store).loyalty_mode === 'stamps' ? (
+                          <>
+                            العميل: <strong className="text-white">{successResult.phone}</strong>
+                            {successResult.points !== undefined ? ` | الأختام المضافة: +${successResult.points} ☕ | إجمالي الأختام: ${successResult.balance} ختم` : ''}
+                          </>
+                        ) : (
+                          <>
+                            العميل: <strong className="text-white">{successResult.phone}</strong> | النقاط المكتسبة: +{successResult.points} | الرصيد الجديد: {successResult.balance} نقطة ({successResult.tier})
+                          </>
+                        )}
                       </p>
                     ) : (
                       <p className="text-xs text-emerald-400 font-mono mt-0.5">
-                        العميل: <strong className="text-white">{successResult.phone}</strong> | الرصيد المتبقي: {successResult.balance} نقطة
+                        العميل: <strong className="text-white">{successResult.phone}</strong> | الرصيد المتبقي: {successResult.balance}{' '}
+                        {WalletPassService.getWalletConfig(store).loyalty_mode === 'stamps' ? 'ختم ☕' : 'نقطة'}
                       </p>
                     )}
                   </div>
@@ -3933,26 +3950,78 @@ ${portalUrl}`;
         );
       })()}
 
-      {activeTab === 'rewards' && (
+      {activeTab === 'rewards' && (() => {
+        const rewardsWalletConfig = WalletPassService.getWalletConfig(store);
+        const isStampsRewardsMode = rewardsWalletConfig.loyalty_mode === 'stamps';
+        const stampsTargetCount = rewardsWalletConfig.stamps_target || 6;
+        const stampsRewardTitle = rewardsWalletConfig.stamps_reward_title || 'قهوة مجانية من اختيارك ☕';
+        const stampsIconChar = rewardsWalletConfig.stamps_icon || '☕';
+
+        return (
         <div className="animate-fade-in pb-24">
           <div className="space-y-6 max-w-xl mx-auto">
+
+          {/* ☕ في وضع الأختام: بطاقة صرف مكافأة البطاقة المكتملة مباشرة */}
+          {isStampsRewardsMode && (
+            <div className="glass-card rounded-3xl p-6 space-y-4 border-2 border-amber-500/40 bg-gradient-to-br from-amber-500/10 via-slate-900 to-slate-950 shadow-xl">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-11 h-11 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-2xl shrink-0">
+                    {stampsIconChar}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white">
+                      مكافأة بطاقة الأختام المكتملة
+                    </h3>
+                    <p className="text-xs text-amber-400 font-bold mt-0.5">
+                      🎁 {stampsRewardTitle}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[11px] bg-amber-500/20 text-amber-300 px-3 py-1 rounded-full font-black border border-amber-500/40 shrink-0">
+                  {stampsTargetCount} أختام {stampsIconChar}
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed">
+                عند اكتمال {stampsTargetCount} أختام في بطاقة العميل، اضغط الزر أدناه وامسح باركود العميل لصرف الهدية المجانية وتصفير عداد البطاقة لدورة جديدة:
+              </p>
+
+              <button
+                type="button"
+                onClick={() =>
+                  handleOpenRewardScanner({
+                    id: 'stamps-card-reward',
+                    title: stampsRewardTitle,
+                    cost: stampsTargetCount,
+                  })
+                }
+                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition active:scale-95"
+              >
+                <Camera className="w-4 h-4" />
+                <span>امسح باركود العميل لصرف الهدية المجانية ({stampsTargetCount} أختام) 🎁</span>
+              </button>
+            </div>
+          )}
           
-          {/* Card: Store Privileges & Instant Reward Redeem by Points */}
+          {/* Card: Store Privileges & Instant Reward Redeem */}
           <div className="glass-card rounded-3xl p-6 space-y-4 border-slate-800">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2 rtl:space-x-reverse">
                 <Gift className="w-5 h-5 text-amber-400" />
                 <h3 className="text-sm font-bold text-white">
-                  عروض وامتيازات المتجر ({privileges.length})
+                  عروض وامتيازات المتجر الإضافية ({privileges.length})
                 </h3>
               </div>
               <span className="text-[10px] bg-amber-500/10 text-amber-400 px-2.5 py-0.5 rounded-full font-bold border border-amber-500/20">
-                استبدال بالنقاط
+                {isStampsRewardsMode ? 'استبدال بالأختام' : 'استبدال بالنقاط'}
               </span>
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              إذا طلب العميل استبدال مكافأة محددة بنقاطه فورياً، اضغط على العرض وامسح باركود العميل:
+              {isStampsRewardsMode
+                ? 'إذا طلب العميل استبدال عرض إضافي برصيده من الأختام، اضغط على العرض وامسح باركود العميل:'
+                : 'إذا طلب العميل استبدال مكافأة محددة بنقاطه فورياً، اضغط على العرض وامسح باركود العميل:'}
             </p>
 
             <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
@@ -4079,7 +4148,8 @@ ${portalUrl}`;
 
       
         </div>
-      )}
+        );
+      })()}
 
 
       {/* 📱 Bottom Navigation Dock */}
@@ -4231,15 +4301,23 @@ ${portalUrl}`;
       </div>
     
 
-{/* 💰 MODAL: Enter Invoice Amount or Add Stamp for Customer (نافذة إضافة الأختام والنقاط المباشرة) */}
+{/* 💰 MODAL: Separated Stamps Modal vs Financial Points Modal (فصل تام بين وضع الأختام ووضع النقاط المالي) */}
       {isAmountModalOpen && pendingCustomerScan && (() => {
         const walletConfig = WalletPassService.getWalletConfig(store);
         const isStampsMode = walletConfig.loyalty_mode === 'stamps';
-        const stampUnitAmount = Math.max(1, Math.ceil(1 / Math.max(0.01, Number(store.points_per_riyal) || 1)));
+        const stampsTarget = walletConfig.stamps_target || 6;
+        const stampsIcon = walletConfig.stamps_icon || '☕';
+        const stampsRewardTitle = walletConfig.stamps_reward_title || 'قهوة مجانية من اختيارك ☕';
+        const custRawBalance = Number(pendingCustomerScan.balance || 0);
+        const isCardReadyForReward = custRawBalance >= stampsTarget;
+        const displayStampsProgress =
+          custRawBalance > 0 && custRawBalance % stampsTarget === 0
+            ? stampsTarget
+            : custRawBalance % stampsTarget;
 
         return (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl p-6 sm:p-8 max-w-md w-full space-y-5 shadow-2xl relative animate-scale-up">
+          <div className="bg-slate-900 border-2 border-amber-500/60 rounded-3xl p-6 sm:p-8 max-w-md w-full space-y-5 shadow-2xl relative animate-scale-up max-h-[92vh] overflow-y-auto">
             
             <button
               type="button"
@@ -4254,13 +4332,15 @@ ${portalUrl}`;
 
             <div className="text-center space-y-2">
               <div className="w-16 h-16 rounded-3xl bg-amber-500/20 border-2 border-amber-500/40 flex items-center justify-center text-3xl mx-auto shadow-lg shadow-amber-500/20">
-                {isStampsMode ? (walletConfig.stamps_icon || '☕') : '💳'}
+                {isStampsMode ? stampsIcon : '💳'}
               </div>
               <h3 className="text-xl font-black text-white">
-                {isStampsMode ? 'إضافة ختم أو نقاط ولاء للعميل' : 'إضافة نقاط ولاء للعميل'}
+                {isStampsMode ? `بطاقة الأختام • إضافة ختم ${stampsIcon}` : 'إضافة نقاط ولاء للعميل'}
               </h3>
               <p className="text-xs text-slate-400">
-                تم مسح باركود العميل بنجاح! تتم الإضافة مباشرة لسجل العميل (دون الحاجة لفتح وردية كاشير):
+                {isStampsMode
+                  ? 'وضع بطاقة الأختام مفعل: أضف ختماً لزيارة العميل مباشرة بدون إدخال مبلغ فاتورة'
+                  : 'أدخل قيمة فاتورة المشتريات بالريال لاحتساب وإيداع النقاط تلقائياً في محفظة العميل'}
               </p>
             </div>
 
@@ -4272,175 +4352,368 @@ ${portalUrl}`;
                   {pendingCustomerScan.name || 'عميل المتجر'}
                 </strong>
               </div>
-              <div className="text-left rtl:text-right font-mono text-amber-400 font-bold" dir="ltr">
-                {pendingCustomerScan.phone}
+              <div className="text-left rtl:text-right">
+                <div className="font-mono text-amber-400 font-bold" dir="ltr">
+                  {pendingCustomerScan.phone}
+                </div>
+                <span className="text-[10px] text-emerald-400 font-bold block mt-0.5">
+                  {isStampsMode
+                    ? `الأختام الحالية: ${displayStampsProgress} من ${stampsTarget} ${stampsIcon}`
+                    : `الرصيد الحالي: ${custRawBalance} نقطة`}
+                </span>
               </div>
             </div>
 
-            {/* ⚡ زر سريع لإضافة ختم زيارة واحد بنقرة واحدة (بدون مبلغ فاتورة) */}
-            <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/15 border border-emerald-500/40 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="text-xl shrink-0">{walletConfig.stamps_icon || '⭐'}</span>
-                <div className="min-w-0">
-                  <span className="text-white font-black block text-xs">إضافة سريعة بنقرة واحدة</span>
-                  <span className="text-[10px] text-emerald-300 block truncate">
-                    إيداع فوري في بطاقة العميل بدون فاتورة
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={loading}
-                onClick={async () => {
-                  const effectiveStaff = activeStaff || authenticatedCashier;
-                  setLoading(true);
-                  setErrorMessage(null);
-                  try {
-                    const res = await LoyaltyService.processPurchase(
-                      store.id,
-                      pendingCustomerScan.phone,
-                      stampUnitAmount,
-                      `إضافة ختم زيارة مباشر بواسطة: ${effectiveStaff?.name || 'الموظف'}`,
-                      pendingCustomerScan.qrTokenObj,
-                      effectiveStaff?.id,
-                      effectiveStaff?.name,
-                      pendingCustomerScan.entryMethod,
-                      cleanBranchUUID(activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id) || null,
-                      activeBranchObj?.name || null
-                    );
-                    setCustomer(res.customer);
-                    setIsAmountModalOpen(false);
-                    setPendingCustomerScan(null);
-                    setInvoiceAmount('');
-                    setManualInput('');
-                    setSuccessResult({
-                      message: `تم بنجاح إضافة ختم زيارة (+${res.pointsEarned} نقطة) لبطاقة العميل فوراً! 🎉`,
-                      points: res.pointsEarned,
-                      phone: pendingCustomerScan.phone,
-                      tier: res.currentTier,
-                      balance: res.customer.wallet_balance,
-                      type: 'PURCHASE',
-                    });
-                    playBeepSound('success');
-                    LoyaltyEvents.emit({
-                      type: 'POINTS_ADDED',
-                      storeId: store.id,
-                      phone: pendingCustomerScan.phone,
-                      points: res.pointsEarned,
-                      newBalance: res.customer.wallet_balance,
-                      newLifetimeXP: res.customer.lifetime_xp,
-                      currentTier: res.currentTier,
-                    });
-                  } catch (err: any) {
-                    setErrorMessage(err.message || 'تعذر إضافة الختم للعميل');
-                    playBeepSound('error');
-                  } finally {
-                    setLoading(false);
-                  }
-                }}
-                className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs active:scale-95 transition shadow-lg shadow-emerald-500/20 shrink-0"
-              >
-                +1 ختم زيارة ⚡
-              </button>
-            </div>
-
-            {/* 🎁 خيار إكرام العميل المميز بهدية أو لعبة مباشرة */}
-            <div className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500/10 to-emerald-500/10 border border-amber-500/25 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-base">🎁</span>
-                <div>
-                  <span className="text-white font-bold block text-[11px]">زبون مميز؟ أكرمه الآن!</span>
-                  <span className="text-[10px] text-slate-400">إهداء محاولة لعبة تفاعلية فورية</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  LoyaltyEvents.emit({
-                    type: 'GAME_TRIGGERED',
-                    storeId: store.id,
-                    phone: pendingCustomerScan.phone,
-                    gameType: 'spin',
-                  });
-                  playBeepSound('success');
-                  setSuccessResult({
-                    message: `تم إهداء فرصة تدوير العجلة للعميل (${pendingCustomerScan.name || pendingCustomerScan.phone}) بنجاح! 🎡🎁`,
-                    phone: pendingCustomerScan.phone,
-                    type: 'PURCHASE',
-                  });
-                  setIsAmountModalOpen(false);
-                  setPendingCustomerScan(null);
-                }}
-                className="px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs hover:bg-amber-400 active:scale-95 transition shadow-sm shrink-0"
-              >
-                إهداء لعبة 🎡
-              </button>
-            </div>
-
-            {/* Amount Input Form */}
-            <form onSubmit={handleConfirmPurchaseAmount} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-300 block">
-                  أو أدخل قيمة العملية لاحتساب النقاط تلقائياً (بالريال):
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    step="any"
-                    autoFocus
-                    value={invoiceAmount}
-                    onChange={(e) => setInvoiceAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="0.00"
-                    style={{
-                      borderColor: `${brandColors.secondary}60`,
-                      color: brandColors.textOnLightHex,
-                    }}
-                    className="w-full bg-slate-950 border-2 rounded-2xl px-5 py-4 text-3xl font-black placeholder-slate-700 outline-none transition shadow-inner font-mono text-center sm:text-right"
-                  />
-                  <span className="absolute left-5 top-1/2 -translate-y-1/2 text-base font-bold text-slate-400">
-                    ر.س
-                  </span>
+            {isStampsMode ? (
+              /* =========================================================
+                 ☕ مسار بطاقة الأختام الحصري (بدون مبالغ مالية ولا نقاط)
+                 ========================================================= */
+              <div className="space-y-4">
+                {/* Visual Stamp Grid Preview */}
+                <div className="p-4 rounded-2xl bg-slate-950/90 border border-amber-500/30 space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-bold">تقدم بطاقة أختام العميل:</span>
+                    <span className="font-black text-amber-400 font-mono">
+                      {displayStampsProgress} / {stampsTarget} {stampsIcon}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-5 sm:grid-cols-6 gap-2">
+                    {Array.from({ length: Math.min(stampsTarget, 12) }).map((_, idx) => {
+                      const isFilled = idx < displayStampsProgress;
+                      return (
+                        <div
+                          key={idx}
+                          className={`aspect-square rounded-xl flex items-center justify-center text-lg border transition-all ${
+                            isFilled
+                              ? 'bg-amber-500/25 border-amber-400 text-white shadow-md shadow-amber-500/20 scale-105'
+                              : 'bg-slate-900 border-slate-800 text-slate-600 opacity-50'
+                          }`}
+                        >
+                          {isFilled ? stampsIcon : idx + 1}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[11px] text-amber-300/90 font-bold text-center pt-1">
+                    🎁 هدية البطاقة عند الاكتمال: <span className="text-white">{stampsRewardTitle}</span>
+                  </div>
                 </div>
 
-                {/* Quick Presets */}
-                <div className="grid grid-cols-4 gap-2 pt-2">
-                  {[15, 30, 50, 100].map((val) => (
+                {/* 🎉 زر صرف المكافأة إذا كانت البطاقة مكتملة */}
+                {isCardReadyForReward && (
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-500/20 via-teal-500/15 to-emerald-500/20 border-2 border-emerald-500/60 space-y-2.5 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-emerald-300">
+                        🎉 بطاقة العميل مكتملة وجاهزة لصرف الهدية!
+                      </span>
+                      <span className="text-[10px] font-mono bg-emerald-500 text-slate-950 font-black px-2 py-0.5 rounded-full">
+                        {stampsTarget}/{stampsTarget} مكتمل
+                      </span>
+                    </div>
                     <button
-                      key={val}
                       type="button"
-                      onClick={() => setInvoiceAmount(val)}
-                      className="py-2.5 px-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 transition"
+                      disabled={loading}
+                      onClick={async () => {
+                        const effectiveStaff = activeStaff || authenticatedCashier;
+                        setLoading(true);
+                        setErrorMessage(null);
+                        try {
+                          const res = await LoyaltyService.processRedeem(
+                            store.id,
+                            pendingCustomerScan.phone,
+                            stampsTarget,
+                            stampsRewardTitle,
+                            pendingCustomerScan.qrTokenObj,
+                            effectiveStaff?.id,
+                            effectiveStaff?.name,
+                            pendingCustomerScan.entryMethod,
+                            cleanBranchUUID(activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id) || null,
+                            activeBranchObj?.name || null
+                          );
+                          setCustomer(res.customer);
+                          setIsAmountModalOpen(false);
+                          setPendingCustomerScan(null);
+                          setManualInput('');
+                          setSuccessResult({
+                            message: `🎁 تم صرف هدية البطاقة المكتملة (${stampsRewardTitle}) وتصفير ${stampsTarget} أختام بنجاح!`,
+                            points: stampsTarget,
+                            phone: pendingCustomerScan.phone,
+                            tier: 'بطاقة أختام ☕',
+                            balance: res.customer.wallet_balance,
+                            type: 'REDEEM',
+                          });
+                          playBeepSound('redeem');
+                          LoyaltyEvents.emit({
+                            type: 'REWARD_REDEEMED',
+                            storeId: store.id,
+                            phone: pendingCustomerScan.phone,
+                            points: stampsTarget,
+                            newBalance: res.customer.wallet_balance,
+                            newLifetimeXP: res.customer.lifetime_xp,
+                            rewardTitle: stampsRewardTitle,
+                          });
+                        } catch (err: any) {
+                          setErrorMessage(err.message || 'تعذر صرف هدية الأختام');
+                          playBeepSound('error');
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                      className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm shadow-lg shadow-emerald-500/25 transition active:scale-95 flex items-center justify-center gap-2"
                     >
-                      {val} ر.س
+                      <span>🎁 صرف الهدية المجانية ({stampsRewardTitle}) الآن</span>
                     </button>
-                  ))}
+                  </div>
+                )}
+
+                {/* Stamp Count Selector (1 to 5 Stamps) */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    عدد الأختام المراد إضافتها للعميل في هذه الزيارة:
+                  </label>
+                  <div className="grid grid-cols-5 gap-2">
+                    {[1, 2, 3, 4, 5].map((cnt) => (
+                      <button
+                        key={cnt}
+                        type="button"
+                        onClick={() => setStampCountToAdd(cnt)}
+                        className={`py-3 rounded-2xl font-black text-sm transition border flex flex-col items-center justify-center gap-0.5 ${
+                          stampCountToAdd === cnt
+                            ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-lg shadow-amber-500/25 scale-105'
+                            : 'bg-slate-950 hover:bg-slate-800 text-slate-300 border-slate-800'
+                        }`}
+                      >
+                        <span>+{cnt}</span>
+                        <span className="text-[10px]">{stampsIcon}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Error Message Inside Modal */}
+                {errorMessage && (
+                  <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center justify-between gap-2 animate-fade-in">
+                    <span>⚠️ {errorMessage}</span>
+                    <button
+                      type="button"
+                      onClick={() => setErrorMessage(null)}
+                      className="text-rose-400 hover:text-white shrink-0"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Confirm Stamp Addition Button */}
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={async () => {
+                    const effectiveStaff = activeStaff || authenticatedCashier;
+                    setLoading(true);
+                    setErrorMessage(null);
+                    try {
+                      const res = await LoyaltyService.addCustomerStamps(
+                        store.id,
+                        pendingCustomerScan.phone,
+                        stampCountToAdd,
+                        `إضافة ${stampCountToAdd === 1 ? 'ختم زيارة' : `${stampCountToAdd} أختام`} بواسطة: ${effectiveStaff?.name || 'الكاشير'}`,
+                        pendingCustomerScan.qrTokenObj,
+                        effectiveStaff?.id,
+                        effectiveStaff?.name,
+                        pendingCustomerScan.entryMethod,
+                        cleanBranchUUID(activeBranchId || effectiveStaff?.branch_id || authenticatedCashier?.branch_id) || null,
+                        activeBranchObj?.name || null
+                      );
+                      setCustomer(res.customer);
+                      setIsAmountModalOpen(false);
+                      setPendingCustomerScan(null);
+                      setManualInput('');
+                      const newBal = res.customer.wallet_balance;
+                      const isNowComplete = newBal >= stampsTarget && newBal % stampsTarget === 0;
+                      setSuccessResult({
+                        message: isNowComplete
+                          ? `🎉 اكتملت بطاقة أختام العميل (${stampsTarget} من ${stampsTarget} ${stampsIcon})! يستحق الآن: ${stampsRewardTitle}`
+                          : `تم بنجاح إضافة ${res.stampsAdded === 1 ? `ختم زيارة (+1 ${stampsIcon})` : `+${res.stampsAdded} أختام ${stampsIcon}`} لبطاقة العميل!`,
+                        points: res.stampsAdded,
+                        phone: pendingCustomerScan.phone,
+                        tier: 'بطاقة أختام ☕',
+                        balance: newBal,
+                        type: 'PURCHASE',
+                      });
+                      playBeepSound('success');
+                    } catch (err: any) {
+                      setErrorMessage(err.message || 'تعذر إضافة الختم للعميل');
+                      playBeepSound('error');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  style={{
+                    backgroundColor: brandColors.secondary,
+                    color: '#000000',
+                  }}
+                  className="w-full py-4 rounded-2xl font-black text-base flex items-center justify-center space-x-2 rtl:space-x-reverse transition shadow-xl hover:brightness-110 disabled:opacity-50"
+                >
+                  <Zap className="w-5 h-5 text-black" />
+                  <span>
+                    {loading
+                      ? 'جاري إضافة الختم للبطاقة...'
+                      : `تأكيد وإضافة ${stampCountToAdd === 1 ? `ختم واحد ${stampsIcon}` : `${stampCountToAdd} أختام ${stampsIcon}`} للبطاقة ⚡`}
+                  </span>
+                </button>
+
+                {/* 🎁 خيار إكرام العميل المميز بهدية أو لعبة مباشرة */}
+                <div className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500/10 to-emerald-500/10 border border-amber-500/25 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🎰</span>
+                    <div>
+                      <span className="text-white font-bold block text-[11px]">زبون مميز؟ أكرمه بلعبة على خلفية بطاقته!</span>
+                      <span className="text-[10px] text-slate-400">تفعيل اكشط واربح أو عجلة الحظ فوراً</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      LoyaltyEvents.emit({
+                        type: 'GAME_TRIGGERED',
+                        storeId: store.id,
+                        phone: pendingCustomerScan.phone,
+                        gameType: 'spin',
+                      });
+                      playBeepSound('success');
+                      setSuccessResult({
+                        message: `تم إهداء لعبة تفاعلية للعميل (${pendingCustomerScan.name || pendingCustomerScan.phone}) بنجاح! 🎰🎁`,
+                        phone: pendingCustomerScan.phone,
+                        type: 'PURCHASE',
+                      });
+                      setIsAmountModalOpen(false);
+                      setPendingCustomerScan(null);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs hover:bg-amber-400 active:scale-95 transition shadow-sm shrink-0"
+                  >
+                    إهداء لعبة 🎰
+                  </button>
                 </div>
               </div>
-
-              {/* Live Points Calculation Preview */}
-              {invoiceAmount && Number(invoiceAmount) > 0 && (
-                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between font-bold animate-fade-in">
-                  <span>النقاط المستحقة للعميل:</span>
-                  <span className="text-sm font-black font-mono">
-                    + {Math.floor(Number(invoiceAmount) * store.points_per_riyal)} نقطة ولاء
-                  </span>
+            ) : (
+              /* =========================================================
+                 💳 مسار النقاط المالي الحصري (بدون أزرار أختام)
+                 ========================================================= */
+              <>
+                {/* 🎁 خيار إكرام العميل المميز بهدية أو لعبة مباشرة */}
+                <div className="p-2.5 rounded-2xl bg-gradient-to-r from-amber-500/10 to-emerald-500/10 border border-amber-500/25 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🎁</span>
+                    <div>
+                      <span className="text-white font-bold block text-[11px]">زبون مميز؟ أكرمه الآن!</span>
+                      <span className="text-[10px] text-slate-400">إهداء محاولة لعبة تفاعلية فورية</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      LoyaltyEvents.emit({
+                        type: 'GAME_TRIGGERED',
+                        storeId: store.id,
+                        phone: pendingCustomerScan.phone,
+                        gameType: 'spin',
+                      });
+                      playBeepSound('success');
+                      setSuccessResult({
+                        message: `تم إهداء فرصة تدوير العجلة للعميل (${pendingCustomerScan.name || pendingCustomerScan.phone}) بنجاح! 🎡🎁`,
+                        phone: pendingCustomerScan.phone,
+                        type: 'PURCHASE',
+                      });
+                      setIsAmountModalOpen(false);
+                      setPendingCustomerScan(null);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black text-xs hover:bg-amber-400 active:scale-95 transition shadow-sm shrink-0"
+                  >
+                    إهداء لعبة 🎡
+                  </button>
                 </div>
-              )}
 
-              {/* Confirm Action Button */}
-              <button
-                type="submit"
-                disabled={loading || !invoiceAmount || Number(invoiceAmount) <= 0}
-                style={{
-                  backgroundColor: brandColors.secondary,
-                  color: '#000000',
-                }}
-                className="w-full py-4 rounded-2xl font-black text-base flex items-center justify-center space-x-2 rtl:space-x-reverse transition shadow-xl hover:brightness-110 disabled:opacity-50"
-              >
-                <Zap className="w-5 h-5 text-black" />
-                <span>{loading ? 'جاري الاحتساب والإيداع...' : 'تأكيد العملية وإضافة النقاط ⚡'}</span>
-              </button>
-            </form>
+                {/* Amount Input Form */}
+                <form onSubmit={handleConfirmPurchaseAmount} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      أدخل قيمة الفاتورة لاحتساب النقاط تلقائياً (بالريال):
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        step="any"
+                        autoFocus
+                        value={invoiceAmount}
+                        onChange={(e) => setInvoiceAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="0.00"
+                        style={{
+                          borderColor: `${brandColors.secondary}60`,
+                          color: brandColors.textOnLightHex,
+                        }}
+                        className="w-full bg-slate-950 border-2 rounded-2xl px-5 py-4 text-3xl font-black placeholder-slate-700 outline-none transition shadow-inner font-mono text-center sm:text-right"
+                      />
+                      <span className="absolute left-5 top-1/2 -translate-y-1/2 text-base font-bold text-slate-400">
+                        ر.س
+                      </span>
+                    </div>
+
+                    {/* Quick Presets */}
+                    <div className="grid grid-cols-4 gap-2 pt-2">
+                      {[15, 30, 50, 100].map((val) => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setInvoiceAmount(val)}
+                          className="py-2.5 px-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-bold text-slate-200 transition"
+                        >
+                          {val} ر.س
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Live Points Calculation Preview */}
+                  {invoiceAmount && Number(invoiceAmount) > 0 && (
+                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center justify-between font-bold animate-fade-in">
+                      <span>النقاط المستحقة للعميل:</span>
+                      <span className="text-sm font-black font-mono">
+                        + {Math.floor(Number(invoiceAmount) * store.points_per_riyal)} نقطة ولاء
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Error Message Inside Modal */}
+                  {errorMessage && (
+                    <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold flex items-center justify-between gap-2 animate-fade-in">
+                      <span>⚠️ {errorMessage}</span>
+                      <button
+                        type="button"
+                        onClick={() => setErrorMessage(null)}
+                        className="text-rose-400 hover:text-white shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Confirm Action Button */}
+                  <button
+                    type="submit"
+                    disabled={loading || !invoiceAmount || Number(invoiceAmount) <= 0}
+                    style={{
+                      backgroundColor: brandColors.secondary,
+                      color: '#000000',
+                    }}
+                    className="w-full py-4 rounded-2xl font-black text-base flex items-center justify-center space-x-2 rtl:space-x-reverse transition shadow-xl hover:brightness-110 disabled:opacity-50"
+                  >
+                    <Zap className="w-5 h-5 text-black" />
+                    <span>{loading ? 'جاري الاحتساب والإيداع...' : 'تأكيد العملية وإضافة النقاط ⚡'}</span>
+                  </button>
+                </form>
+              </>
+            )}
 
           </div>
         </div>

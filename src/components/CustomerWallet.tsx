@@ -34,7 +34,7 @@ import { saveActiveStoreBranding } from '../lib/storeBranding';
 import { SandboxPaymentModal } from './SandboxPaymentModal';
 import { WalletPassModal } from './WalletPassModal';
 import { WalletPassService } from '../lib/walletPassService';
-import { SpinWheelModal, ScratchCardModal, StreakBanner } from './CustomerGamification';
+import { SpinWheelModal, ScratchCardModal, StreakBanner, EmbeddedCardBackGamification } from './CustomerGamification';
 import {
   Building2,
   Sparkles,
@@ -433,6 +433,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
   const isCashbackMode = walletConfig?.loyalty_mode === 'cashback';
   const [showSpinWheel, setShowSpinWheel] = useState(false);
   const [showScratchCard, setShowScratchCard] = useState(false);
+  const [isCardFlipped, setIsCardFlipped] = useState(false);
 
   useEffect(() => {
     if (store?.id) {
@@ -1040,7 +1041,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
         if (isTargetCustomer && (event.storeId === store?.id || event.storeId === 'all')) {
           playBeepSound('success');
           if (event.gameType === 'scratch') {
-            setShowScratchCard(true);
+            setActiveTab('pass');
+            setIsCardFlipped(true);
           } else {
             setShowSpinWheel(true);
           }
@@ -1157,11 +1159,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               origin: { y: 0.5 },
               colors: [curStore.secondary_color || '#d4af37', '#10B981', '#38BDF8', '#FFFFFF'],
             });
+            const isStampsCfg = WalletPassService.getWalletConfig(curStore).loyalty_mode === 'stamps';
             setCelebrationModal({
               isOpen: true,
               type: 'POINTS_EARNED',
               title: curStore.name,
-              subtitle: 'شكراً لزيارتك! تم تسجيل نقاط الزيارة بنجاح ✨',
+              subtitle: isStampsCfg
+                ? 'شكراً لزيارتك! تم إضافة ختم الزيارة إلى بطاقتك بنجاح ☕✨'
+                : 'شكراً لزيارتك! تم تسجيل نقاط الزيارة بنجاح ✨',
               points: event.points,
               newBalance: event.newBalance,
             });
@@ -1406,11 +1411,14 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               origin: { y: 0.5 },
               colors: [store.secondary_color || '#d4af37', '#10B981', '#38BDF8', '#FFFFFF'],
             });
+            const isStampsCfg = WalletPassService.getWalletConfig(store).loyalty_mode === 'stamps';
             setCelebrationModal({
               isOpen: true,
               type: 'POINTS_EARNED',
               title: store.name,
-              subtitle: 'شكراً لزيارتك! تم تسجيل نقاط الزيارة بنجاح ✨',
+              subtitle: isStampsCfg
+                ? 'شكراً لزيارتك! تم إضافة ختم الزيارة إلى بطاقتك بنجاح ☕✨'
+                : 'شكراً لزيارتك! تم تسجيل نقاط الزيارة بنجاح ✨',
               points: pointsGained,
               newBalance: freshCust.wallet_balance,
             });
@@ -3224,6 +3232,22 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 color: brandColors.cardTextColor,
               }}
             >
+              {isCardFlipped ? (
+                /* 🎰 BACK OF CARD: Interactive Scratch & Win, Spin Wheel & Visit Streaks */
+                <EmbeddedCardBackGamification
+                  store={store}
+                  scratchRewardTitle={walletConfig.scratch_card_reward_title || walletConfig.stamps_reward_title || 'قسيمة مكافأة خاصة من المتجر 🎁'}
+                  enableSpinWheel={Boolean(walletConfig.enable_spin_wheel)}
+                  enableScratchCard={Boolean(walletConfig.enable_scratch_card)}
+                  enableStreaks={Boolean(walletConfig.enable_streaks)}
+                  currentStreak={customer?.lifetime_xp ? Math.min(walletConfig.streak_target_days || 3, Math.max(1, Math.floor(customer.lifetime_xp / 100))) : 1}
+                  streakTargetDays={walletConfig.streak_target_days || 3}
+                  streakRewardTitle={walletConfig.streak_reward_title || 'مشروب مجاني'}
+                  onFlipBack={() => setIsCardFlipped(false)}
+                  onOpenSpinWheel={() => setShowSpinWheel(true)}
+                />
+              ) : (
+                <>
               {/* Card Top Row: Merchant Info (Right) & Circular Logo Badge (Left in RTL) */}
               <div className="relative z-10 flex items-center justify-between gap-3">
                 <div className="text-right">
@@ -3237,24 +3261,30 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     className="text-[11px] font-bold font-mono mt-0.5 flex items-center gap-1.5 flex-wrap"
                     style={{ color: brandColors.cardSubtextColor }}
                   >
-                    <span>{currentTierObj?.tier_name ? `عضوية ${currentTierObj.tier_name}` : 'عضوية مميزة'}</span>
+                    <span>
+                      {isStampsMode
+                        ? `بطاقة أختام ${store.name}`
+                        : currentTierObj?.tier_name
+                        ? `عضوية ${currentTierObj.tier_name}`
+                        : 'عضوية مميزة'}
+                    </span>
                     <span>•</span>
                     <span dir="ltr">#{customer?.phone ? `VIP-${customer.phone.slice(-6)}` : 'VIP-DEMO01'}</span>
                   </p>
                 </div>
 
-                {/* Circular Merchant Logo Badge */}
+                {/* Circular Merchant Logo Badge (Store Logo instead of Platform Logo) */}
                 <div
-                  className="w-11 h-11 rounded-full border-2 flex items-center justify-center shrink-0 shadow-lg overflow-hidden font-black text-sm"
+                  className="w-12 h-12 rounded-full border-2 flex items-center justify-center shrink-0 shadow-lg overflow-hidden font-black text-sm"
                   style={{
                     backgroundColor: brandColors.isPrimaryLight ? '#0F172A' : '#FFFFFF',
                     borderColor: brandColors.cardBorderColor,
                     color: brandColors.isPrimaryLight ? '#FFFFFF' : '#0F172A',
                   }}
                 >
-                  {store.logo_url ? (
+                  {(store.logo_url || (store as any)?.fulfillment_settings?.logo_url) ? (
                     <img
-                      src={store.logo_url}
+                      src={store.logo_url || (store as any)?.fulfillment_settings?.logo_url}
                       alt={store.name}
                       className="w-full h-full object-cover"
                     />
@@ -3268,7 +3298,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               {walletConfig.loyalty_mode === 'stamps' ? (() => {
                 const target = walletConfig.stamps_target || 6;
                 const balance = customer?.wallet_balance || 0;
-                const currentStamps = balance % target;
+                const currentStamps = balance > 0 && balance % target === 0 ? target : (balance % target);
                 const icon = walletConfig.stamps_icon || '☕';
                 const rewardTitle = walletConfig.stamps_reward_title || 'مكافأة خاصة 🎁';
                 const remaining = Math.max(0, target - currentStamps);
@@ -3312,7 +3342,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                         <span className="text-amber-300 font-black">{rewardTitle}</span>
                       </div>
                       <div className="text-[10px] text-white/70 mt-0.5 font-medium">
-                        {remaining === 0 ? '🎉 مبارك! يمكنك استلام مكافأتك الآن من الكاشير' : `متبقي ${remaining} أختام لإكمال البطاقة والحصول على هديتك`}
+                        {remaining === 0 ? '🎉 مبارك! بطاقتك مكتملة، أبرز الباركود للكاشير لاستلام هديتك' : `متبقي ${remaining} أختام لإكمال البطاقة والحصول على هديتك`}
                       </div>
                     </div>
                   </div>
@@ -3432,42 +3462,25 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </>
               )}
 
-              {/* 🎡 محرك الألعاب التفاعلية المصاحب (Gamification Engine Action Strip) */}
-              {(walletConfig.enable_spin_wheel || walletConfig.enable_scratch_card || walletConfig.enable_streaks) && (
-                <div className="relative z-10 my-3 pt-2.5 border-t border-white/10 space-y-2">
-                  <div className="flex items-center gap-2">
-                    {walletConfig.enable_spin_wheel && (
-                      <button
-                        type="button"
-                        onClick={() => setShowSpinWheel(true)}
-                        className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500/25 via-amber-400/20 to-orange-500/25 hover:from-amber-500/40 hover:to-orange-500/40 border border-amber-400/40 text-amber-300 font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition active:scale-95 animate-pulse"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                        <span>عجلة الحظ 🎡</span>
-                      </button>
-                    )}
+              {/* 🎰 زر قلب البطاقة للألعاب واكشط واربح على خلفية البطاقة */}
+              <div className="relative z-10 my-3 pt-2.5 border-t border-white/15 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCardFlipped(true)}
+                  className="w-full py-2.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500/25 via-emerald-500/20 to-amber-500/25 hover:from-amber-500/40 hover:to-emerald-500/40 border border-amber-400/50 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-95"
+                >
+                  <Sparkles className="w-4 h-4 text-amber-300" />
+                  <span>🎰 اقلب البطاقة (اكشط واربح والألعاب التفاعلية)</span>
+                </button>
 
-                    {walletConfig.enable_scratch_card && (
-                      <button
-                        type="button"
-                        onClick={() => setShowScratchCard(true)}
-                        className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-500/25 via-teal-400/20 to-emerald-500/25 hover:from-emerald-500/40 hover:to-teal-500/40 border border-emerald-400/40 text-emerald-300 font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition active:scale-95"
-                      >
-                        <Gift className="w-3.5 h-3.5 text-emerald-300" />
-                        <span>اكشط واربح 🎁</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {walletConfig.enable_streaks && (
-                    <StreakBanner
-                      currentStreak={customer?.lifetime_xp ? Math.min(walletConfig.streak_target_days || 3, Math.max(1, Math.floor(customer.lifetime_xp / 100))) : 1}
-                      targetDays={walletConfig.streak_target_days || 3}
-                      rewardTitle={walletConfig.streak_reward_title || 'مشروب مجاني'}
-                    />
-                  )}
-                </div>
-              )}
+                {walletConfig.enable_streaks && (
+                  <StreakBanner
+                    currentStreak={customer?.lifetime_xp ? Math.min(walletConfig.streak_target_days || 3, Math.max(1, Math.floor(customer.lifetime_xp / 100))) : 1}
+                    targetDays={walletConfig.streak_target_days || 3}
+                    rewardTitle={walletConfig.streak_reward_title || 'مشروب مجاني'}
+                  />
+                )}
+              </div>
 
               {/* Bottom Interactive Pill Buttons */}
               <div className="relative z-10 mt-4 pt-1 flex items-center justify-between gap-2.5">
@@ -3518,6 +3531,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   </span>
                 </button>
               </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -5979,7 +5994,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
             {walletConfig.loyalty_mode === 'stamps' ? (() => {
               const target = walletConfig.stamps_target || 6;
               const balance = customer?.wallet_balance || 0;
-              const currentStamps = balance % target;
+              const currentStamps = balance > 0 && balance % target === 0 ? target : (balance % target);
               const icon = walletConfig.stamps_icon || '☕';
               const rewardTitle = walletConfig.stamps_reward_title || 'مكافأة مجانية 🎁';
               const remaining = Math.max(0, target - currentStamps);
@@ -6159,10 +6174,12 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
               <div>
                 <h3 className={`text-lg font-black flex items-center space-x-2 rtl:space-x-reverse ${isDarkTheme ? 'text-white' : 'text-slate-900'}`}>
                   <Ticket className="w-5 h-5" style={{ color: safeAccentText }} />
-                  <span>عروضي وكوبوناتي المحفوظة 🎟️</span>
+                  <span>{isStampsMode ? 'مكافآتي وهدايا الأختام المحفوظة 🎁' : 'عروضي وكوبوناتي المحفوظة 🎟️'}</span>
                 </h3>
                 <p className={`text-xs mt-0.5 ${isDarkTheme ? 'text-slate-400' : 'text-slate-600'}`}>
-                  العروض التي قمت بشرائها بنقاطك، جاهزة للصرف عند الكاشير
+                  {isStampsMode
+                    ? 'هدايا بطاقة الأختام والجوائز الجاهزة للصرف عند الكاشير'
+                    : 'العروض التي قمت بشرائها بنقاطك، جاهزة للصرف عند الكاشير'}
                 </p>
               </div>
               <span className="text-xs bg-emerald-500/15 text-emerald-500 px-3 py-1 rounded-full border border-emerald-500/30 font-bold shrink-0">
@@ -6240,6 +6257,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   <p className={`text-xs max-w-sm mx-auto ${isDarkTheme ? 'text-slate-500' : 'text-slate-600'}`}>
                     {ticketsFilter === 'used' && customerCoupons.length > 0
                       ? 'جميع الامتيازات المصروفة سابقاً ستظهر هنا في سجلك.'
+                      : isStampsMode
+                      ? 'اجمع أختام زياراتك أو اقلب البطاقة للعب اكشط واربح والحصول على هدايا فورية 🎁'
                       : 'استبدل رصيد نقاطك من قائمة العروض لتفتح هدايا وتذاكر فورية 🎁'}
                   </p>
                   {ticketsFilter === 'active' && (
@@ -6682,6 +6701,24 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     <span className="w-4 h-1 opacity-0" />
                   )}
                 </button>
+              ) : isStampsMode ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('pass');
+                    setIsCardFlipped(false);
+                  }}
+                  style={activeTab === 'pass' && !isCardFlipped ? { color: safeAccentText } : undefined}
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
+                    activeTab === 'pass' && !isCardFlipped
+                      ? 'font-black scale-105'
+                      : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
+                  }`}
+                >
+                  <Award className="w-5 h-5 transition-transform duration-300" />
+                  <span className="text-[10px] sm:text-[11px] leading-tight">الأختام</span>
+                  <span className="w-4 h-1 opacity-0" />
+                </button>
               ) : (
                 <button
                   type="button"
@@ -6801,6 +6838,26 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   ) : (
                     <span className="w-4 h-1 opacity-0" />
                   )}
+                </button>
+              ) : isStampsMode ? (
+                /* 🎰 وضع بطاقة الأختام: زر "الألعاب واكشط واربح" يقلب البطاقة مباشرة */
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('pass');
+                    setIsCardFlipped((prev) => !prev);
+                  }}
+                  style={activeTab === 'pass' && isCardFlipped ? { color: safeAccentText } : undefined}
+                  className={`w-full py-2 px-1 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all duration-300 relative ${
+                    activeTab === 'pass' && isCardFlipped
+                      ? 'font-black scale-105'
+                      : isDarkTheme ? 'font-bold text-slate-400 hover:text-white hover:scale-105' : 'font-bold text-slate-500 hover:text-slate-900 hover:scale-105'
+                  }`}
+                  title="خلفية البطاقة للألعاب واكشط واربح"
+                >
+                  <Sparkles className="w-5 h-5 transition-transform duration-300" />
+                  <span className="text-[10px] sm:text-[11px] leading-tight">الألعاب</span>
+                  <span className="w-4 h-1 opacity-0" />
                 </button>
               ) : (
                 /* 💎 تجزئة وولاء فقط: كيف أجمع نقاطاً */

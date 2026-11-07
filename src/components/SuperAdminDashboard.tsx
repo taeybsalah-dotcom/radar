@@ -674,7 +674,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
     setEditIsCompressing(true);
     try {
-      const result = await compressImage(file, 400, 400, 0.8);
+      const result = await compressImage(file, 400, 400, 0.85, 'image/png', 'logos');
       setEditLogoUrl(result.dataUrl);
       setEditLogoStats(result);
     } catch (err) {
@@ -1040,8 +1040,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
 
     setIsCompressing(true);
     try {
-      // ضغط الصورة وتصغيرها إلى 400px وبصيغة WebP لتوفير أقصى قدر من الذاكرة
-      const result = await compressImage(file, 400, 400, 0.8);
+      // ضغط الشعار بصيغة PNG نقية لتوافقه 100% مع محفظة آبل وقوقل
+      const result = await compressImage(file, 400, 400, 0.85, 'image/png', 'logos');
       setLogoUrl(result.dataUrl);
       setLogoStats(result);
     } catch (err) {

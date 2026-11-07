@@ -69,6 +69,8 @@ export function compressImage(
   format: 'image/png' | 'image/webp' | 'image/jpeg' = 'image/webp',
   folder: string = 'misc'
 ): Promise<CompressionResult> {
+  // Ensure logos are always saved as PNG for Apple Wallet (.pkpass) and Google Wallet compatibility
+  const effectiveFormat = folder === 'logos' ? 'image/png' : format;
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);
     const img = new Image();
@@ -158,7 +160,7 @@ export function compressImage(
             reader.readAsDataURL(blob);
           }
         },
-        format,
+        effectiveFormat,
         quality
       );
     };

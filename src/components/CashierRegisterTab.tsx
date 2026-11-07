@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Store, StoreStaff, StoreBranch, Customer, CatalogItem, Tier, POSCartDiscount, POSCashMovement, POSShift, StoreSpecialist, ServiceBooking, getStoreActiveModules } from '../types';
 import { LoyaltyService, cleanBranchUUID } from '../lib/supabase';
+import { WalletPassService } from '../lib/walletPassService';
 import { LoyaltyEvents } from '../lib/events';
 import { playBeepSound } from '../lib/sound';
 import { generateZatcaTLVQR } from '../lib/zatcaQR';
@@ -1010,55 +1011,80 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
         }
       } else if (!isOfflineOrder && customer && customer.phone && !isAlreadyAwarded && !isTransferredAppOrder && !isTransferredBooking) {
         try {
-          const purchaseRes = await LoyaltyService.processPurchase(
-            store.id,
-            customer.phone,
-            cartGrandTotal,
-            `فاتورة كاشير #${orderNumber} (${orderType === 'dine_in' ? 'محلي' : 'سفري'})`,
-            undefined,
-            activeStaff.id,
-            activeStaff.name,
-            'qr_scan',
-            cleanBranchUUID(activeBranch?.id) || null,
-            activeBranch?.name || null
-          );
-          if (purchaseRes && purchaseRes.customer) {
-            setCustomer(purchaseRes.customer);
-            pointsEarned = purchaseRes.pointsEarned;
+          const walletCfg = WalletPassService.getWalletConfig(store);
+          if (walletCfg.loyalty_mode === 'stamps') {
+            const stampRes = await LoyaltyService.addCustomerStamps(
+              store.id,
+              customer.phone,
+              1,
+              `ختم فاتورة كاشير #${orderNumber} (${orderType === 'dine_in' ? 'محلي' : 'سفري'})`,
+              undefined,
+              activeStaff.id,
+              activeStaff.name,
+              'qr_scan',
+              cleanBranchUUID(activeBranch?.id) || null,
+              activeBranch?.name || null
+            );
+            if (stampRes && stampRes.customer) {
+              setCustomer(stampRes.customer);
+              pointsEarned = stampRes.stampsAdded;
+            }
+          } else {
+            const purchaseRes = await LoyaltyService.processPurchase(
+              store.id,
+              customer.phone,
+              cartGrandTotal,
+              `فاتورة كاشير #${orderNumber} (${orderType === 'dine_in' ? 'محلي' : 'سفري'})`,
+              undefined,
+              activeStaff.id,
+              activeStaff.name,
+              'qr_scan',
+              cleanBranchUUID(activeBranch?.id) || null,
+              activeBranch?.name || null
+            );
+            if (purchaseRes && purchaseRes.customer) {
+              setCustomer(purchaseRes.customer);
+              pointsEarned = purchaseRes.pointsEarned;
 
-            // 🌟 إرسال حدث فوري للعميل للاحتفال المباشر على جهازه في كافة وسائل الدفع (كاش / شبكة / تقسيم)
-            if (pointsEarned > 0) {
-              LoyaltyEvents.emit({
-                type: 'POINTS_ADDED',
-                storeId: store.id,
-                phone: customer.phone,
-                points: purchaseRes.pointsEarned,
-                newBalance: purchaseRes.customer.wallet_balance,
-                newLifetimeXP: purchaseRes.customer.lifetime_xp,
-                currentTier: purchaseRes.currentTier,
-              });
-              LoyaltyEvents.emit({
-                type: 'CUSTOMER_UPDATED',
-                storeId: store.id,
-                phone: customer.phone,
-                newBalance: purchaseRes.customer.wallet_balance,
-                newLifetimeXP: purchaseRes.customer.lifetime_xp,
-              });
-              LoyaltyEvents.emit({
-                type: 'WALLET_UPDATED',
-                storeId: store.id,
-              });
+              // 🌟 إرسال حدث فوري للعميل للاحتفال المباشر على جهازه في كافة وسائل الدفع (كاش / شبكة / تقسيم)
+              if (pointsEarned > 0) {
+                LoyaltyEvents.emit({
+                  type: 'POINTS_ADDED',
+                  storeId: store.id,
+                  phone: customer.phone,
+                  points: purchaseRes.pointsEarned,
+                  newBalance: purchaseRes.customer.wallet_balance,
+                  newLifetimeXP: purchaseRes.customer.lifetime_xp,
+                  currentTier: purchaseRes.currentTier,
+                });
+                LoyaltyEvents.emit({
+                  type: 'CUSTOMER_UPDATED',
+                  storeId: store.id,
+                  phone: customer.phone,
+                  newBalance: purchaseRes.customer.wallet_balance,
+                  newLifetimeXP: purchaseRes.customer.lifetime_xp,
+                });
+                LoyaltyEvents.emit({
+                  type: 'WALLET_UPDATED',
+                  storeId: store.id,
+                });
+              }
             }
           }
         } catch (ptsErr) {
-          console.warn('Could not award points to customer:', ptsErr);
+          console.warn('Could not award points/stamps to customer:', ptsErr);
         }
       } else if (isAlreadyAwarded) {
         // 🛡️ [ANTI-DOUBLE-REWARD] صُرفت النقاط مسبقاً عند الدفع الإلكتروني عبر التطبيق
         pointsEarned = 0;
       } else if (isOfflineOrder && customer && customer.phone) {
-        const multiplier = Number(store.points_per_riyal) > 0 ? Number(store.points_per_riyal) : 1.0;
-        pointsEarned = Math.floor(cartGrandTotal * multiplier);
+        const walletCfg = WalletPassService.getWalletConfig(store);
+        if (walletCfg.loyalty_mode === 'stamps') {
+          pointsEarned = 1;
+        } else {
+          const multiplier = Number(store.points_per_riyal) > 0 ? Number(store.points_per_riyal) : 1.0;
+          pointsEarned = Math.floor(cartGrandTotal * multiplier);
+        }
       }
 
       // 2b. 📦 الخصم التلقائي للمخزون والمواد الخام وتنبيهات النفاد الوشيك
@@ -1667,7 +1693,18 @@ export const CashierRegisterTab: React.FC<CashierRegisterTabProps> = ({
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-slate-500 font-mono">
                         <span dir="ltr">{customer.phone}</span>
-                        <span className="font-bold" style={{ color: isDarkTheme ? brandColors.secondary : brandColors.textOnLightHex }}>⭐ {customer.wallet_balance} نقطة</span>
+                        <span className="font-bold" style={{ color: isDarkTheme ? brandColors.secondary : brandColors.textOnLightHex }}>
+                          {(() => {
+                            const wCfg = WalletPassService.getWalletConfig(store);
+                            if (wCfg.loyalty_mode === 'stamps') {
+                              const target = wCfg.stamps_target || 6;
+                              const bal = customer.wallet_balance || 0;
+                              const cur = bal > 0 && bal % target === 0 ? target : bal % target;
+                              return `${wCfg.stamps_icon || '☕'} ${cur}/${target} أختام`;
+                            }
+                            return `⭐ ${customer.wallet_balance} نقطة`;
+                          })()}
+                        </span>
                       </div>
                     </div>
                   </div>

@@ -399,7 +399,8 @@ export class WalletPassService {
     // Calculate primary & header fields depending on loyalty mode
     const isStamps = config.loyalty_mode === 'stamps';
     const stampsTarget = config.stamps_target || 6;
-    const currentStamps = (customer.wallet_balance || 0) % stampsTarget;
+    const rawBalance = customer.wallet_balance || 0;
+    const currentStamps = rawBalance > 0 && rawBalance % stampsTarget === 0 ? stampsTarget : (rawBalance % stampsTarget);
     const stampsIcon = config.stamps_icon || '☕';
 
     const headerFields = isStamps
@@ -576,7 +577,8 @@ export class WalletPassService {
 
     const isStamps = config.loyalty_mode === 'stamps';
     const stampsTarget = config.stamps_target || 6;
-    const currentStamps = (customer.wallet_balance || 0) % stampsTarget;
+    const rawBalance = customer.wallet_balance || 0;
+    const currentStamps = rawBalance > 0 && rawBalance % stampsTarget === 0 ? stampsTarget : (rawBalance % stampsTarget);
 
     let loyaltyPoints: any = {
       label: 'رصيد النقاط',
@@ -601,13 +603,14 @@ export class WalletPassService {
       };
     }
 
-    const rawLogo = store.logo_url || '';
-    const isWebp = rawLogo.toLowerCase().includes('.webp') || rawLogo.toLowerCase().includes('.svg');
-    const logoUrl = (!isWebp && rawLogo && rawLogo.startsWith('https://'))
-      ? rawLogo
-      : (!isWebp && rawLogo && rawLogo.startsWith('http://'))
-        ? rawLogo.replace(/^http:\/\//, 'https://')
-        : 'https://sdeemalathr.com/assets/default-logo.png';
+    const rawLogo = store.logo_url || (store as any)?.fulfillment_settings?.logo_url || '';
+    const isSvg = rawLogo.toLowerCase().includes('.svg');
+    const isWebp = rawLogo.toLowerCase().includes('.webp');
+    const logoUrl = (!isSvg && rawLogo && (rawLogo.startsWith('https://') || rawLogo.startsWith('http://')))
+      ? (isWebp
+          ? `https://wsrv.nl/?url=${encodeURIComponent(rawLogo.replace(/^http:\/\//, 'https://'))}&output=png&w=256&h=256`
+          : rawLogo.replace(/^http:\/\//, 'https://'))
+      : 'https://sdeemalathr.com/assets/default-logo.png';
 
     const cleanCustomerName = (customer.name || 'عميل مميز')
       .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F018}-\u{1F270}\u{2388}\u{2B05}\u{2B06}\u{2B07}\u{2B1B}\u{2B1C}\u{2B50}\u{2B55}\u{FE00}-\u{FE0F}]/gu, '')
@@ -737,26 +740,31 @@ export class WalletPassService {
     if (customer?.id) params.set('customer_id', customer.id);
     if (customer?.phone) params.set('phone', customer.phone);
     if (customer?.name) params.set('name', customer.name);
-    if (store?.logo_url) {
+    const rawStoreLogo = store?.logo_url || (store as any)?.fulfillment_settings?.logo_url;
+    if (rawStoreLogo) {
       try {
-        let finalLogoUrl = store.logo_url;
-        // If logo is not an explicit PNG (e.g. webp/jpeg), rasterize to PNG and upload to storage so edge signer receives genuine PNG
-        if (!store.logo_url.toLowerCase().endsWith('.png') || store.logo_url.includes('.webp')) {
-          const pngData = await rasterizeLogoToPngDataUrl(store.logo_url);
+        let finalLogoUrl = rawStoreLogo;
+        // If logo is not an explicit PNG (e.g. webp/jpeg), rasterize to PNG so Apple PassKit always displays the store logo
+        if (!rawStoreLogo.toLowerCase().endsWith('.png') || rawStoreLogo.toLowerCase().includes('.webp')) {
+          const pngData = await rasterizeLogoToPngDataUrl(rawStoreLogo);
           if (pngData && pngData.startsWith('data:image/png')) {
             try {
               const res = await fetch(pngData);
               const blob = await res.blob();
               const uploadedUrl = await uploadImageBlob(blob, 'logos');
-              if (uploadedUrl) finalLogoUrl = uploadedUrl;
-            } catch (upErr) {
-              console.warn('Could not upload rasterized PNG, using original logoUrl', upErr);
+              if (uploadedUrl) {
+                finalLogoUrl = uploadedUrl;
+              } else {
+                finalLogoUrl = pngData;
+              }
+            } catch {
+              finalLogoUrl = pngData;
             }
           }
         }
         params.set('logo_url', finalLogoUrl);
       } catch {
-        params.set('logo_url', store.logo_url);
+        params.set('logo_url', rawStoreLogo);
       }
     }
     params.set('_t', Date.now().toString());
