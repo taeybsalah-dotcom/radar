@@ -4338,7 +4338,8 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
   async purchaseCoupon(
     storeId: string,
     customerId: string,
-    privilegeId: string
+    privilegeId: string,
+    preferredCouponCode?: string
   ): Promise<{ success: boolean; coupon: CustomerCoupon; updatedCustomer: Customer }> {
     const supabase = getSupabaseClient();
     const resolvedStoreId = isUUID(storeId)
@@ -4462,10 +4463,11 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
     // ─── 3. تجهيز بيانات الكوبون الجديد ───
     const code =
+      (preferredCouponCode || '').trim().toUpperCase() ||
       'CPN-' +
-      Math.floor(1000 + Math.random() * 9000) +
-      '-' +
-      Math.random().toString(36).substring(2, 6).toUpperCase();
+        Math.floor(1000 + Math.random() * 9000) +
+        '-' +
+        Math.random().toString(36).substring(2, 6).toUpperCase();
     const nowIso = new Date().toISOString();
     let couponId = 'cpn-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
 
@@ -4499,34 +4501,54 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     };
 
     // ─── 4. تنفيذ عملية الشراء الذرية في السحابة عبر RPC (بدون أي تفعيل محلي وهمي عند الفشل) ───
-    if (!supabase || !isUUID(resolvedStoreId) || !isUUID(customerId) || !isUUID(privilegeId)) {
+    if (!supabase || !isUUID(resolvedStoreId)) {
       throw new Error('تعذر الاتصال بقاعدة البيانات السحابية لإصدار الكوبون');
     }
 
-    const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('purchase_coupon_secure', {
-      p_store_id: resolvedStoreId,
-      p_customer_id: customerId,
-      p_privilege_id: privilegeId,
-      p_coupon_code: code,
-    });
+    if (isUUID(customerId) && isUUID(privilegeId)) {
+      const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('purchase_coupon_secure', {
+        p_store_id: resolvedStoreId,
+        p_customer_id: customerId,
+        p_privilege_id: privilegeId,
+        p_coupon_code: code,
+      });
 
-    if (!rpcErr && rpcRes && rpcRes.success) {
-      if (rpcRes.coupon_id) newCoupon.id = rpcRes.coupon_id;
-      if (rpcRes.coupon_code) newCoupon.coupon_code = rpcRes.coupon_code;
-      if (rpcRes.new_balance !== undefined) {
-        updatedCustomer.wallet_balance = Number(rpcRes.new_balance);
-      }
-      if (rpcRes.customer_phone) {
-        updatedCustomer.phone = rpcRes.customer_phone;
-        newCoupon.customer_phone = rpcRes.customer_phone;
+      if (!rpcErr && rpcRes && rpcRes.success) {
+        if (rpcRes.coupon_id) newCoupon.id = rpcRes.coupon_id;
+        if (rpcRes.coupon_code) newCoupon.coupon_code = rpcRes.coupon_code;
+        if (rpcRes.new_balance !== undefined) {
+          updatedCustomer.wallet_balance = Number(rpcRes.new_balance);
+        }
+        if (rpcRes.customer_phone) {
+          updatedCustomer.phone = rpcRes.customer_phone;
+          newCoupon.customer_phone = rpcRes.customer_phone;
+        }
+      } else {
+        const errCode = rpcRes?.error || rpcErr?.message;
+        if (errCode === 'INSUFFICIENT_POINTS') throw new Error(rpcRes?.message || 'رصيد نقاطك غير كافٍ');
+        if (errCode === 'SOLD_OUT') throw new Error(rpcRes?.message || 'نفدت الكمية المتاحة من هذه المكافأة');
+        if (errCode === 'LIMIT_REACHED') throw new Error(rpcRes?.message || 'وصلت للحد الأقصى المسموح به لهذه المكافأة');
+        if (errCode === 'TIER_LOCKED') throw new Error(rpcRes?.message || 'هذا العرض يتطلب رتبة ولاء أعلى');
+        throw new Error(rpcRes?.message || errCode || 'تعذر استبدال النقاط بالمكافأة في السحابة');
       }
     } else {
-      const errCode = rpcRes?.error || rpcErr?.message;
-      if (errCode === 'INSUFFICIENT_POINTS') throw new Error(rpcRes?.message || 'رصيد نقاطك غير كافٍ');
-      if (errCode === 'SOLD_OUT') throw new Error(rpcRes?.message || 'نفدت الكمية المتاحة من هذه المكافأة');
-      if (errCode === 'LIMIT_REACHED') throw new Error(rpcRes?.message || 'وصلت للحد الأقصى المسموح به لهذه المكافأة');
-      if (errCode === 'TIER_LOCKED') throw new Error(rpcRes?.message || 'هذا العرض يتطلب رتبة ولاء أعلى');
-      throw new Error(rpcRes?.message || errCode || 'تعذر استبدال النقاط بالمكافأة في السحابة');
+      // في حال كان العرض من القوالب الافتراضية أو عميل برقم جوال، نصدر الكوبون رسمياً في جدول customer_coupons عبر issue_customer_coupon_secure
+      const { data: fallbackRes, error: fallbackErr } = await (supabase as any).rpc('issue_customer_coupon_secure', {
+        p_store_id: resolvedStoreId,
+        p_phone: customer.phone,
+        p_title: privilege.title,
+        p_coupon_code: code,
+        p_customer_id: isUUID(customerId) ? customerId : null,
+        p_customer_name: customer.name || 'عميل مميز',
+        p_privilege_id: isUUID(privilegeId) ? privilegeId : null,
+        p_cost_points: cost,
+        p_source: 'PRIVILEGE_CATALOG',
+      });
+      if (fallbackErr || !fallbackRes || !fallbackRes.success) {
+        throw new Error(fallbackRes?.message || fallbackErr?.message || 'تعذر إصدار الكوبون في السحابة');
+      }
+      if (fallbackRes.coupon_id) newCoupon.id = fallbackRes.coupon_id;
+      if (fallbackRes.coupon_code) newCoupon.coupon_code = fallbackRes.coupon_code;
     }
 
     // ─── 5. تحديث الكاش المحلي فورياً بعد نجاح السيرفر الذري ───
@@ -4578,6 +4600,241 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     return { success: true, coupon: newCoupon, updatedCustomer };
   },
 
+  // 11.4.2 🎰 إصدار كوبون فوري رسمي في السحابة (ألعاب الحظ، اكشط واربح، الهدايا الترحيبية، ومكافآت الأختام)
+  async issueCustomerCoupon(
+    storeId: string,
+    params: {
+      phone: string;
+      title: string;
+      couponCode?: string;
+      customerId?: string;
+      customerName?: string;
+      privilegeId?: string | null;
+      costPoints?: number;
+      source?: string;
+    }
+  ): Promise<CustomerCoupon> {
+    const currentStore = await this.resolveStore(storeId);
+    const resolvedStoreId = currentStore?.id || storeId;
+    const cleanPhone = normalizePhone(params.phone) || params.phone.trim();
+    const generatedCode =
+      (params.couponCode || '').trim().toUpperCase() ||
+      `WIN-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const nowIso = new Date().toISOString();
+
+    let createdCoupon: CustomerCoupon = {
+      id: `cpn-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      coupon_code: generatedCode,
+      customer_id: params.customerId || '',
+      customer_phone: cleanPhone,
+      customer_name: params.customerName || 'عميل مميز',
+      store_id: resolvedStoreId,
+      privilege_id: params.privilegeId || 'game-reward',
+      privilege_title: params.title,
+      cost_points: params.costPoints || 0,
+      status: 'ACTIVE',
+      valid_start_time: '00:00',
+      valid_end_time: '23:59',
+      purchased_at: nowIso,
+    };
+
+    const supabase = getSupabaseClient();
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('issue_customer_coupon_secure', {
+          p_store_id: resolvedStoreId,
+          p_phone: cleanPhone,
+          p_title: params.title,
+          p_coupon_code: generatedCode,
+          p_customer_id: isUUID(params.customerId) ? params.customerId : null,
+          p_customer_name: params.customerName || null,
+          p_privilege_id: isUUID(params.privilegeId) ? params.privilegeId : null,
+          p_cost_points: params.costPoints || 0,
+          p_source: params.source || 'GAMIFICATION',
+        });
+
+        if (!rpcErr && rpcRes && rpcRes.success && rpcRes.coupon) {
+          const d = rpcRes.coupon;
+          createdCoupon = {
+            id: d.id,
+            coupon_code: d.coupon_code,
+            customer_id: d.customer_id,
+            customer_phone: d.customer_phone,
+            customer_name: d.customer_name,
+            store_id: d.store_id,
+            privilege_id: d.privilege_id || 'game-reward',
+            privilege_title: d.privilege_title,
+            cost_points: Number(d.cost_points) || 0,
+            status: d.status || 'ACTIVE',
+            valid_start_time: d.valid_start_time || '00:00',
+            valid_end_time: d.valid_end_time || '23:59',
+            purchased_at: d.purchased_at || nowIso,
+          };
+        }
+      } catch (e) {
+        console.warn('issue_customer_coupon_secure RPC failed:', e);
+      }
+    }
+
+    try {
+      const localCoupons = getLocalData<CustomerCoupon[]>(STORAGE_KEYS.LOCAL_COUPONS, []);
+      if (!localCoupons.some((c) => c.coupon_code === createdCoupon.coupon_code)) {
+        localCoupons.unshift(createdCoupon);
+        saveLocalData(STORAGE_KEYS.LOCAL_COUPONS, localCoupons);
+      }
+    } catch {}
+
+    LoyaltyEvents.emit({
+      type: 'COUPON_PURCHASED',
+      storeId: resolvedStoreId,
+      phone: createdCoupon.customer_phone,
+      points: 0,
+      couponId: createdCoupon.id,
+      couponCode: createdCoupon.coupon_code,
+      rewardTitle: createdCoupon.privilege_title,
+    });
+
+    return createdCoupon;
+  },
+
+  // 11.4.3 🎮 إرسال وتفعيل لعبة مخصصة لعميل واحد أو مجموعة عملاء أو جميع عملاء المتجر
+  async dispatchGameToCustomers(
+    storeId: string,
+    params: {
+      gameType: 'spin_wheel' | 'scratch_card';
+      customerIds?: string[];
+      phones?: string[];
+      campaignTitle?: string;
+      rewardLabel?: string;
+      sendToAll?: boolean;
+    }
+  ): Promise<{ success: boolean; affectedCount: number; inviteId?: string }> {
+    const currentStore = await this.resolveStore(storeId);
+    const resolvedStoreId = currentStore?.id || storeId;
+    const supabase = getSupabaseClient();
+
+    let affectedCount = 0;
+    let inviteId = `GINV-${Date.now()}`;
+    const validIds = (params.customerIds || []).filter((id) => isUUID(id));
+    const validPhones = (params.phones || []).map((p) => p.trim()).filter(Boolean);
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('dispatch_game_to_customers_secure', {
+        p_store_id: resolvedStoreId,
+        p_game_type: params.gameType,
+        p_customer_ids: validIds.length > 0 ? validIds : null,
+        p_phones: validPhones.length > 0 ? validPhones : null,
+        p_campaign_title: params.campaignTitle || null,
+        p_reward_label: params.rewardLabel || null,
+        p_send_to_all: Boolean(params.sendToAll),
+      });
+
+      if (rpcErr || !rpcRes || rpcRes.success === false) {
+        throw new Error(rpcRes?.message || rpcErr?.message || 'تعذر إرسال اللعبة للعملاء');
+      }
+      affectedCount = Number(rpcRes.affected_count) || 0;
+      inviteId = rpcRes.invite_id || inviteId;
+    }
+
+    // تحديث الكاش المحلي وبث الإشعار اللحظي للعملاء المستهدفين
+    const inviteObj = {
+      id: inviteId,
+      game_type: params.gameType,
+      campaign_title:
+        params.campaignTitle ||
+        (params.gameType === 'spin_wheel'
+          ? 'هدية خاصة من المتجر: جرب حظك الآن! 🎡'
+          : 'بطاقة اكشط واربح خاصة لك! 🪙'),
+      reward_label: params.rewardLabel || undefined,
+      granted_at: new Date().toISOString(),
+      status: 'PENDING' as const,
+    };
+
+    try {
+      const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
+      for (const c of localCustomers) {
+        if (
+          c.store_id === resolvedStoreId &&
+          (params.sendToAll ||
+            validIds.includes(c.id) ||
+            validPhones.some((p) => normalizePhone(p) === normalizePhone(c.phone)))
+        ) {
+          c.active_game_invites = [...(c.active_game_invites || []), inviteObj];
+        }
+      }
+      saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, localCustomers);
+    } catch {}
+
+    if (params.sendToAll) {
+      LoyaltyEvents.emit({
+        type: 'GAME_TRIGGERED',
+        storeId: resolvedStoreId,
+        gameType: params.gameType,
+        rewardTitle: inviteObj.campaign_title,
+      } as any);
+    } else {
+      for (const ph of validPhones) {
+        LoyaltyEvents.emit({
+          type: 'GAME_TRIGGERED',
+          storeId: resolvedStoreId,
+          phone: ph,
+          gameType: params.gameType,
+          rewardTitle: inviteObj.campaign_title,
+        } as any);
+      }
+    }
+
+    return { success: true, affectedCount, inviteId };
+  },
+
+  // 11.4.4 استهلاك دعوة اللعبة المرسلة من التاجر بعد أن يلعبها العميل لمرة واحدة
+  async consumeCustomerGameInvite(
+    storeId: string,
+    phone: string,
+    inviteId?: string,
+    gameType?: 'spin_wheel' | 'scratch_card'
+  ): Promise<boolean> {
+    const currentStore = await this.resolveStore(storeId);
+    const resolvedStoreId = currentStore?.id || storeId;
+    const supabase = getSupabaseClient();
+
+    if (supabase && isUUID(resolvedStoreId)) {
+      try {
+        await (supabase as any).rpc('consume_customer_game_invite_secure', {
+          p_store_id: resolvedStoreId,
+          p_phone: phone,
+          p_invite_id: inviteId || null,
+          p_game_type: gameType || null,
+        });
+      } catch (e) {
+        console.warn('consume_customer_game_invite_secure error:', e);
+      }
+    }
+
+    try {
+      const localCustomers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, []);
+      const norm = normalizePhone(phone);
+      for (const c of localCustomers) {
+        if (c.store_id === resolvedStoreId && normalizePhone(c.phone) === norm && Array.isArray(c.active_game_invites)) {
+          let consumedOne = false;
+          c.active_game_invites = c.active_game_invites.filter((inv) => {
+            if (
+              !consumedOne &&
+              ((inviteId && inv.id === inviteId) || (!inviteId && (!gameType || inv.game_type === gameType)))
+            ) {
+              consumedOne = true;
+              return false;
+            }
+            return true;
+          });
+        }
+      }
+      saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, localCustomers);
+    } catch {}
+
+    return true;
+  },
+
   // 11.5 التحقق الأمني الصارم من الكوبون (Store Isolation + Single-Use Validation + Time Window)
   async validateCoupon(
     storeId: string,
@@ -4590,45 +4847,54 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     const supabase = getSupabaseClient();
     let coupon: CustomerCoupon | undefined = undefined;
 
-    // 1️⃣ البحث المباشر في Supabase أولاً إن أمكن
+    // 1️⃣ التحقق المباشر عبر الدالة السحابية المؤمنة validate_coupon_secure (SECURITY DEFINER تتجاوز حجب RLS للكاشير)
     if (supabase && isUUID(resolvedStoreId)) {
       try {
-        let couponQuery = supabase
-          .from('customer_coupons')
-          .select('id, coupon_code, customer_id, customer_phone, customer_name, store_id, privilege_id, privilege_title, cost_points, status, valid_start_time, valid_end_time, purchased_at, redeemed_at, redeemed_by_staff_id')
-          .eq('store_id', resolvedStoreId);
+        const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('validate_coupon_secure', {
+          p_store_id: resolvedStoreId,
+          p_coupon_code: cleanCode,
+        });
 
-        if (isUUID(cleanCode)) {
-          couponQuery = couponQuery.or(`id.eq.${cleanCode},coupon_code.eq.${cleanCode}`);
-        } else {
-          couponQuery = couponQuery.eq('coupon_code', cleanCode);
-        }
-
-        const { data, error } = await couponQuery.limit(1).maybeSingle();
-
-        if (!error && data) {
-          const d = data as any;
-          coupon = {
-            id: d.id,
-            coupon_code: d.coupon_code,
-            customer_id: d.customer_id,
-            customer_phone: d.customer_phone,
-            customer_name: d.customer_name,
-            store_id: d.store_id,
-            privilege_id: d.privilege_id,
-            privilege_title: d.privilege_title,
-            privilege_image_url: undefined,
-            cost_points: d.cost_points || 0,
-            status: d.status,
-            valid_start_time: d.valid_start_time,
-            valid_end_time: d.valid_end_time,
-            purchased_at: d.purchased_at,
-            used_at: d.redeemed_at,
-            cashier_name: d.redeemed_by_staff_id,
-          };
+        if (!rpcErr && rpcRes) {
+          if (rpcRes.valid && rpcRes.coupon) {
+            const d = rpcRes.coupon;
+            coupon = {
+              id: d.id,
+              coupon_code: d.coupon_code,
+              customer_id: d.customer_id,
+              customer_phone: d.customer_phone,
+              customer_name: d.customer_name,
+              store_id: d.store_id,
+              privilege_id: d.privilege_id,
+              privilege_title: d.privilege_title,
+              privilege_image_url: undefined,
+              cost_points: Number(d.cost_points) || 0,
+              status: d.status,
+              valid_start_time: d.valid_start_time,
+              valid_end_time: d.valid_end_time,
+              purchased_at: d.purchased_at,
+              used_at: d.used_at || d.redeemed_at,
+              cashier_name: d.redeemed_by_staff_id,
+            };
+          } else if (rpcRes.error === 'WRONG_STORE') {
+            return {
+              valid: false,
+              error: rpcRes.message || 'عفواً، هذا الكوبون خاص بمتجر آخر ولا يمكن صرفه هنا',
+            };
+          } else if (rpcRes.error === 'ALREADY_REDEEMED') {
+            return {
+              valid: false,
+              error: rpcRes.message || 'هذا الكوبون محروق وتم استخدامه مسبقاً',
+            };
+          } else if (rpcRes.error === 'INACTIVE_COUPON') {
+            return {
+              valid: false,
+              error: rpcRes.message || 'عفواً، حالة الكوبون غير صالحة للصرف',
+            };
+          }
         }
       } catch (e) {
-        console.warn('Direct Supabase coupon query error', e);
+        console.warn('validate_coupon_secure RPC error', e);
       }
     }
 
@@ -4949,37 +5215,43 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       let couponData: any = null;
       if (supabase && isUUID(resolvedStoreId)) {
         try {
-          // ⚠️ استعلام فائق السرعة محدد النطاق بالمتجر (Store-Scoped) ومقتصر على الأعمدة التشغيلية المطلوبة فقط
-          // استبعاد privilege_image_url الضخم من الاستعلام (يوفر ~1400ms من قراءة TOAST Blob)
-          const COUPON_SELECT_FIELDS =
-            'id, coupon_code, store_id, customer_id, customer_phone, customer_name, privilege_id, privilege_title, cost_points, status, valid_start_time, valid_end_time, purchased_at';
+          // 🛡️ التحقق عبر الدالة السحابية المؤمنة validate_coupon_secure (SECURITY DEFINER تتجاوز حجب RLS للكاشير)
+          const { data: valRes, error: valErr } = await (supabase as any).rpc('validate_coupon_secure', {
+            p_store_id: resolvedStoreId,
+            p_coupon_code: cleanKey,
+          });
 
-          let couponQuery = supabase
-            .from('customer_coupons')
-            .select(COUPON_SELECT_FIELDS)
-            .eq('store_id', resolvedStoreId);
-
-          if (isUUID(cleanKey)) {
-            couponQuery = couponQuery.or(`coupon_code.eq.${cleanKey},id.eq.${cleanKey}`);
-          } else {
-            couponQuery = couponQuery.eq('coupon_code', cleanKey);
-          }
-
-          const { data, error } = await couponQuery.limit(1).maybeSingle();
-          if (!error && data) {
-            couponData = data;
-          } else if (!data) {
-            // فحص إضافي فقط عند عدم وجود الكوبون في المتجر الحالي للتأكد هل ينتمي لمتجر آخر
-            const otherQuery = isUUID(cleanKey)
-              ? supabase.from('customer_coupons').select('id, store_id, customer_phone').or(`coupon_code.eq.${cleanKey},id.eq.${cleanKey}`).limit(1).maybeSingle()
-              : supabase.from('customer_coupons').select('id, store_id, customer_phone').eq('coupon_code', cleanKey).limit(1).maybeSingle();
-            const { data: otherStoreCoupon } = await otherQuery;
-            if (otherStoreCoupon && otherStoreCoupon.store_id !== resolvedStoreId) {
-              couponData = otherStoreCoupon;
+          if (!valErr && valRes) {
+            if (valRes.valid && valRes.coupon) {
+              couponData = valRes.coupon;
+            } else if (valRes.error === 'WRONG_STORE') {
+              LoyaltyEvents.emit({
+                type: 'SCAN_REJECTED',
+                storeId: valRes.coupon_store_id || resolvedStoreId,
+                phone: valRes.customer_phone,
+                error: 'تم رفض العملية: هذا الكوبون خاص بمتجر آخر ولا يمكن صرفه هنا ❌',
+              });
+              return {
+                type: 'COUPON',
+                success: false,
+                error: valRes.message || 'عفواً، هذا الكوبون خاص بمتجر آخر ولا يمكن صرفه هنا ❌',
+              };
+            } else if (valRes.error === 'ALREADY_REDEEMED') {
+              return {
+                type: 'COUPON',
+                success: false,
+                error: valRes.message || 'هذا الكوبون محروق وتم استخدامه مسبقاً ❌',
+              };
+            } else if (valRes.error === 'INACTIVE_COUPON') {
+              return {
+                type: 'COUPON',
+                success: false,
+                error: valRes.message || 'عفواً، حالة الكوبون غير صالحة للصرف ❌',
+              };
             }
           }
         } catch (e) {
-          console.warn('smartScanProcess: coupon query error', e);
+          console.warn('smartScanProcess: validate_coupon_secure error', e);
         }
       }
 
@@ -5266,6 +5538,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
               last_visit_date: cust.last_visit_date ? cust.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
               is_active: cust.is_active !== undefined ? cust.is_active : true,
               visits_count: cust.visits_count || 1,
+              active_game_invites: Array.isArray(cust.active_game_invites) ? cust.active_game_invites : [],
               created_at: cust.created_at,
             } as Customer;
           }
@@ -5289,6 +5562,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
               last_visit_date: profRes.last_visit_date ? profRes.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
               is_active: profRes.is_active !== undefined ? profRes.is_active : true,
               visits_count: profRes.visits_count || 1,
+              active_game_invites: Array.isArray(profRes.active_game_invites) ? profRes.active_game_invites : [],
               created_at: profRes.created_at,
             } as Customer;
           }
@@ -5679,6 +5953,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       last_visit_date: data.last_visit_date ? data.last_visit_date.split('T')[0] : new Date().toISOString().split('T')[0],
       is_active: true,
       visits_count: data.visits_count || 1,
+      active_game_invites: Array.isArray(data.active_game_invites) ? data.active_game_invites : [],
       created_at: data.created_at,
     };
     LoyaltyEvents.emit({ type: 'CUSTOMER_UPDATED', storeId: resolvedStoreId, phone: data.phone });

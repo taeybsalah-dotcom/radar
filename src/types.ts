@@ -862,6 +862,15 @@ export interface StoreStaff {
   updated_at?: string;
 }
 
+export interface CustomerGameInvite {
+  id: string;
+  game_type: 'spin_wheel' | 'scratch_card';
+  campaign_title?: string;
+  reward_label?: string;
+  granted_at: string;
+  status: 'PENDING' | 'PLAYED';
+}
+
 export interface Customer {
   id: string;
   store_id: string;
@@ -875,6 +884,7 @@ export interface Customer {
   is_demo?: boolean;
   is_active?: boolean;
   visits_count?: number;
+  active_game_invites?: CustomerGameInvite[];
   created_at?: string;
 }
 
@@ -1544,7 +1554,7 @@ export type PassLoyaltyMode = 'stamps' | 'points' | 'tiers' | 'cashback';
 export interface SpinWheelPrize {
   id: string;
   label: string;
-  reward_type: 'discount_percent' | 'free_item' | 'points' | 'no_luck';
+  reward_type: 'discount_percent' | 'free_item' | 'points' | 'stamps' | 'no_luck';
   reward_value: number | string;
   probability_weight: number;
   color?: string;
@@ -1563,11 +1573,13 @@ export interface StoreWalletPassConfig {
   enable_spin_wheel?: boolean; // عجلة الحظ
   spin_wheel_prizes?: SpinWheelPrize[];
   spin_wheel_trigger_min_spend?: number; // e.g. 30 SAR
+  spin_wheel_trigger_stamps?: number; // تفعيل العجلة عند الوصول لعدد أختام معين (مثلاً 10 أو 20 ختم)
   game_event_name?: string; // اسم المناسبة أو الحدث (مثل 'يوم التأسيس 🇸🇦')
 
   enable_scratch_card?: boolean; // اكشط واربح
   scratch_card_reward_title?: string; // e.g. 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦'
   scratch_card_trigger_min_spend?: number; // e.g. 25 SAR
+  scratch_card_trigger_stamps?: number; // تفعيل الكشط عند الوصول لعدد أختام معين (مثلاً 5 أو 10 أختام)
 
   enable_streaks?: boolean; // سلسلة الزيارات المتتالية
   streak_target_days?: number; // e.g. 3 days

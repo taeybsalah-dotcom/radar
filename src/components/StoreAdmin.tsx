@@ -457,6 +457,17 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   const [moduleToggleSuccess, setModuleToggleSuccess] = useState<string | null>(null);
   const [isTogglingModule, setIsTogglingModule] = useState<string | null>(null);
 
+  // 🎮 حالات إرسال وتفعيل لعبة مخصصة لعميل واحد أو مجموعة عملاء
+  const [dispatchGameType, setDispatchGameType] = useState<'spin_wheel' | 'scratch_card'>('spin_wheel');
+  const [dispatchTargetMode, setDispatchTargetMode] = useState<'selected' | 'all'>('selected');
+  const [dispatchSelectedCustomerIds, setDispatchSelectedCustomerIds] = useState<string[]>([]);
+  const [dispatchManualPhone, setDispatchManualPhone] = useState('');
+  const [dispatchCampaignTitle, setDispatchCampaignTitle] = useState('هدية خاصة لك من المتجر: جرب حظك الآن! 🎁');
+  const [dispatchRewardLabel, setDispatchRewardLabel] = useState('');
+  const [dispatchCustomerSearch, setDispatchCustomerSearch] = useState('');
+  const [isDispatchingGame, setIsDispatchingGame] = useState(false);
+  const [dispatchFeedback, setDispatchFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   useEffect(() => {
     const s = store || currentStore;
     if (s) {
@@ -2667,9 +2678,9 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     setPrivTitleInput('');
     setPrivDescInput('');
     setPrivRequiredTierId(tiers[0]?.id || '');
-    setPrivCostPoints('');
+    setPrivCostPoints(currentWalletConfig.loyalty_mode === 'stamps' ? 0 : '');
     setPrivQuantityLimit('');
-    setPrivPerCustomerLimit('');
+    setPrivPerCustomerLimit(1);
     setPrivStartTime('');
     setPrivEndTime('');
     setPrivImageUrl('');
@@ -5172,58 +5183,201 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     </div>
                   </div>
 
-                  {currentWalletConfig.enable_spin_wheel && (
-                    <div className="pt-3 border-t border-slate-800 space-y-3 animate-fade-in">
-                      <div className="flex items-center gap-1.5 overflow-x-auto text-[11px] text-slate-300 pb-1">
-                        <span className="text-slate-500 shrink-0 font-bold">الجوائز المدمجة:</span>
-                        <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0 font-bold">
-                          خصم 15% (35%)
-                        </span>
-                        <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0 font-bold">
-                          حلى مجاني 🍩 (20%)
-                        </span>
-                        <span className="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0 font-bold">
-                          50 نقطة ⭐ (25%)
-                        </span>
-                        <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 shrink-0 font-bold">
-                          حظ أوفر 🎯 (20%)
-                        </span>
-                      </div>
+                  {currentWalletConfig.enable_spin_wheel && (() => {
+                    const defaultSpinPrizes = [
+                      { id: 'p1', label: 'خصم 15% على طلبك 🏷️', reward_type: 'discount_percent' as const, reward_value: 15, probability_weight: 35, color: '#F59E0B' },
+                      { id: 'p2', label: 'حلى مجاني 🍩', reward_type: 'free_item' as const, reward_value: 'حلى مجاني', probability_weight: 20, color: '#10B981' },
+                      { id: 'p3', label: isStamps ? 'ختم إضافي مجاني 💮' : '50 نقطة إضافية ⭐', reward_type: (isStamps ? 'stamps' : 'points') as any, reward_value: isStamps ? 1 : 50, probability_weight: 25, color: '#6366F1' },
+                      { id: 'p4', label: 'حظ أوفر المرة القادمة 🎯', reward_type: 'no_luck' as const, reward_value: 0, probability_weight: 20, color: '#64748B' },
+                    ];
+                    const activeSpinPrizes =
+                      Array.isArray(currentWalletConfig.spin_wheel_prizes) &&
+                      currentWalletConfig.spin_wheel_prizes.length >= 2
+                        ? currentWalletConfig.spin_wheel_prizes
+                        : defaultSpinPrizes;
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                        <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                          <label className="text-xs text-slate-300 block mb-1.5 font-bold flex items-center gap-1.5">
-                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>حارس الحد الأدنى للفاتورة لتفعيل العجلة (ر.س):</span>
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            defaultValue={currentWalletConfig.spin_wheel_trigger_min_spend ?? 30}
-                            onBlur={(e) => updateWalletSettings({ spin_wheel_trigger_min_spend: Number(e.target.value) || 0 })}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-amber-300 font-mono font-bold outline-none focus:border-emerald-500"
-                            placeholder="مثال: 30"
-                          />
-                          <span className="text-[10px] text-slate-500 block mt-1">يمنع فواتير الريال والريالين من تدوير العجلة لحماية أرباحك</span>
+                    const handleUpdatePrize = (idx: number, patch: Record<string, any>) => {
+                      const nextPrizes = activeSpinPrizes.map((p, i) => (i === idx ? { ...p, ...patch } : p));
+                      updateWalletSettings({ spin_wheel_prizes: nextPrizes as any });
+                    };
+
+                    const handleAddPrize = () => {
+                      const palette = ['#F59E0B', '#10B981', '#6366F1', '#EC4899', '#06B6D4', '#8B5CF6'];
+                      const nextPrizes = [
+                        ...activeSpinPrizes,
+                        {
+                          id: `prize-${Date.now()}`,
+                          label: 'هدية مجانية من المتجر 🎁',
+                          reward_type: 'free_item' as const,
+                          reward_value: 'هدية مجانية',
+                          probability_weight: 20,
+                          color: palette[activeSpinPrizes.length % palette.length],
+                        },
+                      ];
+                      updateWalletSettings({ spin_wheel_prizes: nextPrizes as any });
+                    };
+
+                    const handleDeletePrize = (idx: number) => {
+                      if (activeSpinPrizes.length <= 2) return;
+                      const nextPrizes = activeSpinPrizes.filter((_, i) => i !== idx);
+                      updateWalletSettings({ spin_wheel_prizes: nextPrizes as any });
+                    };
+
+                    return (
+                      <div className="pt-3 border-t border-slate-800 space-y-4 animate-fade-in">
+                        {/* 🎯 محرر جوائز عجلة الحظ المرن بيد التاجر */}
+                        <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <h5 className="text-xs font-black text-amber-300 flex items-center gap-1.5">
+                                <span>🎯 تخصيص جوائز وشرائح عجلة الحظ (بيد التاجر):</span>
+                              </h5>
+                              <p className="text-[10px] text-slate-400 mt-0.5">
+                                كل جائزة يفوز بها العميل تصدر كـ كوبون رسمي يُحرق لمرة واحدة فقط عند الكاشير.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleAddPrize}
+                              className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-black text-[11px] flex items-center gap-1 transition"
+                            >
+                              <PlusCircle className="w-3.5 h-3.5" />
+                              <span>+ إضافة جائزة جديدة</span>
+                            </button>
+                          </div>
+
+                          <div className="space-y-2">
+                            {activeSpinPrizes.map((prize, idx) => (
+                              <div
+                                key={prize.id || idx}
+                                className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center p-2.5 rounded-xl bg-slate-950 border border-slate-800/80"
+                              >
+                                <div className="sm:col-span-5 flex items-center gap-2">
+                                  <input
+                                    type="color"
+                                    value={prize.color || '#F59E0B'}
+                                    onChange={(e) => handleUpdatePrize(idx, { color: e.target.value })}
+                                    className="w-7 h-7 rounded-lg border border-slate-700 bg-transparent cursor-pointer shrink-0"
+                                    title="لون الشريحة في العجلة"
+                                  />
+                                  <input
+                                    type="text"
+                                    defaultValue={prize.label}
+                                    onBlur={(e) => {
+                                      const val = e.target.value.trim();
+                                      if (val && val !== prize.label) {
+                                        handleUpdatePrize(idx, { label: val, reward_value: val });
+                                      }
+                                    }}
+                                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-bold outline-none focus:border-amber-500"
+                                    placeholder="مسمى الجائزة (مثال: قهوة مجانية ☕)"
+                                  />
+                                </div>
+
+                                <div className="sm:col-span-4">
+                                  <select
+                                    value={prize.reward_type}
+                                    onChange={(e) => handleUpdatePrize(idx, { reward_type: e.target.value })}
+                                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] text-slate-200 font-bold outline-none focus:border-amber-500"
+                                  >
+                                    <option value="free_item">🎁 منتج / هدية مجانية (كوبون يُحرق بالكاشير)</option>
+                                    <option value="discount_percent">🏷️ خصم على الطلب (كوبون يُحرق بالكاشير)</option>
+                                    <option value="stamps">💮 ختم إضافي مجاني</option>
+                                    <option value="points">⭐ نقاط إضافية</option>
+                                    <option value="no_luck">🎯 حظ أوفر (بدون جائزة)</option>
+                                  </select>
+                                </div>
+
+                                <div className="sm:col-span-2 flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    defaultValue={prize.probability_weight || 25}
+                                    onBlur={(e) =>
+                                      handleUpdatePrize(idx, {
+                                        probability_weight: Math.max(1, Math.min(100, Number(e.target.value) || 20)),
+                                      })
+                                    }
+                                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-amber-300 font-mono font-bold text-center outline-none focus:border-amber-500"
+                                    title="نسبة الظهور (الاحتمالية %)"
+                                  />
+                                  <span className="text-[11px] text-slate-400 font-bold">%</span>
+                                </div>
+
+                                <div className="sm:col-span-1 flex justify-end">
+                                  <button
+                                    type="button"
+                                    disabled={activeSpinPrizes.length <= 2}
+                                    onClick={() => handleDeletePrize(idx)}
+                                    className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 disabled:opacity-30 transition"
+                                    title={activeSpinPrizes.length <= 2 ? 'يجب بقاء جائزتين على الأقل' : 'حذف هذه الجائزة'}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
 
-                        <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                          <label className="text-xs text-slate-300 block mb-1.5 font-bold flex items-center gap-1.5">
-                            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                            <span>مسمى الحملة أو المناسبة المعروضة:</span>
-                          </label>
-                          <input
-                            type="text"
-                            defaultValue={currentWalletConfig.game_event_name || 'عروض ومكافآت المتجر 🌟'}
-                            onBlur={(e) => updateWalletSettings({ game_event_name: e.target.value })}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-white outline-none focus:border-emerald-500 font-medium"
-                            placeholder="مثال: موسم الشتاء ☕ أو يوم التأسيس 🇸🇦"
-                          />
-                          <span className="text-[10px] text-slate-500 block mt-1">يظهر للعميل في واجهة اللعبة</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                          {isStamps ? (
+                            <div className="p-3 rounded-xl bg-slate-900 border border-amber-500/30">
+                              <label className="text-xs text-amber-300 block mb-1.5 font-bold flex items-center gap-1.5">
+                                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                                <span>💮 تفعيل عجلة الحظ عند الوصول للختم رقم (شرط الأختام):</span>
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                defaultValue={currentWalletConfig.spin_wheel_trigger_stamps ?? 0}
+                                onBlur={(e) =>
+                                  updateWalletSettings({ spin_wheel_trigger_stamps: Math.max(0, Number(e.target.value) || 0) })
+                                }
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-amber-300 font-mono font-bold outline-none focus:border-amber-500"
+                                placeholder="مثال: 10 أو 20 (أو 0 لتكون مفتوحة دائماً)"
+                              />
+                              <span className="text-[10px] text-slate-400 block mt-1">
+                                حدد عند أي رقم ختم تفتح العجلة للعميل (مثلاً 10 أو 20 ختم)، أو اتركه 0 لتكون متاحة دائماً
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
+                              <label className="text-xs text-slate-300 block mb-1.5 font-bold flex items-center gap-1.5">
+                                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                <span>حارس الحد الأدنى للفاتورة لتفعيل العجلة (ر.س):</span>
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                defaultValue={currentWalletConfig.spin_wheel_trigger_min_spend ?? 30}
+                                onBlur={(e) => updateWalletSettings({ spin_wheel_trigger_min_spend: Number(e.target.value) || 0 })}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-amber-300 font-mono font-bold outline-none focus:border-emerald-500"
+                                placeholder="مثال: 30"
+                              />
+                              <span className="text-[10px] text-slate-500 block mt-1">يمنع فواتير الريال والريالين من تدوير العجلة لحماية أرباحك</span>
+                            </div>
+                          )}
+
+                          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
+                            <label className="text-xs text-slate-300 block mb-1.5 font-bold flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                              <span>مسمى الحملة أو المناسبة المعروضة:</span>
+                            </label>
+                            <input
+                              type="text"
+                              defaultValue={currentWalletConfig.game_event_name || 'عروض ومكافآت المتجر 🌟'}
+                              onBlur={(e) => updateWalletSettings({ game_event_name: e.target.value })}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-white outline-none focus:border-emerald-500 font-medium"
+                              placeholder="مثال: موسم الشتاء ☕ أو يوم التأسيس 🇸🇦"
+                            />
+                            <span className="text-[10px] text-slate-500 block mt-1">يظهر للعميل في واجهة اللعبة</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
 
                 {/* 🎁 Game 2: Scratch & Win */}
@@ -5287,20 +5441,42 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                           />
                         </div>
 
-                        <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                          <label className="text-xs text-slate-300 block mb-1.5 font-bold flex items-center gap-1.5">
-                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>الحد الأدنى للفاتورة للكشط (ر.س):</span>
-                          </label>
-                          <input
-                            type="number"
-                            min={0}
-                            defaultValue={currentWalletConfig.scratch_card_trigger_min_spend ?? 25}
-                            onBlur={(e) => updateWalletSettings({ scratch_card_trigger_min_spend: Number(e.target.value) || 0 })}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-emerald-300 font-mono font-bold outline-none focus:border-emerald-500"
-                            placeholder="مثال: 25"
-                          />
-                        </div>
+                        {isStamps ? (
+                          <div className="p-3 rounded-xl bg-slate-900 border border-amber-500/30">
+                            <label className="text-xs text-amber-300 block mb-1.5 font-bold flex items-center gap-1.5">
+                              <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                              <span>💮 تفعيل كرت اكشط واربح عند الختم رقم (شرط الأختام):</span>
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              defaultValue={currentWalletConfig.scratch_card_trigger_stamps ?? 0}
+                              onBlur={(e) =>
+                                updateWalletSettings({ scratch_card_trigger_stamps: Math.max(0, Number(e.target.value) || 0) })
+                              }
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-amber-300 font-mono font-bold outline-none focus:border-amber-500"
+                              placeholder="مثال: 5 أو 10 (أو 0 ليكون مفتوحاً دائماً)"
+                            />
+                            <span className="text-[10px] text-slate-400 block mt-1">
+                              حدد عند أي ختم تفتح بطاقة الكشط للعميل، أو اتركه 0 لتكون مفتوحة دائماً
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
+                            <label className="text-xs text-slate-300 block mb-1.5 font-bold flex items-center gap-1.5">
+                              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>الحد الأدنى للفاتورة للكشط (ر.س):</span>
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              defaultValue={currentWalletConfig.scratch_card_trigger_min_spend ?? 25}
+                              onBlur={(e) => updateWalletSettings({ scratch_card_trigger_min_spend: Number(e.target.value) || 0 })}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-emerald-300 font-mono font-bold outline-none focus:border-emerald-500"
+                              placeholder="مثال: 25"
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -5349,6 +5525,282 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         {currentWalletConfig.enable_streaks ? 'مفعل ✓' : 'معطل'}
                       </button>
                     </div>
+                  </div>
+                </div>
+
+                {/* 🚀 Game 4: Targeted Game Dispatch to Single Customer or Customer Group */}
+                <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950/20 border border-amber-500/30 space-y-4 shadow-lg">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">🚀</span>
+                      <div>
+                        <h4 className="text-sm font-black text-white flex items-center gap-2">
+                          <span>إرسال وتفعيل لعبة فورية لعميل محدد أو مجموعة عملاء</span>
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-black">
+                            تفتح في جوال العميل فوراً 🎰
+                          </span>
+                        </h4>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          اختر محرك اللعبة (عجلة الحظ أو اكشط واربح) وأرسلها لعميل واحد بعينه أو لمجموعة عملاء من اختيارك لتفتح في بطاقتهم فوراً.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800/80">
+                    {/* 1. Game Type Selector */}
+                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                      <label className="text-xs font-bold text-slate-300 block">1️⃣ اختر محرك اللعبة:</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setDispatchGameType('spin_wheel')}
+                          className={`p-2.5 rounded-xl border text-xs font-black flex flex-col items-center gap-1 transition ${
+                            dispatchGameType === 'spin_wheel'
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-sm'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className="text-lg">🎡</span>
+                          <span>عجلة الحظ</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDispatchGameType('scratch_card')}
+                          className={`p-2.5 rounded-xl border text-xs font-black flex flex-col items-center gap-1 transition ${
+                            dispatchGameType === 'scratch_card'
+                              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-sm'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span className="text-lg">🪙</span>
+                          <span>اكشط واربح</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 2. Campaign Title & Optional Custom Reward */}
+                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                      <label className="text-xs font-bold text-slate-300 block">2️⃣ رسالة الإهداء للعميل:</label>
+                      <input
+                        type="text"
+                        value={dispatchCampaignTitle}
+                        onChange={(e) => setDispatchCampaignTitle(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-white font-bold outline-none focus:border-amber-500"
+                        placeholder="مثال: هدية خاصة لك من المتجر 🎁"
+                      />
+                      {dispatchGameType === 'scratch_card' && (
+                        <input
+                          type="text"
+                          value={dispatchRewardLabel}
+                          onChange={(e) => setDispatchRewardLabel(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-xs text-emerald-300 font-bold outline-none focus:border-emerald-500"
+                          placeholder="جائزة مخصصة للكشط (اختياري، أو اتركه للجائزة الافتراضية)"
+                        />
+                      )}
+                    </div>
+
+                    {/* 3. Target Audience Mode */}
+                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                      <label className="text-xs font-bold text-slate-300 block">3️⃣ الفئة المستهدفة:</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setDispatchTargetMode('selected')}
+                          className={`p-2.5 rounded-xl border text-xs font-black flex flex-col items-center gap-1 transition ${
+                            dispatchTargetMode === 'selected'
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span>👤 / 👥</span>
+                          <span>عميل أو مجموعة</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDispatchTargetMode('all')}
+                          className={`p-2.5 rounded-xl border text-xs font-black flex flex-col items-center gap-1 transition ${
+                            dispatchTargetMode === 'all'
+                              ? 'bg-amber-500/20 border-amber-400 text-amber-300'
+                              : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          <span>🌐</span>
+                          <span>جميع العملاء ({customers.length})</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Customer Picker when dispatchTargetMode === 'selected' */}
+                  {dispatchTargetMode === 'selected' && (
+                    <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={dispatchCustomerSearch}
+                          onChange={(e) => setDispatchCustomerSearch(e.target.value)}
+                          className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-amber-500"
+                          placeholder="🔍 ابحث باسم العميل أو رقم الجوال لاختيار عميل واحد أو عدة عملاء..."
+                        />
+                        <input
+                          type="tel"
+                          dir="ltr"
+                          value={dispatchManualPhone}
+                          onChange={(e) => setDispatchManualPhone(e.target.value)}
+                          className="sm:w-52 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-amber-300 font-mono outline-none focus:border-amber-500"
+                          placeholder="أو اكتب جوال مباشر: 05XXXXXXXX"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>
+                          العملاء المحددون حالياً:{' '}
+                          <strong className="text-amber-300 font-mono">{dispatchSelectedCustomerIds.length}</strong> عميل
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setDispatchSelectedCustomerIds(customers.map((c) => c.id))}
+                            className="text-amber-400 hover:underline font-bold"
+                          >
+                            تحديد الكل
+                          </button>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={() => setDispatchSelectedCustomerIds([])}
+                            className="text-slate-400 hover:text-white font-bold"
+                          >
+                            إلغاء التحديد
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="max-h-40 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pr-1">
+                        {customers
+                          .filter((c) => {
+                            if (!dispatchCustomerSearch.trim()) return true;
+                            const q = dispatchCustomerSearch.trim().toLowerCase();
+                            return (
+                              (c.name && c.name.toLowerCase().includes(q)) ||
+                              (c.phone && c.phone.includes(q))
+                            );
+                          })
+                          .slice(0, 30)
+                          .map((cust) => {
+                            const isChecked = dispatchSelectedCustomerIds.includes(cust.id);
+                            return (
+                              <label
+                                key={cust.id}
+                                className={`flex items-center justify-between gap-2 p-2 rounded-lg border cursor-pointer text-xs transition ${
+                                  isChecked
+                                    ? 'bg-amber-500/15 border-amber-500/50 text-white'
+                                    : 'bg-slate-900/70 border-slate-800 text-slate-300 hover:border-slate-700'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setDispatchSelectedCustomerIds((prev) => [...prev, cust.id]);
+                                      } else {
+                                        setDispatchSelectedCustomerIds((prev) => prev.filter((id) => id !== cust.id));
+                                      }
+                                    }}
+                                    className="rounded accent-amber-500"
+                                  />
+                                  <div className="truncate">
+                                    <div className="font-bold truncate">{cust.name || 'عميل'}</div>
+                                    <div className="text-[10px] text-slate-400 font-mono" dir="ltr">
+                                      {cust.phone}
+                                    </div>
+                                  </div>
+                                </div>
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 shrink-0">
+                                  {cust.wallet_balance} {isStamps ? 'ختم' : 'نقطة'}
+                                </span>
+                              </label>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {dispatchFeedback && (
+                    <div
+                      className={`p-3 rounded-xl text-xs font-bold border ${
+                        dispatchFeedback.type === 'success'
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                          : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                      }`}
+                    >
+                      {dispatchFeedback.text}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      disabled={isDispatchingGame}
+                      onClick={async () => {
+                        setDispatchFeedback(null);
+                        const selectedCusts = customers.filter((c) => dispatchSelectedCustomerIds.includes(c.id));
+                        const phonesList = selectedCusts.map((c) => c.phone);
+                        if (dispatchManualPhone.trim()) {
+                          phonesList.push(dispatchManualPhone.trim());
+                        }
+
+                        if (dispatchTargetMode === 'selected' && dispatchSelectedCustomerIds.length === 0 && !dispatchManualPhone.trim()) {
+                          setDispatchFeedback({
+                            type: 'error',
+                            text: '⚠️ يرجى اختيار عميل واحد على الأقل من القائمة أو كتابة رقم جوال العميل.',
+                          });
+                          return;
+                        }
+
+                        setIsDispatchingGame(true);
+                        try {
+                          const targetStoreId = store?.id || currentStore?.id;
+                          const res = await LoyaltyService.dispatchGameToCustomers(targetStoreId, {
+                            gameType: dispatchGameType,
+                            customerIds: dispatchTargetMode === 'selected' ? dispatchSelectedCustomerIds : undefined,
+                            phones: dispatchTargetMode === 'selected' ? phonesList : undefined,
+                            campaignTitle: dispatchCampaignTitle,
+                            rewardLabel: dispatchRewardLabel || undefined,
+                            sendToAll: dispatchTargetMode === 'all',
+                          });
+                          setDispatchFeedback({
+                            type: 'success',
+                            text: `🎉 تم بنجاح إرسال وفتح ${
+                              dispatchGameType === 'spin_wheel' ? 'عجلة الحظ 🎡' : 'بطاقة اكشط واربح 🪙'
+                            } لـ (${
+                              dispatchTargetMode === 'all'
+                                ? customers.length
+                                : Math.max(res.affectedCount, phonesList.length)
+                            }) عميل! ستفتح لهم فور دخولهم للبطاقة.`,
+                          });
+                          setDispatchManualPhone('');
+                        } catch (err: any) {
+                          setDispatchFeedback({
+                            type: 'error',
+                            text: err?.message || 'حدث خطأ أثناء إرسال اللعبة للعملاء',
+                          });
+                        } finally {
+                          setIsDispatchingGame(false);
+                        }
+                      }}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:brightness-110 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg transition active:scale-95 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>
+                        {isDispatchingGame
+                          ? 'جاري إرسال وفتح اللعبة...'
+                          : `🚀 إرسال وفتح ${dispatchGameType === 'spin_wheel' ? 'عجلة الحظ 🎡' : 'اكشط واربح 🪙'} الآن`}
+                      </span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -6281,6 +6733,20 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                   title="إرسال إشعار فوري داخل التطبيق للعميل"
                                 >
                                   <Bell className="w-3.5 h-3.5" />
+                                </button>
+
+                                <button
+                                  onClick={() => {
+                                    setDispatchTargetMode('selected');
+                                    setDispatchSelectedCustomerIds([cust.id]);
+                                    setDispatchFeedback(null);
+                                    setActiveTab('loyalty');
+                                    setLoyaltySection('gamification');
+                                  }}
+                                  className="p-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30 transition shadow-sm"
+                                  title="إرسال لعبة حظ / اكشط واربح لهذا العميل 🎰"
+                                >
+                                  <Gift className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </td>

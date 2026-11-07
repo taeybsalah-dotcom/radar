@@ -1035,12 +1035,16 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       if (event.type === 'GAME_TRIGGERED') {
         const isTargetCustomer = Boolean(
           curCust &&
-          event.phone &&
-          normalizePhone(event.phone) === normalizePhone(curCust.phone)
+          (!event.phone || normalizePhone(event.phone) === normalizePhone(curCust.phone))
         );
         if (isTargetCustomer && (event.storeId === store?.id || event.storeId === 'all')) {
           playBeepSound('success');
-          if (event.gameType === 'scratch') {
+          if (curCust?.phone && store?.id) {
+            LoyaltyService.getCustomer(store.id, curCust.phone).then((fresh) => {
+              if (fresh) setCustomer(fresh);
+            }).catch(() => {});
+          }
+          if ((event as any).gameType === 'scratch' || (event as any).gameType === 'scratch_card') {
             setActiveTab('pass');
             setIsCardFlipped(true);
           } else {
@@ -2052,7 +2056,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       const result = await LoyaltyService.purchaseCoupon(
         store.id,
         customer.id,
-        activePrivilege.id
+        activePrivilege.id,
+        optimisticCode
       );
 
       if (result && result.coupon) {
@@ -2061,6 +2066,11 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           prev.map((c) => (c.id === optimisticCoupon.id ? result.coupon : c))
         );
         setSelectedCouponForQR(result.coupon);
+        setPurchaseSuccessAlert({
+          title: result.coupon.privilege_title,
+          cost: result.coupon.cost_points,
+          code: result.coupon.coupon_code,
+        });
         regenerateToken(result.updatedCustomer, result.coupon);
       }
     } catch (err: any) {
@@ -3232,21 +3242,132 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 color: brandColors.cardTextColor,
               }}
             >
-              {isCardFlipped ? (
-                /* 🎰 BACK OF CARD: Interactive Scratch & Win, Spin Wheel & Visit Streaks */
-                <EmbeddedCardBackGamification
-                  store={store}
-                  scratchRewardTitle={walletConfig.scratch_card_reward_title || walletConfig.stamps_reward_title || 'قسيمة مكافأة خاصة من المتجر 🎁'}
-                  enableSpinWheel={Boolean(walletConfig.enable_spin_wheel)}
-                  enableScratchCard={Boolean(walletConfig.enable_scratch_card)}
-                  enableStreaks={Boolean(walletConfig.enable_streaks)}
-                  currentStreak={customer?.lifetime_xp ? Math.min(walletConfig.streak_target_days || 3, Math.max(1, Math.floor(customer.lifetime_xp / 100))) : 1}
-                  streakTargetDays={walletConfig.streak_target_days || 3}
-                  streakRewardTitle={walletConfig.streak_reward_title || 'مشروب مجاني'}
-                  onFlipBack={() => setIsCardFlipped(false)}
-                  onOpenSpinWheel={() => setShowSpinWheel(true)}
-                />
-              ) : (
+              {isCardFlipped ? (() => {
+                const pendingInvites = (customer?.active_game_invites || []).filter(
+                  (inv) => inv.status === 'PENDING'
+                );
+                const scratchInvite = pendingInvites.find((inv) => inv.game_type === 'scratch_card');
+                const spinInvite = pendingInvites.find((inv) => inv.game_type === 'spin_wheel');
+                const anyInvite = scratchInvite || spinInvite || pendingInvites[0];
+
+                const scratchStampsReq = Number(walletConfig.scratch_card_trigger_stamps || 0);
+                const spinStampsReq = Number(walletConfig.spin_wheel_trigger_stamps || 0);
+                const custBalance = Number(customer?.wallet_balance || 0);
+
+                const canPlayScratch = Boolean(
+                  scratchInvite ||
+                  !isStampsMode ||
+                  scratchStampsReq <= 0 ||
+                  custBalance >= scratchStampsReq
+                );
+                const scratchLockMsg =
+                  !canPlayScratch && isStampsMode && scratchStampsReq > 0
+                    ? `تُفتح عند الوصول إلى ${scratchStampsReq} أختام (رصيدك الحالي: ${custBalance} ختم)`
+                    : null;
+
+                const canPlaySpin = Boolean(
+                  spinInvite ||
+                  !isStampsMode ||
+                  spinStampsReq <= 0 ||
+                  custBalance >= spinStampsReq
+                );
+                const spinLockMsg =
+                  !canPlaySpin && isStampsMode && spinStampsReq > 0
+                    ? `تُفتح عند ${spinStampsReq} ختم (رصيدك: ${custBalance})`
+                    : null;
+
+                const effectiveScratchTitle =
+                  scratchInvite?.reward_label ||
+                  walletConfig.scratch_card_reward_title ||
+                  walletConfig.stamps_reward_title ||
+                  'قسيمة مكافأة خاصة من المتجر 🎁';
+
+                const existingScratchCoupon = customerCoupons.find(
+                  (c) =>
+                    c.status === 'ACTIVE' &&
+                    c.coupon_code?.startsWith('WIN-') &&
+                    c.privilege_title === effectiveScratchTitle
+                );
+
+                return (
+                  /* 🎰 BACK OF CARD: Interactive Scratch & Win, Spin Wheel & Visit Streaks */
+                  <EmbeddedCardBackGamification
+                    store={store}
+                    scratchRewardTitle={effectiveScratchTitle}
+                    enableSpinWheel={Boolean(walletConfig.enable_spin_wheel || spinInvite)}
+                    enableScratchCard={Boolean(walletConfig.enable_scratch_card || scratchInvite)}
+                    enableStreaks={Boolean(walletConfig.enable_streaks)}
+                    currentStreak={
+                      customer?.lifetime_xp
+                        ? Math.min(
+                            walletConfig.streak_target_days || 3,
+                            Math.max(1, Math.floor(customer.lifetime_xp / 100))
+                          )
+                        : 1
+                    }
+                    streakTargetDays={walletConfig.streak_target_days || 3}
+                    streakRewardTitle={walletConfig.streak_reward_title || 'مشروب مجاني'}
+                    wonScratchCouponCode={!scratchInvite ? existingScratchCoupon?.coupon_code || null : null}
+                    canPlayScratch={canPlayScratch}
+                    scratchLockMessage={scratchLockMsg}
+                    canPlaySpinWheel={canPlaySpin}
+                    spinWheelLockMessage={spinLockMsg}
+                    activeGameInviteTitle={anyInvite?.campaign_title || null}
+                    onFlipBack={() => setIsCardFlipped(false)}
+                    onOpenSpinWheel={() => {
+                      if (!canPlaySpin) {
+                        playBeepSound('error');
+                        setCelebrationModal({
+                          isOpen: true,
+                          type: 'REJECTED',
+                          title: 'عجلة الحظ مقفلة حالياً 🔒',
+                          subtitle:
+                            spinLockMsg ||
+                            'أكمل عدد الأختام المطلوب أو انتظر هدية خاصة من المتجر لتدوير عجلة الحظ!',
+                        });
+                        return;
+                      }
+                      setShowSpinWheel(true);
+                    }}
+                    onRewardRevealed={async () => {
+                      if (!customer?.phone) return;
+                      try {
+                        const issued = await LoyaltyService.issueCustomerCoupon(store.id, {
+                          phone: customer.phone,
+                          customerId: customer.id,
+                          customerName: customer.name || 'عميل مميز',
+                          title: effectiveScratchTitle,
+                          source: 'SCRATCH_CARD',
+                        });
+                        setCustomerCoupons((prev) => [
+                          issued,
+                          ...prev.filter((c) => c.coupon_code !== issued.coupon_code),
+                        ]);
+                        if (scratchInvite) {
+                          await LoyaltyService.consumeCustomerGameInvite(
+                            store.id,
+                            customer.phone,
+                            scratchInvite.id,
+                            'scratch_card'
+                          );
+                          setCustomer((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  active_game_invites: (prev.active_game_invites || []).filter(
+                                    (i) => i.id !== scratchInvite.id
+                                  ),
+                                }
+                              : null
+                          );
+                        }
+                      } catch (err) {
+                        console.warn('Scratch reward coupon issue error:', err);
+                      }
+                    }}
+                  />
+                );
+              })() : (
                 <>
               {/* Card Top Row: Merchant Info (Right) & Circular Logo Badge (Left in RTL) */}
               <div className="relative z-10 flex items-center justify-between gap-3">
@@ -3462,24 +3583,20 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                 </>
               )}
 
-              {/* 🎰 زر قلب البطاقة للألعاب واكشط واربح على خلفية البطاقة */}
-              <div className="relative z-10 my-3 pt-2.5 border-t border-white/15 space-y-2">
+              {/* 🎰 زر قلب البطاقة للألعاب واكشط واربح على خلفية البطاقة (بدون تكرار للألعاب في وجه البطاقة) */}
+              <div className="relative z-10 my-3 pt-2.5 border-t border-white/15">
                 <button
                   type="button"
                   onClick={() => setIsCardFlipped(true)}
                   className="w-full py-2.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500/25 via-emerald-500/20 to-amber-500/25 hover:from-amber-500/40 hover:to-emerald-500/40 border border-amber-400/50 text-white font-black text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-95"
                 >
                   <Sparkles className="w-4 h-4 text-amber-300" />
-                  <span>🎰 اقلب البطاقة (اكشط واربح والألعاب التفاعلية)</span>
+                  <span>
+                    {(customer?.active_game_invites || []).some((inv) => inv.status === 'PENDING')
+                      ? '🎁 لديك لعبة حظ مفتوحة من المتجر! اقلب البطاقة الآن'
+                      : '🎰 اقلب البطاقة (اكشط واربح والألعاب التفاعلية)'}
+                  </span>
                 </button>
-
-                {walletConfig.enable_streaks && (
-                  <StreakBanner
-                    currentStreak={customer?.lifetime_xp ? Math.min(walletConfig.streak_target_days || 3, Math.max(1, Math.floor(customer.lifetime_xp / 100))) : 1}
-                    targetDays={walletConfig.streak_target_days || 3}
-                    rewardTitle={walletConfig.streak_reward_title || 'مشروب مجاني'}
-                  />
-                )}
               </div>
 
               {/* Bottom Interactive Pill Buttons */}
@@ -9204,62 +9321,107 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
       />
 
       {/* 🎡 محرك الألعاب التفاعلية المصاحب (Gamification Modals) */}
-      {walletConfig.enable_spin_wheel && (
+      {(walletConfig.enable_spin_wheel || showSpinWheel) && (
         <SpinWheelModal
           isOpen={showSpinWheel}
           onClose={() => setShowSpinWheel(false)}
           prizes={walletConfig.spin_wheel_prizes || []}
           store={store}
           customer={customer}
-          onPrizeWon={(prize) => {
-            if (prize.reward_type === 'points') {
-              const pts = Number(prize.reward_value) || 50;
-              setCustomer((prev) => (prev ? { ...prev, wallet_balance: (prev.wallet_balance || 0) + pts } : null));
-            } else if (prize.reward_type !== 'no_luck') {
-              // 🎟️ إيداع فوري للجائزة في "حصرياتي" مع كود حرق لمرة واحدة
-              const nowIso = new Date().toISOString();
-              const wonCoupon: CustomerCoupon = {
-                id: `win-${Date.now()}`,
-                customer_id: customer?.id || 'guest',
-                store_id: store.id,
-                privilege_id: 'gamification-prize',
-                privilege_title: prize.label,
-                cost_points: 0,
-                status: 'ACTIVE',
-                coupon_code: `WIN-${Math.floor(1000 + Math.random() * 9000)}`,
-                purchased_at: nowIso,
-                created_at: nowIso,
-              };
-              setCustomerCoupons((prev) => [wonCoupon, ...prev]);
+          onPrizeWon={async (prize) => {
+            if (prize.reward_type !== 'no_luck') {
               playBeepSound('success');
+              if (customer?.phone) {
+                try {
+                  const issued = await LoyaltyService.issueCustomerCoupon(store.id, {
+                    phone: customer.phone,
+                    customerId: customer.id,
+                    customerName: customer.name || 'عميل مميز',
+                    title: prize.label,
+                    source: 'SPIN_WHEEL',
+                  });
+                  setCustomerCoupons((prev) => [
+                    issued,
+                    ...prev.filter((c) => c.coupon_code !== issued.coupon_code),
+                  ]);
+                } catch (err) {
+                  console.warn('Spin wheel coupon issue error:', err);
+                }
+              }
+            }
+            if (customer?.phone) {
+              const spinInvite = (customer.active_game_invites || []).find(
+                (i) => i.status === 'PENDING' && i.game_type === 'spin_wheel'
+              );
+              if (spinInvite) {
+                await LoyaltyService.consumeCustomerGameInvite(
+                  store.id,
+                  customer.phone,
+                  spinInvite.id,
+                  'spin_wheel'
+                ).catch(() => {});
+                setCustomer((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        active_game_invites: (prev.active_game_invites || []).filter(
+                          (i) => i.id !== spinInvite.id
+                        ),
+                      }
+                    : null
+                );
+              }
             }
           }}
         />
       )}
 
-      {walletConfig.enable_scratch_card && (
+      {(walletConfig.enable_scratch_card || showScratchCard) && (
         <ScratchCardModal
           isOpen={showScratchCard}
           onClose={() => setShowScratchCard(false)}
           rewardTitle={walletConfig.scratch_card_reward_title || 'خصم 20% بمناسبة زيارتك 🎁'}
           store={store}
-          onRewardRevealed={() => {
-            // 🎟️ إيداع فوري لقسيمة الكشط في "حصرياتي" مع كود حرق لمرة واحدة
-            const nowIso = new Date().toISOString();
-            const wonCoupon: CustomerCoupon = {
-              id: `scratch-${Date.now()}`,
-              customer_id: customer?.id || 'guest',
-              store_id: store.id,
-              privilege_id: 'scratch-reward',
-              privilege_title: walletConfig.scratch_card_reward_title || 'هدية كرت اكشط واربح 🎁',
-              cost_points: 0,
-              status: 'ACTIVE',
-              coupon_code: `WIN-${Math.floor(1000 + Math.random() * 9000)}`,
-              purchased_at: nowIso,
-              created_at: nowIso,
-            };
-            setCustomerCoupons((prev) => [wonCoupon, ...prev]);
+          onRewardRevealed={async () => {
             playBeepSound('success');
+            if (customer?.phone) {
+              try {
+                const issued = await LoyaltyService.issueCustomerCoupon(store.id, {
+                  phone: customer.phone,
+                  customerId: customer.id,
+                  customerName: customer.name || 'عميل مميز',
+                  title: walletConfig.scratch_card_reward_title || 'هدية كرت اكشط واربح 🎁',
+                  source: 'SCRATCH_CARD',
+                });
+                setCustomerCoupons((prev) => [
+                  issued,
+                  ...prev.filter((c) => c.coupon_code !== issued.coupon_code),
+                ]);
+                const scratchInvite = (customer.active_game_invites || []).find(
+                  (i) => i.status === 'PENDING' && i.game_type === 'scratch_card'
+                );
+                if (scratchInvite) {
+                  await LoyaltyService.consumeCustomerGameInvite(
+                    store.id,
+                    customer.phone,
+                    scratchInvite.id,
+                    'scratch_card'
+                  ).catch(() => {});
+                  setCustomer((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          active_game_invites: (prev.active_game_invites || []).filter(
+                            (i) => i.id !== scratchInvite.id
+                          ),
+                        }
+                      : null
+                  );
+                }
+              } catch (err) {
+                console.warn('Scratch modal coupon issue error:', err);
+              }
+            }
           }}
         />
       )}

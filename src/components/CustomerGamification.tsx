@@ -500,6 +500,12 @@ interface EmbeddedCardBackGamificationProps {
   onFlipBack: () => void;
   onOpenSpinWheel: () => void;
   onRewardRevealed?: () => void;
+  wonScratchCouponCode?: string | null;
+  canPlayScratch?: boolean;
+  scratchLockMessage?: string | null;
+  canPlaySpinWheel?: boolean;
+  spinWheelLockMessage?: string | null;
+  activeGameInviteTitle?: string | null;
 }
 
 export const EmbeddedCardBackGamification: React.FC<EmbeddedCardBackGamificationProps> = ({
@@ -513,9 +519,15 @@ export const EmbeddedCardBackGamification: React.FC<EmbeddedCardBackGamification
   onFlipBack,
   onOpenSpinWheel,
   onRewardRevealed,
+  wonScratchCouponCode,
+  canPlayScratch = true,
+  scratchLockMessage,
+  canPlaySpinWheel = true,
+  spinWheelLockMessage,
+  activeGameInviteTitle,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [isRevealed, setIsRevealed] = useState(false);
+  const [isRevealed, setIsRevealed] = useState(Boolean(wonScratchCouponCode));
   const isDrawingRef = useRef(false);
 
   const initCanvas = useCallback(() => {
@@ -546,10 +558,14 @@ export const EmbeddedCardBackGamification: React.FC<EmbeddedCardBackGamification
   }, []);
 
   useEffect(() => {
+    if (wonScratchCouponCode) {
+      setIsRevealed(true);
+      return;
+    }
     setIsRevealed(false);
     const t = setTimeout(initCanvas, 60);
     return () => clearTimeout(t);
-  }, [initCanvas]);
+  }, [initCanvas, wonScratchCouponCode]);
 
   const checkCompletion = () => {
     if (isRevealed) return;
@@ -639,6 +655,13 @@ export const EmbeddedCardBackGamification: React.FC<EmbeddedCardBackGamification
         </button>
       </div>
 
+      {activeGameInviteTitle && (
+        <div className="px-3 py-2 rounded-xl bg-amber-500/20 border border-amber-400/50 text-amber-200 text-[11px] font-black flex items-center justify-between gap-2 animate-pulse">
+          <span>🎁 هدية خاصة من الإدارة: {activeGameInviteTitle}</span>
+          <span className="px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black">مفتوحة لك الآن!</span>
+        </div>
+      )}
+
       {/* Embedded Scratch & Win Canvas Directly on Card Back */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between text-[11px]">
@@ -646,49 +669,62 @@ export const EmbeddedCardBackGamification: React.FC<EmbeddedCardBackGamification
             <Gift className="w-3.5 h-3.5" />
             <span>بطاقة اكشط واربح المدمجة:</span>
           </span>
-          {isRevealed && (
-            <button
-              type="button"
-              onClick={() => {
-                setIsRevealed(false);
-                setTimeout(initCanvas, 50);
-              }}
-              className="text-[10px] text-emerald-300 hover:underline font-bold"
-            >
-              إعادة تغطية البطاقة 🔄
-            </button>
+          {(isRevealed || wonScratchCouponCode) && (
+            <span className="text-[10px] text-emerald-300 font-black">
+              ✅ محفوظ في «حصرياتي» (يُصرف لمرة واحدة)
+            </span>
           )}
         </div>
 
         <div className="relative w-full max-w-[280px] h-[115px] mx-auto rounded-2xl overflow-hidden shadow-xl border-2 border-amber-400/50 select-none">
           {/* Secret Prize Under Foil */}
           <div className="absolute inset-0 bg-gradient-to-br from-emerald-950 via-slate-900 to-emerald-900 flex flex-col items-center justify-center p-3 text-center">
-            <Trophy className="w-6 h-6 text-amber-400 mb-0.5" />
+            <Trophy className="w-5 h-5 text-amber-400 mb-0.5" />
             <div className="text-amber-300 text-[10px] font-bold">🎉 مبارك! هديتك الفورية:</div>
-            <div className="text-white font-black text-sm mt-0.5 line-clamp-1">
+            <div className="text-white font-black text-xs mt-0.5 line-clamp-1">
               {scratchRewardTitle || 'هدية أو خصم خاص من المتجر 🎁'}
             </div>
-            <div className="text-emerald-400 text-[9px] font-bold mt-1">
-              أبرز البطاقة للكاشير لاستلام هديتك ✓
-            </div>
+            {wonScratchCouponCode ? (
+              <div className="mt-1 px-2.5 py-0.5 rounded-lg bg-black/50 border border-emerald-400/40 text-emerald-300 font-mono font-black text-[10px] tracking-wider">
+                {wonScratchCouponCode}
+              </div>
+            ) : (
+              <div className="text-emerald-400 text-[9px] font-bold mt-1">
+                تم حفظ الكوبون في تبويب «حصرياتي» للصرف عند الكاشير ✓
+              </div>
+            )}
           </div>
 
-          {/* Interactive Gold Scratch Foil */}
-          {!isRevealed && (
-            <canvas
-              ref={canvasRef}
-              className="absolute inset-0 w-full h-full z-10 cursor-pointer touch-none"
-              onMouseDown={() => (isDrawingRef.current = true)}
-              onMouseUp={() => (isDrawingRef.current = false)}
-              onMouseMove={(e) => {
-                if (isDrawingRef.current) scratch(e.clientX, e.clientY);
-              }}
-              onTouchStart={() => (isDrawingRef.current = true)}
-              onTouchEnd={() => (isDrawingRef.current = false)}
-              onTouchMove={(e) => {
-                if (e.touches[0]) scratch(e.touches[0].clientX, e.touches[0].clientY);
-              }}
-            />
+          {/* Lock Overlay if condition not met */}
+          {!canPlayScratch && !isRevealed && !wonScratchCouponCode ? (
+            <div className="absolute inset-0 z-20 bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-3 text-center">
+              <div className="w-8 h-8 rounded-full bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 mb-1">
+                🔒
+              </div>
+              <div className="text-white font-black text-[11px]">بطاقة اكشط واربح مقفلة حالياً</div>
+              <div className="text-amber-300/90 font-bold text-[10px] mt-0.5">
+                {scratchLockMessage || 'أكمل شرط المتجر أو انتظر هدية خاصة من المتجر لفتح البطاقة!'}
+              </div>
+            </div>
+          ) : (
+            /* Interactive Gold Scratch Foil */
+            !isRevealed &&
+            !wonScratchCouponCode && (
+              <canvas
+                ref={canvasRef}
+                className="absolute inset-0 w-full h-full z-10 cursor-pointer touch-none"
+                onMouseDown={() => (isDrawingRef.current = true)}
+                onMouseUp={() => (isDrawingRef.current = false)}
+                onMouseMove={(e) => {
+                  if (isDrawingRef.current) scratch(e.clientX, e.clientY);
+                }}
+                onTouchStart={() => (isDrawingRef.current = true)}
+                onTouchEnd={() => (isDrawingRef.current = false)}
+                onTouchMove={(e) => {
+                  if (e.touches[0]) scratch(e.touches[0].clientX, e.touches[0].clientY);
+                }}
+              />
+            )
           )}
         </div>
       </div>
@@ -699,10 +735,20 @@ export const EmbeddedCardBackGamification: React.FC<EmbeddedCardBackGamification
           <button
             type="button"
             onClick={onOpenSpinWheel}
-            className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:brightness-110 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-lg transition active:scale-95"
+            className={`flex-1 py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 shadow-lg transition active:scale-95 ${
+              canPlaySpinWheel
+                ? 'bg-gradient-to-r from-amber-500 to-amber-400 hover:brightness-110 text-slate-950'
+                : 'bg-white/10 border border-white/20 text-amber-200 hover:bg-white/15'
+            }`}
           >
-            <Sparkles className="w-4 h-4 text-slate-950" />
-            <span>{enableSpinWheel ? 'تدوير عجلة الحظ 🎡' : 'تشغيل عجلة الحظ 🎡'}</span>
+            <Sparkles className="w-4 h-4" />
+            <span>
+              {canPlaySpinWheel
+                ? enableSpinWheel
+                  ? 'تدوير عجلة الحظ 🎡'
+                  : 'تشغيل عجلة الحظ 🎡'
+                : `🔒 عجلة الحظ (${spinWheelLockMessage || 'بشرط المتجر'})`}
+            </span>
           </button>
 
           <button
