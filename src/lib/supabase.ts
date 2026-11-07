@@ -756,10 +756,18 @@ export function normalizeStore(s: any): Store {
     true
   );
 
+  const resolvedLogoUrl =
+    s.logo_url ||
+    parsedFulfill?.logo_url ||
+    localExistingStore?.logo_url ||
+    (localExistingStore?.fulfillment_settings as any)?.logo_url ||
+    null;
+
   return {
     ...s,
-    primary_color: s.primary_color || localExistingStore?.primary_color || '#0F172A',
-    secondary_color: s.secondary_color || localExistingStore?.secondary_color || '#F59E0B',
+    logo_url: resolvedLogoUrl,
+    primary_color: s.primary_color || parsedFulfill?.primary_color || localExistingStore?.primary_color || '#0F172A',
+    secondary_color: s.secondary_color || parsedFulfill?.secondary_color || localExistingStore?.secondary_color || '#F59E0B',
     theme_mode: effectiveThemeMode,
     background_color: effectiveBgColor,
     card_color: effectiveCardColor,
@@ -1049,18 +1057,39 @@ function persistStoreAssets() {
   } catch {}
 }
 function mergeStoreAssets(row: any): any {
-  const a = row && row.id ? storeAssetsCache.get(row.id) : undefined;
-  return a ? { ...row, logo_url: a.logo_url, slider_images: a.slider_images } : row;
+  if (!row) return row;
+  const a = row.id ? storeAssetsCache.get(row.id) : undefined;
+  const fulfillLogo = typeof row.fulfillment_settings === 'object' && row.fulfillment_settings !== null ? row.fulfillment_settings.logo_url : undefined;
+  const effectiveLogo = row.logo_url || a?.logo_url || fulfillLogo || null;
+  const effectiveSliders =
+    (Array.isArray(row.slider_images) && row.slider_images.length > 0 ? row.slider_images : null) ||
+    (Array.isArray(a?.slider_images) && a.slider_images.length > 0 ? a.slider_images : null) ||
+    row.slider_images ||
+    [];
+  return { ...row, logo_url: effectiveLogo, slider_images: effectiveSliders };
 }
 async function attachStoreAssets(supabase: any, row: any): Promise<any> {
   if (!row || !isUUID(row.id)) return row;
+  const fulfillLogo = typeof row.fulfillment_settings === 'object' && row.fulfillment_settings !== null ? row.fulfillment_settings.logo_url : undefined;
+  if (row.logo_url || fulfillLogo) {
+    storeAssetsCache.set(row.id, {
+      logo_url: row.logo_url || fulfillLogo,
+      slider_images: row.slider_images,
+      ts: Date.now(),
+    });
+    persistStoreAssets();
+    return mergeStoreAssets(row);
+  }
   const a = storeAssetsCache.get(row.id);
-  if (!a || Date.now() - a.ts > STORE_ASSET_TTL) {
+  if (!a || !a.logo_url || Date.now() - a.ts > STORE_ASSET_TTL) {
     try {
-      const { data } = await supabase.from('stores').select('logo_url, slider_images').eq('id', row.id).maybeSingle();
+      const { data } = await supabase.from('stores').select('logo_url, slider_images, fulfillment_settings').eq('id', row.id).maybeSingle();
       if (data) {
-        storeAssetsCache.set(row.id, { logo_url: data.logo_url, slider_images: data.slider_images, ts: Date.now() });
-        persistStoreAssets();
+        const dbLogo = data.logo_url || (typeof data.fulfillment_settings === 'object' && data.fulfillment_settings ? data.fulfillment_settings.logo_url : null);
+        if (dbLogo || data.slider_images) {
+          storeAssetsCache.set(row.id, { logo_url: dbLogo, slider_images: data.slider_images, ts: Date.now() });
+          persistStoreAssets();
+        }
       }
     } catch {}
   }
@@ -2817,6 +2846,12 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
 
     // Package white-label theme, SaaS module toggles, and extra config into fulfillment_settings JSONB
     const themePayload: any = {};
+    if (updates.logo_url !== undefined) themePayload.logo_url = updates.logo_url;
+    if (updates.name !== undefined) themePayload.store_name = updates.name;
+    if (updates.primary_color !== undefined) themePayload.primary_color = updates.primary_color;
+    if (updates.secondary_color !== undefined) themePayload.secondary_color = updates.secondary_color;
+    if (updates.points_per_riyal !== undefined) themePayload.points_per_riyal = updates.points_per_riyal;
+    if (updates.slider_images !== undefined) themePayload.slider_images = updates.slider_images;
     if (updates.theme_mode !== undefined) themePayload.theme_mode = updates.theme_mode;
     if (updates.background_color !== undefined) themePayload.background_color = updates.background_color;
     if (updates.card_color !== undefined) themePayload.card_color = updates.card_color;
@@ -4759,6 +4794,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     coupon?: CustomerCoupon;
     customerPhone?: string;
     customerName?: string;
+    customerBalance?: number;
     message?: string;
     error?: string;
   }> {
@@ -4785,6 +4821,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       coupon?: CustomerCoupon;
       customerPhone?: string;
       customerName?: string;
+      customerBalance?: number;
       message?: string;
       error?: string;
     }> = (async () => {
@@ -5104,21 +5141,29 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     // =========================================================================
     const normPhone = normalizePhone(scannedPhone);
     let existingCustomerName = 'عميل المتجر';
+    let existingCustomerBalance = 0;
 
     // Single Database Query - ONLY READ, NO INSERTS / WRITES AT SCAN TIME!
     if (supabase && isUUID(resolvedStoreId)) {
       try {
-        const cleanPhone = scannedPhone.trim();
-        const { data: custData } = await supabase
-          .from('store_customers')
-          .select('id, name, phone, wallet_balance, lifetime_xp')
-          .eq('store_id', resolvedStoreId)
-          .or(`phone.eq.${cleanPhone},phone.eq.${normPhone},phone.eq.0${normPhone},phone.eq.+966${normPhone},phone.eq.966${normPhone}`)
-          .limit(1)
-          .maybeSingle();
+        const custObj = await this.getCustomer(resolvedStoreId, scannedPhone).catch(() => null);
+        if (custObj) {
+          if (custObj.name) existingCustomerName = custObj.name;
+          existingCustomerBalance = Number(custObj.wallet_balance) || 0;
+        } else {
+          const cleanPhone = scannedPhone.trim();
+          const { data: custData } = await supabase
+            .from('store_customers')
+            .select('id, name, phone, wallet_balance, lifetime_xp')
+            .eq('store_id', resolvedStoreId)
+            .or(`phone.eq.${cleanPhone},phone.eq.${normPhone},phone.eq.0${normPhone},phone.eq.+966${normPhone},phone.eq.966${normPhone}`)
+            .limit(1)
+            .maybeSingle();
 
-        if (custData && custData.name) {
-          existingCustomerName = custData.name;
+          if (custData) {
+            if (custData.name) existingCustomerName = custData.name;
+            existingCustomerBalance = Number(custData.wallet_balance) || 0;
+          }
         }
       } catch (e) {
         console.warn('Customer lookup error', e);
@@ -5128,17 +5173,19 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       const matched = localCustomers.find(
         (c) => (c.store_id === resolvedStoreId || c.store_id === storeId) && normalizePhone(c.phone) === normPhone
       );
-      if (matched && matched.name) {
-        existingCustomerName = matched.name;
+      if (matched) {
+        if (matched.name) existingCustomerName = matched.name;
+        existingCustomerBalance = Number(matched.wallet_balance) || 0;
       }
     }
 
-      // Return PASS for Cashier POS to open the Amount Modal
+      // Return PASS for Cashier POS to open the Amount / Stamps Modal
       return {
         type: 'PASS',
         success: true,
         customerPhone: normPhone,
         customerName: existingCustomerName,
+        customerBalance: existingCustomerBalance,
       };
     })();
 
@@ -5871,7 +5918,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
     }
 
     // 🛡️ [SEC-POINTS] إضافة النقاط عبر دالة RPC سيرفرية مؤمنة بالتوكن مع توحيد صيغة رقم الجوال وتسجيل قيد التدقيق ذرياً
-    const staffToken = this.getStaffToken(resolvedStoreId, 'any') || getActiveStaffToken();
+    const staffToken = this.getStaffToken(resolvedStoreId, 'any') || getActiveStaffToken() || (isUUID(staffId) ? staffId : null);
     const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('add_customer_points_secure', {
       p_store_id: resolvedStoreId,
       p_phone: normPhone || phone.trim(),
@@ -5900,11 +5947,6 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       } as Customer;
     } else if (rpcRes && !rpcRes.success) {
       console.error('[processPurchase] RPC rejected:', rpcRes);
-      if (rpcRes.error === 'UNAUTHORIZED_STAFF') {
-        this.revokeStaffToken(resolvedStoreId, 'cashier');
-        this.revokeStaffToken(resolvedStoreId, 'admin');
-        throw new Error(rpcRes.message || 'غير مصرح: جلسة الكاشير غير صالحة أو منتهية. يرجى تسجيل الدخول مجدداً برقم PIN.');
-      }
       throw new Error(rpcRes.message || rpcRes.error || 'فشلت عملية إضافة النقاط من السيرفر.');
     } else if (rpcErr) {
       console.error('[processPurchase] RPC error:', rpcErr);
@@ -6017,6 +6059,138 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       customer: finalCust,
       pointsEarned,
       currentTier: computedTier,
+    };
+  },
+
+  // 14.2 إضافة أختام مباشرة لبطاقة العميل (بدون ضرب في معامل النقاط المالي points_per_riyal)
+  async addCustomerStamps(
+    storeId: string,
+    phone: string,
+    stampsCount: number = 1,
+    note?: string,
+    qrToken?: DynamicQRToken,
+    staffId?: string,
+    staffName?: string,
+    entryMethod: 'qr_scan' | 'manual' = 'qr_scan',
+    branchId?: string | null,
+    branchName?: string | null
+  ): Promise<{ success: boolean; customer: Customer; stampsAdded: number; currentTier: string }> {
+    if (qrToken) {
+      const validation = this.validateAndConsumeQRToken(qrToken);
+      if (!validation.valid) {
+        throw new Error(validation.error);
+      }
+    }
+
+    const exactStamps = Math.max(1, Math.floor(Number(stampsCount) || 1));
+    const currentStore = (await this.resolveStore(storeId)) || INITIAL_STORE;
+    const resolvedStoreId = currentStore.id;
+    const normPhone = normalizePhone(phone);
+    const globalName = (await this.findCustomerGlobalName(normPhone)) || 'عميل مميز';
+
+    const supabase = getSupabaseClient();
+    if (!supabase || !isUUID(resolvedStoreId)) {
+      throw new Error('تعذر الاتصال بقاعدة البيانات السحابية لإضافة الختم');
+    }
+
+    const staffToken = this.getStaffToken(resolvedStoreId, 'any') || getActiveStaffToken() || (isUUID(staffId) ? staffId : null);
+    const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('add_customer_points_secure', {
+      p_store_id: resolvedStoreId,
+      p_phone: normPhone || phone.trim(),
+      p_points: exactStamps,
+      p_staff_token: staffToken || null,
+      p_customer_name: (globalName && globalName !== 'عميل مميز') ? globalName : null,
+      p_purchase_amount: 0,
+      p_invoice_number: note || `إضافة ${exactStamps === 1 ? 'ختم زيارة (1 ☕)' : `${exactStamps} أختام ☕`}`,
+      p_entry_method: entryMethod,
+      p_branch_id: cleanBranchUUID(branchId),
+      p_branch_name: branchName || null,
+    });
+
+    let supabaseUpdatedCust: Customer | null = null;
+    if (!rpcErr && rpcRes && rpcRes.success) {
+      supabaseUpdatedCust = {
+        id: rpcRes.customer_id,
+        store_id: resolvedStoreId,
+        phone: rpcRes.phone || normPhone,
+        name: rpcRes.name || globalName || 'عميل مميز',
+        wallet_balance: Number(rpcRes.new_balance) || 0,
+        lifetime_xp: Number(rpcRes.lifetime_xp) || 0,
+        last_visit_date: new Date().toISOString(),
+        is_active: true,
+        visits_count: 1,
+        created_at: new Date().toISOString(),
+      } as Customer;
+    } else {
+      throw new Error(rpcRes?.message || rpcRes?.error || rpcErr?.message || 'فشلت عملية إضافة الختم من السيرفر.');
+    }
+
+    const customers = getLocalData<Customer[]>(STORAGE_KEYS.LOCAL_CUSTOMERS, INITIAL_CUSTOMERS);
+    let localCust = customers.find(
+      (c) => (c.store_id === resolvedStoreId || c.store_id === storeId) && normalizePhone(c.phone) === normPhone
+    );
+
+    if (localCust) {
+      localCust.id = supabaseUpdatedCust.id;
+      localCust.lifetime_xp = supabaseUpdatedCust.lifetime_xp;
+      localCust.wallet_balance = supabaseUpdatedCust.wallet_balance;
+      localCust.name = supabaseUpdatedCust.name || localCust.name;
+      localCust.last_visit_date = new Date().toISOString();
+    } else {
+      localCust = supabaseUpdatedCust;
+      customers.unshift(localCust);
+    }
+    saveLocalData(STORAGE_KEYS.LOCAL_CUSTOMERS, customers);
+
+    const effectiveCustName = localCust.name || globalName;
+    const logs = getLocalData<AuditLog[]>(STORAGE_KEYS.LOCAL_LOGS, INITIAL_AUDIT_LOGS);
+    logs.unshift({
+      id: 'log-' + Date.now(),
+      store_id: resolvedStoreId,
+      staff_id: staffId || null,
+      customer_id: localCust.id,
+      customer_phone: localCust.phone,
+      customer_name: effectiveCustName,
+      action: 'PURCHASE',
+      purchase_amount: 0,
+      points_changed: exactStamps,
+      entry_method: entryMethod,
+      metadata: {
+        note: note || `إضافة ${exactStamps === 1 ? 'ختم زيارة (1 ☕)' : `${exactStamps} أختام ☕`}`,
+        cashier_name: staffName || 'كاشير',
+        customer_name: effectiveCustName,
+        mode: 'stamps',
+      },
+      created_at: new Date().toISOString(),
+    });
+    saveLocalData(STORAGE_KEYS.LOCAL_LOGS, logs);
+
+    LoyaltyEvents.emit({
+      type: 'POINTS_ADDED',
+      storeId: resolvedStoreId,
+      phone: supabaseUpdatedCust.phone,
+      points: exactStamps,
+      newBalance: supabaseUpdatedCust.wallet_balance,
+      newLifetimeXP: supabaseUpdatedCust.lifetime_xp,
+      currentTier: 'بطاقة أختام ☕',
+    });
+    LoyaltyEvents.emit({
+      type: 'CUSTOMER_UPDATED',
+      storeId: resolvedStoreId,
+      phone: supabaseUpdatedCust.phone,
+      newBalance: supabaseUpdatedCust.wallet_balance,
+      newLifetimeXP: supabaseUpdatedCust.lifetime_xp,
+    });
+    LoyaltyEvents.emit({
+      type: 'WALLET_UPDATED',
+      storeId: resolvedStoreId,
+    });
+
+    return {
+      success: true,
+      customer: supabaseUpdatedCust,
+      stampsAdded: exactStamps,
+      currentTier: 'بطاقة أختام ☕',
     };
   },
 
