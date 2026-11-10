@@ -55,7 +55,7 @@ import {
   DEFAULT_SUPER_ADMIN_PERMISSIONS,
 } from '../types';
 import { generateZatcaTLVQR } from './zatcaQR';
-import { getActiveTenantConfig } from '../config/tenant';
+import { getActiveTenantConfig, applyTenantBranding, getTargetTenantHost } from '../config/tenant';
 import {
   INITIAL_STORES,
   INITIAL_STORE,
@@ -1288,12 +1288,13 @@ export const LoyaltyService = {
         return { success: false, error: 'هذا الحساب لا يمتلك صلاحيات إدارة المنصة' };
       }
 
-      // 🛡️ توجيه نطاق الجلسة للسوبر أدمن بحسب الدومين تلقائياً (سديم أو رادار)
+      // 🛡️ توجيه نطاق الجلسة للسوبر أدمن بحسب الدومين أو ?tenant= تلقائياً
       if (verifyRes.role === 'super_admin') {
         try {
-          const host = typeof window !== 'undefined' ? window.location.hostname : '';
+          const host = getTargetTenantHost();
           const { data: tenantData } = await (supabase as any).rpc('get_active_tenant_by_domain', { p_host: host });
           if (tenantData && tenantData.id) {
+            applyTenantBranding(tenantData);
             await (supabase as any).rpc('switch_super_admin_active_tenant', { p_target_tenant_id: tenantData.id });
             await supabase.auth.refreshSession();
           }
@@ -1329,6 +1330,18 @@ export const LoyaltyService = {
       // التحقق عبر الدالة السحابية المحمية
       const { data, error } = await supabase.rpc('verify_super_admin_session');
       if (!error && data && data.is_super_admin) {
+        const assignedTenantId = (data as any).tenant_id || (session.user.app_metadata as any)?.tenant_id;
+        if (data.role === 'tenant_admin' && assignedTenantId && getActiveTenantConfig().tenantId !== assignedTenantId) {
+          try {
+            const { data: tenantData } = await (supabase as any).rpc('get_active_tenant_by_domain', {
+              p_host: assignedTenantId,
+            });
+            if (tenantData && (tenantData.brand_name || tenantData.name)) {
+              applyTenantBranding(tenantData);
+            }
+          } catch {}
+        }
+
         const adminUser: SuperAdminUser = {
           id: data.admin_id || session.user.id,
           user_id: data.user_id || session.user.id,
