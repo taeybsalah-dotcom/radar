@@ -3337,6 +3337,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           customerId: customer.id,
                           customerName: customer.name || 'عميل مميز',
                           title: effectiveScratchTitle,
+                          privilegeId: walletConfig.scratch_card_privilege_id || undefined,
                           source: 'SCRATCH_CARD',
                         });
                         setCustomerCoupons((prev) => [
@@ -6162,6 +6163,51 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                           : `باقي ${remaining} أختام للمكافأة 🚗`}
                       </span>
                     </div>
+
+                    {remaining === 0 && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (walletConfig.stamps_completion_mode === 'spin_wheel' || (walletConfig.enable_spin_wheel && walletConfig.stamps_completion_mode !== 'coupon')) {
+                            setShowSpinWheel(true);
+                            return;
+                          }
+                          if (walletConfig.stamps_completion_mode === 'scratch_card' || (walletConfig.enable_scratch_card && walletConfig.stamps_completion_mode !== 'coupon')) {
+                            setShowScratchCard(true);
+                            return;
+                          }
+                          if (customer?.phone) {
+                            try {
+                              const issued = await LoyaltyService.issueCustomerCoupon(store.id, {
+                                phone: customer.phone,
+                                customerId: customer.id,
+                                customerName: customer.name || 'عميل مميز',
+                                title: rewardTitle,
+                                privilegeId: walletConfig.stamps_reward_privilege_id || undefined,
+                                source: 'STAMPS_COMPLETION',
+                              });
+                              setCustomerCoupons((prev) => [
+                                issued,
+                                ...prev.filter((c) => c.coupon_code !== issued.coupon_code),
+                              ]);
+                              setActiveTab('tickets');
+                              setCelebrationModal({
+                                isOpen: true,
+                                type: 'COUPON_REDEEMED',
+                                title: '🎉 مبروك! استلمت هدية بطاقتك المكتملة',
+                                subtitle: `تم حفظ كوبون (${rewardTitle}) برمز [${issued.coupon_code}] في محفظتك جاهزاً للصرف عند الكاشير!`,
+                              });
+                            } catch {
+                              setActiveTab('tickets');
+                            }
+                          }
+                        }}
+                        className="w-full mt-2.5 py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/20 animate-pulse hover:scale-[1.02] active:scale-95 transition"
+                      >
+                        <Gift className="w-4 h-4" />
+                        <span>🎁 مبروك! اضغط هنا لاستلام هديتك ({rewardTitle}) الآن</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -9338,6 +9384,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     customerId: customer.id,
                     customerName: customer.name || 'عميل مميز',
                     title: prize.label,
+                    privilegeId: prize.privilege_id || undefined,
                     source: 'SPIN_WHEEL',
                   });
                   setCustomerCoupons((prev) => [
@@ -9391,6 +9438,7 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   customerId: customer.id,
                   customerName: customer.name || 'عميل مميز',
                   title: walletConfig.scratch_card_reward_title || 'هدية كرت اكشط واربح 🎁',
+                  privilegeId: walletConfig.scratch_card_privilege_id || undefined,
                   source: 'SCRATCH_CARD',
                 });
                 setCustomerCoupons((prev) => [

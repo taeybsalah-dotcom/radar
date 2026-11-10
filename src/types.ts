@@ -1558,6 +1558,7 @@ export interface SpinWheelPrize {
   reward_value: number | string;
   probability_weight: number;
   color?: string;
+  privilege_id?: string; // Optional link to store catalog coupon
 }
 
 export interface StoreWalletPassConfig {
@@ -1567,6 +1568,8 @@ export interface StoreWalletPassConfig {
   // Stamps Configuration (Buy X Get 1 Free)
   stamps_target?: number; // e.g. 6 (6th is free)
   stamps_reward_title?: string; // e.g. 'قهوة مجانية من اختيارك ☕'
+  stamps_reward_privilege_id?: string; // ربط الهدية بكوبون معتمد من الكتالوج
+  stamps_completion_mode?: 'coupon' | 'spin_wheel' | 'scratch_card'; // طريقة تسليم الهدية
   stamps_icon?: string; // '☕', '✂️', '🚗', '🍔', '⭐', '🎁'
 
   // Gamification Add-ons
@@ -1578,6 +1581,7 @@ export interface StoreWalletPassConfig {
 
   enable_scratch_card?: boolean; // اكشط واربح
   scratch_card_reward_title?: string; // e.g. 'قسيمة خصم 20% بمناسبة يوم التأسيس 🇸🇦'
+  scratch_card_privilege_id?: string; // ربط كرت الكشط بكوبون معتمد من الكتالوج
   scratch_card_trigger_min_spend?: number; // e.g. 25 SAR
   scratch_card_trigger_stamps?: number; // تفعيل الكشط عند الوصول لعدد أختام معين (مثلاً 5 أو 10 أختام)
 

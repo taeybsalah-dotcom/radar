@@ -31,6 +31,7 @@ import {
   getStoreActiveModules,
   PublicPlatformIntegrations,
   StoreWalletPassConfig,
+  SpinWheelPrize,
 } from '../types';
 import { LoyaltyService, normalizeStore, getSupabaseClient } from '../lib/supabase';
 import { getActiveTenantConfig } from '../config/tenant';
@@ -4744,13 +4745,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               /* 🔲 Executive Subtabs Grid Navigation */
               isStamps ? (
                 /* Stamps Mode Hub Grid (Zero Confusion) */
-                <SubTabsHubGrid<'stamps_card' | 'gamification' | 'coupons'>
+                <SubTabsHubGrid<'stamps_card' | 'perks' | 'gamification' | 'coupons'>
                   activeTab={'' as any}
                   onSelectTab={(sec) => {
                     setLoyaltySection(sec);
                     window.scrollTo({ top: 150, behavior: 'smooth' });
                   }}
-                  columns="3"
+                  columns="4"
                   tabs={[
                     {
                       id: 'stamps_card',
@@ -4763,6 +4764,18 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       iconBorder: 'border-amber-500/30',
                       iconColor: 'text-amber-400',
                       statHighlight: `الهدية: ${currentWalletConfig.stamps_reward_title || 'قهوة مجانية ☕'}`,
+                    },
+                    {
+                      id: 'perks',
+                      label: 'كتالوج الكوبونات والعروض',
+                      description: 'إنشاء عروض وجوائز المتجر الرسمية، ساعات الصرف (Time-Lock)، وربطها بالأختام والألعاب',
+                      icon: Gift,
+                      badge: `${privileges.length} عرض`,
+                      glowColor: 'bg-purple-500/20',
+                      iconBg: 'bg-purple-500/15',
+                      iconBorder: 'border-purple-500/30',
+                      iconColor: 'text-purple-400',
+                      statHighlight: `${privileges.length} عرض معتمد بالكتالوج`,
                     },
                     {
                       id: 'gamification',
@@ -4928,6 +4941,7 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   isStamps
                     ? [
                         { id: 'stamps_card', label: 'كرت الأختام والمحفظة' },
+                        { id: 'perks', label: 'كتالوج الكوبونات والعروض' },
                         { id: 'gamification', label: 'محرك الألعاب' },
                         { id: 'coupons', label: 'سجل الكوبونات' },
                       ]
@@ -5061,6 +5075,38 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                       </div>
                     </div>
 
+                    {/* ربط الهدية بكتالوج الكوبونات المؤسسة */}
+                    {privileges.length > 0 && (
+                      <div>
+                        <span className="text-[10px] text-amber-300 block mb-1 font-bold">
+                          🎁 ربط الهدية بكوبون رسمي من الكتالوج (يرث الصورة وساعات الصرف Time-Lock):
+                        </span>
+                        <select
+                          value={currentWalletConfig.stamps_reward_privilege_id || ''}
+                          onChange={(e) => {
+                            const privId = e.target.value;
+                            if (privId) {
+                              const found = privileges.find((p) => p.id === privId);
+                              updateWalletSettings({
+                                stamps_reward_privilege_id: privId,
+                                stamps_reward_title: found ? found.title : currentWalletConfig.stamps_reward_title,
+                              });
+                            } else {
+                              updateWalletSettings({ stamps_reward_privilege_id: undefined });
+                            }
+                          }}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none focus:border-amber-500 font-bold"
+                        >
+                          <option value="">-- تخصيص يدوي حر (بدون ربط بكوبون كتالوج) --</option>
+                          {privileges.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              🎁 {p.title} (ساعات الصرف: {p.valid_start_time || '00:00'} إلى {p.valid_end_time || '23:59'})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
                     <div>
                       <span className="text-[10px] text-slate-300 block mb-1 font-bold">
                         مسمى الهدية المجانية عند اكتمال الأختام:
@@ -5072,6 +5118,34 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                         className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-white outline-none focus:border-amber-500 font-bold"
                         placeholder="مثال: قهوة مجانية من اختيارك ☕"
                       />
+                    </div>
+
+                    {/* طريقة تسليم الهدية للعميل عند الاكتمال */}
+                    <div>
+                      <span className="text-[10px] text-slate-300 block mb-1.5 font-bold">
+                        🎮 طريقة تسليم المكافأة للعميل عند اكتمال الختم الأخير:
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {[
+                          { id: 'coupon', label: 'كوبون رقمي فوري 🎫', desc: 'يصدر فوراً في المحفظة بكود وباركود' },
+                          { id: 'spin_wheel', label: 'عجلة الحظ التفاعلية 🎡', desc: 'تدوير العجلة للكشف عن الجائزة' },
+                          { id: 'scratch_card', label: 'اكشط واربح الذهبية 🪙', desc: 'مسح الكرت باليد للكشف عن الكوبون' },
+                        ].map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => updateWalletSettings({ stamps_completion_mode: m.id as any })}
+                            className={`p-2.5 rounded-xl border text-center transition ${
+                              (currentWalletConfig.stamps_completion_mode || 'coupon') === m.id
+                                ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-md font-black'
+                                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <div className="text-xs">{m.label}</div>
+                            <div className="text-[9px] opacity-75 mt-0.5">{m.desc}</div>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
@@ -5364,11 +5438,11 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                   </div>
 
                   {currentWalletConfig.enable_spin_wheel && (() => {
-                    const defaultSpinPrizes = [
-                      { id: 'p1', label: 'خصم 15% على طلبك 🏷️', reward_type: 'discount_percent' as const, reward_value: 15, probability_weight: 35, color: '#F59E0B' },
-                      { id: 'p2', label: 'حلى مجاني 🍩', reward_type: 'free_item' as const, reward_value: 'حلى مجاني', probability_weight: 20, color: '#10B981' },
+                    const defaultSpinPrizes: SpinWheelPrize[] = [
+                      { id: 'p1', label: 'خصم 15% على طلبك 🏷️', reward_type: 'discount_percent', reward_value: 15, probability_weight: 35, color: '#F59E0B' },
+                      { id: 'p2', label: 'حلى مجاني 🍩', reward_type: 'free_item', reward_value: 'حلى مجاني', probability_weight: 20, color: '#10B981' },
                       { id: 'p3', label: isStamps ? 'ختم إضافي مجاني 💮' : '50 نقطة إضافية ⭐', reward_type: (isStamps ? 'stamps' : 'points') as any, reward_value: isStamps ? 1 : 50, probability_weight: 25, color: '#6366F1' },
-                      { id: 'p4', label: 'حظ أوفر المرة القادمة 🎯', reward_type: 'no_luck' as const, reward_value: 0, probability_weight: 20, color: '#64748B' },
+                      { id: 'p4', label: 'حظ أوفر المرة القادمة 🎯', reward_type: 'no_luck', reward_value: 0, probability_weight: 20, color: '#64748B' },
                     ];
                     const activeSpinPrizes =
                       Array.isArray(currentWalletConfig.spin_wheel_prizes) &&
@@ -5416,14 +5490,46 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                 كل جائزة يفوز بها العميل تصدر كـ كوبون رسمي يُحرق لمرة واحدة فقط عند الكاشير.
                               </p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={handleAddPrize}
-                              className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-black text-[11px] flex items-center gap-1 transition"
-                            >
-                              <PlusCircle className="w-3.5 h-3.5" />
-                              <span>+ إضافة جائزة جديدة</span>
-                            </button>
+                            <div className="flex items-center gap-2">
+                              {privileges.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const palette = ['#F59E0B', '#10B981', '#6366F1', '#EC4899', '#06B6D4', '#8B5CF6'];
+                                    const importedPrizes: any[] = privileges.slice(0, 6).map((p, i) => ({
+                                      id: `priv-prize-${p.id}`,
+                                      label: p.title,
+                                      reward_type: 'free_item',
+                                      reward_value: p.title,
+                                      privilege_id: p.id,
+                                      probability_weight: Math.round(80 / Math.min(privileges.length, 6)),
+                                      color: palette[i % palette.length],
+                                    }));
+                                    importedPrizes.push({
+                                      id: 'no-luck-prize',
+                                      label: 'حظ أوفر المرة القادمة 🎯',
+                                      reward_type: 'no_luck',
+                                      reward_value: 0,
+                                      probability_weight: 20,
+                                      color: '#64748B',
+                                    });
+                                    updateWalletSettings({ spin_wheel_prizes: importedPrizes });
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-300 font-black text-[11px] flex items-center gap-1 transition"
+                                >
+                                  <Gift className="w-3.5 h-3.5" />
+                                  <span>استيراد من الكتالوج ({privileges.length})</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={handleAddPrize}
+                                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-black text-[11px] flex items-center gap-1 transition"
+                              >
+                                <PlusCircle className="w-3.5 h-3.5" />
+                                <span>+ إضافة جائزة جديدة</span>
+                              </button>
+                            </div>
                           </div>
 
                           <div className="space-y-2">
@@ -5496,6 +5602,37 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
+
+                                {privileges.length > 0 && (
+                                  <div className="sm:col-span-12 flex items-center gap-2 pt-1 border-t border-slate-900 text-[10px]">
+                                    <span className="text-slate-400 font-bold shrink-0">🎁 ربط بكوبون كتالوج:</span>
+                                    <select
+                                      value={(prize as any).privilege_id || ''}
+                                      onChange={(e) => {
+                                        const pId = e.target.value;
+                                        const found = privileges.find((p) => p.id === pId);
+                                        if (found) {
+                                          handleUpdatePrize(idx, {
+                                            privilege_id: pId,
+                                            label: found.title,
+                                            reward_type: 'free_item',
+                                            reward_value: found.title,
+                                          });
+                                        } else {
+                                          handleUpdatePrize(idx, { privilege_id: undefined });
+                                        }
+                                      }}
+                                      className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-300 outline-none focus:border-amber-500 w-full"
+                                    >
+                                      <option value="">-- تخصيص حر (جائزة عامة) --</option>
+                                      {privileges.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                          🎁 {p.title} (ساعات الصرف: {p.valid_start_time || '00:00'} إلى {p.valid_end_time || '23:59'})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
