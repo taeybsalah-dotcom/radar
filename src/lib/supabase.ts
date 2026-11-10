@@ -4625,6 +4625,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
       privilegeId?: string | null;
       costPoints?: number;
       source?: string;
+      deductStamps?: number;
     }
   ): Promise<CustomerCoupon> {
     const currentStore = await this.resolveStore(storeId);
@@ -4664,6 +4665,7 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
           p_privilege_id: isUUID(params.privilegeId) ? params.privilegeId : null,
           p_cost_points: params.costPoints || 0,
           p_source: params.source || 'GAMIFICATION',
+          p_deduct_stamps: params.deductStamps || 0,
         });
 
         if (!rpcErr && rpcRes && rpcRes.success && rpcRes.coupon) {
@@ -4683,6 +4685,9 @@ ADD COLUMN IF NOT EXISTS google_private_key TEXT;`
             valid_end_time: d.valid_end_time || '23:59',
             purchased_at: d.purchased_at || nowIso,
           };
+          if (rpcRes.updated_customer) {
+            (createdCoupon as any).updatedCustomer = rpcRes.updated_customer;
+          }
         }
       } catch (e) {
         console.warn('issue_customer_coupon_secure RPC failed:', e);

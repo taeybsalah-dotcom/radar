@@ -6184,12 +6184,18 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                                 customerName: customer.name || 'عميل مميز',
                                 title: rewardTitle,
                                 privilegeId: walletConfig.stamps_reward_privilege_id || undefined,
+                                deductStamps: target,
                                 source: 'STAMPS_COMPLETION',
                               });
                               setCustomerCoupons((prev) => [
                                 issued,
                                 ...prev.filter((c) => c.coupon_code !== issued.coupon_code),
                               ]);
+                              // 🎯 تصفير أختام البطاقة المكتملة وبدء دورة جديدة فوراً
+                              const newBalance = (issued as any).updatedCustomer?.wallet_balance !== undefined
+                                ? Number((issued as any).updatedCustomer.wallet_balance)
+                                : Math.max(0, (customer.wallet_balance || 0) - target);
+                              setCustomer((prev) => (prev ? { ...prev, wallet_balance: newBalance } : null));
                               setActiveTab('tickets');
                               setCelebrationModal({
                                 isOpen: true,
@@ -9375,6 +9381,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           store={store}
           customer={customer}
           onPrizeWon={async (prize) => {
+            const stampsTarget = Math.max(2, walletConfig.stamps_target || 6);
+            const isStampsCompleted = walletConfig.loyalty_mode === 'stamps' && (customer?.wallet_balance || 0) > 0 && ((customer?.wallet_balance || 0) % stampsTarget === 0);
             if (prize.reward_type !== 'no_luck') {
               playBeepSound('success');
               if (customer?.phone) {
@@ -9385,12 +9393,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                     customerName: customer.name || 'عميل مميز',
                     title: prize.label,
                     privilegeId: prize.privilege_id || undefined,
+                    deductStamps: isStampsCompleted ? stampsTarget : 0,
                     source: 'SPIN_WHEEL',
                   });
                   setCustomerCoupons((prev) => [
                     issued,
                     ...prev.filter((c) => c.coupon_code !== issued.coupon_code),
                   ]);
+                  if (isStampsCompleted) {
+                    const newBal = (issued as any).updatedCustomer?.wallet_balance !== undefined
+                      ? Number((issued as any).updatedCustomer.wallet_balance)
+                      : Math.max(0, (customer.wallet_balance || 0) - stampsTarget);
+                    setCustomer((prev) => (prev ? { ...prev, wallet_balance: newBal } : null));
+                  }
                 } catch (err) {
                   console.warn('Spin wheel coupon issue error:', err);
                 }
@@ -9431,6 +9446,8 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
           store={store}
           onRewardRevealed={async () => {
             playBeepSound('success');
+            const stampsTarget = Math.max(2, walletConfig.stamps_target || 6);
+            const isStampsCompleted = walletConfig.loyalty_mode === 'stamps' && (customer?.wallet_balance || 0) > 0 && ((customer?.wallet_balance || 0) % stampsTarget === 0);
             if (customer?.phone) {
               try {
                 const issued = await LoyaltyService.issueCustomerCoupon(store.id, {
@@ -9439,12 +9456,19 @@ export const CustomerWallet: React.FC<CustomerWalletProps> = ({ store: initialSt
                   customerName: customer.name || 'عميل مميز',
                   title: walletConfig.scratch_card_reward_title || 'هدية كرت اكشط واربح 🎁',
                   privilegeId: walletConfig.scratch_card_privilege_id || undefined,
+                  deductStamps: isStampsCompleted ? stampsTarget : 0,
                   source: 'SCRATCH_CARD',
                 });
                 setCustomerCoupons((prev) => [
                   issued,
                   ...prev.filter((c) => c.coupon_code !== issued.coupon_code),
                 ]);
+                if (isStampsCompleted) {
+                  const newBal = (issued as any).updatedCustomer?.wallet_balance !== undefined
+                    ? Number((issued as any).updatedCustomer.wallet_balance)
+                    : Math.max(0, (customer.wallet_balance || 0) - stampsTarget);
+                  setCustomer((prev) => (prev ? { ...prev, wallet_balance: newBal } : null));
+                }
                 const scratchInvite = (customer.active_game_invites || []).find(
                   (i) => i.status === 'PENDING' && i.game_type === 'scratch_card'
                 );

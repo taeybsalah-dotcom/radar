@@ -2747,6 +2747,13 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
         });
         setPrivileges([created, ...privileges]);
         setPrivActionSuccess(`تم إضافة الامتياز الجديد: "${created.title}"`);
+        // 🎯 ربط الكوبون الجديد تلقائياً بجائزة بطاقة الأختام إن لم تكن مربوطة
+        if (currentWalletConfig.loyalty_mode === 'stamps' && !currentWalletConfig.stamps_reward_privilege_id) {
+          updateWalletSettings({
+            stamps_reward_privilege_id: created.id,
+            stamps_reward_title: created.title,
+          });
+        }
       }
       setIsPrivilegeModalOpen(false);
       setTimeout(() => setPrivActionSuccess(null), 4000);
@@ -5076,36 +5083,99 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     </div>
 
                     {/* ربط الهدية بكتالوج الكوبونات المؤسسة */}
-                    {privileges.length > 0 && (
-                      <div>
-                        <span className="text-[10px] text-amber-300 block mb-1 font-bold">
-                          🎁 ربط الهدية بكوبون رسمي من الكتالوج (يرث الصورة وساعات الصرف Time-Lock):
-                        </span>
-                        <select
-                          value={currentWalletConfig.stamps_reward_privilege_id || ''}
-                          onChange={(e) => {
-                            const privId = e.target.value;
-                            if (privId) {
-                              const found = privileges.find((p) => p.id === privId);
-                              updateWalletSettings({
-                                stamps_reward_privilege_id: privId,
-                                stamps_reward_title: found ? found.title : currentWalletConfig.stamps_reward_title,
-                              });
-                            } else {
-                              updateWalletSettings({ stamps_reward_privilege_id: undefined });
-                            }
-                          }}
-                          className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none focus:border-amber-500 font-bold"
-                        >
-                          <option value="">-- تخصيص يدوي حر (بدون ربط بكوبون كتالوج) --</option>
-                          {privileges.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              🎁 {p.title} (ساعات الصرف: {p.valid_start_time || '00:00'} إلى {p.valid_end_time || '23:59'})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
+                    <div>
+                      {privileges.length > 0 ? (
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] text-amber-300 font-bold flex items-center gap-1">
+                              <Gift className="w-3.5 h-3.5" />
+                              ربط الهدية بكوبون رسمي من الكتالوج (يرث الصورة وساعات الصرف Time-Lock):
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingPrivilege(null);
+                                setPrivTitleInput(currentWalletConfig.stamps_reward_title || 'غسيل مجاني 🚗');
+                                setPrivCostPoints(0);
+                                setPrivDescInput('مكافأة إكمال أختام الزيارات - تصرف عند الكاشير 🎁');
+                                setPrivQuantityLimit('');
+                                setPrivPerCustomerLimit(1);
+                                setPrivStartTime('');
+                                setPrivEndTime('');
+                                setPrivImageUrl('');
+                                setPrivIsActive(true);
+                                setPrivIsHidden(false);
+                                setIsPrivilegeModalOpen(true);
+                              }}
+                              className="text-[10px] text-purple-400 hover:text-purple-300 font-bold underline flex items-center gap-0.5"
+                            >
+                              <Plus className="w-3 h-3" />
+                              + إضافة كوبون جديد
+                            </button>
+                          </div>
+                          <select
+                            value={currentWalletConfig.stamps_reward_privilege_id || ''}
+                            onChange={(e) => {
+                              const privId = e.target.value;
+                              if (privId) {
+                                const found = privileges.find((p) => p.id === privId);
+                                updateWalletSettings({
+                                  stamps_reward_privilege_id: privId,
+                                  stamps_reward_title: found ? found.title : currentWalletConfig.stamps_reward_title,
+                                });
+                              } else {
+                                updateWalletSettings({ stamps_reward_privilege_id: undefined });
+                              }
+                            }}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-white outline-none focus:border-amber-500 font-bold"
+                          >
+                            <option value="">-- تخصيص يدوي حر (بدون ربط بكوبون كتالوج) --</option>
+                            {privileges.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                🎁 {p.title} (ساعات الصرف: {p.valid_start_time || '00:00'} إلى {p.valid_end_time || '23:59'})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-950/40 via-purple-900/20 to-slate-900 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in shadow-md">
+                          <div className="flex items-start sm:items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+                              <Gift className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-purple-200">
+                                لم تؤسس أي كوبون في الكتالوج بعد!
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                أنشئ كوبون الهدية في الكتالوج لتحديد صورته، تفاصيله وساعات صرفه (Time-Lock).
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingPrivilege(null);
+                              setPrivTitleInput(currentWalletConfig.stamps_reward_title || 'غسيل مجاني 🚗');
+                              setPrivCostPoints(0);
+                              setPrivDescInput('مكافأة إكمال أختام الزيارات - تصرف عند الكاشير 🎁');
+                              setPrivQuantityLimit('');
+                              setPrivPerCustomerLimit(1);
+                              setPrivStartTime('');
+                              setPrivEndTime('');
+                              setPrivImageUrl('');
+                              setPrivIsActive(true);
+                              setPrivIsHidden(false);
+                              setIsPrivilegeModalOpen(true);
+                            }}
+                            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white font-black text-xs shrink-0 shadow transition flex items-center justify-center gap-1.5 active:scale-95"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>+ إنشاء كوبون الهدية الآن</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
                     <div>
                       <span className="text-[10px] text-slate-300 block mb-1 font-bold">
@@ -5146,6 +5216,53 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                           </button>
                         ))}
                       </div>
+
+                      {/* توجيهات الألعاب التفاعلية السريعة */}
+                      {currentWalletConfig.stamps_completion_mode === 'spin_wheel' && (
+                        <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-2.5 animate-fade-in">
+                          <div className="flex items-center gap-2.5">
+                            <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
+                            <div>
+                              <div className="text-xs font-bold text-amber-200">
+                                سيتم فتح عجلة الحظ للعميل فور اكتمال أختامه!
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                يدور العميل العجلة ليربح إحدى الجوائز المربوطة بالكتالوج وتضاف لمحفظته فوراً.
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setLoyaltySection('gamification')}
+                            className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shrink-0 shadow transition"
+                          >
+                            ⚙️ ضبط جوائز العجلة والكوبونات
+                          </button>
+                        </div>
+                      )}
+
+                      {currentWalletConfig.stamps_completion_mode === 'scratch_card' && (
+                        <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 mt-2.5 animate-fade-in">
+                          <div className="flex items-center gap-2.5">
+                            <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
+                            <div>
+                              <div className="text-xs font-bold text-amber-200">
+                                سيتم فتح بطاقة اكشط واربح الذهبية فور اكتمال الأختام!
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                يمسح العميل الكرت بيده لكشف هديته وتوثيق الكوبون في محفظته مباشرة.
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setLoyaltySection('gamification')}
+                            className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shrink-0 shadow transition"
+                          >
+                            ⚙️ ضبط كرت الكشط والكوبون
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
