@@ -321,8 +321,8 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   };
   
   // Welcome Gift Settings State
-  const [welcomeGiftType, setWelcomeGiftType] = useState<'POINTS' | 'OFFER' | 'NONE'>(
-    currentStore?.welcome_gift_type || 'POINTS'
+  const [welcomeGiftType, setWelcomeGiftType] = useState<'POINTS' | 'STAMPS' | 'OFFER' | 'NONE'>(
+    currentStore?.welcome_gift_type || (currentWalletConfig.loyalty_mode === 'stamps' ? 'STAMPS' : 'POINTS')
   );
   const [welcomePoints, setWelcomePoints] = useState<number | ''>(
     currentStore?.welcome_points ?? 50
@@ -4557,6 +4557,186 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
                     </p>
                   </div>
                 </button>
+              </div>
+
+              {/* 🎯 إعدادات احتساب النقاط والهدية الترحيبية للزبون الجديد (تظهر هنا مباشرة حسب النمط) */}
+              <div className="mt-5 p-5 rounded-3xl bg-slate-950/80 border border-slate-800 space-y-4 shadow-inner">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    <h4 className="text-xs sm:text-sm font-black text-white">
+                      {isStamps ? 'إعدادات الهدية الترحيبية للأختام (للزبون الجديد)' : 'معدل الاحتساب والهدية الترحيبية المباشرة'}
+                    </h4>
+                  </div>
+                  <span className="text-[11px] text-slate-400">
+                    تمنح تلقائياً عند أول انضمام للزبون ومسح كود المتجر
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                  {/* معدل احتساب النقاط (يظهر حصرياً عند اختيار نمط النقاط) */}
+                  {!isStamps && (
+                    <div className="md:col-span-5 space-y-1.5">
+                      <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        <span>معدل احتساب نقاط الولاء (نقاط لكل 1 ريال):</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        value={pointsPerRiyal}
+                        onChange={(e) => setPointsPerRiyal(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                        placeholder="1"
+                        className="w-full bg-slate-900 border border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-2.5 text-xs font-mono font-bold text-white outline-none transition"
+                        required
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        مثال: 1 يعني أن إنفاق 100 ريال يمنح العميل 100 نقطة ولاء تلقائياً.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* نوع الهدية الترحيبية */}
+                  <div className={`${isStamps ? 'md:col-span-6' : 'md:col-span-4'} space-y-1.5`}>
+                    <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
+                      <Gift className="w-3.5 h-3.5 text-rose-400" />
+                      <span>نوع الهدية الترحيبية للزبون الجديد:</span>
+                    </label>
+                    <select
+                      value={welcomeGiftType}
+                      onChange={(e) => {
+                        const nextType = e.target.value as 'POINTS' | 'STAMPS' | 'OFFER' | 'NONE';
+                        setWelcomeGiftType(nextType);
+                        if (nextType === 'STAMPS' && (!welcomePoints || welcomePoints > 5)) {
+                          setWelcomePoints(1);
+                        } else if (nextType === 'POINTS' && (!welcomePoints || welcomePoints < 10)) {
+                          setWelcomePoints(50);
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-slate-800 focus:border-rose-400 rounded-2xl px-4 py-2.5 text-xs font-bold text-white outline-none transition cursor-pointer"
+                    >
+                      {isStamps ? (
+                        <>
+                          <option value="STAMPS">💮 ختم ترحيبي فوري مضاف لكرت الأختام</option>
+                          <option value="OFFER">🏷️ قسيمة / عرض خصم ترحيبي خاص</option>
+                          <option value="NONE">❌ بدون هدية ترحيبية</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="POINTS">🎁 نقاط ولاء فورية مضافة للمحفظة</option>
+                          <option value="OFFER">🏷️ قسيمة / عرض خصم ترحيبي خاص</option>
+                          <option value="NONE">❌ بدون هدية ترحيبية</option>
+                        </>
+                      )}
+                    </select>
+                    <p className="text-[10px] text-slate-500">
+                      {isStamps
+                        ? 'تضاف الأختام فوراً لكرت العميل عند فتح البطاقة لأول مرة.'
+                        : 'تضاف النقاط فوراً لرصيد العميل عند فتح البطاقة لأول مرة.'}
+                    </p>
+                  </div>
+
+                  {/* تفاصيل الهدية: عدد الأختام أو النقاط أو عنوان العرض */}
+                  <div className={`${isStamps ? 'md:col-span-6' : 'md:col-span-3'} space-y-1.5`}>
+                    {welcomeGiftType === 'STAMPS' && (
+                      <div className="space-y-1.5 animate-fade-in">
+                        <label className="text-xs font-bold text-amber-400 block">
+                          عدد الأختام الترحيبية الممنوحة فوراً:
+                        </label>
+                        <div className="flex items-center gap-2">
+                          {[1, 2, 3].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => setWelcomePoints(num)}
+                              className={`flex-1 py-2 rounded-xl text-xs font-bold border transition ${
+                                Number(welcomePoints || 1) === num
+                                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-md'
+                                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700'
+                              }`}
+                            >
+                              {num} {num === 1 ? 'ختم' : num === 2 ? 'ختمان' : 'أختام'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {welcomeGiftType === 'POINTS' && (
+                      <div className="space-y-1.5 animate-fade-in">
+                        <label className="text-xs font-bold text-amber-400 block">
+                          عدد النقاط الترحيبية المجانية:
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={welcomePoints}
+                          onChange={(e) => setWelcomePoints(e.target.value === '' ? '' : Number(e.target.value))}
+                          placeholder="50"
+                          className="w-full bg-slate-900 border border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-2.5 text-xs font-mono font-bold text-white outline-none"
+                        />
+                      </div>
+                    )}
+
+                    {welcomeGiftType === 'OFFER' && (
+                      <div className="space-y-1.5 animate-fade-in">
+                        <label className="text-xs font-bold text-rose-400 block">
+                          عنوان الهدية أو العرض الترحيبي:
+                        </label>
+                        <input
+                          type="text"
+                          value={welcomeOfferTitle}
+                          onChange={(e) => setWelcomeOfferTitle(e.target.value)}
+                          placeholder="قهوة مجانية / غسيل مجاني / خصم 15%"
+                          className="w-full bg-slate-900 border border-slate-800 focus:border-rose-400 rounded-2xl px-4 py-2.5 text-xs text-white outline-none"
+                        />
+                      </div>
+                    )}
+
+                    {welcomeGiftType === 'NONE' && (
+                      <div className="p-2.5 rounded-2xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 text-center">
+                        يبدأ العميل الجديد برصيد 0 دون هدية
+                      </div>
+                    )}
+                  </div>
+
+                  {/* زر الحفظ السريع لإعدادات الولاء والترحيب */}
+                  <div className="md:col-span-12 flex items-center justify-end pt-2">
+                    <button
+                      type="button"
+                      disabled={updatingSettings}
+                      onClick={async () => {
+                        setUpdatingSettings(true);
+                        try {
+                          await LoyaltyService.updateStoreSettings(store.id, {
+                            points_per_riyal: Number(pointsPerRiyal),
+                            welcome_gift_type: welcomeGiftType,
+                            welcome_points: welcomePoints === '' ? (welcomeGiftType === 'STAMPS' ? 1 : 0) : Number(welcomePoints),
+                            welcome_offer_title: welcomeOfferTitle.trim(),
+                          });
+                          setStore((prev: any) => ({
+                            ...prev,
+                            points_per_riyal: Number(pointsPerRiyal),
+                            welcome_gift_type: welcomeGiftType,
+                            welcome_points: welcomePoints === '' ? (welcomeGiftType === 'STAMPS' ? 1 : 0) : Number(welcomePoints),
+                            welcome_offer_title: welcomeOfferTitle.trim(),
+                          }));
+                          setSettingsSavedMessage('تم بنجاح حفظ إعدادات الهدية ومعدل الولاء في السحابة ✅');
+                          setTimeout(() => setSettingsSavedMessage(null), 3000);
+                        } catch (err: any) {
+                          alert(err?.message || 'فشل حفظ الإعدادات');
+                        } finally {
+                          setUpdatingSettings(false);
+                        }
+                      }}
+                      className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black text-xs flex items-center gap-1.5 shadow-md shadow-amber-500/20 transition active:scale-95 disabled:opacity-50"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>{updatingSettings ? 'جاري الحفظ بالسحابة...' : 'حفظ إعدادات الولاء والهدية الترحيبية'}</span>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -11286,83 +11466,28 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
               </p>
             </div>
 
-            {/* Points Per Riyal */}
-            <div className="md:col-span-6 space-y-1.5">
-              <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>معدل احتساب نقاط الولاء (نقاط لكل 1 ريال):</span>
-              </label>
-              <input
-                type="number"
-                step="1"
-                min="1"
-                value={pointsPerRiyal}
-                onChange={(e) => setPointsPerRiyal(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
-                placeholder="1.0"
-                className="w-full bg-slate-950 border border-slate-800 focus:border-amber-400 rounded-2xl px-4 py-3 text-sm font-mono font-bold text-white outline-none transition"
-                required
-              />
-              <p className="text-[10px] text-slate-500">
-                مثال: 1.0 يعني أن إنفاق 100 ريال يمنح العميل 100 نقطة ولاء تلقائياً.
-              </p>
-            </div>
-
-            {/* Welcome Gift Type */}
-            <div className="md:col-span-6 space-y-1.5">
-              <label className="text-xs font-bold text-slate-300 block flex items-center gap-1.5">
-                <Gift className="w-3.5 h-3.5 text-rose-400" />
-                <span>نوع الهدية الترحيبية للزبون الجديد:</span>
-              </label>
-              <select
-                value={welcomeGiftType}
-                onChange={(e) => setWelcomeGiftType(e.target.value as 'POINTS' | 'OFFER' | 'NONE')}
-                className="w-full bg-slate-950 border border-slate-800 focus:border-rose-400 rounded-2xl px-4 py-3 text-xs font-bold text-white outline-none transition cursor-pointer"
+            {/* تم نقل معدل نقاط الولاء والهدية الترحيبية لقسم برنامج الولاء الموحد تفادياً للتشتت */}
+            <div className="md:col-span-12 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <span>إعدادات معدل احتساب النقاط والهدية الترحيبية للزبائن الجدد أصبحت موحدة داخل قسم: <strong>«برنامج الولاء والمكافآت»</strong>.</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('loyalty');
+                  setLoyaltySection('hub');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[11px] transition"
               >
-                <option value="POINTS">🎁 نقاط ولاء فورية مضافة للمحفظة</option>
-                <option value="OFFER">🏷️ قسيمة / عرض خصم ترحيبي خاص</option>
-                <option value="NONE">❌ بدون هدية ترحيبية</option>
-              </select>
-              <p className="text-[10px] text-slate-500">
-                تمنح للزبون تلقائياً بمجرد مسح الباركود لأول مرة والانضمام لمتجرك.
-              </p>
+                انتقال لبرنامج الولاء ⬅️
+              </button>
             </div>
-
-            {/* Conditional Welcome Gift Fields */}
-            {welcomeGiftType === 'POINTS' && (
-              <div className="md:col-span-12 space-y-1.5 p-4 rounded-2xl bg-slate-950/60 border border-slate-800 animate-fade-in">
-                <label className="text-xs font-bold text-amber-400 block">
-                  عدد النقاط الترحيبية المجانية الممنوحة للعميل:
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={welcomePoints}
-                  onChange={(e) => setWelcomePoints(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="مثال: 50"
-                  className="w-full max-w-xs bg-slate-900 border border-slate-800 focus:border-amber-400 rounded-xl px-4 py-2 text-xs font-mono font-bold text-white outline-none"
-                />
-              </div>
-            )}
-
-            {welcomeGiftType === 'OFFER' && (
-              <div className="md:col-span-12 space-y-1.5 p-4 rounded-2xl bg-slate-950/60 border border-slate-800 animate-fade-in">
-                <label className="text-xs font-bold text-rose-400 block">
-                  عنوان الهدية أو العرض الترحيبي (مثال: قهوة مجانية / خصم 15%):
-                </label>
-                <input
-                  type="text"
-                  value={welcomeOfferTitle}
-                  onChange={(e) => setWelcomeOfferTitle(e.target.value)}
-                  placeholder="خصم 15% على أول طلب"
-                  className="w-full bg-slate-900 border border-slate-800 focus:border-rose-400 rounded-xl px-4 py-2.5 text-xs text-white outline-none"
-                />
-              </div>
-            )}
 
             {/* Submit button */}
             <div className="md:col-span-12 flex items-center justify-between pt-3 border-t border-slate-800">
               <span className="text-xs text-slate-500">
-                يتم تطبيق رمز الـ PIN ومعدل النقاط فوراً على محفظة العملاء وشاشة الكاشير
+                يتم تطبيق رمز الـ PIN وسقف الفاتورة فوراً على شاشات الكاشير
               </span>
 
               <button

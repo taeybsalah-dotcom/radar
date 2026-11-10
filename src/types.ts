@@ -439,7 +439,7 @@ export interface Store {
   telegram_chat_id?: string | null;
   telegram_notifications_enabled?: boolean;
   slider_images?: StoreBanner[]; // صور معرض وسلايدر واجهة العميل
-  welcome_gift_type?: 'POINTS' | 'OFFER' | 'NONE'; // نوع الهدية الترحيبية للعميل الجديد
+  welcome_gift_type?: 'POINTS' | 'STAMPS' | 'OFFER' | 'NONE'; // نوع الهدية الترحيبية للعميل الجديد (نقاط، أختام، أو كوبون)
   welcome_points?: number; // عدد النقاط إذا كانت الهدية نقاطاً (مثال: 50)
   welcome_offer_title?: string; // عنوان العرض أو التجربة المجانية إذا كانت الهدية عرضاً (مثال: قهوة مجانية ترحيبية)
   max_cashier_invoice_amount?: number; // سقف الفواتير العادية للكاشير (مثال: 500 ريال) - ما زاد يتطلب رمز المدير
