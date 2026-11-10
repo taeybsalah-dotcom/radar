@@ -3466,19 +3466,6 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
     }
   }, [catalogTabs, catalogSection]);
 
-  if (!authenticatedAdmin) {
-    return (
-      <StaffLoginGate
-        store={store}
-        requiredRole="admin"
-        onAuthenticated={(staff) => {
-          setAuthenticatedAdmin(staff);
-          loadAdminData();
-        }}
-      />
-    );
-  }
-
   const isPureLoyaltyMode =
     activeStoreModules.loyalty &&
     !activeStoreModules.orders &&
@@ -3659,6 +3646,19 @@ export const StoreAdmin: React.FC<StoreAdminProps> = ({ store: initialStore }) =
   }, [tabsConfig, activeTab]);
 
   const currentTabConfig = tabsConfig.find((t) => t.id === activeTab);
+
+  if (!authenticatedAdmin) {
+    return (
+      <StaffLoginGate
+        store={store}
+        requiredRole="admin"
+        onAuthenticated={(staff) => {
+          setAuthenticatedAdmin(staff);
+          loadAdminData();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6 animate-fade-in text-slate-200">

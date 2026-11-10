@@ -38,7 +38,11 @@ export interface TenantRecord {
   pwa_name?: string | null;
   copyright_holder?: string | null;
   status: 'active' | 'suspended' | 'maintenance';
+  admin_name?: string | null;
+  admin_phone?: string | null;
   admin_email?: string | null;
+  admin_user_id?: string | null;
+  admin_password?: string;
   created_at: string;
   updated_at: string;
   // Computed / Aggregated KPIs:
@@ -193,7 +197,7 @@ export async function executeMasterUpdateTenant(
 }
 
 /**
- * 🚀 Deploy / Seed a New Strategic Tenant (White-Label Agency)
+ * 🚀 Deploy / Seed a New Strategic Tenant (White-Label Agency) Atomically
  */
 export async function executeMasterCreateTenant(
   data: Partial<TenantRecord>
@@ -213,54 +217,40 @@ export async function executeMasterCreateTenant(
         .replace(/^www\./i, '')
     : null;
 
+  const cleanLogo =
+    data.logo_url && data.logo_url.trim() !== '' && data.logo_url !== '/favicon.png'
+      ? data.logo_url.trim()
+      : null;
+
   const payload = {
     ...data,
     id,
     slug,
     custom_domain: cleanDomain,
+    logo_url: cleanLogo,
+    favicon_url: cleanLogo,
   };
 
   try {
-    // 1. Try Sovereign RPC
+    // 1. Atomic Sovereign RPC (Creates tenant + integrations + billing plans + bonus rules + admin auth user)
     const { data: rpcData, error: rpcErr } = await masterSupabase.rpc('master_create_tenant', {
       p_master_token: SOVEREIGN_MASTER_TOKEN,
       p_data: payload,
     });
 
-    if (!rpcErr && (rpcData as any)?.success) {
-      return { success: true, tenant_id: (rpcData as any).tenant_id };
-    }
     if (rpcErr) {
-      console.warn('master_create_tenant RPC error:', rpcErr);
+      return { success: false, error: rpcErr.message || 'فشل تدشين الوكيل عبر المحرك السيادي' };
     }
-  } catch (err) {
-    console.warn('master_create_tenant RPC exception:', err);
-  }
 
-  // 2. Direct Table fallback
-  const { error: insertErr } = await masterSupabase.from('tenants').insert([
-    {
-      id,
-      name: data.name || 'وكيل جديد',
-      name_en: data.name_en || null,
-      tagline: data.tagline || 'منظومة الولاء ونقاط البيع السحابية الذكية',
-      slug,
-      custom_domain: cleanDomain,
-      logo_url: data.logo_url || '/favicon.png',
-      favicon_url: data.favicon_url || '/favicon.png',
-      support_phone: data.support_phone || '+966500000000',
-      support_whatsapp: data.support_whatsapp || '966500000000',
-      support_email: data.support_email || 'support@al-athar.cloud',
-      primary_color_hex: data.primary_color_hex || '#F59E0B',
-      accent_color_hex: data.accent_color_hex || '#10B981',
-      pwa_name: data.pwa_name || data.name,
-      copyright_holder: data.copyright_holder || 'جميع الحقوق محفوظة',
-      status: 'active',
-    },
-  ]);
+    if ((rpcData as any)?.success) {
+      return { success: true, tenant_id: (rpcData as any).tenant_id || id };
+    }
 
-  if (insertErr) {
-    return { success: false, error: insertErr.message };
+    if ((rpcData as any)?.error) {
+      return { success: false, error: (rpcData as any).error };
+    }
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'حدث خطأ أثناء الاتصال بالمحرك السيادي' };
   }
 
   return { success: true, tenant_id: id };
@@ -480,41 +470,34 @@ export async function executeMasterSql(sqlScript: string): Promise<SqlExecutionR
 }
 
 /**
- * 🔑 Sovereign Provision / Reset Tenant Admin Credentials
+ * 🔑 Sovereign Provision / Reset Tenant Admin Credentials & Owner Info
  */
 export async function executeMasterProvisionTenantAdmin(
   tenantId: string,
   email: string,
-  password: string
+  password: string,
+  adminName?: string,
+  adminPhone?: string
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
     const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Try GoTrue native signup first (if new user, GoTrue sets up native tables)
-    try {
-      await masterSupabase.auth.signUp({
-        email: cleanEmail,
-        password: password,
-      });
-    } catch (e) {
-      // Ignore if user already exists or needs schema sanitize
-    }
-
-    // 2. Call Sovereign RPC to confirm email, set role/tenant_id, sanitize NULL columns, and update password
+    // Call Sovereign RPC to create/update auth user, confirm email, set role/tenant_id, and save owner profile in public.tenants
     const { data, error } = await masterSupabase.rpc('master_provision_tenant_admin', {
       p_master_token: SOVEREIGN_MASTER_TOKEN,
       p_tenant_id: tenantId,
       p_email: cleanEmail,
       p_password: password,
+      p_admin_name: adminName ? adminName.trim() : null,
+      p_admin_phone: adminPhone ? adminPhone.trim() : null,
     });
 
     if (error) {
-      // Fallback: If RPC is not registered yet, return descriptive error
-      return { 
-        success: false, 
-        error: error.message.includes('Could not find the function') 
-          ? 'دالة master_provision_tenant_admin غير مثبتة بعد في قاعدة البيانات. يرجى تشغيل كود التأسيس في Supabase SQL Editor لمرة واحدة.'
-          : error.message 
+      return {
+        success: false,
+        error: error.message.includes('Could not find the function')
+          ? 'دالة master_provision_tenant_admin غير مثبتة بعد في قاعدة البيانات.'
+          : error.message,
       };
     }
 

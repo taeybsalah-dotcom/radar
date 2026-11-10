@@ -39,7 +39,7 @@ import {
 import { LoyaltyService, getSupabaseClient } from '../lib/supabase';
 import { LoyaltyEvents, type LoyaltyEventPayload } from '../lib/events';
 import type { BillingPlan } from '../types';
-import { getActiveTenantConfig } from '../config/tenant';
+import { getActiveTenantConfig, subscribeTenantBranding } from '../config/tenant';
 import confetti from 'canvas-confetti';
 
 // ==============================================================================
@@ -120,13 +120,20 @@ export const MerchantJoinLanding: React.FC = () => {
     const handleFocus = () => loadPlans();
     window.addEventListener('focus', handleFocus);
 
+    const unsubBranding = subscribeTenantBranding(() => {
+      setBrandingTick((t) => t + 1);
+      loadPlans();
+    });
+
     return () => {
       unsub();
+      unsubBranding();
       window.removeEventListener('focus', handleFocus);
     };
   }, []);
 
   // Dynamic White-Label Tenant Configuration
+  const [, setBrandingTick] = useState(0);
   const tenant = getActiveTenantConfig();
 
   // Capture referral code quietly in background without clutter

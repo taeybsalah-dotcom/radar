@@ -1061,11 +1061,18 @@ export function App() {
     return (
       <div className="min-h-screen bg-[#080B11] flex flex-col items-center justify-center text-slate-100 selection:bg-amber-500 selection:text-black">
         <div className="flex flex-col items-center gap-4 text-center px-4 animate-fade-in">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 text-3xl shadow-xl shadow-emerald-500/20 font-black animate-pulse overflow-hidden">
+          <div className="w-16 h-16 rounded-full bg-slate-900 border border-emerald-500/30 flex items-center justify-center text-slate-950 text-3xl shadow-xl shadow-emerald-500/20 font-black overflow-hidden">
             {tenant.logoUrl ? (
-              <img src={tenant.logoUrl} alt={tenant.brandName} className="w-full h-full object-cover" />
+              <img
+                src={tenant.logoUrl}
+                alt={tenant.brandName}
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                }}
+              />
             ) : (
-              <span>⚡</span>
+              <span className="text-emerald-400 text-lg">{tenant.brandName.slice(0, 2)}</span>
             )}
           </div>
           <div className="space-y-1">

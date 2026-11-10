@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Store, StoreOnboardingPayload, MerchantLead, LeadStatus, StoreInvoice, UnifiedLifecycleStage, UnifiedStageInfo, resolveUnifiedStage, getStoreUnifiedStage, getStoreActiveModules } from '../types';
 import { LoyaltyService, normalizePhone, getSupabaseClient } from '../lib/supabase';
-import { getActiveTenantConfig } from '../config/tenant';
+import { getActiveTenantConfig, subscribeTenantBranding } from '../config/tenant';
 import { LoyaltyEvents, LoyaltyEventPayload } from '../lib/events';
 import { debounce } from '../lib/debounce';
 import { useAuth } from '../context/AuthContext';
@@ -121,6 +121,13 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
   const [activeStoreMenuId, setActiveStoreMenuId] = useState<string | null>(null);
 
   const [currentAdminUser, setCurrentAdminUser] = useState<SuperAdminUser | null>(null);
+  const [, setBrandingTick] = useState(0);
+
+  useEffect(() => {
+    return subscribeTenantBranding(() => {
+      setBrandingTick((t) => t + 1);
+    });
+  }, []);
 
   const canPerform = (perm: keyof AdminPermissions): boolean => {
     if (!currentAdminUser) return true;
@@ -1187,14 +1194,18 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({ onSele
       <div className="max-w-md mx-auto py-12 px-4 animate-fade-in text-center">
         <div className="rounded-3xl p-8 bg-slate-900/90 border-2 border-amber-500/40 shadow-2xl backdrop-blur-2xl space-y-6">
           <div className="w-24 h-24 mx-auto rounded-full p-2 bg-slate-950/80 border border-slate-700/80 shadow-xl flex items-center justify-center overflow-hidden">
-            <img
-              src={getActiveTenantConfig().logoUrl || "/sadeem-logo.jpg"}
-              alt={getActiveTenantConfig().brandName}
-              className="w-full h-full object-cover rounded-full"
-              onError={(e) => {
-                (e.target as any).src = 'https://zagpvflyizbmzsbmhnts.supabase.co/storage/v1/object/public/store-assets/logos/sadeem-official-logo.jpg';
-              }}
-            />
+            {getActiveTenantConfig().logoUrl ? (
+              <img
+                src={getActiveTenantConfig().logoUrl}
+                alt={getActiveTenantConfig().brandName}
+                className="w-full h-full object-cover rounded-full"
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                }}
+              />
+            ) : (
+              <span className="text-amber-400 font-black text-2xl">{getActiveTenantConfig().brandName.slice(0, 2)}</span>
+            )}
           </div>
 
           <div className="space-y-2">

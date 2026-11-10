@@ -58,6 +58,48 @@ import {
 } from './lib/masterApi';
 import { compressAndUploadLogo, CompressionResult } from './lib/imageCompressor';
 
+// 🛡️ Zero-Flicker Tenant Logo Component (Prevents infinite 404 onError loops)
+const TenantLogo: React.FC<{
+  url?: string | null;
+  name?: string;
+  primaryColor?: string | null;
+}> = ({ url, name, primaryColor }) => {
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [url]);
+
+  const cleanUrl = url && url.trim() !== '' && url !== '/favicon.png' && url !== '/favicon.ico' ? url.trim() : '';
+
+  if (cleanUrl && !hasError) {
+    return (
+      <img
+        src={cleanUrl}
+        alt={name || 'Logo'}
+        className="w-full h-full object-contain rounded-xl"
+        onError={(e) => {
+          e.currentTarget.onerror = null;
+          setHasError(true);
+        }}
+      />
+    );
+  }
+
+  const initials = (name || 'وكالة').trim().slice(0, 2);
+  return (
+    <div
+      className="w-full h-full rounded-xl flex items-center justify-center font-black text-sm tracking-wider select-none"
+      style={{
+        backgroundColor: `${primaryColor || '#F59E0B'}20`,
+        color: primaryColor || '#F59E0B',
+      }}
+    >
+      {initials || <Building className="w-6 h-6 text-slate-400" />}
+    </div>
+  );
+};
+
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'tenants' | 'wallets' | 'security' | 'sql'>('tenants');
   const [tenants, setTenants] = useState<TenantRecord[]>([]);
@@ -83,6 +125,7 @@ export const App: React.FC = () => {
 
   // Modals
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [createFormData, setCreateFormData] = useState({
     id: '',
     name: '',
@@ -90,13 +133,31 @@ export const App: React.FC = () => {
     slug: '',
     custom_domain: '',
     tagline: 'منظومة الولاء ونقاط البيع السحابية الذكية',
-    support_phone: '+966500000000',
-    support_whatsapp: '966500000000',
-    support_email: 'support@al-athar.cloud',
+    admin_name: '',
+    admin_phone: '',
+    admin_email: '',
+    admin_password: '',
+    support_phone: '',
+    support_whatsapp: '',
+    support_email: '',
     primary_color_hex: '#10B981',
-    accent_color_hex: '#0EA5E9',
-    logo_url: '/favicon.png',
+    accent_color_hex: '#F59E0B',
+    logo_url: '',
   });
+
+  // 🎉 Celebratory Agent Handover Modal (Like Merchant Onboarding Result)
+  const [onboardedAgentResult, setOnboardedAgentResult] = useState<{
+    id: string;
+    name: string;
+    slug: string;
+    custom_domain: string;
+    logo_url: string;
+    primary_color_hex: string;
+    admin_name: string;
+    admin_phone: string;
+    admin_email: string;
+    admin_password: string;
+  } | null>(null);
 
   const [showEditModal, setShowEditModal] = useState(false);
   const [editTarget, setEditTarget] = useState<TenantRecord | null>(null);
@@ -105,6 +166,8 @@ export const App: React.FC = () => {
     name_en: '',
     custom_domain: '',
     tagline: '',
+    admin_name: '',
+    admin_phone: '',
     support_phone: '',
     support_whatsapp: '',
     support_email: '',
@@ -116,6 +179,8 @@ export const App: React.FC = () => {
   // 🔑 Credentials Management Modal
   const [showCredentialsModal, setShowCredentialsModal] = useState(false);
   const [credentialsTarget, setCredentialsTarget] = useState<TenantRecord | null>(null);
+  const [credNameInput, setCredNameInput] = useState('');
+  const [credPhoneInput, setCredPhoneInput] = useState('');
   const [credEmailInput, setCredEmailInput] = useState('');
   const [credPasswordInput, setCredPasswordInput] = useState('');
   const [showCredPassword, setShowCredPassword] = useState(false);
@@ -129,7 +194,7 @@ export const App: React.FC = () => {
 
   // SQL Console
   const [sqlScript, setSqlScript] = useState(`-- ⚡ استعلام سيادي مباشر على قاعدة الأثر
-SELECT id, name, slug, custom_domain, status 
+SELECT id, name, slug, custom_domain, admin_name, admin_phone, admin_email, status 
 FROM public.tenants;`);
   const [sqlResult, setSqlResult] = useState<SqlExecutionResult | null>(null);
   const [isExecutingSql, setIsExecutingSql] = useState(false);
@@ -252,17 +317,76 @@ FROM public.tenants;`);
     }
   }
 
-  // Create Agency Submission
+  function generateCreatePassword() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
+    let pw = '';
+    for (let i = 0; i < 10; i++) {
+      pw += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setCreateFormData((prev) => ({ ...prev, admin_password: pw }));
+    setShowCreatePassword(true);
+  }
+
+  // Create Agency Submission (Atomic Onboarding + Handover Card)
   async function handleCreateTenantSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!createFormData.name.trim() || !createFormData.slug.trim()) {
+      setError('يرجى إدخال اسم الوكيل والرمز الفريد (slug)');
+      return;
+    }
+    if (!createFormData.admin_name.trim() || !createFormData.admin_phone.trim()) {
+      setError('يرجى إدخال اسم المدير المسؤول ورقم جواله');
+      return;
+    }
+    if (!createFormData.admin_email.trim() || !createFormData.admin_password.trim()) {
+      setError('يرجى إدخال البريد الإلكتروني وكلمة المرور لحساب المدير المسؤول');
+      return;
+    }
+    if (createFormData.admin_password.trim().length < 6) {
+      setError('كلمة المرور يجب ألا تقل عن 6 خانات');
+      return;
+    }
+
     setActionLoading('create-tenant');
     setError(null);
     setSuccessMsg(null);
     try {
-      const res = await executeMasterCreateTenant(createFormData);
+      const finalSupportWhatsapp = createFormData.support_whatsapp.trim() || createFormData.admin_phone.trim();
+      const finalSupportPhone = createFormData.support_phone.trim() || createFormData.admin_phone.trim();
+      const finalSupportEmail = createFormData.support_email.trim() || createFormData.admin_email.trim().toLowerCase();
+
+      const payload = {
+        ...createFormData,
+        admin_name: createFormData.admin_name.trim(),
+        admin_phone: createFormData.admin_phone.trim(),
+        admin_email: createFormData.admin_email.trim().toLowerCase(),
+        admin_password: createFormData.admin_password.trim(),
+        support_whatsapp: finalSupportWhatsapp,
+        support_phone: finalSupportPhone,
+        support_email: finalSupportEmail,
+      };
+
+      const res = await executeMasterCreateTenant(payload);
       if (res.success) {
-        setSuccessMsg(`تم تدشين الوكيل الاستراتيجي "${createFormData.name}" بنجاح في المنظومة!`);
+        setSuccessMsg(`تم تدشين الوكيل الاستراتيجي "${createFormData.name}" وتوليد مفاتيح الدخول بنجاح!`);
         setShowCreateModal(false);
+        setOnboardedAgentResult({
+          id: res.tenant_id || createFormData.slug,
+          name: createFormData.name.trim(),
+          slug: createFormData.slug.trim().toLowerCase(),
+          custom_domain: createFormData.custom_domain
+            .trim()
+            .replace(/^https?:\/\//i, '')
+            .replace(/\/.*$/, '')
+            .replace(/^www\./i, ''),
+          logo_url: createFormData.logo_url,
+          primary_color_hex: createFormData.primary_color_hex,
+          admin_name: createFormData.admin_name.trim(),
+          admin_phone: createFormData.admin_phone.trim(),
+          admin_email: createFormData.admin_email.trim().toLowerCase(),
+          admin_password: createFormData.admin_password.trim(),
+        });
+
         setCreateFormData({
           id: '',
           name: '',
@@ -270,13 +394,18 @@ FROM public.tenants;`);
           slug: '',
           custom_domain: '',
           tagline: 'منظومة الولاء ونقاط البيع السحابية الذكية',
-          support_phone: '+966500000000',
-          support_whatsapp: '966500000000',
-          support_email: 'support@al-athar.cloud',
+          admin_name: '',
+          admin_phone: '',
+          admin_email: '',
+          admin_password: '',
+          support_phone: '',
+          support_whatsapp: '',
+          support_email: '',
           primary_color_hex: '#10B981',
-          accent_color_hex: '#0EA5E9',
-          logo_url: '/favicon.png',
+          accent_color_hex: '#F59E0B',
+          logo_url: '',
         });
+        setCreateLogoSavingsMsg(null);
         await loadAllData();
       } else {
         setError(res.error || 'فشل تدشين الوكيل');
@@ -296,13 +425,16 @@ FROM public.tenants;`);
       name_en: tenant.name_en || '',
       custom_domain: tenant.custom_domain || '',
       tagline: tenant.tagline || '',
+      admin_name: tenant.admin_name || '',
+      admin_phone: tenant.admin_phone || tenant.support_whatsapp || '',
       support_phone: tenant.support_phone || '',
       support_whatsapp: tenant.support_whatsapp || '',
       support_email: tenant.support_email || '',
       primary_color_hex: tenant.primary_color_hex || '#F59E0B',
       accent_color_hex: tenant.accent_color_hex || '#10B981',
-      logo_url: tenant.logo_url || '',
+      logo_url: tenant.logo_url && tenant.logo_url !== '/favicon.png' ? tenant.logo_url : '',
     });
+    setEditLogoSavingsMsg(null);
     setShowEditModal(true);
   }
 
@@ -316,7 +448,7 @@ FROM public.tenants;`);
     try {
       const res = await executeMasterUpdateTenant(editTarget.id, editFormData);
       if (res.success) {
-        setSuccessMsg(`تم تحديث هوية ونطاق الوكيل "${editFormData.name}" بنجاح!`);
+        setSuccessMsg(`تم تحديث هوية وبيانات الوكيل "${editFormData.name}" بنجاح!`);
         setShowEditModal(false);
         await loadAllData();
       } else {
@@ -332,8 +464,9 @@ FROM public.tenants;`);
   // 🔑 Credentials Handlers
   function openCredentialsModal(tenant: TenantRecord) {
     setCredentialsTarget(tenant);
-    // Prefill with existing admin_email or fallback to custom_domain/slug email
-    const defaultEmail = tenant.admin_email || `admin@${tenant.custom_domain || tenant.slug + '.com'}`;
+    const defaultEmail = tenant.admin_email || `admin@${tenant.custom_domain || tenant.slug + '.sa'}`;
+    setCredNameInput(tenant.admin_name || `مدير وكالة ${tenant.name}`);
+    setCredPhoneInput(tenant.admin_phone || tenant.support_whatsapp || '');
     setCredEmailInput(defaultEmail);
     setCredPasswordInput('');
     setShowCredPassword(false);
@@ -365,14 +498,28 @@ FROM public.tenants;`);
       const res = await executeMasterProvisionTenantAdmin(
         credentialsTarget.id,
         credEmailInput.trim(),
-        credPasswordInput.trim()
+        credPasswordInput.trim(),
+        credNameInput.trim(),
+        credPhoneInput.trim()
       );
 
       if (res.success) {
         setSuccessMsg(
-          `تم بنجاح تعيين البريد وكلمة المرور للوكيل "${credentialsTarget.name}"! يمكن للوكيل الآن تسجيل الدخول مباشرة بدون أي تدخل تقني.`
+          `تم بنجاح حفظ بيانات المدير (${credNameInput}) وتعيين البريد وكلمة المرور للوكيل "${credentialsTarget.name}"!`
         );
         setShowCredentialsModal(false);
+        setOnboardedAgentResult({
+          id: credentialsTarget.id,
+          name: credentialsTarget.name,
+          slug: credentialsTarget.slug,
+          custom_domain: credentialsTarget.custom_domain || '',
+          logo_url: credentialsTarget.logo_url || '',
+          primary_color_hex: credentialsTarget.primary_color_hex || '#10B981',
+          admin_name: credNameInput.trim(),
+          admin_phone: credPhoneInput.trim(),
+          admin_email: credEmailInput.trim().toLowerCase(),
+          admin_password: credPasswordInput.trim(),
+        });
         await loadAllData();
       } else {
         setError(res.error || 'فشل تعيين حساب الوكيل');
@@ -703,19 +850,12 @@ FROM public.tenants;`);
                         {/* Header: Logo, Name, Badge & Status */}
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-center gap-3">
-                            <div className="w-14 h-14 rounded-2xl bg-slate-800/80 border border-slate-700 p-2 flex items-center justify-center overflow-hidden flex-shrink-0">
-                              {tenant.logo_url ? (
-                                <img
-                                  src={tenant.logo_url}
-                                  alt={tenant.name}
-                                  className="w-full h-full object-contain"
-                                  onError={(e) => {
-                                    (e.target as any).src = '/favicon.png';
-                                  }}
-                                />
-                              ) : (
-                                <Building className="w-7 h-7 text-slate-400" />
-                              )}
+                            <div className="w-14 h-14 rounded-2xl bg-slate-800/80 border border-slate-700 p-1.5 flex items-center justify-center overflow-hidden flex-shrink-0">
+                              <TenantLogo
+                                url={tenant.logo_url}
+                                name={tenant.name}
+                                primaryColor={tenant.primary_color_hex}
+                              />
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
@@ -727,6 +867,11 @@ FROM public.tenants;`);
                                 )}
                                 {isSadeem && (
                                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                    وكيل استراتيجي معتمد ⭐
+                                  </span>
+                                )}
+                                {!isRadar && !isSadeem && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">
                                     وكيل استراتيجي معتمد ⭐
                                   </span>
                                 )}
@@ -764,26 +909,37 @@ FROM public.tenants;`);
                           </p>
                         )}
 
-                        {/* Domain & URL Box */}
+                        {/* Domain & Local Preview Box */}
                         <div className="space-y-2">
-                          <label className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
-                            <Globe className="w-3.5 h-3.5 text-slate-400" />
-                            <span>رابط المنصة الرسمي (Custom Domain):</span>
+                          <label className="text-xs font-bold text-slate-400 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <Globe className="w-3.5 h-3.5 text-slate-400" />
+                              <span>رابط المنصة الرسمي والمعاينة المحلية:</span>
+                            </span>
+                            <a
+                              href={`http://localhost:3000/?tenant=${tenant.slug}&portal=superadmin`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                            >
+                              <span>معاينة بوابة الوكيل محلياً</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
                           </label>
                           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
                             <a
-                              href={`https://${tenant.custom_domain || (isRadar ? 'myradar.sarl' : 'sdeemalathr.com')}`}
+                              href={`https://${tenant.custom_domain || (isRadar ? 'myradar.sarl' : isSadeem ? 'sdeemalathr.com' : `${tenant.slug}.sa`)}`}
                               target="_blank"
                               rel="noreferrer"
                               className="text-sm font-mono text-amber-400 hover:text-amber-300 flex items-center gap-1.5 truncate"
                             >
-                              <span>https://{tenant.custom_domain || (isRadar ? 'myradar.sarl' : 'sdeemalathr.com')}</span>
+                              <span>https://{tenant.custom_domain || (isRadar ? 'myradar.sarl' : isSadeem ? 'sdeemalathr.com' : `${tenant.slug}.sa`)}</span>
                               <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
                             </a>
                             <button
                               onClick={() => {
                                 navigator.clipboard.writeText(
-                                  `https://${tenant.custom_domain || (isRadar ? 'myradar.sarl' : 'sdeemalathr.com')}`
+                                  `https://${tenant.custom_domain || (isRadar ? 'myradar.sarl' : isSadeem ? 'sdeemalathr.com' : `${tenant.slug}.sa`)}`
                                 );
                                 setSuccessMsg('تم نسخ رابط منصة الوكيل');
                               }}
@@ -796,7 +952,7 @@ FROM public.tenants;`);
                         </div>
 
                         {/* Statistics & Colors Details */}
-                        <div className="grid grid-cols-2 gap-3 pt-2">
+                        <div className="grid grid-cols-2 gap-3 pt-1">
                           <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80">
                             <span className="text-[11px] text-slate-400 block">المتاجر التابعة</span>
                             <span className="text-lg font-black text-white">{tenant.stores_count || 0} متجر</span>
@@ -821,27 +977,46 @@ FROM public.tenants;`);
                           </div>
                         </div>
 
-                        {/* Admin Account Strip */}
-                        <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 text-xs truncate">
-                            <div className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400">
-                              <Lock className="w-4 h-4" />
+                        {/* Admin Account & Owner Info Strip */}
+                        <div className="p-3.5 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-xs truncate">
+                              <div className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400">
+                                <Lock className="w-4 h-4" />
+                              </div>
+                              <div className="truncate">
+                                <span className="text-[10px] text-slate-400 block font-bold">
+                                  المدير المسؤول وحساب الدخول:
+                                </span>
+                                <span className="text-white font-bold text-xs block truncate">
+                                  {tenant.admin_name || `إدارة ${tenant.name}`}
+                                </span>
+                              </div>
                             </div>
+                            <button
+                              type="button"
+                              onClick={() => openCredentialsModal(tenant)}
+                              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-amber-600/20 hover:from-amber-500/30 hover:to-amber-600/30 text-amber-300 hover:text-white text-xs font-bold flex items-center gap-1.5 border border-amber-500/40 transition flex-shrink-0 shadow-sm"
+                            >
+                              <KeyRound className="w-3.5 h-3.5" />
+                              <span>إدارة الحساب وكلمة المرور</span>
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-amber-500/10 text-[11px]">
                             <div className="truncate">
-                              <span className="text-[10px] text-slate-400 block font-bold">حساب المسؤول المعتمد:</span>
-                              <span className="font-mono text-amber-300 font-bold truncate text-xs">
+                              <span className="text-slate-400 block text-[10px]">الإيميل الرسمي للدخول:</span>
+                              <span className="font-mono text-amber-300 font-bold truncate block">
                                 {tenant.admin_email || 'لم يتم تعيين حساب بعد'}
                               </span>
                             </div>
+                            <div className="truncate">
+                              <span className="text-slate-400 block text-[10px]">رقم جوال المالك:</span>
+                              <span className="font-mono text-emerald-300 font-bold truncate block">
+                                {tenant.admin_phone || tenant.support_whatsapp || '—'}
+                              </span>
+                            </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => openCredentialsModal(tenant)}
-                            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-amber-600/20 hover:from-amber-500/30 hover:to-amber-600/30 text-amber-300 hover:text-white text-xs font-bold flex items-center gap-1.5 border border-amber-500/40 transition flex-shrink-0 shadow-sm"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" />
-                            <span>إدارة كلمة المرور</span>
-                          </button>
                         </div>
 
                         {/* Contacts Strip */}
@@ -887,11 +1062,11 @@ FROM public.tenants;`);
                           </button>
 
                           <a
-                            href={`https://${tenant.custom_domain || (isRadar ? 'myradar.sarl' : 'sdeemalathr.com')}`}
+                            href={`http://localhost:3000/?tenant=${tenant.slug}&portal=superadmin`}
                             target="_blank"
                             rel="noreferrer"
                             className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition"
-                            title="فتح بوابة الوكيل"
+                            title="فتح بوابة الوكيل محلياً"
                           >
                             <ExternalLink className="w-4 h-4" />
                           </a>
@@ -1358,19 +1533,21 @@ FROM public.tenants;`);
       </main>
 
       {/* ========================================================================= */}
-      {/* ➕ MODAL: CREATE STRATEGIC AGENCY */}
+      {/* ➕ MODAL: CREATE STRATEGIC AGENCY (CONCIERGE ONBOARDING) */}
       {/* ========================================================================= */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-xl w-full p-6 space-y-6 shadow-2xl animate-in zoom-in-95">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 space-y-5 shadow-2xl animate-in zoom-in-95 max-h-[92vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400">
                   <Building className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-white">تدشين وكيل استراتيجي جديد</h3>
-                  <p className="text-xs text-slate-400">إضافة وكيل متناظر بالكامل مع رادار وسديم في جدول tenants</p>
+                  <h3 className="text-lg font-bold text-white">تدشين وكيل استراتيجي جديد (Concierge Onboarding)</h3>
+                  <p className="text-xs text-slate-400">
+                    إنشاء الوكالة + حساب المدير المسؤول + باقات الاشتراك + عزل أمني كامل بضغطة زر
+                  </p>
                 </div>
               </div>
               <button
@@ -1382,77 +1559,189 @@ FROM public.tenants;`);
             </div>
 
             <form onSubmit={handleCreateTenantSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">اسم الوكيل (عربي) *</label>
-                  <input
-                    type="text"
-                    required
-                    value={createFormData.name}
-                    onChange={(e) => setCreateFormData({ ...createFormData, name: e.target.value })}
-                    placeholder="مثال: أفق الأثر"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">الرمز الفريد (slug / id) *</label>
-                  <input
-                    type="text"
-                    required
-                    value={createFormData.slug}
-                    onChange={(e) =>
-                      setCreateFormData({
-                        ...createFormData,
-                        slug: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
-                        id: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''),
-                      })
-                    }
-                    placeholder="ofooq"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">النطاق المخصص (Custom Domain)</label>
-                  <input
-                    type="text"
-                    value={createFormData.custom_domain}
-                    onChange={(e) => setCreateFormData({ ...createFormData, custom_domain: e.target.value })}
-                    placeholder="ofooq.sa أو ofooq-alathr.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">الاسم بالإنجليزي</label>
-                  <input
-                    type="text"
-                    value={createFormData.name_en}
-                    onChange={(e) => setCreateFormData({ ...createFormData, name_en: e.target.value })}
-                    placeholder="Ofooq"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">شعار المنظومة (Tagline)</label>
-                <input
-                  type="text"
-                  value={createFormData.tagline}
-                  onChange={(e) => setCreateFormData({ ...createFormData, tagline: e.target.value })}
-                  placeholder="منظومة الولاء ونقاط البيع السحابية الذكية"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
-                />
-              </div>
-
-              {/* Logo Upload with Canvas Compression */}
-              <div className="space-y-2 p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+              {/* Section 1: Agency Identity */}
+              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                    <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
-                    <span>شعار المنظومة الرسمي (Logo)</span>
+                  <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5" />
+                    <span>1. هوية المنظومة والنطاق السحابي</span>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">اسم الوكيل (عربي) *</label>
+                    <input
+                      type="text"
+                      required
+                      value={createFormData.name}
+                      onChange={(e) => setCreateFormData({ ...createFormData, name: e.target.value })}
+                      placeholder="مثال: أفق الأثر"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">الرمز الفريد (slug / id) *</label>
+                    <input
+                      type="text"
+                      required
+                      dir="ltr"
+                      value={createFormData.slug}
+                      onChange={(e) => {
+                        const cleanSlug = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                        setCreateFormData({
+                          ...createFormData,
+                          slug: cleanSlug,
+                          id: cleanSlug,
+                        });
+                      }}
+                      placeholder="ofooq"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">النطاق المخصص (Custom Domain)</label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={createFormData.custom_domain}
+                      onChange={(e) => setCreateFormData({ ...createFormData, custom_domain: e.target.value })}
+                      placeholder="ofooq.sa (اختياري - يعمل محلياً فوراً)"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1">الاسم بالإنجليزي</label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={createFormData.name_en}
+                      onChange={(e) => setCreateFormData({ ...createFormData, name_en: e.target.value })}
+                      placeholder="Ofooq Al-Athar"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm text-left focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">شعار المنظومة اللفظي (Tagline)</label>
+                  <input
+                    type="text"
+                    value={createFormData.tagline}
+                    onChange={(e) => setCreateFormData({ ...createFormData, tagline: e.target.value })}
+                    placeholder="منظومة الولاء ونقاط البيع السحابية الذكية"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Section 2: Owner & Manager Credentials (Saved in DB + Auth) */}
+              <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/25 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>2. بيانات مالك الوكالة وحساب الدخول الرسمي (تُحفظ في قاعدة البيانات)</span>
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 font-bold">
+                    تفعيل فوري للحساب
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-200 mb-1">اسم المدير المسؤول (المالك) *</label>
+                    <input
+                      type="text"
+                      required
+                      value={createFormData.admin_name}
+                      onChange={(e) => setCreateFormData({ ...createFormData, admin_name: e.target.value })}
+                      placeholder="مثال: أ. عبدالله القحطاني"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-200 mb-1">رقم جوال المدير (لواتساب التفعيل) *</label>
+                    <input
+                      type="tel"
+                      required
+                      dir="ltr"
+                      value={createFormData.admin_phone}
+                      onChange={(e) =>
+                        setCreateFormData({
+                          ...createFormData,
+                          admin_phone: e.target.value,
+                          support_whatsapp: createFormData.support_whatsapp || e.target.value,
+                          support_phone: createFormData.support_phone || e.target.value,
+                        })
+                      }
+                      placeholder="05XXXXXXXX أو 9665XXXXXXXX"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-200 mb-1">البريد الإلكتروني للدخول (Admin Email) *</label>
+                    <input
+                      type="email"
+                      required
+                      dir="ltr"
+                      value={createFormData.admin_email}
+                      onChange={(e) =>
+                        setCreateFormData({
+                          ...createFormData,
+                          admin_email: e.target.value,
+                          support_email: createFormData.support_email || e.target.value,
+                        })
+                      }
+                      placeholder="admin@ofooq.sa"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-slate-200">الرقم السري للدخول (Password) *</label>
+                      <button
+                        type="button"
+                        onClick={generateCreatePassword}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1"
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        <span>توليد سري قوي</span>
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showCreatePassword ? 'text' : 'password'}
+                        required
+                        dir="ltr"
+                        value={createFormData.admin_password}
+                        onChange={(e) => setCreateFormData({ ...createFormData, admin_password: e.target.value })}
+                        placeholder="6 خانات على الأقل"
+                        className="w-full px-3.5 py-2.5 pl-10 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCreatePassword(!showCreatePassword)}
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1"
+                      >
+                        {showCreatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 3: Logo & Visual Branding */}
+              <div className="space-y-3 p-4 rounded-2xl bg-slate-950/70 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span>3. الشعار الرسمي وألوان الهوية البصرية (ثابت بدون رمش)</span>
                   </label>
                   {createLogoSavingsMsg && (
                     <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
@@ -1462,26 +1751,19 @@ FROM public.tenants;`);
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-700 p-2 flex items-center justify-center overflow-hidden flex-shrink-0">
-                    {createFormData.logo_url ? (
-                      <img
-                        src={createFormData.logo_url}
-                        alt="Logo Preview"
-                        className="w-full h-full object-contain"
-                        onError={(e) => {
-                          (e.target as any).src = '/favicon.png';
-                        }}
-                      />
-                    ) : (
-                      <ImageIcon className="w-6 h-6 text-slate-600" />
-                    )}
+                  <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-700 p-1.5 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <TenantLogo
+                      url={createFormData.logo_url}
+                      name={createFormData.name || 'وكيل'}
+                      primaryColor={createFormData.primary_color_hex}
+                    />
                   </div>
 
                   <div className="flex-1 space-y-2">
                     <div className="flex items-center gap-2">
                       <label className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-amber-500/30 transition shadow-sm">
                         <Upload className="w-3.5 h-3.5" />
-                        <span>{isUploadingCreateLogo ? 'جاري ضغط الشعار ورفعه...' : '📷 رفع شعار من الجهاز (ضغط فوري)'}</span>
+                        <span>{isUploadingCreateLogo ? 'جاري ضغط الشعار ورفعه...' : '📷 رفع شعار من الجهاز (WebP فوري)'}</span>
                         <input
                           type="file"
                           accept="image/*"
@@ -1498,77 +1780,88 @@ FROM public.tenants;`);
                     </div>
                     <input
                       type="text"
+                      dir="ltr"
                       value={createFormData.logo_url}
                       onChange={(e) => setCreateFormData({ ...createFormData, logo_url: e.target.value })}
-                      placeholder="/sadeem-logo.svg أو رابط صورة مباشر"
-                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">اللون الأساسي (Primary HEX)</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={createFormData.primary_color_hex}
-                      onChange={(e) => setCreateFormData({ ...createFormData, primary_color_hex: e.target.value })}
-                      className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border border-slate-800"
-                    />
-                    <input
-                      type="text"
-                      value={createFormData.primary_color_hex}
-                      onChange={(e) => setCreateFormData({ ...createFormData, primary_color_hex: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono"
+                      placeholder="رابط الشعار المباشر أو ارفعه من جهازك أعلاه"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-left text-slate-300"
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">اللون الثانوي (Accent HEX)</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={createFormData.accent_color_hex}
-                      onChange={(e) => setCreateFormData({ ...createFormData, accent_color_hex: e.target.value })}
-                      className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border border-slate-800"
-                    />
-                    <input
-                      type="text"
-                      value={createFormData.accent_color_hex}
-                      onChange={(e) => setCreateFormData({ ...createFormData, accent_color_hex: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono"
-                    />
+                {/* Preset Color Themes */}
+                <div className="pt-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-400">ثيمات ألوان جاهزة:</span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {[
+                        { label: 'زمردي فخم', primary: '#10B981', accent: '#F59E0B' },
+                        { label: 'ذهبي ملكي', primary: '#F59E0B', accent: '#10B981' },
+                        { label: 'أزرق سماوي', primary: '#0EA5E9', accent: '#6366F1' },
+                        { label: 'بنفسجي حديث', primary: '#8B5CF6', accent: '#EC4899' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() =>
+                            setCreateFormData({
+                              ...createFormData,
+                              primary_color_hex: preset.primary,
+                              accent_color_hex: preset.accent,
+                            })
+                          }
+                          className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-300 flex items-center gap-1.5 transition"
+                        >
+                          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: preset.primary }} />
+                          <span>{preset.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">اللون الأساسي (Primary HEX)</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={createFormData.primary_color_hex}
+                          onChange={(e) => setCreateFormData({ ...createFormData, primary_color_hex: e.target.value })}
+                          className="w-10 h-9 rounded-xl bg-transparent cursor-pointer border border-slate-800"
+                        />
+                        <input
+                          type="text"
+                          dir="ltr"
+                          value={createFormData.primary_color_hex}
+                          onChange={(e) => setCreateFormData({ ...createFormData, primary_color_hex: e.target.value })}
+                          className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-left"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">اللون الثانوي (Accent HEX)</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={createFormData.accent_color_hex}
+                          onChange={(e) => setCreateFormData({ ...createFormData, accent_color_hex: e.target.value })}
+                          className="w-10 h-9 rounded-xl bg-transparent cursor-pointer border border-slate-800"
+                        />
+                        <input
+                          type="text"
+                          dir="ltr"
+                          value={createFormData.accent_color_hex}
+                          onChange={(e) => setCreateFormData({ ...createFormData, accent_color_hex: e.target.value })}
+                          className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-left"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">هاتف الدعم (واتساب)</label>
-                  <input
-                    type="text"
-                    value={createFormData.support_whatsapp}
-                    onChange={(e) => setCreateFormData({ ...createFormData, support_whatsapp: e.target.value })}
-                    placeholder="966500000000"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">إيميل الدعم</label>
-                  <input
-                    type="email"
-                    value={createFormData.support_email}
-                    onChange={(e) => setCreateFormData({ ...createFormData, support_email: e.target.value })}
-                    placeholder="support@ofooq.cloud"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
+              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-800">
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
@@ -1579,14 +1872,14 @@ FROM public.tenants;`);
                 <button
                   type="submit"
                   disabled={actionLoading === 'create-tenant'}
-                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold text-xs flex items-center gap-2"
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg shadow-amber-500/20"
                 >
                   {actionLoading === 'create-tenant' ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <PlusCircle className="w-4 h-4" />
                   )}
-                  <span>تدشين الوكيل فوراً</span>
+                  <span>تدشين الوكيل وتوليد الحساب والروابط فوراً 🚀</span>
                 </button>
               </div>
             </form>
@@ -1595,18 +1888,239 @@ FROM public.tenants;`);
       )}
 
       {/* ========================================================================= */}
+      {/* 🎉 MODAL: CELEBRATORY AGENT HANDOVER CARD (بطاقة تسليم الوكيل الجديد) */}
+      {/* ========================================================================= */}
+      {onboardedAgentResult && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border-2 border-emerald-500/40 rounded-3xl max-w-xl w-full p-6 space-y-5 shadow-2xl animate-in zoom-in-95 my-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3.5">
+                <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-emerald-500/40 p-1.5 flex items-center justify-center overflow-hidden flex-shrink-0">
+                  <TenantLogo
+                    url={onboardedAgentResult.logo_url}
+                    name={onboardedAgentResult.name}
+                    primaryColor={onboardedAgentResult.primary_color_hex}
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-black">
+                      تم التدشين والحفظ في السحابة ✓
+                    </span>
+                    <span className="text-xs font-mono text-slate-400">#{onboardedAgentResult.slug}</span>
+                  </div>
+                  <h3 className="text-xl font-black text-white mt-1">
+                    مبارك! وكالة «{onboardedAgentResult.name}» جاهزة للعمل 🎉
+                  </h3>
+                </div>
+              </div>
+              <button
+                onClick={() => setOnboardedAgentResult(null)}
+                className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-white"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Credentials Summary Box */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+              <div className="text-xs font-black text-amber-400 flex items-center justify-between">
+                <span>🔐 بيانات المدير المسؤول ومفاتيح الدخول المعتمدة:</span>
+                <span className="text-[10px] text-emerald-400 font-bold">محفوظة ومفعّلة</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800/80">
+                  <span className="text-slate-400 block text-[10px]">المدير المسؤول:</span>
+                  <span className="font-bold text-white">{onboardedAgentResult.admin_name}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800/80">
+                  <span className="text-slate-400 block text-[10px]">رقم الجوال (واتساب):</span>
+                  <span className="font-mono font-bold text-emerald-400" dir="ltr">
+                    {onboardedAgentResult.admin_phone}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-2.5 rounded-xl bg-slate-900 border border-amber-500/20 flex items-center justify-between">
+                  <div className="truncate">
+                    <span className="text-slate-400 block text-[10px]">البريد الإلكتروني للدخول:</span>
+                    <span className="font-mono font-bold text-amber-300" dir="ltr">
+                      {onboardedAgentResult.admin_email}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(onboardedAgentResult.admin_email);
+                      setSuccessMsg('تم نسخ البريد الإلكتروني');
+                    }}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                    title="نسخ الإيميل"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-slate-900 border border-amber-500/20 flex items-center justify-between">
+                  <div className="truncate">
+                    <span className="text-slate-400 block text-[10px]">الرقم السري (Password):</span>
+                    <span className="font-mono font-bold text-amber-300 tracking-wider" dir="ltr">
+                      {onboardedAgentResult.admin_password}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(onboardedAgentResult.admin_password);
+                      setSuccessMsg('تم نسخ الرقم السري');
+                    }}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                    title="نسخ الرقم السري"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Direct Portal Links (Local + Custom Domain) */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5">
+              <div className="text-xs font-black text-emerald-400 flex items-center justify-between">
+                <span>🌐 روابط المنصة الخاصة بالوكيل (تعمل فوراً بشعاره وهويته):</span>
+              </div>
+
+              {[
+                {
+                  title: '1. بوابة إدارة الوكيل والتجار (Super Admin)',
+                  localUrl: `http://localhost:3000/?tenant=${onboardedAgentResult.slug}&portal=superadmin`,
+                  prodUrl: onboardedAgentResult.custom_domain
+                    ? `https://${onboardedAgentResult.custom_domain}/?portal=superadmin`
+                    : null,
+                },
+                {
+                  title: '2. واجهة انضمام المتاجر والباقات للوكيل',
+                  localUrl: `http://localhost:3000/?tenant=${onboardedAgentResult.slug}`,
+                  prodUrl: onboardedAgentResult.custom_domain
+                    ? `https://${onboardedAgentResult.custom_domain}`
+                    : null,
+                },
+                {
+                  title: '3. بوابة شركاء النجاح والمسوقين للوكيل',
+                  localUrl: `http://localhost:3000/?tenant=${onboardedAgentResult.slug}&portal=partner`,
+                  prodUrl: onboardedAgentResult.custom_domain
+                    ? `https://${onboardedAgentResult.custom_domain}/?portal=partner`
+                    : null,
+                },
+              ].map((linkItem, idx) => (
+                <div
+                  key={idx}
+                  className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                >
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="text-xs font-bold text-slate-200">{linkItem.title}</div>
+                    <div className="text-[11px] font-mono text-amber-400 truncate" dir="ltr">
+                      {linkItem.prodUrl || linkItem.localUrl}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <a
+                      href={linkItem.localUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      <span>فتح ومعاينة</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(linkItem.prodUrl || linkItem.localUrl);
+                        setSuccessMsg('تم نسخ الرابط');
+                      }}
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      title="نسخ الرابط"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Actions: 1-Click WhatsApp Handover + Copy All */}
+            <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const baseUrl = onboardedAgentResult.custom_domain
+                    ? `https://${onboardedAgentResult.custom_domain}`
+                    : `http://localhost:3000/?tenant=${onboardedAgentResult.slug}`;
+                  const adminUrl = onboardedAgentResult.custom_domain
+                    ? `https://${onboardedAgentResult.custom_domain}/?portal=superadmin`
+                    : `http://localhost:3000/?tenant=${onboardedAgentResult.slug}&portal=superadmin`;
+                  const partnerUrl = onboardedAgentResult.custom_domain
+                    ? `https://${onboardedAgentResult.custom_domain}/?portal=partner`
+                    : `http://localhost:3000/?tenant=${onboardedAgentResult.slug}&portal=partner`;
+
+                  const rawPhone = onboardedAgentResult.admin_phone.replace(/[^0-9]/g, '');
+                  const intlPhone = rawPhone.startsWith('05')
+                    ? '966' + rawPhone.slice(1)
+                    : rawPhone.startsWith('5') && rawPhone.length === 9
+                    ? '966' + rawPhone
+                    : rawPhone;
+
+                  const msg = [
+                    `مرحباً بك أ. ${onboardedAgentResult.admin_name} 🌟`,
+                    `مبارك تدشين منصتكم السحابية المستقلة: *${onboardedAgentResult.name}*`,
+                    ``,
+                    `🔐 *بيانات دخول لوحة القيادة العليا (Super Admin):*`,
+                    `• رابط لوحة القيادة: ${adminUrl}`,
+                    `• البريد الإلكتروني: ${onboardedAgentResult.admin_email}`,
+                    `• الرقم السري: ${onboardedAgentResult.admin_password}`,
+                    ``,
+                    `🌐 *روابط منظومتكم للتجار والمسوقين:*`,
+                    `• واجهة انضمام المتاجر: ${baseUrl}`,
+                    `• بوابة شركاء النجاح (المسوقين): ${partnerUrl}`,
+                    ``,
+                    `تم تفعيل باقات الاشتراك والربط المركزي مع بطاقات Apple Wallet و Google Wallet بنجاح 🚀`,
+                  ].join('\n');
+
+                  window.open(`https://wa.me/${intlPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+                }}
+                className="w-full sm:flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 transition"
+              >
+                <Phone className="w-4 h-4" />
+                <span>💬 إرسال الروابط وبيانات الدخول للوكيل عبر واتساب</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setOnboardedAgentResult(null)}
+                className="w-full sm:w-auto px-5 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* 🎨 MODAL: EDIT AGENCY BRANDING & DOMAIN */}
       {/* ========================================================================= */}
       {showEditModal && editTarget && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-xl w-full p-6 space-y-6 shadow-2xl animate-in zoom-in-95">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-xl w-full p-6 space-y-5 shadow-2xl animate-in zoom-in-95 max-h-[92vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400">
                   <Palette className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-white">تخصيص هوية ونطاق: {editTarget.name}</h3>
+                  <h3 className="text-lg font-bold text-white">تخصيص هوية وبيانات: {editTarget.name}</h3>
                   <p className="text-xs text-slate-400 font-mono">ID: {editTarget.id}</p>
                 </div>
               </div>
@@ -1634,9 +2148,34 @@ FROM public.tenants;`);
                   <label className="block text-xs font-bold text-slate-300 mb-1">الاسم بالإنجليزي</label>
                   <input
                     type="text"
+                    dir="ltr"
                     value={editFormData.name_en}
                     onChange={(e) => setEditFormData({ ...editFormData, name_en: e.target.value })}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-left focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">اسم المدير المسؤول</label>
+                  <input
+                    type="text"
+                    value={editFormData.admin_name}
+                    onChange={(e) => setEditFormData({ ...editFormData, admin_name: e.target.value })}
+                    placeholder="أ. اسم المدير"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">جوال المدير المسؤول</label>
+                  <input
+                    type="tel"
+                    dir="ltr"
+                    value={editFormData.admin_phone}
+                    onChange={(e) => setEditFormData({ ...editFormData, admin_phone: e.target.value })}
+                    placeholder="9665XXXXXXXX"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
                   />
                 </div>
               </div>
@@ -1645,10 +2184,11 @@ FROM public.tenants;`);
                 <label className="block text-xs font-bold text-slate-300 mb-1">النطاق المخصص (Custom Domain)</label>
                 <input
                   type="text"
+                  dir="ltr"
                   value={editFormData.custom_domain}
                   onChange={(e) => setEditFormData({ ...editFormData, custom_domain: e.target.value })}
                   placeholder="e.g. sdeemalathr.com (بدون https:// أو www)"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
                 />
               </div>
 
@@ -1662,7 +2202,7 @@ FROM public.tenants;`);
                 />
               </div>
 
-              {/* Logo Upload with Canvas Compression */}
+              {/* Logo Upload with Canvas Compression & Zero-Flicker Preview */}
               <div className="space-y-2 p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
@@ -1677,19 +2217,12 @@ FROM public.tenants;`);
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-700 p-2 flex items-center justify-center overflow-hidden flex-shrink-0">
-                    {editFormData.logo_url ? (
-                      <img
-                        src={editFormData.logo_url}
-                        alt="Logo Preview"
-                        className="w-full h-full object-contain"
-                        onError={(e) => {
-                          (e.target as any).src = '/favicon.png';
-                        }}
-                      />
-                    ) : (
-                      <ImageIcon className="w-6 h-6 text-slate-600" />
-                    )}
+                  <div className="w-14 h-14 rounded-2xl bg-slate-900 border border-slate-700 p-1.5 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <TenantLogo
+                      url={editFormData.logo_url}
+                      name={editFormData.name}
+                      primaryColor={editFormData.primary_color_hex}
+                    />
                   </div>
 
                   <div className="flex-1 space-y-2">
@@ -1713,10 +2246,11 @@ FROM public.tenants;`);
                     </div>
                     <input
                       type="text"
+                      dir="ltr"
                       value={editFormData.logo_url}
                       onChange={(e) => setEditFormData({ ...editFormData, logo_url: e.target.value })}
-                      placeholder="/sadeem-logo.svg أو رابط صورة مباشر"
-                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300"
+                      placeholder="رابط صورة مباشر أو ارفع من جهازك أعلاه"
+                      className="w-full px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono text-left text-slate-300"
                     />
                   </div>
                 </div>
@@ -1734,9 +2268,10 @@ FROM public.tenants;`);
                     />
                     <input
                       type="text"
+                      dir="ltr"
                       value={editFormData.primary_color_hex}
                       onChange={(e) => setEditFormData({ ...editFormData, primary_color_hex: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-left"
                     />
                   </div>
                 </div>
@@ -1752,9 +2287,10 @@ FROM public.tenants;`);
                     />
                     <input
                       type="text"
+                      dir="ltr"
                       value={editFormData.accent_color_hex}
                       onChange={(e) => setEditFormData({ ...editFormData, accent_color_hex: e.target.value })}
-                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-left"
                     />
                   </div>
                 </div>
@@ -1765,18 +2301,20 @@ FROM public.tenants;`);
                   <label className="block text-xs font-bold text-slate-300 mb-1">هاتف الدعم (واتساب)</label>
                   <input
                     type="text"
+                    dir="ltr"
                     value={editFormData.support_whatsapp}
                     onChange={(e) => setEditFormData({ ...editFormData, support_whatsapp: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono focus:border-amber-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-300 mb-1">إيميل الدعم</label>
                   <input
                     type="email"
+                    dir="ltr"
                     value={editFormData.support_email}
                     onChange={(e) => setEditFormData({ ...editFormData, support_email: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-left focus:border-amber-500 focus:outline-none"
                   />
                 </div>
               </div>
@@ -1811,8 +2349,8 @@ FROM public.tenants;`);
       {/* 🔑 MODAL: MANAGE AGENT CREDENTIALS & PASSWORD */}
       {/* ========================================================================= */}
       {showCredentialsModal && credentialsTarget && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-6 shadow-2xl animate-in zoom-in-95">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-5 shadow-2xl animate-in zoom-in-95 my-auto">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400">
@@ -1820,10 +2358,10 @@ FROM public.tenants;`);
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white">
-                    إدارة حساب وكلمة مرور: {credentialsTarget.name}
+                    إدارة بيانات المدير وكلمة مرور: {credentialsTarget.name}
                   </h3>
                   <p className="text-xs text-slate-400 font-mono">
-                    ID: {credentialsTarget.id} • النطاق: {credentialsTarget.custom_domain || 'myradar.sarl'}
+                    ID: {credentialsTarget.id} • النطاق: {credentialsTarget.custom_domain || 'localhost:3000/?tenant=' + credentialsTarget.slug}
                   </p>
                 </div>
               </div>
@@ -1837,6 +2375,32 @@ FROM public.tenants;`);
             </div>
 
             <form onSubmit={handleSaveCredentialsSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">اسم المدير المسؤول *</label>
+                  <input
+                    type="text"
+                    required
+                    value={credNameInput}
+                    onChange={(e) => setCredNameInput(e.target.value)}
+                    placeholder="أ. اسم المدير"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">رقم جوال المدير (واتساب) *</label>
+                  <input
+                    type="tel"
+                    required
+                    dir="ltr"
+                    value={credPhoneInput}
+                    onChange={(e) => setCredPhoneInput(e.target.value)}
+                    placeholder="9665XXXXXXXX"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-mono text-left focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-300 mb-1">
                   البريد الإلكتروني المعتمد للمسؤول (Admin Email) *
@@ -1853,9 +2417,6 @@ FROM public.tenants;`);
                   />
                   <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">
-                  هذا هو الإيميل الذي يسجل به مسؤول المنصة دخوله في بوابة Super Admin.
-                </p>
               </div>
 
               <div>
@@ -1907,7 +2468,7 @@ FROM public.tenants;`);
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  يجب ألا تقل عن 6 خانات. عند النقر على اعتماد، سيتم تشفيرها وتثبيتها في محرك Supabase Auth فوراً.
+                  يجب ألا تقل عن 6 خانات. عند النقر على اعتماد، سيتم تشفيرها وتثبيتها في محرك Supabase Auth وقاعدة البيانات فوراً.
                 </p>
               </div>
 
@@ -1919,7 +2480,7 @@ FROM public.tenants;`);
                 </div>
                 <p className="text-[11px] text-slate-300">
                   يتم ربط المستخدم برتبة <code className="text-amber-300">tenant_admin</code> وعزله أمنياً بـ RLS.
-                  إذا أضاع الوكيل كلمة مروره، يمكنك إعادة تعيينها من هذه النافذة فوراً دون الحاجة لكتابة أي كود أو الذهاب لقاعدة البيانات.
+                  بعد الحفظ ستظهر لك بطاقة التسليم لإرسال البيانات عبر واتساب للوكيل بضغطة زر.
                 </p>
               </div>
 

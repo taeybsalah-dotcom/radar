@@ -20,9 +20,26 @@ export interface WhiteLabelTenantConfig {
   isWhiteLabelTenant: boolean;
 }
 
+export function getTargetTenantHost(): string {
+  if (typeof window === 'undefined') return 'myradar.sarl';
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const tenantParam = params.get('tenant')?.trim().toLowerCase();
+    if (tenantParam) {
+      sessionStorage.setItem('radar_active_tenant_override', tenantParam);
+      return tenantParam;
+    }
+    const savedOverride = sessionStorage.getItem('radar_active_tenant_override')?.trim().toLowerCase();
+    if (savedOverride && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      return savedOverride;
+    }
+  } catch {}
+  return window.location.hostname.toLowerCase();
+}
+
 const getDomainCacheKey = () => {
   if (typeof window === 'undefined') return 'radar_cached_tenant_branding';
-  const cleanHost = window.location.hostname.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const cleanHost = getTargetTenantHost().replace(/[^a-z0-9]/g, '_');
   return `radar_cached_tenant_branding_${cleanHost}`;
 };
 
@@ -45,13 +62,16 @@ const SADEEM_PROFILE: WhiteLabelTenantConfig = {
   isWhiteLabelTenant: true,
 };
 
+const RADAR_DEFAULT_LOGO =
+  'https://zagpvflyizbmzsbmhnts.supabase.co/storage/v1/object/public/store-assets/logos/b9aaa6365c1812ebb5d88c90f358c1b1574f9ae7.webp';
+
 const RADAR_PROFILE: WhiteLabelTenantConfig = {
   tenantId: 'radar',
   brandName: import.meta.env.VITE_BRAND_NAME || 'رادار',
   brandEnglishName: import.meta.env.VITE_BRAND_NAME_EN || 'Radar',
   tagline: import.meta.env.VITE_BRAND_TAGLINE || 'منظومة الولاء ونقاط البيع السحابية الذكية',
-  logoUrl: import.meta.env.VITE_BRAND_LOGO_URL || '/radar-logo-dark.jpg',
-  faviconUrl: import.meta.env.VITE_BRAND_FAVICON_URL || '/favicon.png',
+  logoUrl: import.meta.env.VITE_BRAND_LOGO_URL || RADAR_DEFAULT_LOGO,
+  faviconUrl: import.meta.env.VITE_BRAND_FAVICON_URL || RADAR_DEFAULT_LOGO,
   domain: import.meta.env.VITE_BRAND_DOMAIN || 'myradar.sarl',
   supportPhone: import.meta.env.VITE_SUPPORT_PHONE || '+966500000000',
   supportWhatsapp: import.meta.env.VITE_SUPPORT_WHATSAPP || '966500000000',
@@ -63,12 +83,21 @@ const RADAR_PROFILE: WhiteLabelTenantConfig = {
   isWhiteLabelTenant: Boolean(import.meta.env.VITE_BRAND_NAME && import.meta.env.VITE_BRAND_NAME !== 'رادار'),
 };
 
+function sanitizeLogoUrl(url?: string | null, fallback?: string): string | undefined {
+  if (!url || typeof url !== 'string') return fallback;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === '/favicon.png' || trimmed === '/favicon.ico' || trimmed === '/radar-logo-dark.jpg') {
+    return fallback;
+  }
+  return trimmed;
+}
+
 function resolveInitialConfig(): WhiteLabelTenantConfig {
   if (typeof window === 'undefined') return RADAR_PROFILE;
 
-  const host = window.location.hostname.toLowerCase();
+  const host = getTargetTenantHost();
   let base = RADAR_PROFILE;
-  if (host.includes('sdeem') || host.includes('sadim')) {
+  if (host.includes('sdeem') || host.includes('sadim') || host === 'sadeem') {
     base = SADEEM_PROFILE;
   }
 
@@ -79,20 +108,20 @@ function resolveInitialConfig(): WhiteLabelTenantConfig {
       const b = JSON.parse(raw);
       const bName = b.brand_name || b.name;
       if (bName) {
-        // Guard against cross-domain cache contamination
-        const isSadeemHost = host.includes('sdeem') || host.includes('sadim');
+        const isSadeemHost = host.includes('sdeem') || host.includes('sadim') || host === 'sadeem';
         if (isSadeemHost && bName === 'رادار') {
           // Reject stale radar cache on sadeem domain
         } else {
           const tid = b.id || (isSadeemHost || bName === 'سديم الأثر' ? 'sadeem' : 'radar');
+          const cleanLogo = sanitizeLogoUrl(b.logo_url, base.logoUrl);
           base = {
             ...base,
             tenantId: tid,
             brandName: bName,
             brandEnglishName: b.brand_english_name || b.name_en || base.brandEnglishName,
             tagline: b.tagline || base.tagline,
-            logoUrl: b.logo_url || base.logoUrl,
-            faviconUrl: b.favicon_url || b.logo_url || base.faviconUrl,
+            logoUrl: cleanLogo,
+            faviconUrl: sanitizeLogoUrl(b.favicon_url || b.logo_url, cleanLogo || base.faviconUrl),
             domain: b.domain || b.custom_domain || base.domain,
             supportPhone: b.support_phone || base.supportPhone,
             supportWhatsapp: b.support_whatsapp || base.supportWhatsapp,
@@ -133,14 +162,16 @@ export function applyTenantBranding(data: any): WhiteLabelTenantConfig {
   if (!brandName) return memoryConfig;
 
   const tenantId = data.id || (brandName === 'سديم الأثر' ? 'sadeem' : memoryConfig.tenantId || 'radar');
+  const nextLogoUrl = sanitizeLogoUrl(data.logo_url, memoryConfig.logoUrl);
+  const nextFaviconUrl = sanitizeLogoUrl(data.favicon_url || data.logo_url, nextLogoUrl || memoryConfig.faviconUrl);
 
-  memoryConfig = {
+  const nextConfig: WhiteLabelTenantConfig = {
     tenantId,
     brandName,
     brandEnglishName: data.brand_english_name || data.name_en || memoryConfig.brandEnglishName,
     tagline: data.tagline || memoryConfig.tagline,
-    logoUrl: data.logo_url || memoryConfig.logoUrl,
-    faviconUrl: data.favicon_url || data.logo_url || memoryConfig.faviconUrl,
+    logoUrl: nextLogoUrl,
+    faviconUrl: nextFaviconUrl,
     domain: data.domain || data.custom_domain || memoryConfig.domain,
     supportPhone: data.support_phone || memoryConfig.supportPhone,
     supportWhatsapp: data.support_whatsapp || memoryConfig.supportWhatsapp,
@@ -152,15 +183,26 @@ export function applyTenantBranding(data: any): WhiteLabelTenantConfig {
     isWhiteLabelTenant: brandName !== 'رادار',
   };
 
+  const hasChanged =
+    memoryConfig.tenantId !== nextConfig.tenantId ||
+    memoryConfig.brandName !== nextConfig.brandName ||
+    memoryConfig.logoUrl !== nextConfig.logoUrl ||
+    memoryConfig.primaryColorHex !== nextConfig.primaryColorHex ||
+    memoryConfig.accentColorHex !== nextConfig.accentColorHex ||
+    memoryConfig.tagline !== nextConfig.tagline ||
+    memoryConfig.supportWhatsapp !== nextConfig.supportWhatsapp;
+
+  memoryConfig = nextConfig;
+
   if (typeof window !== 'undefined') {
     try {
       localStorage.setItem(getDomainCacheKey(), JSON.stringify({
         ...data,
         brand_name: brandName,
+        logo_url: nextLogoUrl,
       }));
-      // Update DOM title and favicon
       document.title = memoryConfig.brandName;
-      if (memoryConfig.faviconUrl) {
+      if (hasChanged && memoryConfig.faviconUrl) {
         try {
           const size = 64;
           const img = new Image();
@@ -191,10 +233,11 @@ export function applyTenantBranding(data: any): WhiteLabelTenantConfig {
     } catch {}
   }
 
-  // Notify all subscribed components
-  brandingListeners.forEach((fn) => {
-    try { fn(memoryConfig); } catch {}
-  });
+  if (hasChanged) {
+    brandingListeners.forEach((fn) => {
+      try { fn(memoryConfig); } catch {}
+    });
+  }
 
   return memoryConfig;
 }

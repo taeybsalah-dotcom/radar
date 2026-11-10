@@ -3,7 +3,13 @@ import ReactDOM from 'react-dom/client';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { AuthProvider } from './context/AuthContext.tsx';
-import { getActiveTenantConfig, applyTenantBranding, subscribeTenantBranding, WhiteLabelTenantConfig } from './config/tenant.ts';
+import {
+  getActiveTenantConfig,
+  applyTenantBranding,
+  subscribeTenantBranding,
+  getTargetTenantHost,
+  WhiteLabelTenantConfig,
+} from './config/tenant.ts';
 import { ResellerSuspendedScreen } from './components/ResellerSuspendedScreen.tsx';
 import { getSupabaseClient } from './lib/supabase.ts';
 import './index.css';
@@ -36,8 +42,8 @@ const RootApp: React.FC = () => {
     const supabase = getSupabaseClient();
     if (!supabase) return unsubscribeBranding;
 
-    // 1. Fetch Dynamic Tenant Branding via domain RPC (Al-Athar Core Multi-Tenant Engine)
-    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    // 1. Fetch Dynamic Tenant Branding via domain or ?tenant= RPC (Al-Athar Core Multi-Tenant Engine)
+    const host = getTargetTenantHost();
     (supabase as any)
       .rpc('get_active_tenant_by_domain', { p_host: host })
       .then(({ data, error }: any) => {
@@ -106,7 +112,9 @@ const RootApp: React.FC = () => {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <App key={tenantConfig.brandName} />
+        <div data-active-tenant={tenantConfig.tenantId}>
+          <App />
+        </div>
       </AuthProvider>
     </ErrorBoundary>
   );
